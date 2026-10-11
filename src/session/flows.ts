@@ -64,12 +64,21 @@ function isFlow(value: unknown): value is Flow {
 export function loadFlow(name: string): Flow | null {
   const p = flowPath(name);
   if (!existsSync(p)) return null;
+  // A saved flow that cannot be read, parse, or match the schema is replaced
+  // by the next successful run; say why, so the overwritten recipe is not lost
+  // without a word.
+  let flow: unknown;
   try {
-    const flow: unknown = JSON.parse(readFileSync(p, 'utf-8'));
-    return isFlow(flow) ? flow : null;
-  } catch {
+    flow = JSON.parse(readFileSync(p, 'utf-8'));
+  } catch (error) {
+    console.error(`[flows] ${name}: saved flow ${p} cannot be read: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
+  if (!isFlow(flow)) {
+    console.error(`[flows] ${name}: saved flow ${p} is not a ${FLOW_SCHEMA} flow`);
+    return null;
+  }
+  return flow;
 }
 
 export function saveFlow(name: string, steps: FlowStep[]): boolean {
