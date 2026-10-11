@@ -134,10 +134,32 @@ export function attachWorkerInventory(ws: any): void {
         const we = ws._instWorkerEvents;
         try {
           await childCdp.send('Runtime.enable');
-        } catch {}
+        } catch (enableError: any) {
+          // Without Runtime the worker's console and exceptions never arrive.
+          we.push({
+            t: Date.now(),
+            targetId: ti.targetId,
+            phase: 'enable_failed',
+            payload: {
+              domain: 'Runtime',
+              error: String(enableError?.message ?? enableError),
+            },
+          });
+        }
         try {
           await childCdp.send('Network.enable');
-        } catch {}
+        } catch (enableError: any) {
+          // Without Network the worker's requests and responses never arrive.
+          we.push({
+            t: Date.now(),
+            targetId: ti.targetId,
+            phase: 'enable_failed',
+            payload: {
+              domain: 'Network',
+              error: String(enableError?.message ?? enableError),
+            },
+          });
+        }
         childCdp.on('Runtime.consoleAPICalled', (ev: any) => {
           try {
             we.push({
