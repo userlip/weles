@@ -168,11 +168,17 @@ export async function finalDump(ws: any): Promise<void> {
   // teardown so the snapshots reflect the actual final state of the session.
   try {
     await captureFinalCdpSnapshots(ws);
-  } catch {}
+  } catch (e: any) {
+    console.error(
+      `[wsession] final DOMSnapshot/HeapProfiler capture failed: ${e?.message}`,
+    );
+  }
   try {
     const { stopPcap } = await import('./pcap_sidecar.js');
     await stopPcap(ws);
-  } catch {}
+  } catch (e: any) {
+    console.error(`[wsession] pcap sidecar stop failed: ${e?.message}`);
+  }
   try {
     await ws._instCheckpoints?.captureFinal();
     writeJsonFile(ws._instFile, buildDumpPayload(ws, { closing: true }));
