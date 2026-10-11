@@ -209,7 +209,7 @@ export async function readCode(
     );
     if (!r.ok)
       throw new Error(
-        `sms_juicysms_http_${r.status}: getsms for order ${orderId} failed`,
+        `sms_juicysms_http_${r.status}: getsms for order ${orderId} failed: ${(await r.text()).trim()}`,
       );
     const text = (await r.text()).trim();
     if (text.startsWith('SUCCESS_')) {
@@ -236,7 +236,7 @@ export async function readCode(
   );
   if (!r.ok)
     throw new Error(
-      `sms_smsactivate_http_${r.status}: getStatus for order ${orderId} failed`,
+      `sms_smsactivate_http_${r.status}: getStatus for order ${orderId} failed: ${(await r.text()).trim()}`,
     );
   const text = (await r.text()).trim();
   if (text.startsWith('STATUS_OK:')) {
