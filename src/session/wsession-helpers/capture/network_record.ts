@@ -68,16 +68,22 @@ export function attachCompleteNetRecord(
   ctx.on('request', (req) => {
     try {
       let post = '';
+      // A body that could not be read is not an empty body: the entry says so.
+      let postDataError: string | undefined;
       try {
         post = req.postData() ?? '';
-      } catch {}
+      } catch (readError) {
+        postDataError = `postData: ${readError instanceof Error ? readError.message : String(readError)}`;
+      }
       const redactedPost = redactRequestBody(req.url(), post);
       let postBytes = '';
       try {
         const b = (req as any).postDataBuffer?.();
         if (b && !redactedPost.redacted)
           postBytes = Buffer.from(b).toString('base64');
-      } catch {}
+      } catch (readError) {
+        postDataError = `postDataBuffer: ${readError instanceof Error ? readError.message : String(readError)}`;
+      }
       reqs.push({
         t: Date.now(),
         phase: 'req',
@@ -88,6 +94,7 @@ export function attachCompleteNetRecord(
         postData: redactedPost.body,
         postDataRedacted: redactedPost.redacted,
         postDataBase64: postBytes,
+        postDataError,
       });
     } catch {}
   });
