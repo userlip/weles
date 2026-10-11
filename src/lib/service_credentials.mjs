@@ -92,12 +92,15 @@ export async function listCredentialSummaries({ search } = {}) {
     .map(redacted);
 }
 
+// Null only for an item Skarbiec does not list. A listed item that cannot be
+// read (vault locked, Skarbiec unreachable) throws its cause instead of
+// reading as a credential that does not exist.
 export async function getCredential(id) {
-  try {
-    return rowFromItem(String(id), readItem(id));
-  } catch {
-    return null;
-  }
+  const listed = JSON.parse(skarbiec(['list'])).some(
+    (item) => !item.deleted && String(item.name ?? item.id) === String(id),
+  );
+  if (!listed) return null;
+  return rowFromItem(String(id), readItem(id));
 }
 
 export async function patchCredential(id, patch) {
