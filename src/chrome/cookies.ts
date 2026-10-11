@@ -59,6 +59,9 @@ export interface PlaywrightCookie {
 export interface ExportResult {
   cookies: PlaywrightCookie[];
   v20Skipped: number;
+  /** v10/v11 cookies whose value did not decrypt, and the first such cause. */
+  decryptFailed: number;
+  decryptFailure: string | null;
 }
 
 function safeStorageKey(): Buffer {
@@ -190,6 +193,10 @@ export function exportCookies(
     const raw = querySqlite(tmp, sql);
     const cookies: PlaywrightCookie[] = [];
     let v20Skipped = 0;
+    // A cookie whose v10/v11 value does not decrypt is not exported; the count
+    // and the first cause are returned so a session missing it is explained.
+    let decryptFailed = 0;
+    let decryptFailure: string | null = null;
 
     for (const line of raw.split('\n')) {
       if (!line) continue;
@@ -217,7 +224,9 @@ export function exportCookies(
         if (prefix === 'v10' || prefix === 'v11') {
           try {
             value = decryptV10(enc, key, host);
-          } catch {
+          } catch (error) {
+            decryptFailed++;
+            decryptFailure ??= `${host} ${name}: ${error instanceof Error ? error.message : String(error)}`;
             continue;
           }
         } else if (prefix === 'v20') {
@@ -244,7 +253,7 @@ export function exportCookies(
         sameSite: sameSiteMap(Number(ss)),
       });
     }
-    return { cookies, v20Skipped };
+    return { cookies, v20Skipped, decryptFailed, decryptFailure };
   } finally {
     try {
       unlinkSync(tmp);
