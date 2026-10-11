@@ -120,7 +120,13 @@ export async function wsSaveAccount(
       join(recordingsDir(s.label || undefined), 'account.json'),
       JSON.stringify({ item, platform, username }, null, 2),
     );
-    await markSignupSuccess(email, platform).catch(() => {});
+    // The account is saved either way; a signup-success mark that failed is
+    // said in the step's answer, not dropped.
+    try {
+      await markSignupSuccess(email, platform);
+    } catch (error) {
+      return `account saved: ${item}; signup success not marked for ${email}: ${error instanceof Error ? error.message : String(error)}`;
+    }
     return `account saved: ${item}`;
   } catch (error) {
     return `error: ${error instanceof Error ? error.message : String(error)}`;
