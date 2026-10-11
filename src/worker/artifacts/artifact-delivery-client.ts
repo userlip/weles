@@ -144,22 +144,41 @@ export async function requestSignedArtifactUrls(
   config: ArtifactDeliveryClientConfig = loadArtifactDeliveryClientConfig(),
 ): Promise<SignedArtifactResponse> {
   const normalized = normalizeArtifactLocators(artifacts);
-  const response = await fetch(new URL(SIGN_PATH, config.baseUrl), {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.token}`,
-      'Content-Type': 'application/json',
-    },
-    redirect: 'error',
-    body: JSON.stringify({ artifacts: normalized }),
-  });
-  const text = await response.text();
+  const endpoint = new URL(SIGN_PATH, config.baseUrl);
+  const operation = `Weles artifact delivery POST ${endpoint.origin}${endpoint.pathname}`;
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        'Content-Type': 'application/json',
+      },
+      redirect: 'error',
+      body: JSON.stringify({ artifacts: normalized }),
+    });
+  } catch (error) {
+    throw new Error(
+      `${operation} request failed: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (error) {
+    throw new Error(
+      `${operation} response body read failed (HTTP ${response.status}): ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
   let payload: unknown;
   try {
     payload = JSON.parse(text) as unknown;
-  } catch {
+  } catch (error) {
     throw new Error(
-      `Weles artifact delivery returned invalid JSON (HTTP ${response.status})`,
+      `${operation} receipt JSON decode failed (HTTP ${response.status}): ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
   if (!response.ok) {
@@ -168,7 +187,7 @@ export async function requestSignedArtifactUrls(
         ? payload.error
         : text;
     throw new Error(
-      `Weles artifact delivery HTTP ${response.status}: ${String(detail)}`,
+      `${operation} HTTP ${response.status}: ${String(detail)}`,
     );
   }
   return validateSignedResponse(payload, normalized, config, Date.now());
