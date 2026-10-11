@@ -150,12 +150,27 @@ async function main() {
     await session.close();
   }
   if (!issued.ok) {
-    const next =
-      issued.blocked === 'google_push_approval_required'
-        ? {
-            next_action: `POST /run {"action":"google_authenticator_enrol","params":{"login_item":"${loginItem}"},"detached":true} on this executor, then weles app-password --provider google --login-role <the role this login plays> --organization ${organization}`,
-          }
-        : {};
+    const next = {};
+    if (issued.blocked === 'google_push_approval_required') {
+      const enrollment = JSON.stringify({
+        action: 'google_authenticator_enrol',
+        params: { login_item: loginItem },
+        detached: true,
+      });
+      const resume = [
+        'weles',
+        'app-password',
+        '--provider',
+        'google',
+        '--login-item',
+        loginItem,
+        '--organization',
+        organization,
+      ]
+        .map((argument) => `'${argument.replaceAll("'", "'\\''")}'`)
+        .join(' ');
+      next.next_action = `POST /run ${enrollment} on this executor, then ${resume}`;
+    }
     report({
       ok: false,
       login_item: loginItem,
