@@ -162,13 +162,17 @@ export function diagnosticsManifest(runId) {
       download_url: `/diagnostics/${encodeURIComponent(runId)}/file?path=run-result.json`,
     });
   }
+  // A directory or file of the run that cannot be listed or examined is named
+  // under `unreadable` with its cause; dropped, the manifest looked complete.
+  const unreadable = [];
   const stack = root ? [{ dir: root, rel: '' }] : [];
   while (stack.length) {
     const current = stack.pop();
     let entries;
     try {
       entries = readdirSync(current.dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      unreadable.push({ path: current.dir, cause: error.message });
       continue;
     }
     for (const entry of entries) {
@@ -183,7 +187,8 @@ export function diagnosticsManifest(runId) {
       let stat;
       try {
         stat = statSync(full);
-      } catch {
+      } catch (error) {
+        unreadable.push({ path: full, cause: error.message });
         continue;
       }
       files.push({
@@ -203,6 +208,7 @@ export function diagnosticsManifest(runId) {
     total_files: files.length,
     total_bytes: files.reduce((sum, file) => sum + file.bytes, 0),
     files,
+    unreadable,
   };
 }
 
