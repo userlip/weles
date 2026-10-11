@@ -50,15 +50,20 @@ export function cidrKeys(ip: string): CidrKeys | undefined {
 
 type AsnCache = Record<string, { asn: string; at: string }>;
 
-function loadAsnCache(): AsnCache {
+// The ASN cache; empty when there is none yet. One that cannot be read or is
+// not a JSON object answers null after saying why, so a lookup does not save a
+// one-entry cache over every ASN it held.
+function loadAsnCache(): AsnCache | null {
+  const { readFileSync, existsSync } = require('node:fs');
+  if (!existsSync(ASN_CACHE_PATH)) return {};
   try {
-    const { readFileSync, existsSync } = require('node:fs');
-    if (!existsSync(ASN_CACHE_PATH)) return {};
     const j = JSON.parse(readFileSync(ASN_CACHE_PATH, 'utf8'));
-    return j && typeof j === 'object' ? j : {};
-  } catch {
-    return {};
+    if (j && typeof j === 'object' && !Array.isArray(j)) return j;
+    console.error(`[proxy] ASN cache ${ASN_CACHE_PATH} is not a JSON object; it is not rewritten`);
+  } catch (error) {
+    console.error(`[proxy] ASN cache ${ASN_CACHE_PATH} cannot be read, so it is not rewritten: ${error instanceof Error ? error.message : String(error)}`);
   }
+  return null;
 }
 
 function saveAsnCache(c: AsnCache): void {
@@ -78,7 +83,7 @@ function saveAsnCache(c: AsnCache): void {
 export async function lookupAsn(ip: string): Promise<string | undefined> {
   if (!isIpv4(ip)) return undefined;
   const cache = loadAsnCache();
-  if (cache[ip]?.asn) return cache[ip].asn;
+  if (cache?.[ip]?.asn) return cache[ip].asn;
   try {
     const r = await fetch(
       `https://stat.ripe.net/data/network-info/data.json?resource=${ip}`,
@@ -86,8 +91,10 @@ export async function lookupAsn(ip: string): Promise<string | undefined> {
     const j = (await r.json()) as { data?: { asns?: string[] } };
     const asn = j?.data?.asns?.[0];
     if (asn) {
-      cache[ip] = { asn: String(asn), at: new Date().toISOString() };
-      saveAsnCache(cache);
+      if (cache) {
+        cache[ip] = { asn: String(asn), at: new Date().toISOString() };
+        saveAsnCache(cache);
+      }
       return String(asn);
     }
   } catch {
