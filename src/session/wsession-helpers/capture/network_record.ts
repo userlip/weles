@@ -201,7 +201,17 @@ export function attachCompleteNetRecord(
             ? p.toString('base64')
             : String(p ?? '');
           reqs.push({ t: Date.now(), phase: 'ws-tx', url: u, payload });
-        } catch {}
+        } catch (frameError) {
+          reqs.push({
+            t: Date.now(),
+            phase: 'ws-tx_capture_failed',
+            url: u,
+            error:
+              frameError instanceof Error
+                ? frameError.message
+                : String(frameError),
+          });
+        }
       });
       sock.on('framereceived', (f: any) => {
         try {
@@ -210,7 +220,17 @@ export function attachCompleteNetRecord(
             ? p.toString('base64')
             : String(p ?? '');
           reqs.push({ t: Date.now(), phase: 'ws-rx', url: u, payload });
-        } catch {}
+        } catch (frameError) {
+          reqs.push({
+            t: Date.now(),
+            phase: 'ws-rx_capture_failed',
+            url: u,
+            error:
+              frameError instanceof Error
+                ? frameError.message
+                : String(frameError),
+          });
+        }
       });
       sock.on('close', () => {
         try {
@@ -227,6 +247,15 @@ export function attachCompleteNetRecord(
           });
         } catch {}
       });
-    } catch {}
+    } catch (socketError) {
+      reqs.push({
+        t: Date.now(),
+        phase: 'ws-open_capture_failed',
+        error:
+          socketError instanceof Error
+            ? socketError.message
+            : String(socketError),
+      });
+    }
   });
 }
