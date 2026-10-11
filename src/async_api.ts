@@ -297,7 +297,10 @@ export async function AsyncNewBrowser(
       process.env.WELES_RECORDINGS_MAX_BYTES ?? String(2 * 1024 * 1024 * 1024),
       10,
     );
-    pruneRecordings(recordingsBase(), budget);
+    // The run still starts; what pruning could not examine or remove is said,
+    // so a host that keeps filling has its cause on stderr.
+    for (const failure of pruneRecordings(recordingsBase(), budget))
+      console.error(`[recordings-prune] ${failure}`);
   }
 
   // Launch only the checksum-verified, deployment-selected browser release.
