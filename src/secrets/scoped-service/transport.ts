@@ -275,8 +275,13 @@ export function welesManagedCredentialReaderMismatch(
   try {
     catalog = acquisitionScopesFile(tenantId);
     granted = managedReaderGrantedFields(contract, tenantId);
-  } catch {
-    return null;
+  } catch (error: unknown) {
+    // An unreadable catalog is the reason the reader cannot be checked, not
+    // the absence of a mismatch.
+    return (
+      `deployed Skarbiec acquisition catalog for ${contract.item} cannot be read:` +
+      ` ${error instanceof Error ? error.message : String(error)}`
+    );
   }
   if (!granted.length || granted.includes(field)) return null;
   return (
