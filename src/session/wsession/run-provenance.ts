@@ -152,8 +152,12 @@ export function writePrelaunchSessionMeta(request: SessionMetaRequest): void {
       ),
       JSON.stringify(meta, null, 2),
     );
-  } catch {
-    /* provenance is best-effort */
+  } catch (error) {
+    // The run goes on without it, but a missing session_meta.json makes the
+    // importer report meta_missing; the cause is said here so that is explained.
+    console.error(
+      `[run-provenance] prelaunch session_meta.json for ${process.env.ACTION || request.label} was not written: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -244,7 +248,11 @@ export function writeRealizedSessionMeta(realized: RealizedSessionMeta): void {
       ),
       JSON.stringify(meta, null, 2),
     );
-  } catch {}
+  } catch (error) {
+    console.error(
+      `[run-provenance] realized session_meta.json for ${process.env.ACTION || realized.label} was not written: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 export type StepPhase = 'before' | 'after' | 'error';
