@@ -88,23 +88,30 @@ export function installAtoms(
           2,
         ),
       );
-    } catch {
-      /* swallow — best-effort sidecar write */
+    } catch (error) {
+      // The run goes on, but a lost ban signal is said with its file and cause.
+      console.error(
+        `ban signal ${join(dir, 'ban_signal.json')} was not written: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   };
 
   W.prototype.patchAccount = async function (accountId, patch) {
     if (!accountId) return false;
+    // A failed update is thrown with its account and cause: the callers store
+    // a freshly issued token here and do not read the result.
+    const metadata =
+      patch.metadata && typeof patch.metadata === 'object'
+        ? (patch.metadata as Record<string, unknown>)
+        : undefined;
+    const active =
+      typeof patch.is_active === 'boolean' ? patch.is_active : undefined;
     try {
-      const metadata =
-        patch.metadata && typeof patch.metadata === 'object'
-          ? (patch.metadata as Record<string, unknown>)
-          : undefined;
-      const active =
-        typeof patch.is_active === 'boolean' ? patch.is_active : undefined;
-      return updateAccount(accountId, { metadata, active });
-    } catch {
-      return false;
+      return await updateAccount(accountId, { metadata, active });
+    } catch (error) {
+      throw new Error(
+        `account ${accountId} was not updated: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   };
 
