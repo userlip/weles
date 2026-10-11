@@ -14,7 +14,7 @@ import {
   actionAllowlist,
   declaredNames,
 } from './configuration.mjs';
-import { executable, refuse, run, runAsync, runCommand } from './running.mjs';
+import { notAFile, refuse, run, runAsync, runCommand } from './running.mjs';
 
 /**
  * The address Stado's service directory published for `service` on this host
@@ -47,8 +47,9 @@ export async function startup() {
 
   const stadoBin = process.env.STADO_BIN || join(HOME, '.stado/bin/stado');
   process.env.STADO_BIN = stadoBin;
-  if (!executable(stadoBin))
-    refuse(`required Stado binary is unavailable: ${stadoBin}`);
+  const stadoProblem = notAFile(stadoBin);
+  if (stadoProblem)
+    refuse(`required Stado binary ${stadoBin} ${stadoProblem}`);
   const nodeBin = process.env.NODE_BIN || process.execPath;
 
   // Page reading needs the native binaries from this release.
@@ -59,8 +60,9 @@ export async function startup() {
     requiredNative.push('jeden-sandbox-helper');
   for (const name of requiredNative) {
     const binary = join(REPO, 'native/jeden/bin', name);
-    if (!executable(binary))
-      refuse(`required Weles native runtime is unavailable: ${binary}`);
+    const binaryProblem = notAFile(binary);
+    if (binaryProblem)
+      refuse(`required Weles native runtime ${binary} ${binaryProblem}`);
     run(
       binary,
       ['--version'],

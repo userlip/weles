@@ -64,10 +64,14 @@ export function run(command, args, label) {
   return result.stdout.trim();
 }
 
-export function executable(path) {
+// Why `path` is not a regular file, or null when it is: a missing file and one
+// that cannot be examined (permissions, I/O) are different refusals.
+export function notAFile(path) {
   try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
+    return statSync(path).isFile() ? null : 'is not a regular file';
+  } catch (error) {
+    return error.code === 'ENOENT'
+      ? 'does not exist'
+      : `cannot be examined: ${error.message}`;
   }
 }
