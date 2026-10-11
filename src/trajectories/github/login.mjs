@@ -3,10 +3,7 @@ import { WSession } from '../../../dist/session/wsession.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
-import {
-  getReceived,
-  listReceivedFrom,
-} from '../../_shared/resend-receiving.mjs';
+import { messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
 
 const URL = 'https://github.com/login';
@@ -184,17 +181,15 @@ try {
     url2.includes('two-factor')
   ) {
     console.log(
-      '[login] Device verification required, polling Resend for code...',
+      '[login] Device verification required, reading the code from Skrzynka...',
     );
     const emailAddr = process.env.SVC_EMAIL;
     // The code arrives when GitHub sends it; the inbox is read until it does.
     let otp = null;
     while (!otp) {
       await pageSettled(s.page);
-      for (const em of await listReceivedFrom(10, emailAddr, 'github.com')) {
-        const full = await getReceived(em.id);
-        const body = (full.html ?? '') + (full.text ?? '');
-        const m = body.match(/\b(\d{6,8})\b/);
+      for (const em of await messagesTo(emailAddr, 'github.com')) {
+        const m = em.body_text.match(/\b(\d{6,8})\b/);
         if (m) {
           otp = m[1];
           break;
@@ -204,12 +199,14 @@ try {
     {
       console.log(`[login] Device code: ${otp}`);
       await s.page
-        .evaluate(`(code => {
+        .evaluate(
+          `(code => {
         const inputs = document.querySelectorAll('input[autocomplete="one-time-code"], input[name*="code"], input[inputmode="numeric"]');
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
         if (inputs.length === 1) { setter.call(inputs[0], code); inputs[0].dispatchEvent(new Event('input', {bubbles:true})); }
         else if (inputs.length >= code.length) { for (let i = 0; i < code.length; i++) { setter.call(inputs[i], code[i]); inputs[i].dispatchEvent(new Event('input', {bubbles:true})); } }
-      })(${JSON.stringify(otp)})`)
+      })(${JSON.stringify(otp)})`,
+        )
         .catch(() => {});
       await pageSettled(s.page);
       url2 = s.page.url?.() ?? '';
@@ -247,7 +244,8 @@ try {
     // signals for bad credentials vs anti-abuse vs device-verification gates,
     // but they all funnel through /login eventually.
     const diag = await s.page
-      .evaluate(`(() => {
+      .evaluate(
+        `(() => {
       const flash = document.querySelector('.flash-error,[role="alert"]')?.innerText?.trim() || '';
       const body = document.body ? document.body.innerText : '';
       let reason = 'unknown';
@@ -257,7 +255,8 @@ try {
       else if (/too many|try again later|rate limit/i.test(flash + body)) reason = 'rate_limited';
       else if (/captcha|are you human|puzzle/i.test(flash + body)) reason = 'captcha_required';
       return { reason, flash, title: document.title };
-    })()`)
+    })()`,
+      )
       .catch(() => ({ reason: 'unknown', flash: '', title: '' }));
     console.error(
       `FAIL: not logged in at ${finalUrl} — reason=${diag.reason} flash=${JSON.stringify(diag.flash)} title=${JSON.stringify(diag.title)}`,

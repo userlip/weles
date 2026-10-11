@@ -6,10 +6,7 @@ import { requireStadoModelRouterConfig } from './captcha/stado_model_router.mjs'
 import { humanClick, humanClickLocator } from '../../../dist/human/mouse.js';
 import { humanType } from '../../../dist/human/keyboard.js';
 import { autoBindCharacter } from '../lib/character-bind.mjs';
-import {
-  getReceived,
-  listReceivedFrom,
-} from '../../_shared/resend-receiving.mjs';
+import { messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
 
 const URL = 'https://github.com/signup';
 
@@ -243,10 +240,12 @@ try {
   // DOM-based extraction of pkey from iframe (data-src becomes src after load)
   if (!captcha.pkey) {
     const iframeInfo = await s.page
-      .evaluate(`(() => {
+      .evaluate(
+        `(() => {
       const frames = Array.from(document.querySelectorAll('iframe'));
       return frames.map(f => ({ src: f.src, dataSrc: f.getAttribute('data-src'), cls: f.className })).filter(f => f.src || f.dataSrc);
-    })()`)
+    })()`,
+      )
       .catch(() => []);
     console.log(`[register] All iframes: ${JSON.stringify(iframeInfo)}`);
     for (const f of iframeInfo) {
@@ -312,7 +311,8 @@ try {
         ).token;
   if (token) {
     const inject = await s.page
-      .evaluate(`(tk => {
+      .evaluate(
+        `(tk => {
       const inputs = document.querySelectorAll('input[name="octocaptcha-token"], input.js-octocaptcha-token');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
       for (const inp of inputs) { setter.call(inp, tk); inp.dispatchEvent(new Event('input', {bubbles:true})); inp.dispatchEvent(new Event('change', {bubbles:true})); }
@@ -326,7 +326,8 @@ try {
       const form = document.querySelector('form.js-octocaptcha-parent, form[data-octo-click-hmac]');
       if (form && typeof form.requestSubmit === 'function') { form.requestSubmit(); return { injected: inputs.length, clicked: 'form-requestSubmit' }; }
       return { injected: inputs.length, clicked: false, reason: 'no form.requestSubmit available' };
-    })(${JSON.stringify(token)})`)
+    })(${JSON.stringify(token)})`,
+      )
       .catch((e) => ({ error: e.message }));
     console.log(
       `[register] Token injection: ${JSON.stringify(inject)} region=${token.match(/r=([^|&]+)/)?.[1] ?? '?'}`,
@@ -364,10 +365,8 @@ try {
   let otp = null;
   while (!otp) {
     await s.wait(5);
-    for (const em of await listReceivedFrom(10, emailAddr, 'github.com')) {
-      const full = await getReceived(em.id);
-      const body = (full.html ?? '') + (full.text ?? '');
-      const m = body.match(/\b(\d{6,8})\b/);
+    for (const em of await messagesTo(emailAddr, 'github.com')) {
+      const m = em.body_text.match(/\b(\d{6,8})\b/);
       if (m) {
         otp = m[1];
         break;
@@ -377,7 +376,8 @@ try {
   console.log(`[register] OTP: ${otp}`);
 
   const entered = await s.page
-    .evaluate(`(code => {
+    .evaluate(
+      `(code => {
     const inputs = document.querySelectorAll('input[autocomplete="one-time-code"], input[name*="code"], input[inputmode="numeric"]');
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
     if (inputs.length === 1) { setter.call(inputs[0], code); inputs[0].dispatchEvent(new Event('input', {bubbles:true})); return 'single'; }
@@ -386,7 +386,8 @@ try {
       return 'split';
     }
     return 'none';
-  })(${JSON.stringify(otp)})`)
+  })(${JSON.stringify(otp)})`,
+    )
     .catch(() => 'error');
   console.log(`[register] OTP entered: ${entered}`);
   await Promise.race([

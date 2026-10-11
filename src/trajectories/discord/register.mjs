@@ -6,10 +6,7 @@ import { humanFill } from '../../../dist/human/keyboard.js';
 import { autoBindCharacter } from '../lib/character-bind.mjs';
 import { harvestAfterRegister } from '../lib/discord_harvest.mjs';
 import { accountItemFor } from '../_shared/skarbiec/accounts.mjs';
-import {
-  getReceived,
-  listReceivedFrom,
-} from '../../_shared/resend-receiving.mjs';
+import { messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
 // burned.js is CommonJS; default-import then destructure (named ESM import
 // of a CJS export is fragile across rebuilds). This lineage exposes
 // markBurned(host,signal,platform) — no multi-level markBurnedIp.
@@ -106,16 +103,15 @@ async function solverProxyFields(proxy) {
 // carries a click.discord.com link that resolves to /verify. Throws when no
 // such mail has arrived.
 async function verifyEmail(emailAddr) {
-  const fromDiscord = await listReceivedFrom(10, emailAddr, 'discord.com');
+  const fromDiscord = await messagesTo(emailAddr, 'discord.com');
   if (fromDiscord.length === 0)
     throw new Error(
       `discord_register: no mail from discord.com for ${emailAddr} has arrived yet; open its verify link once it is in the inbox`,
     );
   for (const mail of fromDiscord) {
-    const full = await getReceived(mail.id);
-    if (!full.html) continue;
-    const links =
-      full.html.match(/https:\/\/click\.discord\.com[^\s"]+/g) ?? [];
+    const links = [
+      ...mail.body_text.matchAll(/https:\/\/click\.discord\.com[^\s"]+/g),
+    ].map((found) => found[0]);
     for (const link of links) {
       const r = await fetch(link, { redirect: 'manual' });
       const loc = r.headers.get('location');

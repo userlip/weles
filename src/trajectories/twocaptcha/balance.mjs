@@ -12,7 +12,7 @@ import { humanType } from '../../../dist/human/keyboard.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
-import { getReceived, listReceived } from '../../_shared/resend-receiving.mjs';
+import { messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
 
 const LOGIN_URL = 'https://2captcha.com/auth/login';
 const DISPLAY_NAME = '2Captcha';
@@ -69,21 +69,17 @@ try {
     process.exit(1);
   }
 
-  // If account not yet confirmed, fetch the code from Resend and submit it.
+  // If account not yet confirmed, read the code from Skrzynka and submit it.
   if (/\/auth\/confirm-email/.test(s.page.url())) {
     console.log(
-      '[trajectory] account needs email confirmation; fetching code from Resend',
+      '[trajectory] account needs email confirmation; reading the code from Skrzynka',
     );
-    const list = await listReceived(10, login.email);
-    const msg = list.data.find(
-      (m) => m.to?.[0] === login.email && /2captcha/i.test(m.from || ''),
-    );
+    const msg = (await messagesTo(login.email, '2captcha'))[0];
     if (!msg) {
-      console.log('FAIL: no 2Captcha email found in Resend inbox');
+      console.log('FAIL: no 2Captcha email found in Skrzynka');
       process.exit(1);
     }
-    const full = await getReceived(msg.id);
-    const code = (full?.text || '').match(/\b(\d{6})\b/)?.[1];
+    const code = msg.body_text.match(/\b(\d{6})\b/)?.[1];
     if (!code) {
       console.log('FAIL: could not extract 6-digit code from email');
       process.exit(1);

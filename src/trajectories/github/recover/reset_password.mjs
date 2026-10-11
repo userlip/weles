@@ -16,10 +16,10 @@ import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { updateAccountPassword } from '../../_shared/skarbiec/accounts.mjs';
 import { registrationPassword } from '../../../../dist/utils/identity/password.js';
 import {
-  getReceived,
-  listReceived,
-  receivingConfigured,
-} from '../../../_shared/resend-receiving.mjs';
+  inboxConfigured,
+  ORGANIZATION_VARIABLE,
+  messagesTo,
+} from '../../../_shared/mail/skrzynka-inbox.mjs';
 
 const acct = await getSocialAccount('github');
 if (!acct) {
@@ -31,13 +31,13 @@ if (!acct.metadata?.email) {
   process.exit(1);
 }
 const email = acct.metadata.email;
-if (!receivingConfigured()) {
+if (!inboxConfigured()) {
   console.log(
-    'FAIL: the wisent-integrations inbox route (STADO_INTEGRATION_API_URL, WELES_STADO_INTEGRATION_TOKEN) is not configured',
+    `FAIL: ${ORGANIZATION_VARIABLE} names no Skrzynka organization, so the reset mail cannot be read`,
   );
   process.exit(1);
 }
-// Reset emails go to Resend inbound MX which is bound to wisentmedia.com.
+// Reset emails reach Skrzynka through the inbound domain wisentmedia.com.
 // Any account whose email is on a different domain (e.g. throwaway domains
 // like hubbold730.com, mailcom, tutanota) cannot have its reset link claimed
 // here. Fail fast with a clear signal instead of polling 2 min for nothing.
@@ -148,26 +148,14 @@ try {
 
   await pageSettled(s.page);
   // The reset email arrives when GitHub sends it; the inbox is read until it does.
-  console.log('[reset] Polling Resend for reset email...');
+  console.log('[reset] Reading the reset email from Skrzynka...');
   let resetUrl = null;
   while (!resetUrl) {
     await pageSettled(s.page);
-    let emails;
-    try {
-      emails = (await listReceived(20, email)).data;
-    } catch (e) {
-      console.log(`[reset] inbox read failed: ${String(e?.message || e)}`);
-      continue;
-    }
-    for (const em of emails) {
-      const to = (em.to ?? [])
-        .map((t) => (typeof t === 'string' ? t : t.email))
-        .join(',');
-      if (!to.includes(email)) continue;
-      if (!/github|noreply@github/i.test(em.from ?? '')) continue;
-      const full = await getReceived(em.id);
-      const body = (full.html ?? '') + (full.text ?? '');
-      const m = body.match(
+    // A refusal of Skrzynka's ends the run with its cause: retrying a mail
+    // path that refuses would hide why the reset never arrived.
+    for (const em of await messagesTo(email, 'github')) {
+      const m = em.body_text.match(
         /https:\/\/github\.com\/password_reset\/[A-Za-z0-9_-]+/,
       );
       if (m) {

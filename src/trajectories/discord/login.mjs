@@ -10,10 +10,9 @@ import { WSession } from '../../../dist/session/wsession.js';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 import {
-  getReceived,
-  listReceived,
-  receivingConfigured,
-} from '../../_shared/resend-receiving.mjs';
+  inboxConfigured,
+  messagesTo,
+} from '../../_shared/mail/skrzynka-inbox.mjs';
 
 const URL = 'https://discord.com/login';
 
@@ -95,17 +94,11 @@ try {
     await humanFill(s.page, loc, val);
     return { ok: true, len: val.length };
   };
-  // Find email input (could be name="email", name="login", or type="email")
-  const emailSel = inputNames.find(
-    (i) => i.name === 'email' || i.type === 'email' || i.name === 'login',
-  )
-    ? `input[name="${inputNames.find((i) => i.name === 'email' || i.type === 'email' || i.name === 'login').name}"]`
-    : 'input[type="email"], input[name="email"], input[name="login"]';
-  const passSel = inputNames.find(
-    (i) => i.type === 'password' || i.name === 'password',
-  )
-    ? `input[name="${inputNames.find((i) => i.type === 'password' || i.name === 'password').name}"]`
-    : 'input[type="password"]';
+  // The address input is whichever of these the form renders (its name has
+  // been email and login), and the password input is the password field.
+  const emailSel =
+    'input[type="email"], input[name="email"], input[name="login"]';
+  const passSel = 'input[type="password"]';
   const emailResult = await fillField(emailSel, process.env.SVC_EMAIL);
   const passResult = await fillField(passSel, process.env.SVC_PASSWORD);
   console.log(
@@ -254,9 +247,8 @@ try {
     // The newest received mail for this login, and what it held before the
     // attempt: a new-location mail Discord sends for this attempt is the one
     // not among these, so no clock tolerance decides which mail is new.
-    const loginInbox = async () =>
-      (await listReceived(10, formData.login)).data;
-    const seenBefore = receivingConfigured()
+    const loginInbox = async () => messagesTo(formData.login, 'discord.com');
+    const seenBefore = inboxConfigured()
       ? new Set((await loginInbox()).map((em) => em.id))
       : new Set();
     const result = await loginApi();
@@ -281,23 +273,18 @@ try {
       );
       const email = formData.login;
       const emails = await loginInbox();
-      const verifyMail = emails.find((em) => {
-        const to = (em.to || [])
-          .map((t) => (typeof t === 'string' ? t : t.email))
-          .join(',');
-        return (
-          to.includes(email) &&
-          em.subject?.includes('Login') &&
-          !seenBefore.has(em.id)
-        );
-      });
+      const verifyMail = emails.find(
+        (em) => em.subject.includes('Login') && !seenBefore.has(em.id),
+      );
       if (!verifyMail)
         throw new Error(
           `discord_login: no new-location verification mail for ${email} has arrived yet; run the login again once it is in the inbox`,
         );
-      const full = await getReceived(verifyMail.id);
-      const links =
-        (full.html || '').match(/https:\/\/click\.discord\.com[^\s"]+/g) || [];
+      const links = [
+        ...verifyMail.body_text.matchAll(
+          /https:\/\/click\.discord\.com[^\s"]+/g,
+        ),
+      ].map((found) => found[0]);
       let authorizeLink = null;
       for (const link of links) {
         const resp = await fetch(link, { redirect: 'manual' });

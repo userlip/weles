@@ -4,18 +4,17 @@ import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled, urlMatching } from '../page/settled.mjs';
 import { humanType } from '../../../../dist/human/keyboard.js';
 import {
-  getReceived,
-  listReceivedFrom,
-  receivingConfigured,
-} from '../../../_shared/resend-receiving.mjs';
+  inboxConfigured,
+  messagesTo,
+} from '../../../_shared/mail/skrzynka-inbox.mjs';
 
 const RECAPTCHA_SITEKEY = '6LcIy_MqAAAAAMKiupFSbmzW3xjGSlIfRzNWYMjC';
 const CHECKPOINT_RE = /\/(checkpoint|uas\/login|login\/recovery)/;
 
 // Detect & solve the email-PIN /checkpoint variant. LinkedIn serves this when
 // a known account logs in from a new device/IP: pageKey=
-// "d_checkpoint_ch_emailPinChallenge" with a 6-digit PIN input. We own
-// wisentmedia.com / pilatesguild.com / dashnet102.com inboxes via Resend.
+// "d_checkpoint_ch_emailPinChallenge" with a 6-digit PIN input. Mail to
+// wisentmedia.com / pilatesguild.com / dashnet102.com lands in Skrzynka.
 async function solveEmailPinChallenge({ page }, email) {
   const pageKey = await page
     .evaluate(
@@ -25,36 +24,27 @@ async function solveEmailPinChallenge({ page }, email) {
   if (!pageKey.includes('emailPinChallenge'))
     return { ok: false, reason: 'not_email_pin_challenge' };
   console.log(
-    `[linkedin_login] emailPinChallenge detected for ${email} — fetching code from Resend`,
+    `[linkedin_login] emailPinChallenge detected for ${email} — reading the code from Skrzynka`,
   );
-  if (!receivingConfigured()) return { ok: false, reason: 'no_inbox_route' };
+  if (!inboxConfigured()) return { ok: false, reason: 'no_inbox_route' };
   // Only accept emails that arrived AFTER /checkpoint was loaded — earlier
   // PINs from prior login attempts are expired. LinkedIn issues a fresh
   // 6-digit PIN per /checkpoint instance.
-  // One inbox read: the receiving route has no push or blocking read, so a PIN
-  // that has not arrived yet is reported by name.
+  // One inbox read, newest first: a PIN that has not arrived yet is reported
+  // by name.
   const challengeStart = Date.now();
   let code = null;
-  const matches = (await listReceivedFrom(20, email, 'linkedin.com')).filter(
-    (m) => new Date(m.created_at).getTime() >= challengeStart - 5000,
+  const matches = (await messagesTo(email, 'linkedin.com')).filter(
+    (m) => new Date(m.received_at).getTime() >= challengeStart - 5000,
   );
   const msg = matches[0];
   if (msg) {
-    const m = (msg.subject || '').match(/\b(\d{6})\b/);
+    const m = `${msg.subject}\n${msg.body_text}`.match(/\b(\d{6})\b/);
     if (m) {
       code = m[1];
       console.log(
-        `[linkedin_login] PIN ${code} from subject (sent ${msg.created_at})`,
+        `[linkedin_login] PIN ${code} from the mail received ${msg.received_at}`,
       );
-    } else {
-      const full = await getReceived(msg.id);
-      const body = (full?.text || full?.html || '').match(/\b(\d{6})\b/);
-      if (body) {
-        code = body[1];
-        console.log(
-          `[linkedin_login] PIN ${code} from body (sent ${msg.created_at})`,
-        );
-      }
     }
   }
   if (!code) return { ok: false, reason: 'pin_email_not_received' };
@@ -131,7 +121,6 @@ async function solveEmailPinChallenge({ page }, email) {
     const submitCandidates = [
       'button[type="submit"]',
       'button[id="email-pin-submit-button"]',
-      'button:has-text(/^\\s*(submit|verify|continue|next|done)\\s*$/i)',
     ];
     for (const sel of submitCandidates) {
       const btn = page.locator(sel).filter({ visible: true }).first();
@@ -226,9 +215,9 @@ export async function solveLinkedinCheckpoint({ ctx, page }, reason, email) {
 // link signed with id+ct+sig+crua. Hitting it on an authed session removes
 // the banner.
 export async function confirmLinkedinEmail(page, email) {
-  if (!receivingConfigured()) {
+  if (!inboxConfigured()) {
     console.log(
-      '[linkedin_register] the wisent-integrations inbox route is not configured',
+      '[linkedin_register] WELES_SKRZYNKA_ORGANIZATION names no Skrzynka organization',
     );
     return { ok: false, reason: 'no_inbox_route' };
   }
@@ -236,12 +225,11 @@ export async function confirmLinkedinEmail(page, email) {
   // reported by name. Any LinkedIn mail to this address carrying the confirm
   // link is this account's, so no age decides which one counts.
   let confirmUrl = null;
-  const matches = await listReceivedFrom(20, email, 'linkedin.com');
+  const matches = await messagesTo(email, 'linkedin.com');
   // The confirmation mail is the one from LinkedIn that carries the
   // confirmation link, whatever its subject says.
   for (const match of matches) {
-    const full = await getReceived(match.id);
-    const body = full?.text || full?.html || '';
+    const body = match.body_text;
     const m = body.match(
       /https:\/\/www\.linkedin\.com\/comm\/psettings\/email\/confirm\?[^\s<>"]+/,
     );

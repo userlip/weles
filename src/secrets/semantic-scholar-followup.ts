@@ -5,11 +5,9 @@ import {
   writeWelesAcquiredSecret,
 } from './scoped-service.js';
 import {
-  getReceived,
-  listReceived,
-  receivingConfigured,
-  type ReceivedSummary,
-} from '../utils/email/resend-receiving.js';
+  ORGANIZATION_VARIABLE,
+  messagesTo,
+} from '../utils/email/skrzynka-inbox.js';
 
 type ActionLogRow = {
   id: string;
@@ -118,18 +116,6 @@ async function loadSourceSubmission(
     : null;
 }
 
-function messageRecipients(message: ReceivedSummary): string[] {
-  return (message.to ?? [])
-    .map((entry) => (typeof entry === 'string' ? entry : text(entry.email)))
-    .map((entry) => entry.toLowerCase());
-}
-
-function contentForCandidateExtraction(
-  message: Record<string, unknown>,
-): string {
-  return [message.subject, message.text, message.html].map(text).join('\n');
-}
-
 export function extractSemanticScholarKeyCandidates(content: string): string[] {
   const candidates = new Set<string>();
   const normalized = content
@@ -188,55 +174,38 @@ async function scanMailboxForValidKey(source: ActionLogRow): Promise<
 > {
   const target = identityEmail(source).toLowerCase();
   const minCreatedAt = sourceStartedAt(source);
-  let after: string | undefined;
   let emailsScanned = 0;
   let matchedEmails = 0;
-  // Every page of the mailbox is read until Resend says there is no more;
-  // 100 is the largest page Resend's list endpoint returns.
-  for (;;) {
-    const page = await listReceived(100, undefined, after);
-    const data = page.data ?? [];
-    emailsScanned += data.length;
-    for (const message of data) {
-      const createdAt = Date.parse(message.created_at ?? '');
-      if (Number.isFinite(createdAt) && createdAt < minCreatedAt) continue;
-      if (!messageRecipients(message).includes(target)) continue;
-      matchedEmails += 1;
-      const full = await getReceived(message.id);
-      const content = contentForCandidateExtraction(full);
-      for (const candidate of extractSemanticScholarKeyCandidates(content)) {
-        const secret = Buffer.from(candidate, 'utf8');
-        try {
-          const validation = await validateCandidate(candidate);
-          if (!validation.ok) continue;
-          const constraints = sourceConstraints(source);
-          const tenantId =
-            text(source.tenant_id) || text(constraints.tenant_id) || null;
-          writeWelesAcquiredSecret(
-            SEMANTIC_SECRET,
-            'api_key',
-            secret,
-            tenantId,
-            {
-              requestId: text(constraints.request_id),
-              operation: text(constraints.operation) || 'acquire',
-            },
-          );
-          return {
-            stored: true,
-            emailId: message.id,
-            validationStatus: validation.status,
-            emailsScanned,
-            matchedEmails,
-          };
-        } finally {
-          secret.fill(0);
-        }
+  // Every message Skrzynka holds for the identity's address, newest first.
+  for (const message of await messagesTo(target, '')) {
+    emailsScanned += 1;
+    const receivedAt = Date.parse(message.received_at);
+    if (Number.isFinite(receivedAt) && receivedAt < minCreatedAt) continue;
+    matchedEmails += 1;
+    const content = `${message.subject}\n${message.body_text}`;
+    for (const candidate of extractSemanticScholarKeyCandidates(content)) {
+      const secret = Buffer.from(candidate, 'utf8');
+      try {
+        const validation = await validateCandidate(candidate);
+        if (!validation.ok) continue;
+        const constraints = sourceConstraints(source);
+        const tenantId =
+          text(source.tenant_id) || text(constraints.tenant_id) || null;
+        writeWelesAcquiredSecret(SEMANTIC_SECRET, 'api_key', secret, tenantId, {
+          requestId: text(constraints.request_id),
+          operation: text(constraints.operation) || 'acquire',
+        });
+        return {
+          stored: true,
+          emailId: message.id,
+          validationStatus: validation.status,
+          emailsScanned,
+          matchedEmails,
+        };
+      } finally {
+        secret.fill(0);
       }
     }
-    if (!page.has_more || data.length === 0) break;
-    after = data[data.length - 1]?.id;
-    if (!after) break;
   }
   return { stored: false, emailsScanned, matchedEmails };
 }
@@ -285,12 +254,11 @@ export async function runSemanticScholarKeyFollowup(
   attemptArg?: number,
   tenantId: string | null = null,
 ): Promise<ScannerResult> {
-  if (!receivingConfigured()) {
+  if (!process.env[ORGANIZATION_VARIABLE]?.trim()) {
     return {
       status: 'needs_configuration',
       validated: false,
-      reason:
-        'the wisent-integrations inbox route (STADO_INTEGRATION_API_URL, WELES_STADO_INTEGRATION_TOKEN) is not configured',
+      reason: `${ORGANIZATION_VARIABLE} names no Skrzynka organization, so the key email cannot be read`,
       next_scheduled_at: null,
     };
   }

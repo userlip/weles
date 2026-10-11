@@ -4,6 +4,7 @@
 // and sender; Weles asks it through the `skrzynka` program it already runs
 // for app passwords, for the organization the mailbox belongs to. A refusal is
 // Skrzynka's own sentence, so a mail-path failure is diagnosed in Skrzynka.
+// The journeys' twin is src/_shared/mail/skrzynka-inbox.mjs.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 

@@ -22,10 +22,10 @@ import {
   resolveAccountSession,
 } from '../../../../dist/utils/credentials.js';
 import {
-  getReceived,
-  listReceivedFrom,
-  receivingConfigured,
-} from '../../../_shared/resend-receiving.mjs';
+  inboxConfigured,
+  ORGANIZATION_VARIABLE,
+  messagesTo,
+} from '../../../_shared/mail/skrzynka-inbox.mjs';
 import {
   pageSettled,
   responseAfterAction,
@@ -37,15 +37,10 @@ import {
 } from '../../_shared/discord/response.mjs';
 
 const ACCT_USERNAME = process.env.ACCOUNT_USERNAME;
-if (!receivingConfigured()) {
-  console.error('DISCORD_EMAIL_INBOX_UNCONFIGURED:', {
-    STADO_INTEGRATION_API_URL: Boolean(
-      process.env.STADO_INTEGRATION_API_URL?.trim(),
-    ),
-    WELES_STADO_INTEGRATION_TOKEN: Boolean(
-      process.env.WELES_STADO_INTEGRATION_TOKEN?.trim(),
-    ),
-  });
+if (!inboxConfigured()) {
+  console.error(
+    `DISCORD_EMAIL_INBOX_UNCONFIGURED: ${ORGANIZATION_VARIABLE} names no Skrzynka organization, so the verification mail cannot be read`,
+  );
   process.exit(1);
 }
 
@@ -84,14 +79,7 @@ async function getVerifiedText(s) {
 }
 
 async function fetchInboxRecent() {
-  return listReceivedFrom(10, email, 'discord.com');
-}
-
-async function fetchEmailBody(id) {
-  const j = await getReceived(id);
-  const body = j?.html ?? j?.text;
-  if (!body) throw new Error(`resend email ${id} has no html/text`);
-  return body;
+  return messagesTo(email, 'discord.com');
 }
 
 async function resolveClickToVerify(link) {
@@ -171,14 +159,14 @@ async function verifyUrlFromInbox() {
     acct.metadata?.email_verify_requested_at ?? '',
   );
   if (!requestedAt) return null;
-  const candidate = (await fetchInboxRecent()).find((m) => {
-    const subj = typeof m.subject === 'string' ? m.subject : '';
-    const created = m.created_at ? Date.parse(m.created_at) : 0;
-    return subj.includes('Verify') && created >= requestedAt;
-  });
+  const candidate = (await fetchInboxRecent()).find(
+    (m) =>
+      m.subject.includes('Verify') && Date.parse(m.received_at) >= requestedAt,
+  );
   if (!candidate) return null;
-  const body = await fetchEmailBody(candidate.id);
-  const links = body.match(/https:\/\/click\.discord\.com[^\s"<>]+/g);
+  const links = candidate.body_text.match(
+    /https:\/\/click\.discord\.com[^\s"<>]+/g,
+  );
   if (!links)
     throw new Error(
       `discord_email_verify: mail ${candidate.id} has no click.discord.com links`,
