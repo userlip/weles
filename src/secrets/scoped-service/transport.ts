@@ -123,10 +123,13 @@ export function checkedTokenFile(
     ? join(checkedTenantDirectory(tenantId), fileName)
     : join(homedir(), '.stado', fileName);
   let metadata;
+  // A token file that does not exist is absent; one that cannot be inspected
+  // is refused with its cause instead of being reported as never issued.
   try {
     metadata = lstatSync(path);
-  } catch {
-    return null;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error(`scoped Skarbiec token file ${path} cannot be inspected: ${String(error)}`);
   }
   if (
     !metadata.isFile() ||
