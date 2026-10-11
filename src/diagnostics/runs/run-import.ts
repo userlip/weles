@@ -34,16 +34,20 @@ async function findInRun(
   }
   return walk(join(RECORDINGS_ROOT, runId));
 }
+// The run's file and its parsed content: value null when the file is absent;
+// failure names a file that exists but cannot be read or is not JSON, which
+// is not the same as absent (an unreadable session_meta.json used to read as
+// a run that died before any session existed).
 async function readJsonInRun(
   runId: string,
   filename: string,
-): Promise<any | null> {
+): Promise<{ value: any | null; failure: string | null }> {
   const p = await findInRun(runId, filename);
-  if (!p) return null;
+  if (!p) return { value: null, failure: null };
   try {
-    return JSON.parse(await readFile(p, 'utf8'));
-  } catch {
-    return null;
+    return { value: JSON.parse(await readFile(p, 'utf8')), failure: null };
+  } catch (error) {
+    return { value: null, failure: `${p}: ${(error as Error).message}` };
   }
 }
 
@@ -61,7 +65,7 @@ export async function readChallengeOutcome(
   runId: string,
 ): Promise<ChallengeOutcome | null> {
   const har = await readJsonInRun(runId, 'session.har');
-  const entries = har?.log?.entries;
+  const entries = har.value?.log?.entries;
   if (!Array.isArray(entries)) return null;
   try {
     const co = analyzeChallengeOutcome(entries);
@@ -80,7 +84,8 @@ export async function importRunProvenance(
   params?: Record<string, unknown>,
 ): Promise<RunProvenance> {
   const out: RunProvenance = {};
-  const m = await readJsonInRun(runId, 'session_meta.json');
+  const meta = await readJsonInRun(runId, 'session_meta.json');
+  const m = meta.value;
   if (m) {
     out.session = {
       proxy_host: m.proxy_host,
@@ -109,23 +114,33 @@ export async function importRunProvenance(
       out.run = { timing_seed: m.timing_seed };
   } else {
     out.session = {
-      meta_missing: true,
+      // An unreadable meta file is named as such, not taken for a run that
+      // died before any session existed.
+      ...(meta.failure ? { meta_unreadable: meta.failure } : { meta_missing: true }),
       proxy_requested:
         (params as Record<string, unknown> | undefined)?.proxy_url_override ??
         null,
       env_all: snapshotSanitizedEnvironment(),
     };
   }
-  const pf = await readJsonInRun(runId, 'proxy_preflight.json');
+  const preflight = await readJsonInRun(runId, 'proxy_preflight.json');
+  const pf = preflight.value;
   if (pf) {
     if (out.session)
       (out.session as Record<string, unknown>).proxy_preflight = pf;
     else out.session = { proxy_preflight: pf };
+  } else if (preflight.failure && out.session) {
+    (out.session as Record<string, unknown>).proxy_preflight_unreadable =
+      preflight.failure;
   }
-  const rc = await readJsonInRun(runId, 'real_chrome_session.json');
+  const chrome = await readJsonInRun(runId, 'real_chrome_session.json');
+  const rc = chrome.value;
   if (rc) {
     if (out.session) (out.session as Record<string, unknown>).real_chrome = rc;
     else out.session = { real_chrome: rc };
+  } else if (chrome.failure && out.session) {
+    (out.session as Record<string, unknown>).real_chrome_unreadable =
+      chrome.failure;
   }
   const co = await readChallengeOutcome(runId);
   if (co) out.challenge_outcome = co;
