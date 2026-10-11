@@ -68,7 +68,13 @@ export function writeProxyPreflightDiagnostics(
         2,
       ),
     );
-  } catch {}
+  } catch (error) {
+    // A run without proxy_preflight.json is reported by the importer as one
+    // that never resolved a proxy; the reason the file is missing is said here.
+    console.error(
+      `[proxy] proxy_preflight.json was not written: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 export function platformFromTarget(
