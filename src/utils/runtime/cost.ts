@@ -40,7 +40,12 @@ class WelesCostTracker {
     process.on('exit', () => {
       try {
         this.flushLocalSync();
-      } catch {}
+      } catch (flushError) {
+        // Only synchronous output works inside an exit handler.
+        process.stderr.write(
+          `[cost] local cost record not written at exit: ${flushError instanceof Error ? flushError.message : String(flushError)}\n`,
+        );
+      }
     });
     process.on('beforeExit', () => {
       void this.flush();

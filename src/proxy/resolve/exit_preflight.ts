@@ -84,7 +84,11 @@ export async function preflightExit(
       // 407 = account unfunded/suspended. Same credential, all sticks fail. Enqueue topup now.
       if (status === 407) {
         const { enqueueProviderTopup } = await import('../policy.js');
-        await enqueueProviderTopup(p.display_name).catch(() => {});
+        await enqueueProviderTopup(p.display_name).catch((topupError) =>
+          console.log(
+            `[proxy] ${p.display_name} top-up could not be enqueued: ${topupError instanceof Error ? topupError.message : String(topupError)}`,
+          ),
+        );
         abandonProvider = true;
       }
     } else {
