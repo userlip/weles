@@ -60,8 +60,38 @@ export function decodeRunId(raw) {
   }
 }
 
+// Every `<base>/<release>/<platform>/<suffix...>` directory. A missing base is
+// a host that never ran that installer; any other listing failure is kept in
+// `unreadable` with its path and cause, so a run that lives under a root this
+// process cannot list is not answered as a run that does not exist.
+function addReleaseRoots(base, suffix, add, unreadable) {
+  let releases;
+  try {
+    releases = readdirSync(base, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') unreadable.push(`${base}: ${error.message}`);
+    return;
+  }
+  for (const release of releases) {
+    if (!release.isDirectory()) continue;
+    const releaseRoot = join(base, release.name);
+    let platforms;
+    try {
+      platforms = readdirSync(releaseRoot, { withFileTypes: true });
+    } catch (error) {
+      unreadable.push(`${releaseRoot}: ${error.message}`);
+      continue;
+    }
+    for (const platform of platforms) {
+      if (!platform.isDirectory()) continue;
+      add(join(releaseRoot, platform.name, ...suffix));
+    }
+  }
+}
+
 function diagnosticsCandidates() {
   const candidates = [];
+  const unreadable = [];
   const seen = new Set();
   const add = (candidate) => {
     if (!candidate || seen.has(candidate)) return;
@@ -77,51 +107,44 @@ function diagnosticsCandidates() {
 
   // Managed releases before the stable recordings root wrote beside their
   // unpacked runtime. Keep those runs diagnosable after `current` advances.
-  const managed = join(homedir(), '.stado', 'services', 'weles-admission');
-  try {
-    for (const release of readdirSync(managed, { withFileTypes: true })) {
-      if (!release.isDirectory()) continue;
-      const releaseRoot = join(managed, release.name);
-      for (const platform of readdirSync(releaseRoot, {
-        withFileTypes: true,
-      })) {
-        if (!platform.isDirectory()) continue;
-        add(join(releaseRoot, platform.name, 'runtime', 'recordings'));
-      }
-    }
-  } catch {}
+  addReleaseRoots(
+    join(homedir(), '.stado', 'services', 'weles-admission'),
+    ['runtime', 'recordings'],
+    add,
+    unreadable,
+  );
 
   // The retired per-version installer is still where runs made by 0.5.44 and
   // earlier live. Stado's activity reader already counts these exact roots; the
   // authenticated diagnostics route must be able to open the run it reports.
-  const legacy = join(homedir(), '.local', 'share', 'weles-worker');
-  try {
-    for (const release of readdirSync(legacy, { withFileTypes: true })) {
-      if (!release.isDirectory()) continue;
-      const releaseRoot = join(legacy, release.name);
-      for (const platform of readdirSync(releaseRoot, {
-        withFileTypes: true,
-      })) {
-        if (!platform.isDirectory()) continue;
-        add(join(releaseRoot, platform.name, 'recordings'));
-      }
-    }
-  } catch {}
-  return candidates;
+  addReleaseRoots(
+    join(homedir(), '.local', 'share', 'weles-worker'),
+    ['recordings'],
+    add,
+    unreadable,
+  );
+  return { candidates, unreadable };
 }
 
 function diagnosticsRoot(runId) {
-  for (const candidate of diagnosticsCandidates()) {
+  const { candidates, unreadable } = diagnosticsCandidates();
+  for (const candidate of candidates) {
     let recordingsRoot;
     let runRoot;
     try {
       recordingsRoot = realpathSync(candidate);
       runRoot = realpathSync(join(recordingsRoot, runId));
-    } catch {
+    } catch (error) {
+      if (error?.code !== 'ENOENT')
+        unreadable.push(`${join(candidate, runId)}: ${error.message}`);
       continue;
     }
     if (runRoot.startsWith(`${recordingsRoot}${sep}`)) return runRoot;
   }
+  if (unreadable.length)
+    throw new Error(
+      `run ${runId} was not found, and these recording roots could not be read: ${unreadable.join('; ')}`,
+    );
   return null;
 }
 
