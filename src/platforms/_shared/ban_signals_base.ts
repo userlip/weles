@@ -98,15 +98,23 @@ export async function detectFromConfig(
     }
   }
 
-  // 2. DOM text
-  let bodyText = '';
+  // 2. DOM text. A page whose text cannot be read, or that has no body, is
+  //    not called healthy for lacking ban keywords it was never seen to
+  //    lack: the failed read is the verdict, with its cause.
+  let bodyText: string | null;
   try {
-    bodyText =
-      (await page
-        .evaluate(() => document.body?.innerText ?? '')
-        .catch(() => '')) || '';
-  } catch {
-    /* noop */
+    bodyText = await page.evaluate(() =>
+      document.body === null ? null : document.body.innerText,
+    );
+  } catch (error) {
+    bodyText = null;
+    details.body_text_error =
+      error instanceof Error ? error.message : String(error);
+  }
+  if (bodyText === null) {
+    if (details.body_text_error === undefined)
+      details.body_text_error = 'the page has no body to read';
+    return { healthy: false, signal: 'unknown_error', details };
   }
   details.body_text_sample = bodyText;
   for (const [sig, patterns] of Object.entries(cfg.text ?? {})) {
