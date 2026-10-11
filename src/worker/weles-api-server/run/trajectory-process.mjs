@@ -56,14 +56,19 @@ function signalRunProcess(child, signal) {
 function trajectoryProcess(trajPath) {
   const direct = { command: process.execPath, args: [trajPath] };
   if (process.platform !== 'darwin') return direct;
-  let session = 'unknown';
+  // Each reason the run starts in this process's own session rather than the
+  // logged-in GUI session is said with its cause: a headed browser that then
+  // cannot draw otherwise fails with nothing pointing here.
+  let session;
   try {
     session = execFileSync('/bin/launchctl', ['managername'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
-  } catch {
-    /* use direct */
+  } catch (error) {
+    console.error(
+      `[trajectory] launchctl managername failed, so this process's session is unknown: ${error.message}`,
+    );
   }
   if (session === 'Aqua') return direct;
   const uid = process.getuid?.();
@@ -72,7 +77,10 @@ function trajectoryProcess(trajPath) {
     execFileSync('/bin/launchctl', ['print', `gui/${uid}`], {
       stdio: 'ignore',
     });
-  } catch {
+  } catch (error) {
+    console.error(
+      `[trajectory] no GUI login session gui/${uid} to run ${trajPath} in (launchctl print: ${error.message}); it runs in this process's ${session} session`,
+    );
     return direct;
   }
   const username = userInfo().username;
