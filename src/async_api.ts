@@ -325,11 +325,18 @@ export async function AsyncNewBrowser(
       process.env.WELES_BROWSER_EVIDENCE_TARGET_HOST ?? '',
     );
     let targetAddresses: unknown;
+    let addressesParseFailure: string | null = null;
     try {
       targetAddresses = JSON.parse(
         process.env.WELES_BROWSER_EVIDENCE_TARGET_ADDRESSES_JSON ?? 'null',
       );
-    } catch {}
+    } catch (error) {
+      addressesParseFailure = `WELES_BROWSER_EVIDENCE_TARGET_ADDRESSES_JSON is not JSON: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (addressesParseFailure !== null)
+      throw new Error(
+        `browser-evidence target resolver binding is invalid: ${addressesParseFailure}`,
+      );
     if (
       !/^[A-Za-z0-9.-]+$/.test(targetHost) ||
       !Array.isArray(targetAddresses) ||
@@ -337,7 +344,11 @@ export async function AsyncNewBrowser(
       typeof targetAddresses[0] !== 'string' ||
       !/^[0-9A-Fa-f:.]+$/.test(targetAddresses[0])
     ) {
-      throw new Error('browser-evidence target resolver binding is invalid');
+      // The refusal names what it received, so the caller sees which part of
+      // the binding to correct.
+      throw new Error(
+        `browser-evidence target resolver binding is invalid: host ${JSON.stringify(targetHost)}, addresses ${JSON.stringify(targetAddresses)}`,
+      );
     }
     const pinnedAddress = targetAddresses[0].includes(':')
       ? `[${targetAddresses[0]}]`
