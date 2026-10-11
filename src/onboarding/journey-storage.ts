@@ -133,12 +133,26 @@ export class FileJourneyStorage implements JourneyStorage {
     return `${productId}-${journeyId}-${subjectHash}`;
   }
 
+  // Only a missing file is absent. One that cannot be read or is not JSON is
+  // refused with its path: read as absent, a legacy progress or events file
+  // was left out of the first journal and its progress lost on migration.
   private async load(path: string): Promise<unknown | null> {
+    let text: string;
     try {
-      const parsed: unknown = JSON.parse(await readFile(path, 'utf8'));
+      text = await readFile(path, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw new Error(
+        `onboarding file ${path} cannot be read: ${(error as Error).message}`,
+      );
+    }
+    try {
+      const parsed: unknown = JSON.parse(text);
       return parsed;
-    } catch {
-      return null;
+    } catch (error) {
+      throw new Error(
+        `onboarding file ${path} is not JSON: ${(error as Error).message}`,
+      );
     }
   }
 
