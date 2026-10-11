@@ -31,10 +31,12 @@ function allCredentialItems() {
     .map((row) => String(row.name ?? row.id ?? ''))
     .filter(Boolean)
     .map((id) => {
+      // An item that cannot be read is named; returning null here broke the
+      // destructuring filter below with a TypeError that named nothing.
       try {
         return { id, document: readItem(id) };
-      } catch {
-        return null;
+      } catch (error) {
+        throw new Error(`Skarbiec credential item ${id} cannot be read: ${String(error)}`);
       }
     })
     .filter(({ document } = {}) => {
@@ -118,10 +120,16 @@ export async function upsertCredential(row) {
   const id = String(row.id ?? '');
   if (!/^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,190}$/.test(id))
     throw new Error('invalid Skarbiec credential item id');
+  // Only an item Skarbiec does not list is created. A listed item that cannot
+  // be read (vault locked, Skarbiec unreachable) fails here instead of a fresh
+  // item being written over its fields and context.
+  const listed = JSON.parse(skarbiec(['list'])).some(
+    (item) => !item.deleted && String(item.name ?? item.id) === id,
+  );
   let document;
-  try {
+  if (listed) {
     document = readItem(id);
-  } catch {
+  } else {
     const fields = {
       username: String(row.login_email ?? ''),
       password: String(row.login_password ?? ''),
