@@ -44,13 +44,20 @@ export type ParsedCli = {
   options: Record<string, string | boolean>;
 };
 
+// The installed package's own manifest. One that cannot be read or parsed is
+// refused with its path: read as {}, `weles version` printed "unknown" and
+// doctor checked an install it could not identify.
 function readPackageJson(): { version?: string; bin?: unknown } {
+  const path = join(__dirname, '..', 'package.json');
   try {
-    return JSON.parse(
-      readFileSync(join(__dirname, '..', 'package.json'), 'utf8'),
-    ) as { version?: string; bin?: unknown };
-  } catch {
-    return {};
+    return JSON.parse(readFileSync(path, 'utf8')) as {
+      version?: string;
+      bin?: unknown;
+    };
+  } catch (error) {
+    throw new Error(
+      `Weles package manifest ${path} cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -284,7 +291,12 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
   if (parsed.command === 'version') {
-    process.stdout.write(`${readPackageJson().version ?? 'unknown'}\n`);
+    const { version } = readPackageJson();
+    if (typeof version !== 'string' || !version)
+      throw new Error(
+        `the Weles package manifest ${join(__dirname, '..', 'package.json')} names no version`,
+      );
+    process.stdout.write(`${version}\n`);
     return;
   }
   if (parsed.command === 'doctor') {
