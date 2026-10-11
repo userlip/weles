@@ -113,7 +113,13 @@ export function createPublicTaskService(options) {
       let serviceIdentity;
       try {
         serviceIdentity = await deployedIdentity.currentServiceIdentity();
-      } catch {
+      } catch (error) {
+        // The public answer stays the fixed code (the cause can carry local
+        // paths); the operator's log carries what actually failed, since an
+        // unreadable identity and a mismatched one answer the same code.
+        console.error(
+          `[weles-admission] /api/v1/version: deployed service identity: ${error instanceof Error ? error.message : String(error)}`,
+        );
         return {
           status: 503,
           payload: {
