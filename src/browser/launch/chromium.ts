@@ -266,8 +266,11 @@ export async function launchChromiumContext(
       }
       try {
         rmSync(fpDir, { recursive: true, force: true });
-      } catch {
-        /* already gone */
+      } catch (error) {
+        // force: true already absorbs a missing directory, so this is real.
+        console.log(
+          `[async_api] fingerprint_dir_remove_failed ${fpDir}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     };
     // Init-script injections. Chrome 147 stubs are fingerprint-parity shims;
