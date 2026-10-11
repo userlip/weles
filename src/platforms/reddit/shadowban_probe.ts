@@ -134,7 +134,14 @@ export async function probeShadowban(
         err: e?.message ?? 'launch_error',
       });
     } finally {
-      if (session) await session.close().catch(() => {});
+      if (session)
+        await session
+          .close()
+          .catch((e: any) =>
+            console.log(
+              `[shadowban] vantage session close failed: ${e?.message ?? e}`,
+            ),
+          );
     }
   }
 
@@ -209,6 +216,13 @@ export async function probeCommentVisibility(opts: {
   } catch (e: any) {
     return { visible: false, status: 0, err: e?.message ?? 'probe_error' };
   } finally {
-    if (session) await session.close().catch(() => {});
+    if (session)
+      await session
+        .close()
+        .catch((e: any) =>
+          console.log(
+            `[shadowban] probe session close failed: ${e?.message ?? e}`,
+          ),
+        );
   }
 }

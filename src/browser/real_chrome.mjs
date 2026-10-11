@@ -171,7 +171,11 @@ export async function launchRealChrome({ label = 'real_chrome' } = {}) {
         2,
       ),
     );
-  } catch {}
+  } catch (e) {
+    console.log(
+      `[real_chrome] session record ${join(diagnosticsDir, 'real_chrome_session.json')} not written: ${e.message}`,
+    );
+  }
   console.log(`[real_chrome] launched (label=${label}, profile=${dir})`);
   return {
     context,
@@ -179,7 +183,11 @@ export async function launchRealChrome({ label = 'real_chrome' } = {}) {
     async close() {
       try {
         await context.close();
-      } catch {}
+      } catch (e) {
+        console.log(
+          `[real_chrome] context close failed (profile=${dir}): ${e.message}`,
+        );
+      }
     },
   };
 }
