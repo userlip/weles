@@ -361,13 +361,19 @@ export async function wsClose(s: WSession): Promise<void> {
       console.log(`[wsession] proxy-bytes record err: ${e.message}`);
     }
   }
-  await (s as any)._cap.save('session', s.page).catch(() => {});
+  await (s as any)._cap
+    .save('session', s.page)
+    .catch((e: any) => console.log(`[wsession] session capture err: ${e.message}`));
   try {
     writeFileSync(
       join(recordingsDir(s.label || undefined), 'network.ndjson'),
       s.capturedResponses.map((r) => JSON.stringify(r)).join('\n'),
     );
-  } catch {}
+  } catch (error) {
+    console.log(
+      `[wsession] network.ndjson write err: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   // Final merged dump — fires the close-time flush of every frame's
   // property-trap log + writes the same {accesses, requests, console,
   // pageerrors, persona, proxy, versions} shape the interval writer uses,
@@ -434,6 +440,8 @@ export async function wsClose(s: WSession): Promise<void> {
       );
     }
   }
-  await costTracker.flush().catch(() => {});
+  await costTracker
+    .flush()
+    .catch((e: any) => console.log(`[wsession] cost flush err: ${e.message}`));
   console.log(`[wsession] close() done`);
 }
