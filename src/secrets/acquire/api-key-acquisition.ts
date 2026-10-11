@@ -15,7 +15,7 @@
 // re-derived, because the Skarbiec contract — not this file — decides which item
 // a credential is written to.
 
-import { hasWelesAcquiredSecretWriter } from '../scoped-service.js';
+import { welesAcquiredSecretWriterProblem } from '../scoped-service/transport.js';
 import type { AcquireSecretRequest, AcquireSecretResult } from './request.js';
 import type { SecretDefinition } from './catalog.js';
 import { paramsFor, queueAction } from './queued-job.js';
@@ -50,9 +50,9 @@ export async function queueAcquisition(
   }
 
   const missing = [
-    ...(!hasWelesAcquiredSecretWriter(def.secret, request.tenantId)
-      ? [`scoped Skarbiec writer for ${def.secret}`]
-      : []),
+    ...[welesAcquiredSecretWriterProblem(def.secret, request.tenantId)].filter(
+      (problem): problem is string => problem !== null,
+    ),
     ...(!/^[a-f0-9]{64}$/i.test(request.requestId ?? '')
       ? ['one exact credential operation request id']
       : []),

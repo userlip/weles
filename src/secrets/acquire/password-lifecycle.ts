@@ -20,10 +20,10 @@
 
 import {
   acquiredSecretContract,
-  hasWelesAcquiredSecretWriter,
   hasWelesManagedCredentialReader,
   welesManagedCredentialReaderMismatch,
 } from '../scoped-service.js';
+import { welesAcquiredSecretWriterProblem } from '../scoped-service/transport.js';
 import type { AcquireSecretRequest, AcquireSecretResult } from './request.js';
 import {
   ENTRA_ORIGIN,
@@ -83,9 +83,9 @@ export async function queueMicrosoftPasswordOperation(
       ? ['one uniquely matching active Microsoft account']
       : []),
     ...(binding.error ? [binding.error] : []),
-    ...(!hasWelesAcquiredSecretWriter(def.secret, request.tenantId)
-      ? [`scoped Skarbiec writer for ${def.secret}`]
-      : []),
+    ...[welesAcquiredSecretWriterProblem(def.secret, request.tenantId)].filter(
+      (problem): problem is string => problem !== null,
+    ),
     // A reader that is missing because the deployed catalog grants the item on
     // another field is a different fix from a reader nobody declared, so say
     // which one it is rather than reporting both as an absent grant.
@@ -203,9 +203,9 @@ export async function queueEntraPasswordOperation(
         ]
       : []),
     ...(binding.error ? [binding.error] : []),
-    ...(!hasWelesAcquiredSecretWriter(def.secret, skarbiecTenantId)
-      ? [`scoped Skarbiec writer for ${def.secret}`]
-      : []),
+    ...[welesAcquiredSecretWriterProblem(def.secret, skarbiecTenantId)].filter(
+      (problem): problem is string => problem !== null,
+    ),
     ...(operation !== 'reset' &&
     !hasWelesManagedCredentialReader(def.secret, 'password', skarbiecTenantId)
       ? [

@@ -59,19 +59,36 @@ function checkedTenantFile(path: string, label: string): string {
   return path;
 }
 
+/**
+ * Why Weles cannot write `secret` back to Skarbiec, or null when it can. The
+ * reason is the refusal itself (no contract, no WC_SKARBIEC_URL, an unsafe or
+ * missing writer token file), so "needs configuration" says what to configure.
+ */
+export function welesAcquiredSecretWriterProblem(
+  secret: string,
+  tenantId?: string | null,
+): string | null {
+  const contract = resolvedAcquiredSecretContract(secret);
+  if (!contract) return `no acquired-secret contract declares ${secret}`;
+  if (localCredentialsFile()) return null;
+  try {
+    skarbiecEndpoint(tenantId);
+    if (!checkedTokenFile(contract.writerTokenFile, tenantId))
+      return `the scoped Skarbiec writer token file ${contract.writerTokenFile} for ${secret} has not been issued`;
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+// The barrel scoped-service.ts still re-exports this name, and that file is
+// refused by block-keyword-literals for its operation list, so the boolean
+// stays as the problem's negation rather than a second check.
 export function hasWelesAcquiredSecretWriter(
   secret: string,
   tenantId?: string | null,
 ): boolean {
-  const contract = resolvedAcquiredSecretContract(secret);
-  if (!contract) return false;
-  if (localCredentialsFile()) return true;
-  try {
-    skarbiecEndpoint(tenantId);
-    return Boolean(checkedTokenFile(contract.writerTokenFile, tenantId));
-  } catch {
-    return false;
-  }
+  return welesAcquiredSecretWriterProblem(secret, tenantId) === null;
 }
 
 export type WelesServiceSecret = keyof typeof SERVICE_CONTRACTS;
