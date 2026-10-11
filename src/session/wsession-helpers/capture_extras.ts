@@ -226,8 +226,15 @@ export function buildSiblingManifest(dir: string, instFn: string): any[] {
           return { name: n, error: 'stat_failed' };
         }
       });
-  } catch {
-    return [];
+  } catch (error) {
+    // An empty manifest reads as a run that left no companions; the dump
+    // says the directory could not be listed instead.
+    return [
+      {
+        dir,
+        error: `list_failed: ${error instanceof Error ? error.message : String(error)}`,
+      },
+    ];
   }
 }
 
