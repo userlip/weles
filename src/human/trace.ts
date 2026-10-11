@@ -21,12 +21,22 @@ function loadLatestTrace(): TraceEvent[] {
   const path = join(dir, files[files.length - 1]);
   const raw = readFileSync(path, 'utf8');
   const out: TraceEvent[] = [];
+  // A line that does not parse is skipped, but kept with its parser error and
+  // reported, so a trace that is mostly unreadable is not taken for a short one.
+  const malformed: string[] = [];
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     try {
       out.push(JSON.parse(line));
-    } catch {}
+    } catch (error) {
+      malformed.push(error instanceof Error ? error.message : String(error));
+    }
   }
+  const [firstError] = malformed;
+  if (firstError !== undefined)
+    console.error(
+      `[human] ${path}: ${malformed.length} trace line(s) are not JSON, first: ${firstError}`,
+    );
   return out;
 }
 
