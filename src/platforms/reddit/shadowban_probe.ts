@@ -165,8 +165,12 @@ export async function probeShadowban(
  * then re-fetch the comment's permalink JSON via a fresh proxy with no
  * cookies, and confirm the comment node is present.
  *
- * Returns true if the comment is publicly visible from a clean session,
- * false if it's missing (auto-removed or shadowbanned).
+ * `visible` is an observation only when `err` is absent: true if the
+ * comment node is in the permalink JSON, false if the JSON was read and the
+ * node is missing (auto-removed or shadowbanned). A proxy that cannot be
+ * resolved, a non-2xx answer (rate limit, block page), a body that cannot
+ * be read or is not JSON all set `err` - they say nothing about the comment
+ * and used to read as "not visible", which flagged the account shadowbanned.
  */
 export async function probeCommentVisibility(opts: {
   postPermalinkBase: string; // e.g. 'https://old.reddit.com/r/sub/comments/abc/post-slug'
@@ -174,7 +178,8 @@ export async function probeCommentVisibility(opts: {
   expectedAuthor?: string; // optional sanity check
 }): Promise<{
   visible: boolean;
-  status: number;
+  /** The permalink's HTTP status; absent when no answer arrived. */
+  status?: number;
   exit_ip?: string;
   err?: string;
 }> {
@@ -183,9 +188,7 @@ export async function probeCommentVisibility(opts: {
 
   let session: WSession | null = null;
   try {
-    const pw = await resolveProxy('residential us', 'old.reddit.com').catch(
-      () => undefined,
-    );
+    const pw = await resolveProxy('residential us', 'old.reddit.com');
     const proxyForSession =
       pw?.server && pw.username && pw.password
         ? `${pw.server.replace('://', `://${encodeURIComponent(pw.username)}:${encodeURIComponent(pw.password)}@`)}`
@@ -200,21 +203,34 @@ export async function probeCommentVisibility(opts: {
       timeout: 0,
     });
     const status = resp.status();
-    const body = await resp.text().catch(() => '');
-    let visible = false;
-    try {
-      const j = JSON.parse(body);
-      const node = j?.[1]?.data?.children?.[0];
-      visible =
-        node?.kind === 't1' &&
-        node?.data?.id === commentId &&
-        (!expectedAuthor || node?.data?.author === expectedAuthor);
-    } catch {
-      /* not JSON */
+    if (!resp.ok()) {
+      return {
+        visible: false,
+        status,
+        exit_ip: pw?.exit_ip,
+        err: `the permalink JSON answered HTTP ${status}`,
+      };
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await resp.text());
+    } catch (e: unknown) {
+      return {
+        visible: false,
+        status,
+        exit_ip: pw?.exit_ip,
+        err: `the permalink JSON could not be read: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+    const node = permalinkComment(parsed);
+    const nodeData = field(node, 'data');
+    const visible =
+      field(node, 'kind') === 't1' &&
+      field(nodeData, 'id') === commentId &&
+      (!expectedAuthor || field(nodeData, 'author') === expectedAuthor);
     return { visible, status, exit_ip: pw?.exit_ip };
-  } catch (e: any) {
-    return { visible: false, status: 0, err: e?.message ?? 'probe_error' };
+  } catch (e: unknown) {
+    return { visible: false, err: e instanceof Error ? e.message : String(e) };
   } finally {
     if (session)
       await session
@@ -225,4 +241,26 @@ export async function probeCommentVisibility(opts: {
           ),
         );
   }
+}
+
+/** `value[key]` when `value` is an object carrying `key`, else undefined. */
+function field(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== 'object' || !(key in value)) {
+    return undefined;
+  }
+  const found: unknown = Reflect.get(value, key);
+  return found;
+}
+
+/**
+ * The comment node of a permalink JSON document: the first child of the
+ * second listing (the first listing is the post).
+ */
+function permalinkComment(document: unknown): unknown {
+  if (!Array.isArray(document)) return undefined;
+  const [, comments] = document;
+  const children = field(field(comments, 'data'), 'children');
+  if (!Array.isArray(children)) return undefined;
+  const [node] = children;
+  return node;
 }

@@ -61,9 +61,17 @@ export async function verifyPreviousComment(acct) {
       commentId,
       expectedAuthor: handle || undefined,
     });
+    if (probe.err) {
+      // A probe that observed nothing says nothing about the comment: the
+      // pending verify stays for the next run and the account is not
+      // flagged. It used to read as "not visible" and deactivate it.
+      throw new Error(
+        `deferred clean-session probe of ${commentId} posted ${postedAt} observed nothing: ${probe.err}; the pending verify is kept`,
+      );
+    }
     stillPublic = probe.visible;
     console.log(
-      `[deferred-verify] permalink probe of ${commentId} posted ${postedAt}: visible=${probe.visible} status=${probe.status} exit_ip=${probe.exit_ip ?? '?'}`,
+      `[deferred-verify] permalink probe of ${commentId} posted ${postedAt}: visible=${probe.visible} status=${probe.status} exit_ip=${probe.exit_ip}`,
     );
   }
   if (stillPublic === 'unprobed' && handle) {
