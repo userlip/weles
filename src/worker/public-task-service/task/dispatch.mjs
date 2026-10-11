@@ -117,7 +117,12 @@ export function createDispatcher({
         policy: config.policy,
         networkTarget: task.networkTarget,
       });
-    } catch {
+    } catch (error) {
+      // The completion keeps its fixed public error; the service log names
+      // the load or run failure behind it.
+      console.error(
+        `[public-task] task ${taskId} run failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       output = { ok: false, run_id: taskId, result: null };
     }
     await withTaskLock(taskId, async () => {
