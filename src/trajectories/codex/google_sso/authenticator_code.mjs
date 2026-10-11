@@ -74,7 +74,7 @@ export async function requireAuthenticatorCode(page, code) {
   if (typeof code === 'string' && code.trim()) return code.trim();
   throw challengeFailure(
     'google_2fa_material_missing',
-    'The selected login has no authenticator seed or supplied verification code. ' +
+    'The selected login has no authenticator seed. ' +
       'Brama sign-in can request Weles authenticator enrolment and resume this account ' +
       'after the seed is confirmed; any required phone approval appears in Weles operator requests.',
     await googleChallengeState(page),
