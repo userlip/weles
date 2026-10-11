@@ -11,11 +11,11 @@ import {
 } from './page_controls.mjs';
 import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
 import {
-  resolveOtp,
   requireAuthenticatorCode,
   selectAuthenticatorMethod,
   waitForGoogleChallengeExit,
 } from './authenticator_code.mjs';
+import { resolveOtp } from '../../_shared/services/google_sso/sign_in/challenge/seed.mjs';
 import { completeGooglePhoneApproval } from '../../_shared/services/google_sso/sign_in/challenge/phone.mjs';
 import { readAcrossNavigation } from '../../_shared/page/navigation/read.mjs';
 
@@ -301,7 +301,7 @@ export async function enterGoogleCredentials({
     // (no method-chooser present) — then there is nothing to answer.
     const result = await selectAuthenticatorMethod(
       page,
-      Boolean(login.totpSecret || process.env.CODEX_2FA_CODE),
+      Boolean(login.totpSecret),
     );
     if (result === 'no-2fa') {
       mark('google_2fa_not_requested', { required: false, method: null });

@@ -5,7 +5,7 @@
 // Native input attributes do not prove WIZ hydration. The Next control must be
 // enabled, and provider refusals are reported by the corresponding stage.
 import { fillAndVerify, waitForEnabledThenClick } from './page_controls.mjs';
-import { resolveOtp } from './authenticator_code.mjs';
+import { resolveOtp } from '../../_shared/services/google_sso/sign_in/challenge/seed.mjs';
 import {
   requireAuthenticatorCode,
   selectAuthenticatorMethod,
@@ -124,7 +124,7 @@ export async function enterGoogleCredentials({
     }
     const result = await selectAuthenticatorMethod(
       page,
-      Boolean(login.totpSecret || process.env.CLAUDE_2FA_CODE),
+      Boolean(login.totpSecret),
     );
     if (result === 'no-2fa') {
       mark('google_2fa_not_requested', { required: false, method: null });
