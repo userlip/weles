@@ -152,8 +152,12 @@ export async function askJedenAboutImage(
         2,
       ),
     );
-  } catch {
-    /* skip */
+  } catch (writeError) {
+    // The question goes on; the run's vision record of it is missing, and
+    // that is said with the file and cause.
+    console.error(
+      `[vision] ${logPath} was not written: ${writeError instanceof Error ? writeError.message : String(writeError)}`,
+    );
   }
 
   // No prune here. This used to trim `dir`, the current run's own vision
