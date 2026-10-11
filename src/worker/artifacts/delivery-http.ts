@@ -44,8 +44,11 @@ export async function requestJson(request: IncomingMessage): Promise<unknown> {
   }
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
-  } catch {
-    throw new RequestFailure(400, 'request body must be valid JSON');
+  } catch (parseError) {
+    throw new RequestFailure(
+      400,
+      `request body must be valid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+    );
   }
 }
 
