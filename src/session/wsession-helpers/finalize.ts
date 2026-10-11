@@ -416,8 +416,16 @@ export async function wsClose(s: WSession): Promise<void> {
         if (src) {
           copyFileSync(src, dest);
           console.log(`[wsession] video copied from ${src}`);
+        } else {
+          console.log(
+            `[wsession] no local video file to copy to ${dest}, the run has no recording`,
+          );
         }
-      } catch {}
+      } catch (copyError: any) {
+        console.log(
+          `[wsession] video copy to ${dest} failed too, the run has no recording: ${copyError.message}`,
+        );
+      }
     });
   }
   await s.ctx
