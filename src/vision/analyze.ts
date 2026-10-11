@@ -73,14 +73,17 @@ function visionDir(): string {
   return dir;
 }
 
-async function takeScreenshot(
-  page: ScreenshottablePage,
-): Promise<Buffer | null> {
+// The page's screenshot, or an error naming why it could not be taken: read as
+// null, a failed capture became "Failed to capture screenshot" with no cause,
+// or a click target answered as "no coordinates found".
+async function takeScreenshot(page: ScreenshottablePage): Promise<Buffer> {
   try {
     if (typeof page.screenshot === 'function') {
       try {
         return await (page as any).screenshot({ type: 'png', scale: 'css' });
       } catch {
+        // `scale` is not accepted by every driver; the plain capture's own
+        // failure is the one reported below.
         return await page.screenshot({ type: 'png' });
       }
     }
@@ -88,14 +91,15 @@ async function takeScreenshot(
       const result = await page.send('Page.captureScreenshot', {
         format: 'png',
       });
-      if (result?.data) {
-        return Buffer.from(result.data, 'base64');
-      }
+      if (result?.data) return Buffer.from(result.data, 'base64');
+      throw new Error('Page.captureScreenshot returned no image data');
     }
-    return null;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(
+      `screenshot of the page failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
+  throw new Error('the page offers neither screenshot() nor send()');
 }
 
 export async function askJedenAboutImage(
@@ -179,9 +183,6 @@ export async function askPage(
   tier = 'tier_0_bare',
 ): Promise<string> {
   const screenshot = imageBytes ?? (await takeScreenshot(page));
-  if (!screenshot) {
-    throw new Error('Failed to capture screenshot from page');
-  }
   const answer = await askJedenAboutImage(screenshot, question, tier);
   if (isRefusal(answer)) {
     throw new VisionRefusedError(question, answer);
@@ -232,7 +233,6 @@ export async function findClickTarget(
   description: string,
 ): Promise<{ x: number; y: number } | null> {
   const full = await takeScreenshot(page);
-  if (!full) return null;
   const { width, height } = pngSize(full);
   const frame = `The image is ${width}x${height} pixels; answer in those pixels. `;
 
