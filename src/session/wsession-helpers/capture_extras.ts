@@ -222,8 +222,11 @@ export function buildSiblingManifest(dir: string, instFn: string): any[] {
         try {
           const s = statSync(join(dir, n));
           return { name: n, size: s.size, mtime: s.mtimeMs };
-        } catch {
-          return { name: n, error: 'stat_failed' };
+        } catch (statError) {
+          return {
+            name: n,
+            error: `stat_failed: ${statError instanceof Error ? statError.message : String(statError)}`,
+          };
         }
       });
   } catch (error) {
