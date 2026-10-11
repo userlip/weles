@@ -18,6 +18,9 @@ export function terminalCompletion(
     const captureResult = isObject(output.result) ? output.result : null;
     let effectiveUrl = null;
     let finalUrl = null;
+    // A capture URL that does not parse is named with the parser's cause, not
+    // folded into "missing".
+    let urlProblem = null;
     try {
       effectiveUrl =
         typeof captureResult?.url === 'string'
@@ -27,7 +30,9 @@ export function terminalCompletion(
         typeof captureResult?.final_url === 'string'
           ? new URL(captureResult.final_url).toString()
           : null;
-    } catch {}
+    } catch (error) {
+      urlProblem = error instanceof Error ? error.message : String(error);
+    }
     const captureValid =
       typeof requestedUrl === 'string' &&
       effectiveUrl === requestedUrl &&
@@ -37,7 +42,9 @@ export function terminalCompletion(
       completion = {
         status: 'failed',
         result: { state: 'failed', executionRunId: output.run_id ?? null },
-        error: 'browser evidence capture identity is missing or inconsistent',
+        error: urlProblem
+          ? `browser evidence capture reported a URL that does not parse: ${urlProblem}`
+          : 'browser evidence capture identity is missing or inconsistent',
         capture: { requestedUrl, effectiveUrl, finalUrl },
       };
     } else {
