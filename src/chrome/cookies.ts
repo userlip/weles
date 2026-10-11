@@ -82,8 +82,12 @@ function getProfileEmails(profileDir: string): string[] {
     return [
       ...new Set(matches.map((m) => m[1]).filter((e) => e.includes('@'))),
     ];
-  } catch {
-    return [];
+  } catch (error: unknown) {
+    // Read as no email, the profile could not be found by the account it is
+    // signed in to, and nothing said why.
+    throw new Error(
+      `Chrome profile preferences ${prefs} cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
