@@ -102,7 +102,9 @@ try {
           2,
         ),
       );
-    } catch {}
+    } catch (e) {
+      console.log('[ban-signal] persist err:', e.message);
+    }
   }
   await s.close();
 }
