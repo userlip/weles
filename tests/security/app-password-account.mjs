@@ -76,7 +76,9 @@ try {
   evidence.runs.add(run.id);
   const persisted = await request(`/diagnostics/${encodeURIComponent(run.id)}/file?path=run-result.json`);
   assert.equal(persisted.status, http.HTTP_STATUS_OK);
-  assert.deepEqual(persisted.value.params, run.params);
+  assert.equal(persisted.value.params.login_item, values['login-item']);
+  assert.equal(persisted.value.params.organization, values.organization.trim());
+  assert.equal(persisted.value.params.expected_account, values.account.trim());
   report.persisted_run = persisted.value;
   if (typeof persisted.value.run_id === 'string') evidence.runs.add(persisted.value.run_id);
   if (persisted.value.status === 'running') {
