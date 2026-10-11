@@ -126,7 +126,13 @@ export class CDPBrowserContext {
           info.type === 'page' &&
           info.browserContextId === this._browserContextId
         ) {
-          this._initPage(info.targetId, params.sessionId).catch(() => {});
+          // A popup that could not be initialised runs without the init
+          // scripts and is not tracked for close(), so the cause is said.
+          this._initPage(info.targetId, params.sessionId).catch((error) => {
+            console.error(
+              `[async_api] popup ${info.targetId} runs without page initialisation: ${error}`,
+            );
+          });
         }
       },
       sessionId,
