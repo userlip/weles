@@ -196,7 +196,9 @@ try {
           2,
         ),
       );
-    } catch {}
+    } catch (persistError) {
+      console.log('[ban-signal] persist err:', persistError.message);
+    }
   }
 } catch (e) {
   const finalUrl = s?.page?.url?.() ?? '';
@@ -254,7 +256,9 @@ try {
         2,
       ),
     );
-  } catch {}
+  } catch (persistError) {
+    console.log('[ban-signal] persist err:', persistError.message);
+  }
   console.log(`FAIL: ${e.message}`);
   // exitCode (not exit) so the finally block's await s.close() actually runs.
   // process.exit(1) kills pending async ops immediately, which prevents

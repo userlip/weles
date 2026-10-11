@@ -36,7 +36,9 @@ function writeBan(signal, details) {
         2,
       ),
     );
-  } catch {}
+  } catch (e) {
+    console.log('[ban-signal] persist err:', e.message);
+  }
 }
 
 const acct = readAccount(ACCOUNT_ITEM);
