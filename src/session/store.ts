@@ -38,15 +38,24 @@ export class SessionStore {
   // Low-level persistence
   // -----------------------------------------------------------------------
 
+  // A store that does not exist holds no sessions. One that exists but cannot
+  // be read or parsed is refused with its path and cause: answering it as
+  // empty made the next saveCookies write it back with only one label,
+  // dropping every other service's saved session.
   private _readStore(): Record<string, CookieParam[]> {
     if (!existsSync(this._persistPath)) {
       return {};
     }
+    let raw: string;
     try {
-      const raw = readFileSync(this._persistPath, 'utf-8');
+      raw = readFileSync(this._persistPath, 'utf-8');
+    } catch (error: unknown) {
+      throw new Error(`session store ${this._persistPath} cannot be read: ${String(error)}`);
+    }
+    try {
       return JSON.parse(raw);
-    } catch {
-      return {};
+    } catch (error: unknown) {
+      throw new Error(`session store ${this._persistPath} is not valid JSON: ${String(error)}`);
     }
   }
 
