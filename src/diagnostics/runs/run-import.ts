@@ -20,8 +20,13 @@ async function findInRun(
     let entries: any[];
     try {
       entries = (await readdir(dir, { withFileTypes: true } as any)) as any;
-    } catch {
-      return null;
+    } catch (error) {
+      // A directory that is not there holds nothing; one that cannot be
+      // listed is thrown with its path, so a file in it is not taken as absent.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw new Error(
+        `run directory ${dir} cannot be listed: ${(error as Error).message}`,
+      );
     }
     for (const e of entries) {
       const full = join(dir, e.name);
@@ -42,7 +47,12 @@ async function readJsonInRun(
   runId: string,
   filename: string,
 ): Promise<{ value: any | null; failure: string | null }> {
-  const p = await findInRun(runId, filename);
+  let p: string | null;
+  try {
+    p = await findInRun(runId, filename);
+  } catch (error) {
+    return { value: null, failure: (error as Error).message };
+  }
   if (!p) return { value: null, failure: null };
   try {
     return { value: JSON.parse(await readFile(p, 'utf8')), failure: null };
