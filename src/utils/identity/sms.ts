@@ -140,7 +140,9 @@ export async function getNumber(
         };
       }
     }
-    console.log(`[sms] juicysms (${country}): ${text}`);
+    // A refused request is already in `failures`; only a real answer that
+    // carried no number is logged here.
+    if (text !== String(null)) console.log(`[sms] juicysms (${country}): ${text}`);
   }
   // Try sms-activate
   const saKey = smsActivateApiKey();
@@ -163,11 +165,15 @@ export async function getNumber(
         console.log(
           `[sms] sms-activate: got ${phone} (activation ${d.activationId})`,
         );
+        // The number is held whether or not the provider takes the "ready"
+        // status; a refused status is said, not dropped with the rest.
+        const statusFailures: string[] = [];
         await providerText(
           `https://api.sms-activate.org/stubs/handler_api.php?api_key=${saKey}&action=setStatus&status=1&id=${d.activationId}`,
           `sms-activate setStatus ${d.activationId}`,
-          failures,
+          statusFailures,
         );
+        for (const failure of statusFailures) console.error(`[sms] ${failure}`);
         costTracker.recordSms('smsactivate', service);
         return {
           phone: normalizePhone(phone, country),
