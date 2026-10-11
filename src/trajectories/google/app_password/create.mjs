@@ -153,7 +153,8 @@ async function main() {
       login_item: loginItem,
       expected_account: expectedAccount,
       email: login.email,
-      detail: 'The selected login does not belong to the requested mailbox account',
+      detail:
+        'The selected login does not belong to the requested mailbox account',
     });
     process.exit(2);
   }

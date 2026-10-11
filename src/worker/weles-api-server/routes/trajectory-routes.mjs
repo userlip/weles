@@ -358,7 +358,8 @@ export async function respondToAuthenticatorEnrolment(
     out.result?.ok === true &&
     out.result?.login_item === account.loginItem &&
     typeof out.result?.email === 'string' &&
-    out.result.email.trim().toLowerCase() === account.accountRef.trim().toLowerCase() &&
+    out.result.email.trim().toLowerCase() ===
+      account.accountRef.trim().toLowerCase() &&
     out.result?.seed_written === true;
   json(res, confirmed ? 200 : 502, {
     ...out,

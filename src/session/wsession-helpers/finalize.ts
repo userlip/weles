@@ -363,7 +363,9 @@ export async function wsClose(s: WSession): Promise<void> {
   }
   await (s as any)._cap
     .save('session', s.page)
-    .catch((e: any) => console.log(`[wsession] session capture err: ${e.message}`));
+    .catch((e: any) =>
+      console.log(`[wsession] session capture err: ${e.message}`),
+    );
   try {
     writeFileSync(
       join(recordingsDir(s.label || undefined), 'network.ndjson'),

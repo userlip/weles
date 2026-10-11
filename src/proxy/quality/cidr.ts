@@ -63,9 +63,13 @@ function loadAsnCache(): AsnCache | null {
   try {
     const j = JSON.parse(readFileSync(ASN_CACHE_PATH, 'utf8'));
     if (j && typeof j === 'object' && !Array.isArray(j)) return j;
-    console.error(`[proxy] ASN cache ${ASN_CACHE_PATH} is not a JSON object; it is not rewritten`);
+    console.error(
+      `[proxy] ASN cache ${ASN_CACHE_PATH} is not a JSON object; it is not rewritten`,
+    );
   } catch (error) {
-    console.error(`[proxy] ASN cache ${ASN_CACHE_PATH} cannot be read, so it is not rewritten: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `[proxy] ASN cache ${ASN_CACHE_PATH} cannot be read, so it is not rewritten: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   return null;
 }
@@ -77,7 +81,9 @@ function saveAsnCache(c: AsnCache): void {
     mkdirSync(dirname(ASN_CACHE_PATH), { recursive: true });
     writeFileSync(ASN_CACHE_PATH, JSON.stringify(c));
   } catch (error) {
-    console.error(`[proxy] ASN cache ${ASN_CACHE_PATH} cannot be written, so the lookup repeats next time: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `[proxy] ASN cache ${ASN_CACHE_PATH} cannot be written, so the lookup repeats next time: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

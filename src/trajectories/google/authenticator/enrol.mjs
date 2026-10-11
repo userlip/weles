@@ -21,7 +21,10 @@ import { join } from 'node:path';
 import { runOutputPath } from '#run-output';
 import { completeGooglePhoneApproval } from '../../_shared/services/google_sso/sign_in/challenge/phone.mjs';
 import { WSession } from '../../../../dist/session/wsession.js';
-import { persistEnrolledSeed, validateExpectedAccount } from './account-binding.mjs';
+import {
+  persistEnrolledSeed,
+  validateExpectedAccount,
+} from './account-binding.mjs';
 import { loginItemMethod } from '../../../../dist/utils/login-accounts.js';
 import {
   confirmSetupCode,

@@ -146,7 +146,9 @@ export function checkedTokenFile(
     metadata = lstatSync(path);
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw new Error(`scoped Skarbiec token file ${path} cannot be inspected: ${String(error)}`);
+    throw new Error(
+      `scoped Skarbiec token file ${path} cannot be inspected: ${String(error)}`,
+    );
   }
   if (
     !metadata.isFile() ||

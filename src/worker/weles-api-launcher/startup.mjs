@@ -48,8 +48,7 @@ export async function startup() {
   const stadoBin = process.env.STADO_BIN || join(HOME, '.stado/bin/stado');
   process.env.STADO_BIN = stadoBin;
   const stadoProblem = notAFile(stadoBin);
-  if (stadoProblem)
-    refuse(`required Stado binary ${stadoBin} ${stadoProblem}`);
+  if (stadoProblem) refuse(`required Stado binary ${stadoBin} ${stadoProblem}`);
   const nodeBin = process.env.NODE_BIN || process.execPath;
 
   // Page reading needs the native binaries from this release.

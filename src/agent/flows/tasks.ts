@@ -57,7 +57,9 @@ export class Trajectory {
       return new Trajectory(JSON.parse(readFileSync(path, 'utf-8')));
     } catch (e: unknown) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.log(`[task] ${service}: trajectory cache ${path} cannot be read: ${String(e)}`);
+        console.log(
+          `[task] ${service}: trajectory cache ${path} cannot be read: ${String(e)}`,
+        );
       }
       return null;
     }
@@ -68,7 +70,9 @@ export class Trajectory {
     try {
       writeFileSync(path, JSON.stringify(this, null, 2));
     } catch (e: unknown) {
-      console.log(`[task] ${this.service}: trajectory cache ${path} cannot be written: ${String(e)}`);
+      console.log(
+        `[task] ${this.service}: trajectory cache ${path} cannot be written: ${String(e)}`,
+      );
     }
   }
 
@@ -78,7 +82,9 @@ export class Trajectory {
       unlinkSync(path);
     } catch (e: unknown) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.log(`[task] ${service}: stale trajectory cache ${path} cannot be removed: ${String(e)}`);
+        console.log(
+          `[task] ${service}: stale trajectory cache ${path} cannot be removed: ${String(e)}`,
+        );
       }
     }
   }
@@ -257,7 +263,9 @@ export class FetchAccountValue {
     try {
       return new SessionStore().loadCookies(this.service);
     } catch (e: unknown) {
-      console.log(`[task] ${this.service}: saved session cannot be loaded, logging in afresh: ${String(e)}`);
+      console.log(
+        `[task] ${this.service}: saved session cannot be loaded, logging in afresh: ${String(e)}`,
+      );
       return null;
     }
   }
@@ -266,7 +274,9 @@ export class FetchAccountValue {
     try {
       new SessionStore().saveCookies(this.service, cookies);
     } catch (e: unknown) {
-      console.log(`[task] ${this.service}: session cannot be saved, the next run logs in again: ${String(e)}`);
+      console.log(
+        `[task] ${this.service}: session cannot be saved, the next run logs in again: ${String(e)}`,
+      );
     }
   }
 
@@ -274,7 +284,9 @@ export class FetchAccountValue {
     try {
       new SessionStore().saveCookies(this.service, []);
     } catch (e: unknown) {
-      console.log(`[task] ${this.service}: rejected session cannot be cleared: ${String(e)}`);
+      console.log(
+        `[task] ${this.service}: rejected session cannot be cleared: ${String(e)}`,
+      );
     }
   }
 }

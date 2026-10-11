@@ -180,7 +180,8 @@ function revision(value: string | undefined): string | null {
 function readRevisionMarker(path: string): string | null {
   try {
     const observed = revision(readFileSync(path, 'utf8'));
-    if (!observed) throw new Error('expected a full hexadecimal source revision');
+    if (!observed)
+      throw new Error('expected a full hexadecimal source revision');
     return observed;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;

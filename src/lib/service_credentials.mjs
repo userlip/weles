@@ -36,7 +36,9 @@ function allCredentialItems() {
       try {
         return { id, document: readItem(id) };
       } catch (error) {
-        throw new Error(`Skarbiec credential item ${id} cannot be read: ${String(error)}`);
+        throw new Error(
+          `Skarbiec credential item ${id} cannot be read: ${String(error)}`,
+        );
       }
     })
     .filter(({ document } = {}) => {

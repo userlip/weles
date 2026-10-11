@@ -71,11 +71,15 @@ export function loadFlow(name: string): Flow | null {
   try {
     flow = JSON.parse(readFileSync(p, 'utf-8'));
   } catch (error) {
-    console.error(`[flows] ${name}: saved flow ${p} cannot be read: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `[flows] ${name}: saved flow ${p} cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return null;
   }
   if (!isFlow(flow)) {
-    console.error(`[flows] ${name}: saved flow ${p} is not a ${FLOW_SCHEMA} flow`);
+    console.error(
+      `[flows] ${name}: saved flow ${p} is not a ${FLOW_SCHEMA} flow`,
+    );
     return null;
   }
   return flow;

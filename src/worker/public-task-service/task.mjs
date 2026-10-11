@@ -136,19 +136,28 @@ export function createTaskOperations({
         throw new Error(
           'idempotency reservation disappeared after a concurrent claim',
         );
-      return { status: 200, payload: publicStatus(raced, dispatcherStatus(), redact) };
+      return {
+        status: 200,
+        payload: publicStatus(raced, dispatcherStatus(), redact),
+      };
     }
     await persistTask(task);
     await enqueue(task.id);
     const accepted = await loadTask(task.id);
-    return { status: 202, payload: publicStatus(accepted, dispatcherStatus(), redact) };
+    return {
+      status: 202,
+      payload: publicStatus(accepted, dispatcherStatus(), redact),
+    };
   }
 
   async function getTask(taskId) {
     return withTaskLock(taskId, async () => {
       const task = await loadTask(taskId);
       if (task.completion && !task.receipt) await retainCompletion(task);
-      return { status: 200, payload: publicStatus(task, dispatcherStatus(), redact) };
+      return {
+        status: 200,
+        payload: publicStatus(task, dispatcherStatus(), redact),
+      };
     });
   }
 
@@ -165,7 +174,10 @@ export function createTaskOperations({
     const response = await withTaskLock(taskId, async () => {
       const task = await loadTask(taskId);
       if (Object.hasOwn(TERMINAL_STATUSES, task.status)) {
-        return { status: 200, payload: publicStatus(task, dispatcherStatus(), redact) };
+        return {
+          status: 200,
+          payload: publicStatus(task, dispatcherStatus(), redact),
+        };
       }
       if (
         task.cancellation &&
@@ -189,7 +201,10 @@ export function createTaskOperations({
       if (running) {
         controller = running.controller;
         await persistTask(task);
-        return { status: 202, payload: publicStatus(task, dispatcherStatus(), redact) };
+        return {
+          status: 202,
+          payload: publicStatus(task, dispatcherStatus(), redact),
+        };
       }
       removeQueued(task.id);
       task.completion = {

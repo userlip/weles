@@ -160,7 +160,10 @@ export async function putPrivateStadoObject(
     },
   );
   const responseText = await response.text().catch((cause) => {
-    throw new Error(`Stado object upload response read failed for ${uri} (HTTP ${response.status}): ${String(cause)}`, { cause });
+    throw new Error(
+      `Stado object upload response read failed for ${uri} (HTTP ${response.status}): ${String(cause)}`,
+      { cause },
+    );
   });
   if (!response.ok) {
     throw new Error(
@@ -171,7 +174,10 @@ export async function putPrivateStadoObject(
   try {
     payload = JSON.parse(responseText) as Record<string, unknown>;
   } catch (cause) {
-    throw new Error(`Stado object upload receipt JSON read failed for ${uri} (HTTP ${response.status}): ${String(cause)}`, { cause });
+    throw new Error(
+      `Stado object upload receipt JSON read failed for ${uri} (HTTP ${response.status}): ${String(cause)}`,
+      { cause },
+    );
   }
   const expectedSha256 = createHash('sha256').update(bytes).digest('hex');
   const keys = Object.keys(payload).sort().join(',');
@@ -227,7 +233,10 @@ export async function readPrivateStadoObjectIdentity(
   );
   if (!response.ok || !response.body) {
     const message = await response.text().catch((cause) => {
-      throw new Error(`Stado object readback response read failed for ${uri} (HTTP ${response.status}): ${String(cause)}`, { cause });
+      throw new Error(
+        `Stado object readback response read failed for ${uri} (HTTP ${response.status}): ${String(cause)}`,
+        { cause },
+      );
     });
     throw new Error(
       `Stado object readback failed for ${uri} (HTTP ${response.status}): ${message}`,
@@ -238,7 +247,10 @@ export async function readPrivateStadoObjectIdentity(
   let bytes = 0;
   while (true) {
     const chunk = await reader.read().catch((cause) => {
-      throw new Error(`Stado object readback stream failed for ${uri} (HTTP ${response.status}) after ${bytes} bytes: ${String(cause)}`, { cause });
+      throw new Error(
+        `Stado object readback stream failed for ${uri} (HTTP ${response.status}) after ${bytes} bytes: ${String(cause)}`,
+        { cause },
+      );
     });
     if (chunk.done) break;
     bytes += chunk.value.byteLength;
@@ -286,7 +298,10 @@ async function collectTree(
   try {
     entries = (await readdir(root, { withFileTypes: true } as any)) as any;
   } catch (cause) {
-    throw new Error(`Artifact directory read failed for ${root}: ${String(cause)}`, { cause });
+    throw new Error(
+      `Artifact directory read failed for ${root}: ${String(cause)}`,
+      { cause },
+    );
   }
   for (const e of entries as any[]) {
     const name = e.name as string;
@@ -361,7 +376,10 @@ async function writeUploadProof(
   let totalBytes = 0;
   for (const f of files) {
     const info = await stat(f.path).catch((cause) => {
-      throw new Error(`Artifact proof stat failed for ${f.path}: ${String(cause)}`, { cause });
+      throw new Error(
+        `Artifact proof stat failed for ${f.path}: ${String(cause)}`,
+        { cause },
+      );
     });
     totalBytes += info.size;
     manifest.push(`${f.rel}:${info.size}`);

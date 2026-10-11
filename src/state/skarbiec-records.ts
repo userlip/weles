@@ -149,7 +149,10 @@ export function writeUnchangedDocument(
   expected: Record<string, any>,
   payload: Record<string, any>,
 ): void {
-  skarbiec(['set-json', id, '--if-unchanged'], JSON.stringify({ expected, payload }));
+  skarbiec(
+    ['set-json', id, '--if-unchanged'],
+    JSON.stringify({ expected, payload }),
+  );
 }
 
 /** Write item `id` as `type` carrying exactly `tags`, the payload on stdin. */

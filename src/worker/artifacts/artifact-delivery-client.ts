@@ -186,9 +186,7 @@ export async function requestSignedArtifactUrls(
       isRecord(payload) && typeof payload.error === 'string'
         ? payload.error
         : text;
-    throw new Error(
-      `${operation} HTTP ${response.status}: ${String(detail)}`,
-    );
+    throw new Error(`${operation} HTTP ${response.status}: ${String(detail)}`);
   }
   return validateSignedResponse(payload, normalized, config, Date.now());
 }

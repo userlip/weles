@@ -71,13 +71,15 @@ refuse(
   ],
   'app-password needs --provider naming the identity provider that issues it; Weles issues through google',
 );
-refuse(
-  ['app-password', '--run', 'run-test', '--provider', 'google'],
-  '--run',
-);
+refuse(['app-password', '--run', 'run-test', '--provider', 'google'], '--run');
 const accountCreation = [
-  'app-password', '--provider', 'google',
-  '--login-item', 'test-login', '--organization', 'test-org',
+  'app-password',
+  '--provider',
+  'google',
+  '--login-item',
+  'test-login',
+  '--organization',
+  'test-org',
 ];
 refuse(accountCreation, '--account');
 refuse([...accountCreation, '--account', ' '], '--account');

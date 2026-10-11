@@ -139,10 +139,14 @@ function loadWarmManifest(dir = '') {
   try {
     raw = JSON.parse(readFileSync(p, 'utf8'));
   } catch (cause) {
-    throw new Error(`warm profile manifest ${p} cannot be read: ${cause instanceof Error ? cause.message : String(cause)}`);
+    throw new Error(
+      `warm profile manifest ${p} cannot be read: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
   }
   if (raw?.schema !== 'linkedin_register_warm_profile.v1') {
-    throw new Error(`warm profile manifest ${p} is not a linkedin_register_warm_profile.v1 manifest`);
+    throw new Error(
+      `warm profile manifest ${p} is not a linkedin_register_warm_profile.v1 manifest`,
+    );
   }
   return raw;
 }

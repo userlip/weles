@@ -55,7 +55,9 @@ export async function runAppPassword(parsed: ParsedCli): Promise<void> {
   }
   if (
     runId !== undefined &&
-    (organization !== undefined || parsed.options.provider !== undefined || expectedAccount !== undefined)
+    (organization !== undefined ||
+      parsed.options.provider !== undefined ||
+      expectedAccount !== undefined)
   ) {
     throw new UsageError(
       '--run reads a started run back and takes no --organization, --provider or --account',
@@ -70,13 +72,23 @@ export async function runAppPassword(parsed: ParsedCli): Promise<void> {
     runId === undefined &&
     (typeof expectedAccount !== 'string' || !expectedAccount.trim())
   ) {
-    throw new UsageError('--account must name the Gmail account the mailbox belongs to');
+    throw new UsageError(
+      '--account must name the Gmail account the mailbox belongs to',
+    );
   }
   const input =
     typeof loginRole === 'string'
-      ? { loginRole, organization: organization as string, expectedAccount: expectedAccount as string }
+      ? {
+          loginRole,
+          organization: organization as string,
+          expectedAccount: expectedAccount as string,
+        }
       : typeof loginItem === 'string'
-        ? { loginItem, organization: organization as string, expectedAccount: expectedAccount as string }
+        ? {
+            loginItem,
+            organization: organization as string,
+            expectedAccount: expectedAccount as string,
+          }
         : { runId: runId as string };
   const row = await appPasswordRun(input);
   printAnswer(row, parsed.options.json === true);

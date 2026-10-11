@@ -99,7 +99,8 @@ export async function respondToRun(
   // file carries that login from the moment it is admitted.
   if (action === 'google_app_password') {
     try {
-      const { loginItem, organization, expectedAccount } = validateAppPasswordParams(params);
+      const { loginItem, organization, expectedAccount } =
+        validateAppPasswordParams(params);
       requestBinding = {
         params: {
           login_item: loginItem,
@@ -110,7 +111,11 @@ export async function respondToRun(
             : {}),
         },
       };
-      params = { login_item: loginItem, organization, expected_account: expectedAccount };
+      params = {
+        login_item: loginItem,
+        organization,
+        expected_account: expectedAccount,
+      };
     } catch (error) {
       json(res, 400, { ok: false, error: error.message });
       return;

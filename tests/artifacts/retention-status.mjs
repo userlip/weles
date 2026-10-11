@@ -20,16 +20,25 @@ try {
   assert.ok(!Object.hasOwn(TERMINAL_STATUSES, expectedStatus));
   async function get(path, authenticated) {
     const endpoint = new URL(path, base);
-    assert.ok(!endpoint.username && !endpoint.password, 'credentials must remain in the bearer header');
+    assert.ok(
+      !endpoint.username && !endpoint.password,
+      'credentials must remain in the bearer header',
+    );
     const response = await fetch(endpoint, {
       headers: authenticated ? { Authorization: `Bearer ${bearer}` } : {},
       redirect: 'error',
     });
     const text = await response.text();
-    assert.ok(!text.includes(bearer), 'task response must not expose its bearer');
+    assert.ok(
+      !text.includes(bearer),
+      'task response must not expose its bearer',
+    );
     evidence.report.operations.push({
-      method: 'GET', endpoint: endpoint.href, authenticated,
-      http_status: response.status, body: text,
+      method: 'GET',
+      endpoint: endpoint.href,
+      authenticated,
+      http_status: response.status,
+      body: text,
     });
     return { response, value: JSON.parse(text) };
   }

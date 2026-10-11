@@ -38,13 +38,21 @@ function check(name, detail) {
   report.checks.push({ name, ...detail });
 }
 
-const UNREAD_LINE = /^unread evidence: (?<source>\S+) at (?<path>.+?): (?<cause>.+)$/;
+const UNREAD_LINE =
+  /^unread evidence: (?<source>\S+) at (?<path>.+?): (?<cause>.+)$/;
 
 function unreadFromLines(lines) {
   return lines.map((line) => {
     const match = line.match(UNREAD_LINE);
-    assert.ok(match, `an unread evidence line names source, path and cause: ${line}`);
-    return { source: match.groups.source, path: match.groups.path, cause: match.groups.cause };
+    assert.ok(
+      match,
+      `an unread evidence line names source, path and cause: ${line}`,
+    );
+    return {
+      source: match.groups.source,
+      path: match.groups.path,
+      cause: match.groups.cause,
+    };
   });
 }
 
@@ -86,16 +94,27 @@ try {
       'the Jeden failure line carries its cause',
     );
     unread = unreadFromLines(rest);
-  } else if (answer.startsWith('Diagnosis unavailable: model output failed schema validation: ')) {
+  } else if (
+    answer.startsWith(
+      'Diagnosis unavailable: model output failed schema validation: ',
+    )
+  ) {
     outcome = 'schema_failed';
     const [first, ...rest] = answer.split('\n');
-    assert.match(first, /; reply: /, 'the schema failure names the check and the reply part');
+    assert.match(
+      first,
+      /; reply: /,
+      'the schema failure names the check and the reply part',
+    );
     unread = unreadFromLines(rest);
   } else {
     outcome = 'diagnosed';
     const diagnosis = JSON.parse(answer);
     assert.equal(typeof diagnosis.summary, 'string');
-    assert.ok(Array.isArray(diagnosis.unread_evidence), 'the diagnosis carries unread_evidence');
+    assert.ok(
+      Array.isArray(diagnosis.unread_evidence),
+      'the diagnosis carries unread_evidence',
+    );
     unread = diagnosis.unread_evidence;
   }
   check('outcome', { outcome, unread });
@@ -103,7 +122,11 @@ try {
   for (const [source, path] of expected) {
     const entry = unread.find((item) => item.source === source);
     assert.ok(entry, `${source} is reported as unread`);
-    assert.equal(entry.path, path, `${source} names the path it was looked for at`);
+    assert.equal(
+      entry.path,
+      path,
+      `${source} names the path it was looked for at`,
+    );
     assert.ok(entry.cause.trim(), `${source} names its cause`);
   }
   assert.match(
@@ -130,7 +153,10 @@ try {
   const badSummary = parseDiagnosisOutput(
     'prose {"summary": true, "errors": [], "anomalies": [], "next_steps": []} prose',
   );
-  assert.deepEqual(badSummary, { failure: 'summary is not a string', excerpt: 'true' });
+  assert.deepEqual(badSummary, {
+    failure: 'summary is not a string',
+    excerpt: 'true',
+  });
   const badItem = parseDiagnosisOutput(
     '{"summary": "ok", "errors": ["one", {"two": true}], "anomalies": [], "next_steps": []}',
   );
@@ -146,15 +172,25 @@ try {
     excerpt: '"none"',
   });
   const unparsable = parseDiagnosisOutput('{"summary": "ok", }');
-  assert.ok('failure' in unparsable && unparsable.failure.startsWith('the JSON object does not parse: '));
+  assert.ok(
+    'failure' in unparsable &&
+      unparsable.failure.startsWith('the JSON object does not parse: '),
+  );
   assert.equal(unparsable.excerpt, '{"summary": "ok", }');
   const good = parseDiagnosisOutput(
     'reply: {"summary": " fine ", "errors": [], "anomalies": ["a"], "next_steps": ["b"]}',
   );
   assert.deepEqual(good, {
-    diagnosis: { summary: 'fine', errors: [], anomalies: ['a'], next_steps: ['b'] },
+    diagnosis: {
+      summary: 'fine',
+      errors: [],
+      anomalies: ['a'],
+      next_steps: ['b'],
+    },
   });
-  check('parser', { verdicts: [noObject, badSummary, badItem, missingList, unparsable, good] });
+  check('parser', {
+    verdicts: [noObject, badSummary, badItem, missingList, unparsable, good],
+  });
 
   report.verdict = 'passed';
 } catch (error) {
@@ -163,6 +199,9 @@ try {
   throw error;
 } finally {
   report.finished_at = new Date().toISOString();
-  writeFileSync(join(run, 'report.json'), JSON.stringify(report, null, '\t') + '\n');
+  writeFileSync(
+    join(run, 'report.json'),
+    JSON.stringify(report, null, '\t') + '\n',
+  );
   console.log(`${report.verdict}: ${join(run, 'report.json')}`);
 }

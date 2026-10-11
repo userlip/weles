@@ -50,12 +50,16 @@ export class SessionStore {
     try {
       raw = readFileSync(this._persistPath, 'utf-8');
     } catch (error: unknown) {
-      throw new Error(`session store ${this._persistPath} cannot be read: ${String(error)}`);
+      throw new Error(
+        `session store ${this._persistPath} cannot be read: ${String(error)}`,
+      );
     }
     try {
       return JSON.parse(raw);
     } catch (error: unknown) {
-      throw new Error(`session store ${this._persistPath} is not valid JSON: ${String(error)}`);
+      throw new Error(
+        `session store ${this._persistPath} is not valid JSON: ${String(error)}`,
+      );
     }
   }
 

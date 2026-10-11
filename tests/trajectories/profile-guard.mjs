@@ -16,7 +16,10 @@ const directory = join(root, 'build/real-tests/profile-guard', randomUUID());
 mkdirSync(directory, { recursive: true });
 const report = {
   command: [process.execPath, ...process.execArgv, ...process.argv],
-  source_revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+  source_revision: execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: root,
+    encoding: 'utf8',
+  }).trim(),
   host: hostname(),
   started_at: new Date().toISOString(),
   cases: [],
@@ -46,12 +49,29 @@ await test('the Google Ads profile guard tells a free profile from an unreadable
   const profile = join(directory, `profile-${randomUUID()}`);
 
   const free = assertFree(profile, process.env.PATH);
-  report.cases.push({ case: 'free profile', status: free.status, stderr: free.stderr });
-  assert.ok(!free.status, `a profile no process holds was refused:\n${free.stderr}`);
+  report.cases.push({
+    case: 'free profile',
+    status: free.status,
+    stderr: free.stderr,
+  });
+  assert.ok(
+    !free.status,
+    `a profile no process holds was refused:\n${free.stderr}`,
+  );
 
   const blind = assertFree(profile, directory);
-  report.cases.push({ case: 'pgrep cannot run', status: blind.status, stderr: blind.stderr });
-  assert.ok(blind.status, 'a guard that could not run pgrep let the session start');
-  assert.match(blind.stderr, /cannot tell whether the Google Ads profile is already open/);
+  report.cases.push({
+    case: 'pgrep cannot run',
+    status: blind.status,
+    stderr: blind.stderr,
+  });
+  assert.ok(
+    blind.status,
+    'a guard that could not run pgrep let the session start',
+  );
+  assert.match(
+    blind.stderr,
+    /cannot tell whether the Google Ads profile is already open/,
+  );
   assert.match(blind.stderr, /ENOENT/);
 });

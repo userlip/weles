@@ -107,7 +107,9 @@ export async function getNumber(
   if (jKey) {
     const sid = SERVICE_IDS[service.toLowerCase()] ?? service;
     const url = `${JUICY_BASE}/makeorder?key=${jKey}&serviceId=${sid}&country=${country}`;
-    const text = String(await providerText(url, 'juicysms makeorder', failures));
+    const text = String(
+      await providerText(url, 'juicysms makeorder', failures),
+    );
     const m = text.match(/ORDER_ID_(\d+)_NUMBER_(\d+)/);
     if (m) {
       console.log(`[sms] juicysms: got ${m[2]} (order ${m[1]}, ${country})`);
@@ -128,7 +130,9 @@ export async function getNumber(
           failures,
         );
       }
-      const t2 = String(await providerText(url, 'juicysms makeorder (retry)', failures));
+      const t2 = String(
+        await providerText(url, 'juicysms makeorder (retry)', failures),
+      );
       const m2 = t2.match(/ORDER_ID_(\d+)_NUMBER_(\d+)/);
       if (m2) {
         costTracker.recordSms('juicysms', service);
@@ -142,7 +146,8 @@ export async function getNumber(
     }
     // A refused request is already in `failures`; only a real answer that
     // carried no number is logged here.
-    if (text !== String(null)) console.log(`[sms] juicysms (${country}): ${text}`);
+    if (text !== String(null))
+      console.log(`[sms] juicysms (${country}): ${text}`);
   }
   // Try sms-activate
   const saKey = smsActivateApiKey();
@@ -150,7 +155,11 @@ export async function getNumber(
     const svc = SMSACTIVATE_SERVICES[service.toLowerCase()] ?? service;
     const cc = SMSACTIVATE_COUNTRIES[country] ?? '12';
     const url = `https://api.sms-activate.org/stubs/handler_api.php?api_key=${saKey}&action=getNumberV2&service=${svc}&country=${cc}`;
-    const answer = await providerText(url, 'sms-activate getNumberV2', failures);
+    const answer = await providerText(
+      url,
+      'sms-activate getNumberV2',
+      failures,
+    );
     if (answer !== null) {
       let d: any;
       try {
@@ -271,7 +280,9 @@ export async function cancelOrder(
       const response = await fetch(url);
       if (!response.ok) report(`answered HTTP ${response.status}`);
     } catch (error) {
-      report(`failed: ${error instanceof Error ? error.message : String(error)}`);
+      report(
+        `failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   };
   if (provider === 'juicysms') {

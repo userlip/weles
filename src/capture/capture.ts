@@ -82,7 +82,9 @@ export class Capture {
     await page
       .send('Runtime.enable')
       .catch((e: any) =>
-        this.consoleLogs.push(`[capture] Runtime.enable failed, console events are not captured: ${e?.message}`),
+        this.consoleLogs.push(
+          `[capture] Runtime.enable failed, console events are not captured: ${e?.message}`,
+        ),
       );
 
     // Network response logging
@@ -116,7 +118,9 @@ export class Capture {
     await page
       .send('Network.enable')
       .catch((e: any) =>
-        this.consoleLogs.push(`[capture] Network.enable failed, responses are not captured: ${e?.message}`),
+        this.consoleLogs.push(
+          `[capture] Network.enable failed, responses are not captured: ${e?.message}`,
+        ),
       );
 
     return page;

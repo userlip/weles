@@ -44,7 +44,11 @@ const IDENTIFIER_PATH_PATTERN = new RegExp(
 /// One evidence source the diagnosis asked for and could not read: which
 /// source, the path it was looked for at, and the cause the read gave.
 export type UnreadEvidence = {
-  source: 'video_frames' | 'console_lines' | 'network_responses' | 'dom_snapshot';
+  source:
+    | 'video_frames'
+    | 'console_lines'
+    | 'network_responses'
+    | 'dom_snapshot';
   path: string;
   cause: string;
 };
@@ -294,7 +298,10 @@ export async function diagnoseCapture(
   }
 
   const unreadLines = unreadEvidence
-    .map((entry) => `unread evidence: ${entry.source} at ${entry.path}: ${entry.cause}`)
+    .map(
+      (entry) =>
+        `unread evidence: ${entry.source} at ${entry.path}: ${entry.cause}`,
+    )
     .join('\n');
 
   const request = {
@@ -353,5 +360,5 @@ export async function diagnoseCapture(
     ...parsed.diagnosis,
     unread_evidence: unreadEvidence,
   };
-    return JSON.stringify(diagnosis, null, 2);
+  return JSON.stringify(diagnosis, null, 2);
 }

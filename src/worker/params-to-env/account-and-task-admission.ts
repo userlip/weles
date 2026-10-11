@@ -68,7 +68,9 @@ export function validateAppPasswordParams(params: Record<string, unknown>): {
   expectedAccount: string;
 } {
   if (!params || typeof params !== 'object' || Array.isArray(params)) {
-    throw new Error('app-password params must declare the login, organization and expected_account');
+    throw new Error(
+      'app-password params must declare the login, organization and expected_account',
+    );
   }
   const { organization, expected_account: expectedAccount, ...login } = params;
   if (typeof organization !== 'string' || !organization.trim()) {
@@ -77,7 +79,9 @@ export function validateAppPasswordParams(params: Record<string, unknown>): {
     );
   }
   if (typeof expectedAccount !== 'string' || !expectedAccount.trim()) {
-    throw new Error('expected_account must name the Gmail account the mailbox belongs to');
+    throw new Error(
+      'expected_account must name the Gmail account the mailbox belongs to',
+    );
   }
   return {
     loginItem: googleLogin(login, ['login_role', 'login_item']),
@@ -120,14 +124,20 @@ export function applyAccountAndTaskAdmission(
     // seed, whether or not a subscription or a mailbox rides on it yet.
     env.WELES_LOGIN_ITEM = googleLogin(params);
     if (params.expected_account !== undefined) {
-      if (typeof params.expected_account !== 'string' || !params.expected_account.trim()) {
-        throw new Error('expected_account must name the Google account to enroll');
+      if (
+        typeof params.expected_account !== 'string' ||
+        !params.expected_account.trim()
+      ) {
+        throw new Error(
+          'expected_account must name the Google account to enroll',
+        );
       }
       env.WELES_EXPECTED_ACCOUNT = params.expected_account.trim();
     }
   }
   if (trajPath.endsWith('/google/app_password/create.mjs')) {
-    const { loginItem, organization, expectedAccount } = validateAppPasswordParams(params);
+    const { loginItem, organization, expectedAccount } =
+      validateAppPasswordParams(params);
     env.WELES_LOGIN_ITEM = loginItem;
     env.SKRZYNKA_ORGANIZATION = organization;
     env.WELES_EXPECTED_ACCOUNT = expectedAccount;
