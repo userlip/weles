@@ -72,8 +72,8 @@ function saveAsnCache(c: AsnCache): void {
     const { dirname } = require('node:path');
     mkdirSync(dirname(ASN_CACHE_PATH), { recursive: true });
     writeFileSync(ASN_CACHE_PATH, JSON.stringify(c));
-  } catch {
-    /* best-effort */
+  } catch (error) {
+    console.error(`[proxy] ASN cache ${ASN_CACHE_PATH} cannot be written, so the lookup repeats next time: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
