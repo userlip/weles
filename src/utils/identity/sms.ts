@@ -219,18 +219,28 @@ export async function cancelOrder(
   orderId: string,
   provider: 'juicysms' | 'smsactivate',
 ): Promise<void> {
+  // A cancel the provider did not take leaves a paid number held; the failure
+  // is said with the order and cause (the URL carries the API key, so only the
+  // provider name is quoted).
+  const report = (outcome: string) =>
+    console.error(`[sms] cancel of ${provider} order ${orderId} ${outcome}`);
+  const send = async (url: string) => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) report(`answered HTTP ${response.status}`);
+    } catch (error) {
+      report(`failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   if (provider === 'juicysms') {
     const jKey = juicyApiKey();
-    if (jKey)
-      await fetch(
-        `${JUICY_BASE}/cancelorder?key=${jKey}&orderId=${orderId}`,
-      ).catch(() => {});
+    if (!jKey) return report('was not sent: no JuicySMS API key');
+    await send(`${JUICY_BASE}/cancelorder?key=${jKey}&orderId=${orderId}`);
   } else {
     const saKey = smsActivateApiKey();
-    if (saKey) {
-      await fetch(
-        `https://api.sms-activate.org/stubs/handler_api.php?api_key=${saKey}&action=setStatus&status=8&id=${orderId}`,
-      ).catch(() => {});
-    }
+    if (!saKey) return report('was not sent: no sms-activate API key');
+    await send(
+      `https://api.sms-activate.org/stubs/handler_api.php?api_key=${saKey}&action=setStatus&status=8&id=${orderId}`,
+    );
   }
 }
