@@ -27,7 +27,7 @@ export class EvidenceRetentionError extends Error {
   }
 }
 
-export function publicStatus(task, dispatcher) {
+export function publicStatus(task, dispatcher, redact) {
   const terminal = Object.hasOwn(TERMINAL_STATUSES, task.status);
   // The wire vocabulary is exactly TERMINAL_STATUSES plus NONTERMINAL_STATUSES,
   // and every verifier downstream carries a matching status map. A new status
@@ -50,6 +50,7 @@ export function publicStatus(task, dispatcher) {
     status: task.status,
     serviceIdentity: task.serviceIdentity,
     dispatcher,
+    evidenceError: task.evidenceError ? redact(task.evidenceError) : null,
     requestIdentity: {
       requestDigest: task.requestDigest,
       spisBinding: task.spisBinding,
