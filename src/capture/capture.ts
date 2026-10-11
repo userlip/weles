@@ -75,7 +75,13 @@ export class Capture {
     });
 
     // Enable Runtime domain so we receive console events
-    await page.send('Runtime.enable').catch(() => {});
+    // Without the domain the capture has no console log at all; the failure
+    // goes into the console log itself so the empty log carries its reason.
+    await page
+      .send('Runtime.enable')
+      .catch((e: any) =>
+        this.consoleLogs.push(`[capture] Runtime.enable failed, console events are not captured: ${e?.message}`),
+      );
 
     // Network response logging
     page.on('Network.responseReceived', (params: any) => {
@@ -104,7 +110,11 @@ export class Capture {
         });
     });
 
-    await page.send('Network.enable').catch(() => {});
+    await page
+      .send('Network.enable')
+      .catch((e: any) =>
+        this.consoleLogs.push(`[capture] Network.enable failed, responses are not captured: ${e?.message}`),
+      );
 
     return page;
   }
