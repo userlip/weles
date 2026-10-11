@@ -127,17 +127,24 @@ export const warmProfileDir =
   process.env.LINKEDIN_REGISTER_WARM_PROFILE_DIR ||
   process.env.WELES_USER_DATA_DIR ||
   '';
+// A warm profile without a manifest replays nothing. One whose manifest cannot
+// be read or is not a warm-profile manifest is refused: read as none, the
+// registration ran through a different proxy and persona than the profile was
+// warmed with.
 function loadWarmManifest(dir = '') {
   if (!dir) return null;
+  const p = join(dir, 'warm_manifest.json');
+  if (!existsSync(p)) return null;
+  let raw;
   try {
-    const p = join(dir, 'warm_manifest.json');
-    if (!existsSync(p)) return null;
-    const raw = JSON.parse(readFileSync(p, 'utf8'));
-    if (raw?.schema !== 'linkedin_register_warm_profile.v1') return null;
-    return raw;
-  } catch {
-    return null;
+    raw = JSON.parse(readFileSync(p, 'utf8'));
+  } catch (cause) {
+    throw new Error(`warm profile manifest ${p} cannot be read: ${cause instanceof Error ? cause.message : String(cause)}`);
   }
+  if (raw?.schema !== 'linkedin_register_warm_profile.v1') {
+    throw new Error(`warm profile manifest ${p} is not a linkedin_register_warm_profile.v1 manifest`);
+  }
+  return raw;
 }
 export const warmManifest = loadWarmManifest(warmProfileDir);
 const replayProxyUrl = warmManifest?.proxy_replay?.url || '';
