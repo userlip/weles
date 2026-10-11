@@ -143,6 +143,15 @@ export function writeDocument(id: string, document: Record<string, any>): void {
   skarbiec(['set-json', id], JSON.stringify(document));
 }
 
+/** Replace only the exact payload observed by the caller; the vault arbitrates. */
+export function writeUnchangedDocument(
+  id: string,
+  expected: Record<string, any>,
+  payload: Record<string, any>,
+): void {
+  skarbiec(['set-json', id, '--if-unchanged'], JSON.stringify({ expected, payload }));
+}
+
 /** Write item `id` as `type` carrying exactly `tags`, the payload on stdin. */
 export function writeTaggedDocument(
   id: string,

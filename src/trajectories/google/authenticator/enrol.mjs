@@ -21,10 +21,7 @@ import { join } from 'node:path';
 import { runOutputPath } from '#run-output';
 import { completeGooglePhoneApproval } from '../../_shared/services/google_sso/sign_in/challenge/phone.mjs';
 import { WSession } from '../../../../dist/session/wsession.js';
-import {
-  readDocument,
-  writeDocument,
-} from '../../../../dist/state/skarbiec-records.js';
+import { persistEnrolledSeed, validateExpectedAccount } from './account-binding.mjs';
 import { loginItemMethod } from '../../../../dist/utils/login-accounts.js';
 import {
   confirmSetupCode,
@@ -164,6 +161,7 @@ async function main() {
     return;
   }
   const login = loginMaterial(loginItem);
+  validateExpectedAccount(login, process.env.WELES_EXPECTED_ACCOUNT);
   // The enrolment Weles ships is Google's. A password-only login has no
   // authenticator to enrol, and a run for it would end in a verdict that
   // says nothing about why.
@@ -251,20 +249,13 @@ async function enrol(loginItem, login) {
       process.exitCode = 6;
       return;
     }
-    // Google accepted the first code: the seed is live. Write it beside the
-    // password and read it back, so the vault and the account agree.
     mark('authenticator_seed_write');
-    const current = readDocument(loginItem);
-    current.fields = { ...current.fields, totp_secret: revealed.secret };
-    writeDocument(loginItem, current);
-    const stored = String(readDocument(loginItem).fields?.totp_secret || '');
-    if (stored !== revealed.secret) {
+    const persisted = persistEnrolledSeed(login, revealed.secret);
+    if (!persisted.ok) {
       report({
-        ok: false,
         login_item: loginItem,
         email: login.email,
-        blocked: 'seed_persist_unconfirmed',
-        detail: 'Skarbiec did not return the seed just written',
+        ...persisted,
       });
       process.exitCode = 7;
       return;
@@ -273,6 +264,7 @@ async function enrol(loginItem, login) {
       ok: true,
       login_item: loginItem,
       email: login.email,
+      expected_account: process.env.WELES_EXPECTED_ACCOUNT,
       seed_written: true,
       url: confirmed.url,
     });

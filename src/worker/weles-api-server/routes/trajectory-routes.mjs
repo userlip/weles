@@ -333,7 +333,7 @@ export async function respondToAuthenticatorEnrolment(
   const run = () =>
     runTrajectory(
       AUTHENTICATOR_ENROL_ACTION,
-      { login_item: account.loginItem },
+      { login_item: account.loginItem, expected_account: account.accountRef },
       null,
       false,
     );
@@ -357,6 +357,8 @@ export async function respondToAuthenticatorEnrolment(
     out.ok === true &&
     out.result?.ok === true &&
     out.result?.login_item === account.loginItem &&
+    typeof out.result?.email === 'string' &&
+    out.result.email.trim().toLowerCase() === account.accountRef.trim().toLowerCase() &&
     out.result?.seed_written === true;
   json(res, confirmed ? 200 : 502, {
     ...out,

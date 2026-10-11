@@ -135,7 +135,28 @@ async function main() {
     });
     process.exit(2);
   }
+  const requestedAccount = process.env.WELES_EXPECTED_ACCOUNT;
+  if (typeof requestedAccount !== 'string' || !requestedAccount.trim()) {
+    report({
+      ok: false,
+      blocked: 'expected_account_required',
+      detail: 'WELES_EXPECTED_ACCOUNT must name the requested mailbox account',
+    });
+    process.exit(2);
+  }
+  const expectedAccount = requestedAccount.trim();
   const login = loginMaterial(loginItem);
+  if (login.email.trim().toLowerCase() !== expectedAccount.toLowerCase()) {
+    report({
+      ok: false,
+      blocked: 'expected_account_mismatch',
+      login_item: loginItem,
+      expected_account: expectedAccount,
+      email: login.email,
+      detail: 'The selected login does not belong to the requested mailbox account',
+    });
+    process.exit(2);
+  }
   const session = await WSession.start({
     label: `${RUN}-${loginItem}`,
     browser: 'chromium',
@@ -154,7 +175,7 @@ async function main() {
     if (issued.blocked === 'google_push_approval_required') {
       const enrollment = JSON.stringify({
         action: 'google_authenticator_enrol',
-        params: { login_item: loginItem },
+        params: { login_item: loginItem, expected_account: expectedAccount },
         detached: true,
       });
       const resume = [
@@ -166,6 +187,8 @@ async function main() {
         loginItem,
         '--organization',
         organization,
+        '--account',
+        expectedAccount,
       ]
         .map((argument) => `'${argument.replaceAll("'", "'\\''")}'`)
         .join(' ');
@@ -174,6 +197,7 @@ async function main() {
     report({
       ok: false,
       login_item: loginItem,
+      expected_account: expectedAccount,
       email: login.email,
       ...issued,
       ...next,
@@ -185,6 +209,7 @@ async function main() {
     report({
       ok: false,
       login_item: loginItem,
+      expected_account: expectedAccount,
       email: login.email,
       app_password_created: true,
       ...handed,
@@ -195,6 +220,7 @@ async function main() {
     ok: true,
     login_item: loginItem,
     organization,
+    expected_account: expectedAccount,
     email: login.email,
     app_name: APP_NAME,
     skrzynka: handed.skrzynka,
