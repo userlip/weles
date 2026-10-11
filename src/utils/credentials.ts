@@ -205,8 +205,13 @@ export async function platformAdminSessionReady(
     return login
       ? { ready: true, source: `skarbiec:${service}` }
       : { ready: false, source: `skarbiec_grant_unavailable:${service}` };
-  } catch {
-    return { ready: false, source: `skarbiec_error:${service}` };
+  } catch (error) {
+    // The cause is part of the answer: "skarbiec_error" alone does not say
+    // whether the vault was locked, unreachable or refused the grant.
+    return {
+      ready: false,
+      source: `skarbiec_error:${service}: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
