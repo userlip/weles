@@ -13,6 +13,8 @@ try {
   const bearer = required('WELES_PUBLIC_TASK_BEARER');
   const taskId = required('WELES_RETENTION_TASK_ID');
   const expectedCause = required('WELES_EXPECTED_RETENTION_CAUSE');
+  const expectedOperation = required('WELES_EXPECTED_RETENTION_OPERATION');
+  const expectedResource = required('WELES_EXPECTED_RETENTION_RESOURCE');
   const expectedOrganization = required('WELES_RETENTION_ORGANIZATION');
   const expectedStatus = required('WELES_RETENTION_TASK_STATUS');
   assert.ok(!Object.hasOwn(TERMINAL_STATUSES, expectedStatus));
@@ -47,6 +49,8 @@ try {
   assert.equal(observed.value.receipt, undefined);
   assert.equal(typeof observed.value.evidenceError, 'string');
   assert.ok(observed.value.evidenceError.includes(expectedCause));
+  assert.ok(observed.value.evidenceError.includes(expectedOperation));
+  assert.ok(observed.value.evidenceError.includes(expectedResource));
   evidence.report.status = 'passed';
 } catch (error) {
   evidence.report.status = 'failed';

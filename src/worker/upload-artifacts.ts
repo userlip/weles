@@ -159,17 +159,19 @@ export async function putPrivateStadoObject(
       body: bytes as unknown as BodyInit,
     },
   );
-  const responseText = await response.text();
+  const responseText = await response.text().catch((cause) => {
+    throw new Error(`Stado object upload response read failed for ${uri} (HTTP ${response.status}): ${String(cause)}`, { cause });
+  });
   if (!response.ok) {
     throw new Error(
-      `Stado object upload failed (HTTP ${response.status}): ${responseText}`,
+      `Stado object upload failed for ${uri} (HTTP ${response.status}): ${responseText}`,
     );
   }
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(responseText) as Record<string, unknown>;
-  } catch {
-    throw new Error('Stado object upload returned invalid JSON');
+  } catch (cause) {
+    throw new Error(`Stado object upload receipt JSON read failed for ${uri} (HTTP ${response.status}): ${String(cause)}`, { cause });
   }
   const expectedSha256 = createHash('sha256').update(bytes).digest('hex');
   const keys = Object.keys(payload).sort().join(',');
@@ -228,14 +230,16 @@ export async function readPrivateStadoObjectIdentity(
       throw new Error(`Stado object readback response read failed for ${uri} (HTTP ${response.status}): ${String(cause)}`, { cause });
     });
     throw new Error(
-      `Stado object readback failed (HTTP ${response.status}): ${message}`,
+      `Stado object readback failed for ${uri} (HTTP ${response.status}): ${message}`,
     );
   }
   const hash = createHash('sha256');
   const reader = response.body.getReader();
   let bytes = 0;
   while (true) {
-    const chunk = await reader.read();
+    const chunk = await reader.read().catch((cause) => {
+      throw new Error(`Stado object readback stream failed for ${uri} (HTTP ${response.status}) after ${bytes} bytes: ${String(cause)}`, { cause });
+    });
     if (chunk.done) break;
     bytes += chunk.value.byteLength;
     if (bytes > maximumBytes) {
