@@ -110,28 +110,36 @@ type ManagedRuntimeReport = {
   detail?: string;
 };
 
-/// What the managed Weles API runtime on this host was built from, and which
-/// Brama alias it will ask for.
-///
-/// The runtime is one checkout under `~/.stado/build-work/weles-api-managed`
-/// whose revision the deployment records in `.weles-api-revision`, and
-/// `stado host weles-api-runtime` is what moves it. The declared revision is
-/// the one the deployment left in `WELES_API_DECLARED_REVISION` on the unit;
-/// a mismatch means the running checkout does not match the deployment.
-/// Repository package metadata alone does not establish runtime identity.
+// Compare the deployment's revision marker with its declaration; absence is
+// healthy only when no managed runtime is declared. This is metadata, not
+// proof that the browser or its dependencies work.
 function inspectManagedRuntime(): ManagedRuntimeReport {
   const root = join(homedir(), '.stado', 'build-work', 'weles-api-managed');
   const alias = process.env.WELES_AGENT_MODEL?.trim() || WELES_AGENT_MODEL;
-  const builtRevision = readRevisionMarker(join(root, '.weles-api-revision'));
   const declaredRevision = revision(process.env.WELES_API_DECLARED_REVISION);
-  if (!builtRevision) {
+  let builtRevision: string | null;
+  try {
+    builtRevision = readRevisionMarker(join(root, '.weles-api-revision'));
+  } catch (error) {
     return {
-      ok: true,
+      ok: false,
       root,
       builtRevision: null,
       declaredRevision,
       agentModelAlias: alias,
-      detail: 'this host runs no managed Weles API runtime',
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (!builtRevision) {
+    return {
+      ok: !declaredRevision,
+      root,
+      builtRevision: null,
+      declaredRevision,
+      agentModelAlias: alias,
+      detail: declaredRevision
+        ? `managed Weles API revision marker ${join(root, '.weles-api-revision')} is missing; cannot verify declared revision ${declaredRevision}`
+        : 'this host runs no managed Weles API runtime',
     };
   }
   if (!declaredRevision) {
@@ -171,9 +179,14 @@ function revision(value: string | undefined): string | null {
 
 function readRevisionMarker(path: string): string | null {
   try {
-    return revision(readFileSync(path, 'utf8'));
-  } catch {
-    return null;
+    const observed = revision(readFileSync(path, 'utf8'));
+    if (!observed) throw new Error('expected a full hexadecimal source revision');
+    return observed;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error(
+      `read managed Weles API revision marker ${path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
