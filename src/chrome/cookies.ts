@@ -101,8 +101,13 @@ export function listProfiles(): ChromeProfile[] {
     const p = join(CHROME_ROOT, entry);
     try {
       if (!statSync(p).isDirectory()) continue;
-    } catch {
-      continue;
+    } catch (error) {
+      // An entry that vanished between listing and stat is gone; one that
+      // cannot be examined may be the profile asked for and is refused.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw new Error(
+        `Chrome profile entry ${p} cannot be examined: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     if (!existsSync(join(p, 'Preferences'))) continue;
     const emails = getProfileEmails(p);
