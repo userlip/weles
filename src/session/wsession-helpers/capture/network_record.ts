@@ -96,7 +96,17 @@ export function attachCompleteNetRecord(
         postDataBase64: postBytes,
         postDataError,
       });
-    } catch {}
+    } catch (captureError) {
+      // A request that could not be described still happened: keep its trace.
+      reqs.push({
+        t: Date.now(),
+        phase: 'req_capture_failed',
+        error:
+          captureError instanceof Error
+            ? captureError.message
+            : String(captureError),
+      });
+    }
   });
   ctx.on('response', (resp) => {
     // Push metadata synchronously, hydrate body asynchronously. Prior version
@@ -168,7 +178,16 @@ export function attachCompleteNetRecord(
         url: req.url(),
         failure: req.failure(),
       });
-    } catch {}
+    } catch (captureError) {
+      reqs.push({
+        t: Date.now(),
+        phase: 'reqfailed_capture_failed',
+        error:
+          captureError instanceof Error
+            ? captureError.message
+            : String(captureError),
+      });
+    }
   });
   // WebSocket capture: every frame in both directions.
   (ctx as any).on?.('websocket', (sock: any) => {
