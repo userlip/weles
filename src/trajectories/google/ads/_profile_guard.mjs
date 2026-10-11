@@ -1,5 +1,9 @@
 import { execFileSync } from 'node:child_process';
 
+// pgrep answers no match with a non-zero exit and nothing on stderr; that is
+// the only failure that means "no such process". A pgrep that cannot run, or
+// one that says why it failed, is thrown with its cause: read as no process,
+// the guard let a second session open a profile a window already holds.
 function commandLinesMatching(pattern) {
   try {
     return execFileSync('pgrep', ['-fl', pattern], { encoding: 'utf8' })
@@ -7,7 +11,13 @@ function commandLinesMatching(pattern) {
       .map((line) => line.trim())
       .filter(Boolean)
       .filter((line) => !line.startsWith(`${process.pid} `));
-  } catch {
+  } catch (error) {
+    const said = typeof error?.stderr === 'string' ? error.stderr.trim() : '';
+    if (error?.code || said) {
+      throw new Error(
+        `cannot tell whether the Google Ads profile is already open: pgrep -fl ${pattern} failed: ${said || error.message}`,
+      );
+    }
     return [];
   }
 }
