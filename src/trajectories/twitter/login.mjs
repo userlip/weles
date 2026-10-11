@@ -147,7 +147,11 @@ try {
       );
       if (acct.id) await markCookiesStale(acct.id);
     }
-  } catch {}
+  } catch (persistError) {
+    // The ban signal file, the deactivation of a suspended account and the
+    // stale mark of a checkpointed one: whichever of them failed is said.
+    console.log('[ban-signal] persist err:', persistError.message);
+  }
   console.log('FAIL:', e.message);
   process.exitCode = 1;
 } finally {

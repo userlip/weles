@@ -310,7 +310,9 @@ try {
         2,
       ),
     );
-  } catch {}
+  } catch (persistError) {
+    console.log('[ban-signal] persist err:', persistError.message);
+  }
   console.error('FAIL:', e.message);
   process.exitCode = 1;
 } finally {
