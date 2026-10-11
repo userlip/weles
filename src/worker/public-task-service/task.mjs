@@ -77,7 +77,11 @@ export function createTaskOperations({
     let serviceIdentity;
     try {
       serviceIdentity = await currentServiceIdentity();
-    } catch {
+    } catch (error) {
+      // The public answer stays fixed; the service log carries the cause.
+      console.error(
+        `[public-task] service identity unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw new PublicTaskError(
         503,
         'service-not-ready',
@@ -97,7 +101,10 @@ export function createTaskOperations({
     let networkTarget;
     try {
       networkTarget = await resolveTarget(parsed.executionInput.url);
-    } catch {
+    } catch (error) {
+      console.error(
+        `[public-task] target refused: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw new PublicTaskError(
         403,
         'network-target-denied',
