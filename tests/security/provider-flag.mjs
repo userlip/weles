@@ -73,7 +73,17 @@ refuse(
 );
 refuse(
   ['app-password', '--run', 'run-test', '--provider', 'google'],
-  '--run reads a started run back and takes no --organization or --provider',
+  '--run',
+);
+const accountCreation = [
+  'app-password', '--provider', 'google',
+  '--login-item', 'test-login', '--organization', 'test-org',
+];
+refuse(accountCreation, '--account');
+refuse([...accountCreation, '--account', ' '], '--account');
+refuse(
+  ['app-password', '--run', 'run-test', '--account', 'mailbox@example.com'],
+  '--run',
 );
 refuse(
   ['account-security', '--login-role', 'test-role'],

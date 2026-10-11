@@ -65,16 +65,24 @@ export function validateAccountSecurityParams(
 export function validateAppPasswordParams(params: Record<string, unknown>): {
   loginItem: string;
   organization: string;
+  expectedAccount: string;
 } {
-  const { organization, ...login } = params ?? {};
+  if (!params || typeof params !== 'object' || Array.isArray(params)) {
+    throw new Error('app-password params must declare the login, organization and expected_account');
+  }
+  const { organization, expected_account: expectedAccount, ...login } = params;
   if (typeof organization !== 'string' || !organization.trim()) {
     throw new Error(
       'organization must name the Skrzynka organization the mailbox is declared in',
     );
   }
+  if (typeof expectedAccount !== 'string' || !expectedAccount.trim()) {
+    throw new Error('expected_account must name the Gmail account the mailbox belongs to');
+  }
   return {
     loginItem: googleLogin(login, ['login_role', 'login_item']),
     organization: organization.trim(),
+    expectedAccount: expectedAccount.trim(),
   };
 }
 
@@ -111,11 +119,18 @@ export function applyAccountAndTaskAdmission(
     // The enrolment acts on the Skarbiec login itself: it is what gains the
     // seed, whether or not a subscription or a mailbox rides on it yet.
     env.WELES_LOGIN_ITEM = googleLogin(params);
+    if (params.expected_account !== undefined) {
+      if (typeof params.expected_account !== 'string' || !params.expected_account.trim()) {
+        throw new Error('expected_account must name the Google account to enroll');
+      }
+      env.WELES_EXPECTED_ACCOUNT = params.expected_account.trim();
+    }
   }
   if (trajPath.endsWith('/google/app_password/create.mjs')) {
-    const { loginItem, organization } = validateAppPasswordParams(params);
+    const { loginItem, organization, expectedAccount } = validateAppPasswordParams(params);
     env.WELES_LOGIN_ITEM = loginItem;
     env.SKRZYNKA_ORGANIZATION = organization;
+    env.WELES_EXPECTED_ACCOUNT = expectedAccount;
   }
   if (trajPath.endsWith('/google/authenticator/status.mjs')) {
     env.WELES_LOGIN_ITEM = validateAccountSecurityParams(params);

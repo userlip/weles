@@ -10,7 +10,7 @@ export type AppPasswordRun = {
   action: 'google_app_password';
   status: string;
   completed_at: string | null;
-  params: { login_role?: string; login_item?: string; organization?: string };
+  params: { login_role?: string; login_item?: string; organization?: string; expected_account?: string };
   ok: boolean | null;
   stdout: string | null;
   error: string | null;
@@ -48,8 +48,8 @@ function parseRun(value: unknown): AppPasswordRun {
  */
 export async function appPasswordRun(
   input:
-    | { loginRole: string; organization: string }
-    | { loginItem: string; organization: string }
+    | { loginRole: string; organization: string; expectedAccount: string }
+    | { loginItem: string; organization: string; expectedAccount: string }
     | { runId: string },
   options: WelesApiOptions = {},
 ): Promise<AppPasswordRun> {
@@ -68,6 +68,8 @@ export async function appPasswordRun(
         : input.runId
   ).trim();
   const organization = 'organization' in input ? input.organization.trim() : '';
+  const expectedAccount = 'expectedAccount' in input ? input.expectedAccount.trim() : '';
+  if (creating && !expectedAccount) throw new Error('expected_account_required');
   if (creating && !organization) throw new Error('organization_required');
   if (!value) throw new Error(`${selector}_required`);
   const path = creating
@@ -86,7 +88,7 @@ export async function appPasswordRun(
         ? {
             body: JSON.stringify({
               action: 'google_app_password',
-              params: { [selector]: value, organization },
+              params: { [selector]: value, organization, expected_account: expectedAccount },
               detached: true,
             }),
           }
@@ -130,6 +132,10 @@ export async function appPasswordRun(
       selector === 'run_id' ? row.id !== value : row.params[selector] !== value
     )
       throw new Error('Weles returned a different app-password request');
+    if (creating && (
+      row.params.organization !== organization ||
+      row.params.expected_account !== expectedAccount
+    )) throw new Error('Weles returned a different app-password organization or expected account');
     return row;
   } catch (cause) {
     const error = cause instanceof Error ? cause.message : String(cause);

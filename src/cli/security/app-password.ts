@@ -17,17 +17,19 @@ export async function runAppPassword(parsed: ParsedCli): Promise<void> {
         key !== 'login-item' &&
         key !== 'run' &&
         key !== 'organization' &&
+        key !== 'account' &&
         key !== 'json',
     )
   ) {
     throw new UsageError(
-      'app-password accepts --provider with --login-role or --login-item and --organization, or --run, and --json',
+      'app-password accepts --provider with --login-role or --login-item, --organization and --account, or --run, and --json',
     );
   }
   const loginRole = parsed.options['login-role'];
   const loginItem = parsed.options['login-item'];
   const runId = parsed.options.run;
   const organization = parsed.options.organization;
+  const expectedAccount = parsed.options.account;
   if (
     Number(loginRole !== undefined) +
       Number(loginItem !== undefined) +
@@ -53,10 +55,10 @@ export async function runAppPassword(parsed: ParsedCli): Promise<void> {
   }
   if (
     runId !== undefined &&
-    (organization !== undefined || parsed.options.provider !== undefined)
+    (organization !== undefined || parsed.options.provider !== undefined || expectedAccount !== undefined)
   ) {
     throw new UsageError(
-      '--run reads a started run back and takes no --organization or --provider',
+      '--run reads a started run back and takes no --organization, --provider or --account',
     );
   }
   if (runId === undefined && parsed.options.provider !== PROVIDER) {
@@ -64,11 +66,17 @@ export async function runAppPassword(parsed: ParsedCli): Promise<void> {
       `app-password needs --provider naming the identity provider that issues it; Weles issues through ${PROVIDER}`,
     );
   }
+  if (
+    runId === undefined &&
+    (typeof expectedAccount !== 'string' || !expectedAccount.trim())
+  ) {
+    throw new UsageError('--account must name the Gmail account the mailbox belongs to');
+  }
   const input =
     typeof loginRole === 'string'
-      ? { loginRole, organization: organization as string }
+      ? { loginRole, organization: organization as string, expectedAccount: expectedAccount as string }
       : typeof loginItem === 'string'
-        ? { loginItem, organization: organization as string }
+        ? { loginItem, organization: organization as string, expectedAccount: expectedAccount as string }
         : { runId: runId as string };
   const row = await appPasswordRun(input);
   printAnswer(row, parsed.options.json === true);
