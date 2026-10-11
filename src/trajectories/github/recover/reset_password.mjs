@@ -61,7 +61,9 @@ if (!/@wisentmedia\.com$/i.test(email)) {
         2,
       ),
     );
-  } catch {}
+  } catch (e) {
+    console.log('[ban-signal] persist err:', e.message);
+  }
   console.log(
     `FAIL: account ${acct.username} email ${email} not on wisentmedia.com — cannot claim reset link via Resend`,
   );
@@ -235,7 +237,9 @@ try {
         2,
       ),
     );
-  } catch {}
+  } catch (persistError) {
+    console.log('[ban-signal] persist err:', persistError.message);
+  }
   console.log(`FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {
