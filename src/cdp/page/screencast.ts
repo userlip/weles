@@ -90,7 +90,18 @@ export class CDPScreencast {
     }
     this._conn.off('Page.screencastFrame', this._listener, this._sid);
     if (this._frameCount === 0) return null;
-    const videoPath = this._stitch();
+    let videoPath: string;
+    try {
+      videoPath = this._stitch();
+    } catch (error) {
+      // Page close is the one caller and closes the target regardless, so
+      // the recording's loss and its cause are said here, with the frames
+      // left in place for a later stitch.
+      console.error(
+        `[async_api] recording of session ${this._sid} could not be stitched; its frames stay in ${this._frameDir}: ${error}`,
+      );
+      throw error;
+    }
     // The frames are the video's raw material, not evidence of their own,
     // and they are large: a ninety-second capture leaves several thousand
     // PNGs beside the WebM they became.
