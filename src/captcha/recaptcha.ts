@@ -146,7 +146,13 @@ export async function solveRecaptchaV2(page: Page): Promise<boolean> {
         page as unknown as ScreenshottablePage,
         prompt,
         pageScreenshot,
-      ).catch(() => '');
+      ).catch((visionError: unknown) => {
+        // No positions follow, so no tile is clicked this attempt; say why.
+        console.log(
+          `[recaptcha] vision model gave no answer (attempt ${attempt}): ${visionError instanceof Error ? visionError.message : String(visionError)}`,
+        );
+        return '';
+      });
       positions = parsePositions(answer);
       if (positions)
         console.log(`[recaptcha] Model: ${JSON.stringify(positions)}`);
