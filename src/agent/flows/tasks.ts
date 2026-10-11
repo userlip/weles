@@ -48,31 +48,38 @@ export class Trajectory {
     this.lastValue = data.lastValue ?? null;
   }
 
+  // The cache only saves a rediscovery: a missing entry is normal, but an
+  // entry that cannot be read, written or removed is said, since the next
+  // run silently rediscovering or reusing a stale route has a cause.
   static load(service: string): Trajectory | null {
+    const path = join(cacheDir(), `${service}.json`);
     try {
-      const raw = readFileSync(join(cacheDir(), `${service}.json`), 'utf-8');
-      return new Trajectory(JSON.parse(raw));
-    } catch {
+      return new Trajectory(JSON.parse(readFileSync(path, 'utf-8')));
+    } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.log(`[task] ${service}: trajectory cache ${path} cannot be read: ${String(e)}`);
+      }
       return null;
     }
   }
 
   save(): void {
+    const path = join(cacheDir(), `${this.service}.json`);
     try {
-      writeFileSync(
-        join(cacheDir(), `${this.service}.json`),
-        JSON.stringify(this, null, 2),
-      );
-    } catch {
-      /* skip */
+      writeFileSync(path, JSON.stringify(this, null, 2));
+    } catch (e: unknown) {
+      console.log(`[task] ${this.service}: trajectory cache ${path} cannot be written: ${String(e)}`);
     }
   }
 
   static invalidate(service: string): void {
+    const path = join(cacheDir(), `${service}.json`);
     try {
-      unlinkSync(join(cacheDir(), `${service}.json`));
-    } catch {
-      /* skip */
+      unlinkSync(path);
+    } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.log(`[task] ${service}: stale trajectory cache ${path} cannot be removed: ${String(e)}`);
+      }
     }
   }
 }
@@ -249,7 +256,8 @@ export class FetchAccountValue {
   private _loadCookies(): any[] | null {
     try {
       return new SessionStore().loadCookies(this.service);
-    } catch {
+    } catch (e: unknown) {
+      console.log(`[task] ${this.service}: saved session cannot be loaded, logging in afresh: ${String(e)}`);
       return null;
     }
   }
@@ -257,16 +265,16 @@ export class FetchAccountValue {
   private _saveCookies(cookies: any[]): void {
     try {
       new SessionStore().saveCookies(this.service, cookies);
-    } catch {
-      /* skip */
+    } catch (e: unknown) {
+      console.log(`[task] ${this.service}: session cannot be saved, the next run logs in again: ${String(e)}`);
     }
   }
 
   private _clearCookies(): void {
     try {
       new SessionStore().saveCookies(this.service, []);
-    } catch {
-      /* skip */
+    } catch (e: unknown) {
+      console.log(`[task] ${this.service}: rejected session cannot be cleared: ${String(e)}`);
     }
   }
 }
