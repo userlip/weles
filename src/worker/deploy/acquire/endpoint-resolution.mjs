@@ -8,38 +8,43 @@ import * as net from 'node:net';
  * @returns {Promise<boolean>} true if listening
  */
 export async function isEndpointListening(urlString) {
+  // A value that is not a URL, or names no valid port, is a configuration
+  // error and is thrown as one, never reported as an endpoint not listening.
+  let url;
   try {
-    const url = new URL(urlString);
-    const host = url.hostname;
-    const port = parseInt(
-      url.port || (url.protocol === 'https:' ? '443' : '80'),
-      10,
+    url = new URL(urlString);
+  } catch (error) {
+    throw new Error(
+      `endpoint ${JSON.stringify(urlString)} is not a URL: ${error.message}`,
     );
-
-    if (isNaN(port) || port < 1 || port > 65535) {
-      return false;
-    }
-
-    const { promise, resolve } = Promise.withResolvers();
-    const socket = new net.Socket();
-
-    socket.on('connect', () => {
-      socket.destroy();
-      resolve(true);
-    });
-
-    socket.on('error', (error) => {
-      console.log(
-        `[endpoint] ${host}:${port} not listening: ${error.code ?? error.message}`,
-      );
-      resolve(false);
-    });
-
-    socket.connect(port, host);
-    return promise;
-  } catch {
-    return false;
   }
+  const host = url.hostname;
+  const port = parseInt(
+    url.port || (url.protocol === 'https:' ? '443' : '80'),
+    10,
+  );
+
+  if (isNaN(port) || port < 1 || port > 65535) {
+    throw new Error(`endpoint ${urlString} names no valid TCP port`);
+  }
+
+  const { promise, resolve } = Promise.withResolvers();
+  const socket = new net.Socket();
+
+  socket.on('connect', () => {
+    socket.destroy();
+    resolve(true);
+  });
+
+  socket.on('error', (error) => {
+    console.log(
+      `[endpoint] ${host}:${port} not listening: ${error.code ?? error.message}`,
+    );
+    resolve(false);
+  });
+
+  socket.connect(port, host);
+  return promise;
 }
 
 /**
