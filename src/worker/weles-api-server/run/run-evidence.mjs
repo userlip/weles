@@ -202,7 +202,13 @@ export function diagnosticFile(runId, requestedPath) {
     if (!real.startsWith(`${root}${sep}`)) return null;
     const stat = statSync(real);
     return { path: real, stat };
-  } catch {
-    return null;
+  } catch (error) {
+    // Only a missing file is not found. One that cannot be examined is thrown
+    // with its path: read as absent, an unreadable credential_capture.json made
+    // a captured credential read as 'no matching Skarbiec capture evidence'.
+    if (error?.code === 'ENOENT') return null;
+    throw new Error(
+      `diagnostic file ${candidate} cannot be examined: ${error?.message ?? String(error)}`,
+    );
   }
 }
