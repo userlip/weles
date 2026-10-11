@@ -302,7 +302,13 @@ export async function persistFreshCookieJar(
         username: decodeURIComponent(u.username || ''),
         password: decodeURIComponent(u.password || ''),
       };
-    } catch {}
+    } catch (error) {
+      // The cookies are still persisted; the account keeps its previous proxy,
+      // and that the minting proxy could not be recorded is said, not dropped.
+      console.error(
+        `[cookie-freshness] account ${acct.id}: minting proxy not recorded, its URL does not parse: ${error?.message ?? error}`,
+      );
+    }
   }
   // Clear cookies_stale_at — the whole point of persisting fresh cookies is
   // they're no longer stale. getSocialAccount and the routine selector skip
