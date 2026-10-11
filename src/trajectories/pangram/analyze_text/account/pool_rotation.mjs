@@ -3,7 +3,8 @@
 // reads exactly the ledger the recording writes, so two files could never
 // disagree about what an exhausted account means.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   getSocialAccount,
@@ -31,21 +32,31 @@ function accountDomain(acct) {
   return hit?.[1] || 'unknown';
 }
 
+// Under the user's home (HOME, else the user database): the working directory
+// gave every run started elsewhere an empty ledger, so exhausted accounts read
+// as fresh.
 function usageLedgerPath() {
   return (
     process.env.PANGRAM_ACCOUNT_USAGE_FILE ||
-    join(
-      process.env.HOME || process.cwd(),
-      '.weles',
-      'pangram-account-usage.json',
-    )
+    join(homedir(), '.weles', 'pangram-account-usage.json')
   );
 }
 
+// A ledger that does not exist is an empty one. Any other read failure is
+// thrown with its path: `existsSync` answers false for a ledger it cannot
+// reach, and every exhausted account then read as fresh.
 function readUsageLedger() {
   const path = usageLedgerPath();
-  if (!existsSync(path)) return {};
-  const parsed = JSON.parse(readFileSync(path, 'utf8'));
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return {};
+    throw new Error(
+      `cannot read the Pangram account usage ledger ${path}: ${error.message}`,
+    );
+  }
+  const parsed = JSON.parse(text);
   return parsed && typeof parsed === 'object' ? parsed : {};
 }
 

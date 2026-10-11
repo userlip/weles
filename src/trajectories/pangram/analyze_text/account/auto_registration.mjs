@@ -8,25 +8,36 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { todayKey } from './pool_rotation.mjs';
 import { statedBudget } from '../../../_shared/inputs/stated.mjs';
 
+// Under the user's home (HOME, else the user database): the working directory
+// gave every run started elsewhere a fresh ledger, and with it a fresh daily
+// registration budget.
 function autoRegisterLedgerPath() {
   return (
     process.env.PANGRAM_AUTO_REGISTER_LEDGER_FILE ||
-    join(
-      process.env.HOME || process.cwd(),
-      '.weles',
-      'pangram-auto-register.json',
-    )
+    join(homedir(), '.weles', 'pangram-auto-register.json')
   );
 }
 
+// A ledger that does not exist is an empty one. Any other read failure is
+// thrown with its path: `existsSync` answers false for a ledger it cannot
+// reach, and the day's registrations then counted from zero.
 export function readAutoRegisterLedger() {
   const path = autoRegisterLedgerPath();
-  if (!existsSync(path)) return {};
-  const parsed = JSON.parse(readFileSync(path, 'utf8'));
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return {};
+    throw new Error(
+      `cannot read the Pangram auto-register ledger ${path}: ${error.message}`,
+    );
+  }
+  const parsed = JSON.parse(text);
   return parsed && typeof parsed === 'object' ? parsed : {};
 }
 
@@ -58,9 +69,10 @@ async function runPangramRegisterChild(reason, mode) {
     };
   }
 
+  // Beside this module, not under whatever directory the run started from.
   const script =
     process.env.PANGRAM_REGISTER_SCRIPT ||
-    join(process.cwd(), 'src/trajectories/pangram/register.mjs');
+    join(import.meta.dirname, '..', '..', 'register.mjs');
   if (!existsSync(script)) {
     return { success: false, reason: `register_script_not_found:${script}` };
   }
