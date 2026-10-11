@@ -70,18 +70,27 @@ export interface RunProvenance {
 
 // Decode the captcha/challenge outcome (type, grid, objects, verdicts, whether
 // LinkedIn accepted) from the run's HAR — the only artifact that carries the
-// reCAPTCHA response bodies. Best-effort; null when no HAR or no challenge.
+// reCAPTCHA response bodies. No HAR, or no challenge in it, is no outcome; a
+// HAR that cannot be read, has no entries or cannot be analysed is a failure
+// named as such, not taken for a run that met no challenge.
 export async function readChallengeOutcome(
   runId: string,
-): Promise<ChallengeOutcome | null> {
+): Promise<{ outcome: ChallengeOutcome | null; failure: string | null }> {
   const har = await readJsonInRun(runId, 'session.har');
-  const entries = har.value?.log?.entries;
-  if (!Array.isArray(entries)) return null;
+  if (har.failure) return { outcome: null, failure: har.failure };
+  if (!har.value) return { outcome: null, failure: null };
+  const entries = har.value.log?.entries;
+  if (!Array.isArray(entries)) {
+    return { outcome: null, failure: 'session.har has no log.entries array' };
+  }
   try {
     const co = analyzeChallengeOutcome(entries);
-    return co.present ? co : null;
-  } catch {
-    return null;
+    return { outcome: co.present ? co : null, failure: null };
+  } catch (error) {
+    return {
+      outcome: null,
+      failure: `session.har could not be analysed: ${(error as Error).message}`,
+    };
   }
 }
 
@@ -126,7 +135,9 @@ export async function importRunProvenance(
     out.session = {
       // An unreadable meta file is named as such, not taken for a run that
       // died before any session existed.
-      ...(meta.failure ? { meta_unreadable: meta.failure } : { meta_missing: true }),
+      ...(meta.failure
+        ? { meta_unreadable: meta.failure }
+        : { meta_missing: true }),
       proxy_requested:
         (params as Record<string, unknown> | undefined)?.proxy_url_override ??
         null,
@@ -152,7 +163,10 @@ export async function importRunProvenance(
     (out.session as Record<string, unknown>).real_chrome_unreadable =
       chrome.failure;
   }
-  const co = await readChallengeOutcome(runId);
-  if (co) out.challenge_outcome = co;
+  const challenge = await readChallengeOutcome(runId);
+  if (challenge.outcome) out.challenge_outcome = challenge.outcome;
+  else if (challenge.failure && out.session)
+    (out.session as Record<string, unknown>).challenge_outcome_unreadable =
+      challenge.failure;
   return out;
 }
