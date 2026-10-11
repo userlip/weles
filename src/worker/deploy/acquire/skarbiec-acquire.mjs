@@ -7,6 +7,7 @@ import {
   resolveSkarbiecEndpoint,
   formatEndpointErrorMessage,
 } from './endpoint-resolution.mjs';
+import { acquisitionPost, readRefusalDetail } from './transport.mjs';
 
 // A refusal whose cause the caller must act on differently ends with one
 // machine line naming that cause (refused, scope_not_declared,
@@ -174,34 +175,14 @@ if (workloadSignature.length !== 128 || !validHex) {
   throw new Error('invalid Skarbiec workload proof signature');
 }
 
-// The authority's refusal is the diagnosis: a bare "HTTP 403" cannot tell an
-// unregistered consumer from a grant whose action, audience or window does not
-// cover this read, and the caller collapsed even that into one sentence. The body
-// of a refusal carries the authority's reason and never carries a field value —
-// a successful read is the only response that does, and it is not routed here —
-// but any `value` key is dropped anyway before the text is repeated.
 async function refuse(stage, response, consumer, item, field) {
-  let detail = '';
-  try {
-    const text = await response.text();
-    detail = text
-      .replace(/"value"\s*:\s*"(?:[^"\\]|\\.)*"/g, '"value":"<redacted>"')
-      .replace(/\s+/g, ' ')
-      .trim();
-  } catch {
-    detail = '<body unreadable>';
-  }
+  const detail = await readRefusalDetail(response);
   const reason = REFUSAL_BY_STATUS[response.status] ?? 'refused';
   stop(
     reason,
     `Skarbiec ${stage} at ${endpoint.origin} refused ${consumer} for ${item}#${field}: HTTP ${response.status}` +
       `${detail ? ` ${detail}` : ''}` +
-      // The issue call carries no bearer: the authority authorizes the tuple
-      // (X-Consumer, item, field, workload_id, timestamp, nonce, Ed25519 signature).
-      // A 401 therefore means the authority holds no token whose consumer, capability
-      // and workload binding cover that tuple, so the workload identity this client
-      // asserted has to be visible next to the refusal — it is a name, not a secret,
-      // and without it the only unchecked half of the comparison stays invisible.
+      // The workload identity is public proof context, not a bearer or secret.
       ` [asserted workload_id=${workloadId}, proof over ${consumer}\0${item}\0${field}]`,
   );
 }
@@ -226,22 +207,7 @@ const commonHeaders = {
   'Content-Type': 'application/json',
   'X-Consumer': consumer,
 };
-// A dead endpoint and a refusing endpoint are different faults and were reported
-// the same way: the launcher can export an authority nobody serves, and the caller
-// then read "unauthorized" from whichever other authority answered, or an opaque
-// fetch error. Name the endpoint and the reason it could not be reached.
-async function post(path, headers, payload) {
-  const target = new URL(path, endpoint);
-  try {
-    return await fetch(target, { method: 'POST', headers, body: payload });
-  } catch (cause) {
-    stop(
-      'authority_unreachable',
-      `Skarbiec at ${endpoint.origin} is unreachable for ${consumer} on ${item}#${field}` +
-        ` (${path}): ${cause?.cause?.code ?? cause?.code ?? String(cause)}`,
-    );
-  }
-}
+const post = acquisitionPost({ endpoint, consumer, item, field, stop });
 
 const issueResponse = await post('/v1/acquisitions', commonHeaders, issueBody);
 if (!issueResponse.ok) {
