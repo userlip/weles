@@ -33,12 +33,23 @@ export const PREDECESSORS = Object.freeze([
   'com.wisent.compute.service.weles-release-cutover',
 ]);
 
+// Whether launchctl accepted the command, and its own words when it did not.
+// A launchctl that cannot be started at all is thrown: every answer it would
+// have given about the predecessors is unknown, not "absent".
 function launchctl(args) {
   try {
-    execFileSync('/bin/launchctl', args, { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
+    execFileSync('/bin/launchctl', args, {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      encoding: 'utf8',
+    });
+    return { ok: true, detail: null };
+  } catch (error) {
+    if (error.status == null)
+      throw new Error(`/bin/launchctl could not run: ${error.message}`);
+    return {
+      ok: false,
+      detail: `launchctl ${args.join(' ')} exited ${error.status}: ${String(error.stderr).trim()}`,
+    };
   }
 }
 
@@ -57,7 +68,7 @@ export function retirePredecessors(environment = process.env) {
   const retired = [];
   for (const label of PREDECESSORS) {
     const plist = join(agents, `${label}.plist`);
-    if (!launchctl(['print', `${domain}/${label}`]) && !existsSync(plist)) {
+    if (!launchctl(['print', `${domain}/${label}`]).ok && !existsSync(plist)) {
       const daemon = join('/Library/LaunchDaemons', `${label}.plist`);
       if (existsSync(daemon)) {
         console.error(
@@ -66,7 +77,15 @@ export function retirePredecessors(environment = process.env) {
       }
       continue;
     }
-    launchctl(['bootout', `${domain}/${label}`]);
+    const bootout = launchctl(['bootout', `${domain}/${label}`]);
+    if (!bootout.ok && launchctl(['print', `${domain}/${label}`]).ok) {
+      // Still loaded after a refused bootout: it keeps running beside this
+      // process, so it is neither removed nor reported retired.
+      console.error(
+        `[weles-api] ${label} could not be booted out and still runs beside this one: ${bootout.detail}`,
+      );
+      continue;
+    }
     try {
       rmSync(plist, { force: true });
       console.log(
