@@ -133,15 +133,15 @@ export async function retainedWithheldEdges(files) {
     const lines = (await readFile(file.fullPath, 'utf8'))
       .split(/\r?\n/)
       .filter(Boolean);
-    for (const line of lines) {
+    for (const [index, line] of lines.entries()) {
       try {
         const edge = JSON.parse(line);
         if (!isObject(edge)) throw new Error('edge is not an object');
         edges.push(edge);
-      } catch {
+      } catch (error) {
         throw new EvidenceRetentionError(
           'withheld-edge-malformed',
-          `withheld-edge evidence is not valid NDJSON: ${file.path}`,
+          `withheld-edge evidence is not valid NDJSON: ${file.path} record ${index + 1}: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
