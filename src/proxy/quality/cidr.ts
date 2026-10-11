@@ -8,7 +8,11 @@
 // markBurnedIp records every level so isIpBurned can answer at whichever
 // granularity the platform actually gates on.
 
-const ASN_CACHE_PATH = `${process.env.HOME ?? ''}/.weles/asn_cache.json`;
+import { homedir } from 'node:os';
+
+// os.homedir(), not HOME with an empty default: an empty HOME put the cache
+// at /.weles, where every write fails.
+const ASN_CACHE_PATH = `${homedir()}/.weles/asn_cache.json`;
 
 export function isIpv4(ip: string): boolean {
   return (
@@ -129,7 +133,7 @@ export function recordProbe(
   try {
     const { mkdirSync, appendFileSync } = require('node:fs');
     const { dirname } = require('node:path');
-    const fp = `${process.env.HOME ?? ''}/.weles/linkedin_probe_ledger.jsonl`;
+    const fp = `${homedir()}/.weles/linkedin_probe_ledger.jsonl`;
     mkdirSync(dirname(fp), { recursive: true });
     const ck = cidrKeys(ip);
     const row = {
@@ -142,7 +146,11 @@ export function recordProbe(
       bytes: bytes ?? null,
     };
     appendFileSync(fp, JSON.stringify(row) + '\n');
-  } catch {
-    /* best-effort diagnostic */
+  } catch (error: unknown) {
+    // The ledger is how the clean-versus-burned rate is measured; a lost row
+    // is said, so a gap in the trail is not read as no probes.
+    console.error(
+      `[cidr] probe ledger write failed for ${ip}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
