@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { ChildProcess, execFile } from 'node:child_process';
+import { ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -25,6 +25,7 @@ import {
   MODERN_API_HOOKS_SCRIPT,
   SURFACE_INVENTORY_SCRIPT,
 } from './init_scripts.js';
+import { closeWithProfileCleanup } from './teardown/context-close.js';
 
 export async function launchChromiumContext(
   input: ContextLaunchInput & {
@@ -236,43 +237,7 @@ export async function launchChromiumContext(
     context.setDefaultNavigationTimeout(0);
     context.setDefaultTimeout(0);
     console.log(`[async_api] Context created`);
-    const origClose = context.close.bind(context);
-    context.close = async () => {
-      // Graceful close first so a persistent profile is flushed. A crashed
-      // Chromium closes its protocol pipe, which Playwright reports as a
-      // rejected close; that is logged by name and the reap below finishes it.
-      await origClose().catch((error: Error) =>
-        console.log(
-          `[async_api] browser_context_close_failed: ${error.message}`,
-        ),
-      );
-      await pwBrowser
-        ?.close()
-        .catch((error: Error) =>
-          console.log(`[async_api] browser_close_failed: ${error.message}`),
-        );
-      // Backstop reap: kill THIS run's Chromium tree by its unique
-      // --weles-fingerprint=<fpDir> arg. Concurrency-safe — the fpDir basename
-      // is unique per launch, so this never touches a sibling run's browser.
-      // No-op if the graceful close already terminated it.
-      try {
-        const tag = fpDir.split('/').pop(); // e.g. weles-fp-Pf0jrD — unique per run
-        if (tag)
-          await new Promise<void>((res) =>
-            execFile('pkill', ['-f', tag], () => res()),
-          );
-      } catch {
-        /* pkill unavailable / nothing to kill */
-      }
-      try {
-        rmSync(fpDir, { recursive: true, force: true });
-      } catch (error) {
-        // force: true already absorbs a missing directory, so this is real.
-        console.log(
-          `[async_api] fingerprint_dir_remove_failed ${fpDir}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    };
+    closeWithProfileCleanup(context, pwBrowser, fpDir);
     // Init-script injections. Chrome 147 stubs are fingerprint-parity shims;
     // page diagnostics are disabled for sensitive flows such as LinkedIn
     // register because wrappers/traps are visible to page JavaScript.
