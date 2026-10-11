@@ -224,7 +224,9 @@ export async function readPrivateStadoObjectIdentity(
     },
   );
   if (!response.ok || !response.body) {
-    const message = await response.text().catch(() => '');
+    const message = await response.text().catch((cause) => {
+      throw new Error(`Stado object readback response read failed for ${uri} (HTTP ${response.status}): ${String(cause)}`, { cause });
+    });
     throw new Error(
       `Stado object readback failed (HTTP ${response.status}): ${message}`,
     );
@@ -279,8 +281,8 @@ async function collectTree(
   let entries: Awaited<ReturnType<typeof readdir>> = [];
   try {
     entries = (await readdir(root, { withFileTypes: true } as any)) as any;
-  } catch {
-    return;
+  } catch (cause) {
+    throw new Error(`Artifact directory read failed for ${root}: ${String(cause)}`, { cause });
   }
   for (const e of entries as any[]) {
     const name = e.name as string;
@@ -354,8 +356,9 @@ async function writeUploadProof(
   const manifest: string[] = [];
   let totalBytes = 0;
   for (const f of files) {
-    const info = await stat(f.path).catch(() => null);
-    if (!info) return; // a collected file vanished mid-upload: no proof
+    const info = await stat(f.path).catch((cause) => {
+      throw new Error(`Artifact proof stat failed for ${f.path}: ${String(cause)}`, { cause });
+    });
     totalBytes += info.size;
     manifest.push(`${f.rel}:${info.size}`);
   }
