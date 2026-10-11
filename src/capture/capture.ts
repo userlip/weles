@@ -24,6 +24,8 @@ export interface ResponseRecord {
   method: string;
   status: number;
   body: string;
+  /** Why `body` is empty when CDP could not return it (streamed, evicted, closed). */
+  bodyError?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,12 +102,13 @@ export class Capture {
             body: bodyResult?.body ?? '',
           });
         })
-        .catch(() => {
+        .catch((e: any) => {
           this.responseBodies.push({
             url: resp.url ?? req.url ?? '',
             method: req.method ?? 'GET',
             status: resp.status ?? 0,
             body: '',
+            bodyError: String(e?.message),
           });
         });
     });
