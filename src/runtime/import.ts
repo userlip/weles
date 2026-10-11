@@ -144,9 +144,13 @@ export async function importWelesTrajectoryFile(
   targetHost: string,
   options: WelesImportClientOptions = {},
 ): Promise<WelesImportReport> {
-  const metadata = await stat(path).catch(() => null);
-  if (!metadata?.isFile())
-    throw new Error(`trajectory export is not a readable file: ${path}`);
+  const metadata = await stat(path).catch((error: unknown) => {
+    throw new Error(
+      `trajectory export ${path} cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+  if (!metadata.isFile())
+    throw new Error(`trajectory export is not a regular file: ${path}`);
   if (metadata.size > MAX_IMPORT_BYTES)
     throw new Error('trajectory export exceeds 2 MiB');
   const bytes = await readFile(path);
