@@ -255,7 +255,7 @@ export const BROWSER_TOOLS: readonly FunctionTool[] = [
   ),
   browserTool(
     'check_email',
-    'Poll for the authorized email verification code.',
+    'Read the newest mail Skrzynka holds for the address (optionally from a sender containing the hint) and return its verification code.',
     { email: TEXT, sender: TEXT },
   ),
   browserTool(

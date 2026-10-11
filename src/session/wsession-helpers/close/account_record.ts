@@ -5,10 +5,9 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { markSignupSuccess } from '../../../utils/email/domain.js';
 import {
-  getReceived,
-  listReceived,
-  receivingConfigured,
-} from '../../../utils/email/resend-receiving.js';
+  messagesTo,
+  type InboxMessage,
+} from '../../../utils/email/skrzynka-inbox.js';
 import type { WSession } from '../../wsession.js';
 import { putAccount } from '../../../state/skarbiec-records.js';
 import { recordingsDir } from './fingerprint_capture.js';
@@ -31,26 +30,18 @@ export async function wsCheckEmail(
   email: string,
   sender: string,
 ): Promise<string> {
-  if (!receivingConfigured())
-    return 'error: the wisent-integrations inbox route (STADO_INTEGRATION_API_URL, WELES_STADO_INTEGRATION_TOKEN) is not configured';
   const addr = s.resolveEnv(email).toLowerCase();
   const senderHint = sender.toLowerCase();
-  const earliestAcceptMs = Date.now() - 90_000;
-  for (const em of (await listReceived(10, addr)).data) {
-    const to = (em.to ?? []).map((t: any) =>
-      (typeof t === 'string' ? t : (t.email ?? '')).toLowerCase(),
-    );
-    if (!to.includes(addr)) continue;
-    if (senderHint && !(em.from ?? '').toLowerCase().includes(senderHint))
-      continue;
-    const emAt = em.created_at ? new Date(em.created_at).getTime() : 0;
-    if (emAt < earliestAcceptMs) continue;
-    const d = (await getReceived(em.id)) as {
-      subject?: string;
-      text?: string;
-      html?: string;
-    };
-    const content = `${d.subject ?? ''}\n${d.text ?? ''}\n${d.html ?? ''}`;
+  // Skrzynka answers the newest first; every branch below returns with the
+  // first message, so the code read is the one most recently mailed.
+  let messages: InboxMessage[];
+  try {
+    messages = await messagesTo(addr, senderHint);
+  } catch (error) {
+    return `error: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  for (const em of messages) {
+    const content = `${em.subject}\n${em.body_text}`;
     const verificationMatch = content.match(
       /https:\/\/api-dashboard\.search\.brave\.com\/verification[^\s"'<>\]]+/,
     );
