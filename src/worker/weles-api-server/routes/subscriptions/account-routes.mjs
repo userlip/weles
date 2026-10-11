@@ -161,9 +161,13 @@ export async function respondToAcquire(req, res) {
     );
     return;
   }
+  // The request names Brama's correlation id, not a member: the member is
+  // `<provider>-<account>`, known only once the run has created the account,
+  // and travels in the run's own answer as `subscription_id`. The correlation
+  // id goes back as `request_id`, so it can never take the member's place.
   const identity = {
     provider,
-    subscription_id: subscriptionId,
+    request_id: subscriptionId,
     plan_tier: planTier,
     source_revision: RUN_RELEASE_IDENTITY.source_revision,
   };
@@ -179,6 +183,7 @@ export async function respondToAcquire(req, res) {
       }),
     (said) => ({
       account: said.account,
+      subscription_id: said.subscription_id,
       subscription_item: said.subscription_item,
       login_item: said.login_item,
       paid: said.paid,

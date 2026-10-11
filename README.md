@@ -210,7 +210,8 @@ holds the stages reached so far while it runs.
 
 Two more runs are admitted by Brama's token and answer the same
 `application/x-ndjson` stream. `POST /subscriptions/acquire` (`provider`,
-`subscription_id` Brama chose, `plan_tier` such as `default_claude_max_20x`,
+`subscription_id` carrying the correlation id Brama chose, `plan_tier` such as
+`default_claude_max_20x`,
 `reason`) buys one account of `provider` by running that provider's own
 purchase trajectory, `src/trajectories/<provider>/account/acquire.mjs`: a
 provider with that file is bought for, and any other is refused
@@ -230,8 +231,10 @@ tier names paid with the purchase card (`plan_page`, `card_entry`,
 `payment_approval` when the card issuer holds the payment, `plan_paid`), and
 the account signed in for Brama in the same browser (`oauth_consent`,
 `token_exchange`, `credential_persist`). The `result` names `account`,
+`subscription_id` (the member the run banked, `<brama provider>-<account>`),
 `subscription_item`, `login_item` and `paid` whenever they exist, also when a
-later step failed, so a paid account is never unnamed. Failures are named:
+later step failed, so a paid account is never unnamed; Brama's correlation id
+comes back as `request_id` and never in place of the member. Failures are named:
 `plan_tier_unknown`, `purchase_card_missing`, `purchase_card_incomplete`,
 `phone_verification_required`, `onboarding_page_unrecognized`,
 `plan_choice_missing`, `plan_proceed_missing`, `card_entry_failed`,
