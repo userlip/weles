@@ -73,17 +73,41 @@ function normalizePhone(raw: string, country: string): string {
   return p.startsWith('+') ? p : `+${pfxDigits}${p}`;
 }
 
+// One provider request's text, or null with the reason added to `failures`:
+// a network error, or a refusal with its HTTP status. The URL carries the API
+// key, so only `label` is quoted.
+async function providerText(
+  url: string,
+  label: string,
+  failures: string[],
+): Promise<string | null> {
+  try {
+    const response = await fetch(url);
+    const text = (await response.text()).trim();
+    if (!response.ok) {
+      failures.push(`${label} answered HTTP ${response.status}: ${text}`);
+      return null;
+    }
+    return text;
+  } catch (error) {
+    failures.push(
+      `${label} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
+}
+
 export async function getNumber(
   service: string,
   country = 'UK',
 ): Promise<SmsNumber | null> {
+  const failures: string[] = [];
   // Try JuicySMS — only the requested country (caller handles rotation)
   const jKey = juicyApiKey();
   if (jKey) {
     const sid = SERVICE_IDS[service.toLowerCase()] ?? service;
     const url = `${JUICY_BASE}/makeorder?key=${jKey}&serviceId=${sid}&country=${country}`;
-    const r = await fetch(url).catch(() => null);
-    const text = (await r?.text())?.trim() ?? '';
+    const text = String(await providerText(url, 'juicysms makeorder', failures));
     const m = text.match(/ORDER_ID_(\d+)_NUMBER_(\d+)/);
     if (m) {
       console.log(`[sms] juicysms: got ${m[2]} (order ${m[1]}, ${country})`);
@@ -98,12 +122,13 @@ export async function getNumber(
     if (text.includes('OPEN_ORDER')) {
       const oid = text.match(/(\d+)/)?.[1];
       if (oid) {
-        await fetch(
+        await providerText(
           `${JUICY_BASE}/cancelorder?key=${jKey}&orderId=${oid}`,
-        ).catch(() => {});
+          `juicysms cancelorder ${oid}`,
+          failures,
+        );
       }
-      const r2 = await fetch(url).catch(() => null);
-      const t2 = (await r2?.text())?.trim() ?? '';
+      const t2 = String(await providerText(url, 'juicysms makeorder (retry)', failures));
       const m2 = t2.match(/ORDER_ID_(\d+)_NUMBER_(\d+)/);
       if (m2) {
         costTracker.recordSms('juicysms', service);
@@ -123,17 +148,26 @@ export async function getNumber(
     const svc = SMSACTIVATE_SERVICES[service.toLowerCase()] ?? service;
     const cc = SMSACTIVATE_COUNTRIES[country] ?? '12';
     const url = `https://api.sms-activate.org/stubs/handler_api.php?api_key=${saKey}&action=getNumberV2&service=${svc}&country=${cc}`;
-    const r = await fetch(url).catch(() => null);
-    if (r?.ok) {
-      const d = (await r.json().catch(() => ({}))) as any;
-      if (d.activationId) {
+    const answer = await providerText(url, 'sms-activate getNumberV2', failures);
+    if (answer !== null) {
+      let d: any;
+      try {
+        d = JSON.parse(answer);
+      } catch (error) {
+        failures.push(
+          `sms-activate getNumberV2 answered non-JSON (${error instanceof Error ? error.message : String(error)}): ${answer}`,
+        );
+      }
+      if (d?.activationId) {
         const phone = String(d.phoneNumber ?? '');
         console.log(
           `[sms] sms-activate: got ${phone} (activation ${d.activationId})`,
         );
-        await fetch(
+        await providerText(
           `https://api.sms-activate.org/stubs/handler_api.php?api_key=${saKey}&action=setStatus&status=1&id=${d.activationId}`,
-        ).catch(() => {});
+          `sms-activate setStatus ${d.activationId}`,
+          failures,
+        );
         costTracker.recordSms('smsactivate', service);
         return {
           phone: normalizePhone(phone, country),
@@ -144,7 +178,9 @@ export async function getNumber(
       }
     }
   }
-  console.log(`[sms] no provider available for ${service}`);
+  console.log(
+    `[sms] no number for ${service} (${country})${failures.length ? `: ${failures.join('; ')}` : ': no provider is configured'}`,
+  );
   return null;
 }
 
