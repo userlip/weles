@@ -16,6 +16,11 @@ import {
 } from '../_shared/auth/cookie-freshness.mjs';
 import { statedText } from '../_shared/inputs/stated.mjs';
 import { textShownOutsideEditors } from '../_shared/page/shows.mjs';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
+
+// The web app answers only a signed-in session; any other host it lands on
+// is the sign-in it sent the browser to.
+const WEB_APP = new URL('https://web.snapchat.com/');
 
 const RECIPIENT = statedText(
   ['RECIPIENT_HANDLE'],
@@ -27,10 +32,10 @@ const MESSAGE = statedText(
 );
 
 const acct = await getSocialAccount('snapchat');
-if (!acct) {
-  console.log('FAIL: no active snapchat account in DB');
-  process.exit(1);
-}
+if (!acct)
+  throw new Error(
+    'SNAPCHAT_ACCOUNT_UNAVAILABLE: no active snapchat account in the account store',
+  );
 console.log(`[trajectory] Using account: ${acct.username} → @${RECIPIENT}`);
 
 const { proxyUrl, persona } = await resolveAccountSession(acct);
@@ -53,17 +58,16 @@ try {
     if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
     throw jarErr;
   }
+  // A stored cookie the browser refuses fails here with Playwright's cause.
   await s.ctx.addCookies(
-    stored
-      .filter((c) => c?.name && c?.value && (c.domain || c.url))
-      .map((c) => ({ ...c, path: c.path || '/' })),
+    stored.filter((c) => c?.name && c?.value && (c.domain || c.url)),
   );
 
-  await s.page.goto('https://web.snapchat.com/', {
+  await s.page.goto(WEB_APP.href, {
     waitUntil: 'domcontentloaded',
   });
   await humanIdlePause('long');
-  if (/login|signup|accounts\.snapchat\.com/.test(s.page.url())) {
+  if (new URL(s.page.url()).hostname !== WEB_APP.hostname) {
     await markCookiesStale(acct.id);
     throw new Error(`cookies stale, redirected to ${s.page.url()}`);
   }
@@ -152,7 +156,7 @@ try {
   console.log(`PASS: DM sent to @${RECIPIENT}`);
 } catch (e) {
   console.error('FAIL:', e);
-  process.exitCode = 1;
+  process.exitCode = exitStatusFor(e);
 } finally {
   await s.close();
 }
