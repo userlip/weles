@@ -421,7 +421,7 @@ try {
 } catch (e) {
   console.log(`FAIL: ${e.message}`);
   await shot(s, 'fail');
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
   try {
     await s.close();

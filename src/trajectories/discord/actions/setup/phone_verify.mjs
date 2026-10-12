@@ -203,8 +203,8 @@ try {
       console.log(`[phone_verify] cancel err: ${ce.message}`);
     }
   }
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
   await s.close();
 }
-process.exit(0);
+process.exit(process.exitCode);

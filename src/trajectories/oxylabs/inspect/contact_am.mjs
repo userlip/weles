@@ -171,7 +171,7 @@ try {
   try {
     await s.page.screenshot({ path: join(OUT, 'error.png'), fullPage: true });
   } catch {}
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
   await s.close();
 }
