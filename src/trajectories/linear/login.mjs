@@ -97,7 +97,6 @@ try {
   // The sign-in is over when the page reaches a Linear workspace URL.
   await s.page.waitForURL((url) => SUCCESS_URL_RE.test(String(url)));
   console.log(`PASS: landed on ${s.page.url()}`);
-  process.exit(0);
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;

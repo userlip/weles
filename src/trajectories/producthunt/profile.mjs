@@ -125,7 +125,6 @@ const s = await WSession.start({
 try {
   await fillProfile(s, acct, sessionOpts);
   console.log(`PASS: ${acct.username} profile saved`);
-  process.exit(0);
 } catch (e) {
   console.log(`FAIL: ${e.message}`);
   process.exitCode = 1;

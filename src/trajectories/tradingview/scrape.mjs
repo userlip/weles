@@ -132,7 +132,6 @@ try {
       stock_context: persisted,
     }) + '\n',
   );
-  process.exit(0);
 } catch (e) {
   console.error(`FAIL: ${e.message}`);
   process.exitCode = 1;

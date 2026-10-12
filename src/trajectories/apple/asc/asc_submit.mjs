@@ -329,7 +329,6 @@ try {
     );
   }
   console.log(`PASS: app ${APP_ID} submitted — status now "${status}"`);
-  process.exit(0);
 } catch (error) {
   console.error('FAIL:', error);
   process.exitCode = 1;

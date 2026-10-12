@@ -159,7 +159,6 @@ const s = await WSession.start({
 try {
   const target = await postComment(s, acct, sessionOpts);
   console.log(`PASS: ${acct.username} commented on ${target}`);
-  process.exit(0);
 } catch (e) {
   console.log(`FAIL: ${e.message}`);
   process.exitCode = 1;
