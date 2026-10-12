@@ -155,7 +155,7 @@ export function activeSkarbiecBinary() {
   if (inherited)
     return executable(inherited, 'launcher-provided Skarbiec binary');
   const active = stadoJson(
-    ['release', 'active-binary', 'skarbiec', '--json'],
+    ['release', 'active', 'binary', 'skarbiec', '--json'],
     'active Skarbiec release lookup',
   );
   if (attestedRelease(active))
