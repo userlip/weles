@@ -85,6 +85,13 @@ export async function fillPhoneAndSend(page) {
         maxLength: null,
       }));
   }
+  // A field that holds nothing, or other digits, would send Meta a number
+  // nobody typed and the code would go elsewhere.
+  const typedDigits = String(inputValue).replace(/\D/g, '');
+  if (inputState.valueLength !== typedDigits.length)
+    throw new Error(
+      `developer phone field holds ${inputState.valueLength} digits after typing ${typedDigits.length}; the number was not entered`,
+    );
   console.log(
     JSON.stringify({
       stage: 'filled_phone_input',
@@ -207,19 +214,22 @@ export async function fillCodeAndContinue(page) {
     await page.keyboard.insertText(VERIFY_CODE).catch(() => {});
   });
   await pageSettled(page);
+  const heldCode = (await input.inputValue()).replace(/\D/g, '');
+  if (heldCode !== String(VERIFY_CODE).replace(/\D/g, ''))
+    throw new Error(
+      `developer code field holds ${heldCode.length} digits, not the code typed; the code was not entered`,
+    );
   const clicked = await page.evaluate(() => {
     const textOf = (el) =>
       (el.innerText || el.textContent || el.getAttribute('aria-label') || '')
         .replace(/\s+/g, ' ')
         .trim();
     const visible = (el) => {
-      const style = window.getComputedStyle(el);
       const rect = el.getBoundingClientRect();
       return (
-        style.visibility !== 'hidden' &&
-        style.display !== 'none' &&
         rect.width > 0 &&
-        rect.height > 0
+        rect.height > 0 &&
+        el.checkVisibility({ visibilityProperty: true })
       );
     };
     const candidates = Array.from(
