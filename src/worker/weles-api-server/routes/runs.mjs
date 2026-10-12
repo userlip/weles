@@ -31,12 +31,16 @@ import {
 
 // A run id is SAFE_RUN_ID: letters, digits, `_` and `-`, so it never needs
 // percent-decoding and a path that carries anything else is not a run.
-const RUN_PATH = /^\/runs(?:\/([^/]+))?(?:\/(cancel|answer))?$/;
+const RUN_PATH = /^\/runs(?:\/(?<run>[^/]+))?(?:\/(?<act>cancel|answer))?$/;
+
+// A path that acts on a run (cancel, answer) changes it and is POSTed; one
+// that reads runs or one run is a GET.
+const METHOD_FOR = { act: 'POST', read: 'GET' };
 
 export function isRunsRoute(req, url) {
   const match = RUN_PATH.exec(url.pathname);
   if (!match) return false;
-  return match[2] ? req.method === 'POST' : req.method === 'GET';
+  return req.method === METHOD_FOR[match.groups.act ? 'act' : 'read'];
 }
 
 function readRecord(runId) {
