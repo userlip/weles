@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { exitStatusFor } from '../../../dist/cli/usage.js';
+import { loginUnusualWhales } from './session/login.mjs';
 
 // Redirect all console.log to stderr so stdout is pure JSON output.
 console.log = (...a) => process.stderr.write(a.map(String).join(' ') + '\n');
@@ -114,65 +115,6 @@ const s = await WSession.start({
   proxy: proxyUrl,
 });
 global._s = s;
-
-async function doLogin(sess) {
-  console.error('[uw_scrape] logging in');
-  await sess.goto('https://unusualwhales.com/login');
-  await sess.page.waitForFunction(
-    () => document.querySelectorAll('input').length >= 2,
-  );
-  const inputs = await sess.page.evaluate(
-    `(() => Array.from(document.querySelectorAll('input')).map((i, idx) => ({ idx, name: i.name, type: i.type, id: i.id, ph: i.placeholder })))()`,
-  );
-  // The fields are told apart by what they declare (type, name, placeholder),
-  // not by a list of words; a form without both refuses the login.
-  const declared = (i) => `${i.type} ${i.name} ${i.ph}`;
-  const emailIn = inputs.find((i) => /email|address/i.test(declared(i)));
-  const passIn = inputs.find((i) => /password/i.test(declared(i)));
-  if (!emailIn || !passIn)
-    throw new Error(`login inputs not found: ${JSON.stringify(inputs)}`);
-  const sel = (i) =>
-    i.name
-      ? `input[name="${i.name}"]`
-      : i.id
-        ? `input[id="${i.id}"]`
-        : `input[placeholder="${i.ph}"]`;
-  const submit = async () => {
-    const submitLoc = sess.page
-      .locator('button[type="submit"], input[type="submit"]')
-      .first();
-    if (await submitLoc.count()) await submitLoc.click().catch(() => {});
-    else
-      await sess.page
-        .evaluate('document.querySelector("form")?.requestSubmit()')
-        .catch(() => {});
-  };
-  // After a submit the page either leaves /login or settles on it.
-  const redirected = async () => {
-    await pageSettled(sess.page);
-    if (sess.page.url().includes('/login')) return false;
-    console.error(`[uw_scrape] logged in, now at ${sess.page.url()}`);
-    return true;
-  };
-  // UW's login carries a risk-based Google reCAPTCHA v2 checkbox that silently
-  // auto-passes for low-risk sessions and only demands an image challenge
-  // otherwise. So submit with plain credentials first (the common case), and
-  // only pay for a captcha solve when that submit is actually blocked.
-  await sess.fillSelector(sel(emailIn), email);
-  await sess.fillSelector(sel(passIn), password);
-  await submit();
-  if (await redirected()) return;
-  console.error('[uw_scrape] plain submit blocked — attempting captcha solve');
-  await sess.goto('https://unusualwhales.com/login');
-  await sess.fillSelector(sel(emailIn), email);
-  await sess.fillSelector(sel(passIn), password);
-  console.error(`[uw_scrape] captcha: ${await sess.solveCaptcha()}`);
-  await submit();
-  if (await redirected()) return;
-  throw new Error(
-    `login did not leave /login after the captcha; still at ${sess.page.url()}`,
-  );
-}
 
 // Scrape one UW page within an already-authenticated Playwright session.
 async function scrapeOnePage(sess, tk, pg, ssPath) {
@@ -324,7 +266,8 @@ async function scrapeOnePage(sess, tk, pg, ssPath) {
 }
 
 try {
-  await doLogin(s);
+  console.error('[uw_scrape] logging in');
+  await loginUnusualWhales(s, email, password);
   await pageSettled(s.page);
   const allPages = pagesList && pagesList.length > 0 ? pagesList : [page];
   const results = [];
