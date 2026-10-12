@@ -47,27 +47,16 @@ const PLATFORM_HOSTS: Record<string, string> = {
   pangram: 'www.pangram.com',
 };
 
-function inferTrajectoryAction(platform: string): string {
-  const explicit = process.env.ACTION?.trim();
-  if (explicit) return explicit;
-
-  const script = process.argv[1] ?? '';
-  const parts = script
-    .replace(/\.(?:mjs|cjs|js|ts)$/, '')
-    .split(/[\\/]+/)
-    .filter(Boolean);
-  const file = parts[parts.length - 1] ?? '';
-  const parent = parts[parts.length - 2] ?? '';
-  const grandparent = parts[parts.length - 3] ?? '';
-
-  if (file.startsWith(`${platform}_`)) return file;
-  if (parent === platform && file && file !== 'index')
-    return `${platform}_${file}`;
-  if (grandparent === platform && file && !['index', 'run'].includes(file))
-    return `${platform}_${file}`;
-  if (grandparent === platform && parent && file === 'run')
-    return `${platform}_${parent}`;
-  return `${platform}_unknown`;
+// The action this run performs, as the worker states it (runChildIdentity
+// sets ACTION for every run it spawns). Which network the run needs is read
+// from it, so a run without it is refused rather than given a name guessed
+// from its script's path.
+function trajectoryAction(): string {
+  const stated = process.env.ACTION?.trim();
+  if (stated) return stated;
+  throw new Error(
+    `ACTION is not set for ${process.argv[1]}: the account session reads the run's network requirements by its action; run it through the Weles worker or set ACTION to the action it performs`,
+  );
 }
 
 export async function resolveAccountSession(
@@ -76,7 +65,7 @@ export async function resolveAccountSession(
   const meta = acct.metadata as any;
   const out: AccountSession = {};
   let cfg: ProxyConfig | null = null;
-  const action = inferTrajectoryAction(acct.platform);
+  const action = trajectoryAction();
   const targetHost = PLATFORM_HOSTS[acct.platform];
 
   const network = taskNetworkRequirements(action, acct.platform);
