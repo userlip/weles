@@ -49,10 +49,20 @@ export async function runHealthProbe(cfg) {
     const prepared = stored
       .filter((c) => c && c.name && c.value && (c.domain || c.url))
       .map((c) => ({ ...c, path: c.path || '/' }));
-    if (prepared.length > 0) await sIn.ctx.addCookies(prepared).catch(() => {});
+    // Auth that could not be set up would land the probe on a login wall and
+    // read as stale cookies, which starts a re-login; the probe fails instead.
+    if (prepared.length > 0)
+      await sIn.ctx.addCookies(prepared).catch((error) => {
+        loggedIn.setup_error = `stored cookies could not be injected: ${error.message}`;
+        throw new Error(loggedIn.setup_error);
+      });
     // Optional per-platform hook — e.g. Discord injects its localStorage
     // token via addInitScript since its auth doesn't live in cookies.
-    if (cfg.beforeGoto) await cfg.beforeGoto(sIn, acct).catch(() => {});
+    if (cfg.beforeGoto)
+      await cfg.beforeGoto(sIn, acct).catch((error) => {
+        loggedIn.setup_error = `the pre-navigation auth hook failed: ${error.message}`;
+        throw new Error(loggedIn.setup_error);
+      });
     const inUrl =
       typeof cfg.loggedInUrl === 'function'
         ? cfg.loggedInUrl(acct.username)
@@ -177,7 +187,9 @@ export async function runHealthProbe(cfg) {
     );
 
   let signal;
-  if (extracted.is_suspended) signal = 'suspended';
+  // A probe whose own auth setup failed observed nothing about the account.
+  if (loggedIn.setup_error) signal = 'unknown';
+  else if (extracted.is_suspended) signal = 'suspended';
   // Cookies-stale check needs to win over captcha_challenge specifically.
   // PerimeterX iframe loads on every /uas/login page, so loggedIn.signal
   // will be captcha_challenge whenever LinkedIn's session is dead — that's
@@ -237,8 +249,7 @@ export async function runHealthProbe(cfg) {
   );
   console.log(`[health:${cfg.platform}] snapshot -> ${filePath}`);
   // Self-heal: when the probe detects checkpoint (cookies stale), submit the
-  // exact login trajectory to Stado for this account. Apple authentication
-  // always requires an explicit owner action, so health probes only report it.
+  // exact login trajectory to Stado for this account.
   // BUT: skip auto-recovery for accounts whose registration never completed.
   // metadata.status in {captcha_blocked, unverified, needs_verification,
   // captcha_signup_failed} means the saveAccount stub got written but the
@@ -254,11 +265,7 @@ export async function runHealthProbe(cfg) {
     'needs_verification',
     'captcha_signup_failed',
   ].includes(acctStatus);
-  if (signal === 'checkpoint' && cfg.platform.toLowerCase() === 'apple') {
-    console.log(
-      `[health:${cfg.platform}] OWNER_ACTION_REQUIRED: Apple cookies are stale; apple_login was not auto-enqueued for ${acct.username}`,
-    );
-  } else if (signal === 'checkpoint' && acct.id && !brokenRegistration) {
+  if (signal === 'checkpoint' && acct.id && !brokenRegistration) {
     try {
       const accountItem = String(
         acct.metadata?.login_item || acct.metadata?.vault_login_item || '',
