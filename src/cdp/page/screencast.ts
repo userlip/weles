@@ -75,9 +75,16 @@ export class CDPScreencast {
       `frame_${String(this._frameCount).padStart(6, '0')}.png`,
     );
     writeFileSync(framePath, Buffer.from(data, 'base64'));
+    // Chrome sends no further frame until this one is acknowledged, so an
+    // acknowledgement that fails ends the recording early; that is said.
     this._conn
       .send('Page.screencastFrameAck', { sessionId }, this._sid)
-      .catch(() => {});
+      .catch((error) => {
+        if (this._stopped) return;
+        console.error(
+          `[cdp] screencast frame ${this._frameCount} in ${this._frameDir} was not acknowledged; the recording may stop here: ${error}`,
+        );
+      });
   }
 
   async stop(): Promise<string | null> {
