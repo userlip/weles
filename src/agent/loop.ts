@@ -184,7 +184,14 @@ export async function execute(
         ? null
         : await capture
             .screenshot(activePage, `loop_step${step}`)
-            .catch(() => null);
+            .catch((error) => {
+              // The model then decides from the page state alone, so a
+              // screenshot that failed is said with the step and cause.
+              console.error(
+                `[loop] step ${step} screenshot failed; the model decides without it: ${error}`,
+              );
+              return null;
+            });
       const state = await buildState(activePage, history, envHints);
       decision = await askLlm(
         goal,
