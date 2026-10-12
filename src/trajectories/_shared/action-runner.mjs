@@ -147,6 +147,10 @@ export async function runAction(cfg) {
   };
   const wantedDomain = domainFor[cfg.platform];
   let banSignal = null;
+  // A stale jar is thrown first inside the main try, so its catch keeps the
+  // checkpoint signal and its finally persists it, marks the cookies stale and
+  // closes the session; exiting here skipped all three.
+  let jarFailure = null;
   // Cookie freshness gate — bound the device-mismatch / token-staleness
   // failure mode that produced TikTok's silent logged-out shell. If the
   // jar is stale (no cookies_minted_at, or older than the freshness
@@ -182,8 +186,8 @@ export async function runAction(cfg) {
       if (jarErr instanceof CookieJarStaleError) {
         // Stale jar — try inline relogin on the SAME WSession (mints fresh
         // cookies bound to the current proxy sticky). If unavailable or it
-        // fails, fall back to the original exit path so the routine layer
-        // can re-queue.
+        // fails, the stale jar fails the run from inside the main try, so the
+        // routine layer can re-queue on the persisted checkpoint signal.
         if (typeof cfg.inlineRelogin === 'function') {
           console.log(
             `[${label}] ${jarErr.message} — attempting inline relogin`,
@@ -204,10 +208,7 @@ export async function runAction(cfg) {
                 ...(jarErr.details ?? {}),
               },
             };
-            if (acct.id) await markCookiesStale(acct.id).catch(() => {});
-            await s.close().catch(() => {});
-            console.log(`FAIL: ${jarErr.message}`);
-            process.exit(1);
+            jarFailure = jarErr;
           }
         } else {
           banSignal = {
@@ -215,10 +216,7 @@ export async function runAction(cfg) {
             healthy: false,
             details: { reason: jarErr.message, ...(jarErr.details ?? {}) },
           };
-          if (acct.id) await markCookiesStale(acct.id).catch(() => {});
-          await s.close().catch(() => {});
-          console.log(`FAIL: ${jarErr.message}`);
-          process.exit(1);
+          jarFailure = jarErr;
         }
       } else {
         throw jarErr;
@@ -257,6 +255,7 @@ export async function runAction(cfg) {
     // platform-specific helper can mint fresh cookies on the SAME WSession
     // when the first attempt hits auth_wall (verified live: linkedin engagement
     // running on stale-cookie account → relogin via emailPinChallenge → retry → PASS).
+    if (jarFailure) throw jarFailure;
     const { runAuthGate } = await import('./linkedin/auth-gate.mjs');
     const gateRes = await runAuthGate({ s, cfg, acct, feed, label });
     if (!gateRes.ok) {
