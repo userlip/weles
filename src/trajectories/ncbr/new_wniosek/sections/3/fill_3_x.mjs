@@ -168,12 +168,7 @@ if (!page) {
 
 await page.goto(PROJ + cfg.id, { waitUntil: 'domcontentloaded' });
 await humanIdlePause('long');
-await page.evaluate(() => {
-  const b = Array.from(document.querySelectorAll('div')).find((d) =>
-    (d.innerText || '').includes('pliki cookies'),
-  );
-  if (b) b.style.pointerEvents = 'none';
-}); // allow-raw-playwright: cookie banner
+await (await import('#ncbr-cookie-notice')).dismissCookieNotice(page); // allow-raw-playwright: cookie banner
 
 if (process.env.DIAG) {
   const before = await page.evaluate(() => ({

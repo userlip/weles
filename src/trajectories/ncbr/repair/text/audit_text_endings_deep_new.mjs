@@ -200,12 +200,7 @@ for (const section of sections) {
     await page.goto(section.url, { waitUntil: 'domcontentloaded' }); // allow-raw-playwright: read-only section navigation
     await waitForSectionShell();
     await pause(sleepKind());
-    await page.evaluate(() => {
-      const banner = Array.from(document.querySelectorAll('div')).find((d) =>
-        (d.innerText || '').includes('pliki cookies'),
-      );
-      if (banner) banner.style.pointerEvents = 'none';
-    }); // allow-raw-playwright: neutralise cookie banner only
+    await (await import('#ncbr-cookie-notice')).dismissCookieNotice(page); // allow-raw-playwright: neutralise cookie banner only
     const visible = await fieldDump(`${section.label}:visible`);
     for (const f of visible) {
       const hit = classifyField(f);

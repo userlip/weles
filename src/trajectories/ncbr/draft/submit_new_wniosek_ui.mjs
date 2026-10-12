@@ -33,12 +33,7 @@ page.on('response', async (res) => {
 await page.goto(PROJECT_URL, { waitUntil: 'domcontentloaded' });
 await humanIdlePause('long');
 
-await page.evaluate(() => {
-  const banner = Array.from(document.querySelectorAll('div')).find((d) =>
-    (d.innerText || '').includes('pliki cookies'),
-  );
-  if (banner) banner.style.pointerEvents = 'none';
-}); // allow-raw-playwright: neutralize cookie banner only
+await (await import('#ncbr-cookie-notice')).dismissCookieNotice(page); // allow-raw-playwright: neutralize cookie banner only
 
 async function clickVisibleButton(text) {
   const button = page

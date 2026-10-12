@@ -6,7 +6,8 @@
   "imports": {
     "#run-output": "./src/_shared/run-output/index.mjs",
     "#operator-request": "./src/operator/request.mjs",
-    "#ncbr-settings": "./src/trajectories/ncbr/settings/index.mjs"
+    "#ncbr-settings": "./src/trajectories/ncbr/settings/index.mjs",
+    "#ncbr-cookie-notice": "./src/trajectories/_shared/ncbr/cookie_notice.mjs"
   },
   "bin": {
     "weles": "dist/cli.js",

@@ -57,12 +57,7 @@ if (!page) {
 }
 await page.goto(SECTION_URL, { waitUntil: 'domcontentloaded' });
 await humanIdlePause('long');
-await page.evaluate(() => {
-  const b = Array.from(document.querySelectorAll('div')).find((d) =>
-    (d.innerText || '').includes('pliki cookies'),
-  );
-  if (b) b.style.pointerEvents = 'none';
-}); // allow-raw-playwright: cookie banner
+await (await import('#ncbr-cookie-notice')).dismissCookieNotice(page); // allow-raw-playwright: cookie banner
 
 async function pickFirst(suffix, search) {
   const inp = page.locator(`input[name$="${suffix}"]`).first();

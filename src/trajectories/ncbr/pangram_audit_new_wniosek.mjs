@@ -279,12 +279,7 @@ async function extractSection(page, section) {
   await page.goto(section.url, { waitUntil: 'domcontentloaded' }); // allow-raw-playwright: read-only LSI section navigation
   await waitForControls(page);
   await humanIdlePause('long');
-  await page.evaluate(() => {
-    const banner = Array.from(document.querySelectorAll('div')).find((d) =>
-      (d.innerText || '').includes('pliki cookies'),
-    );
-    if (banner) banner.style.pointerEvents = 'none';
-  }); // allow-raw-playwright: neutralise cookie overlay only
+  await (await import('#ncbr-cookie-notice')).dismissCookieNotice(page); // allow-raw-playwright: neutralise cookie overlay only
   const fields = await visibleFields(page);
   const rowFields = [];
   if (includeRows) {

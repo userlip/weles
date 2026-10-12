@@ -69,12 +69,7 @@ async function fillCapped(name, value) {
 
 await page.goto(SECTION_URL, { waitUntil: 'domcontentloaded' });
 await humanIdlePause('long');
-await page.evaluate(() => {
-  const b = Array.from(document.querySelectorAll('div')).find((d) =>
-    (d.innerText || '').includes('pliki cookies'),
-  );
-  if (b) b.style.pointerEvents = 'none';
-}); // allow-raw-playwright: cookie banner
+await (await import('#ncbr-cookie-notice')).dismissCookieNotice(page); // allow-raw-playwright: cookie banner
 
 await setAuto('rodzaj_innowacji', 'Innowacja produktowa');
 await page

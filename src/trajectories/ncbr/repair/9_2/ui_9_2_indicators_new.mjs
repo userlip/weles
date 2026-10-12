@@ -76,12 +76,7 @@ if (!page) {
 
 await page.goto(SECTION_URL, { waitUntil: 'domcontentloaded' }); // allow-raw-playwright: authenticated LSI section navigation
 await humanIdlePause('long');
-await page.evaluate(() => {
-  const banner = Array.from(document.querySelectorAll('div')).find((d) =>
-    (d.innerText || '').includes('pliki cookies'),
-  );
-  if (banner) banner.style.pointerEvents = 'none';
-}); // allow-raw-playwright: neutralise cookie overlay only
+await (await import('#ncbr-cookie-notice')).dismissCookieNotice(page); // allow-raw-playwright: neutralise cookie overlay only
 
 if (process.env.INSPECT) {
   const data = await page.evaluate(() => ({
