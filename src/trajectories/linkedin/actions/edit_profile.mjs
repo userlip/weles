@@ -207,10 +207,14 @@ try {
     [hlIn, targetHeadline, 'headline'],
     [indIn, tgtInd, 'industry'],
   ]) {
-    if (!target || !(await el.count())) {
-      console.log(`[li-profile] ${label}: locator missing — skipping`);
-      continue;
-    }
+    // A value the character does not state leaves the field as it is; a
+    // stated one whose field the form does not show fails the run, instead
+    // of a PASS for a profile that was not updated.
+    if (!target) continue;
+    if (!(await el.count()))
+      throw new Error(
+        `the LinkedIn intro form shows no ${label} field; the stated ${label} was not written`,
+      );
     await el.scrollIntoViewIfNeeded();
     const cur = await el.inputValue();
     if (cur.trim() === target.trim()) continue;
