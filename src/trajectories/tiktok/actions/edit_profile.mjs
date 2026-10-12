@@ -31,6 +31,7 @@ import {
 import { loadAvatarFile } from '../../_shared/runner/avatar-loader.mjs';
 import { updateAccountMetadata } from '../../_shared/skarbiec/accounts.mjs';
 import { fitsField } from '../../_shared/page/fits.mjs';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 
 const acct = await getSocialAccount('tiktok');
 if (!acct) {
@@ -214,11 +215,21 @@ try {
     await humanClickLocator(s.page, saveBtn);
     await humanIdlePause('deliberate');
 
-    const verifiedBio = await bioIn.inputValue().catch(() => '');
-    if (targetBio && verifiedBio.trim() !== targetBio.trim())
-      throw new Error(
-        `bio mismatch after save ("${verifiedBio}..." != "${targetBio}...")`,
-      );
+    // What TikTok kept is read from a reloaded settings page: the fields of
+    // the page that was saved still hold whatever was typed into them.
+    await s.page.reload({ waitUntil: 'domcontentloaded' });
+    await pageSettled(s.page);
+    for (const [field, target, what] of [
+      [nameIn, targetName, 'name'],
+      [bioIn, targetBio, 'bio'],
+    ]) {
+      if (!target) continue;
+      const kept = await field.inputValue();
+      if (kept.trim() !== target.trim())
+        throw new Error(
+          `TikTok kept a ${what} of ${kept.length} characters after Save, not the ${target.length} written`,
+        );
+    }
     recordProfile();
     console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
   }

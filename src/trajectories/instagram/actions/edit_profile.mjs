@@ -33,6 +33,7 @@ import {
 import { loadAvatarFile } from '../../_shared/runner/avatar-loader.mjs';
 import { updateAccountMetadata } from '../../_shared/skarbiec/accounts.mjs';
 import { fitsField } from '../../_shared/page/fits.mjs';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 
 const acct = await getSocialAccount('instagram');
 if (!acct) {
@@ -218,9 +219,12 @@ try {
     await humanClickLocator(s.page, submitBtn);
     await humanIdlePause('deliberate');
 
-    // Verify the changes stuck by re-reading the form fields.
-    const verifiedName = await nameIn.inputValue().catch(() => '');
-    const verifiedBio = await bioIn.inputValue().catch(() => '');
+    // What Instagram kept is read from a reloaded form: the fields of the
+    // page that was submitted still hold whatever was typed into them.
+    await s.page.reload({ waitUntil: 'domcontentloaded' });
+    await pageSettled(s.page);
+    const verifiedName = await nameIn.inputValue();
+    const verifiedBio = await bioIn.inputValue();
     if (targetName && verifiedName.trim() !== targetName.trim()) {
       throw new Error(
         `name mismatch after submit ("${verifiedName}" != "${targetName}")`,
