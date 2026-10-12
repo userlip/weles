@@ -12,7 +12,7 @@ import {
   submitEnabled,
   withValidateOnly,
 } from '../marketing_api.mjs';
-import { statedText } from '../../../../_shared/inputs/stated.mjs';
+import { statedChoice } from '../../../../_shared/inputs/stated.mjs';
 
 const PAGE_ID =
   process.env.PAGE_ID ||
@@ -76,14 +76,11 @@ async function update() {
 const ACTIONS = { create, read, list: read, update };
 
 try {
-  const action = statedText(
+  const action = statedChoice(
     ['ACTION_KIND', 'META_ACTION'],
-    `what is done with the lead form: ${Object.keys(ACTIONS).join(', ')}`,
-  ).toLowerCase();
-  if (!Object.hasOwn(ACTIONS, action))
-    throw new Error(
-      `unsupported ACTION=${action}; one of ${Object.keys(ACTIONS).join(', ')}`,
-    );
+    ACTIONS,
+    'what is done with the lead form',
+  );
   await ACTIONS[action]();
   console.log(`PASS: Meta lead form API ${action} completed`);
 } catch (e) {

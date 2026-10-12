@@ -9,13 +9,8 @@ import {
   submitEnabled,
   withValidateOnly,
 } from './marketing_api.mjs';
+import { statedChoice } from '../../../_shared/inputs/stated.mjs';
 
-const RESOURCE = (process.env.RESOURCE || 'creative').toLowerCase();
-const ACTION = (
-  process.env.ACTION_KIND ||
-  process.env.META_ACTION ||
-  'create'
-).toLowerCase();
 const CREATIVE_ID = process.env.CREATIVE_ID;
 
 function objectStorySpec() {
@@ -64,59 +59,63 @@ function creativePayload() {
   });
 }
 
-try {
-  if (RESOURCE === 'image') {
-    if (ACTION !== 'create' && ACTION !== 'upload')
-      throw new Error('RESOURCE=image supports ACTION=create/upload');
-    if (!process.env.IMAGE_PATH) throw new Error('IMAGE_PATH required');
-    await graphUpload(
-      `/${adAccountId()}/adimages`,
-      {},
-      'filename',
-      process.env.IMAGE_PATH,
-      { label: 'meta-ads-api-image' },
-    );
-  } else if (RESOURCE === 'video') {
-    if (ACTION !== 'create' && ACTION !== 'upload')
-      throw new Error('RESOURCE=video supports ACTION=create/upload');
-    if (!process.env.VIDEO_PATH) throw new Error('VIDEO_PATH required');
-    await graphUpload(
-      `/${adAccountId()}/advideos`,
-      compactObject({
-        title: process.env.VIDEO_TITLE,
-        description: process.env.DESCRIPTION,
-      }),
-      'source',
-      process.env.VIDEO_PATH,
-      { label: 'meta-ads-api-video' },
-    );
-  } else if (RESOURCE === 'creative') {
-    if (ACTION === 'create') {
+async function uploadImage() {
+  if (!process.env.IMAGE_PATH) throw new Error('IMAGE_PATH required');
+  await graphUpload(
+    `/${adAccountId()}/adimages`,
+    {},
+    'filename',
+    process.env.IMAGE_PATH,
+    { label: 'meta-ads-api-image' },
+  );
+}
+
+async function uploadVideo() {
+  if (!process.env.VIDEO_PATH) throw new Error('VIDEO_PATH required');
+  await graphUpload(
+    `/${adAccountId()}/advideos`,
+    compactObject({
+      title: process.env.VIDEO_TITLE,
+      description: process.env.DESCRIPTION,
+    }),
+    'source',
+    process.env.VIDEO_PATH,
+    { label: 'meta-ads-api-video' },
+  );
+}
+
+async function readCreative() {
+  const path = CREATIVE_ID
+    ? `/${CREATIVE_ID}`
+    : `/${adAccountId()}/adcreatives`;
+  await graphRequest(
+    'GET',
+    path,
+    { fields: process.env.FIELDS, limit: process.env.LIMIT },
+    {
+      execute: submitEnabled() || process.env.LIVE_READ === '1',
+      label: 'meta-ads-api-creative-read',
+    },
+  );
+}
+
+// What each ACTION does to each RESOURCE; `upload` names the same create for
+// media, and `list` is a read without a creative id.
+const RESOURCES = {
+  image: { create: uploadImage, upload: uploadImage },
+  video: { create: uploadVideo, upload: uploadVideo },
+  creative: {
+    async create() {
       await graphRequest(
         'POST',
         `/${adAccountId()}/adcreatives`,
         withValidateOnly(creativePayload()),
         { label: 'meta-ads-api-creative' },
       );
-    } else if (ACTION === 'read' || ACTION === 'list') {
-      const path = CREATIVE_ID
-        ? `/${CREATIVE_ID}`
-        : `/${adAccountId()}/adcreatives`;
-      await graphRequest(
-        'GET',
-        path,
-        {
-          fields:
-            process.env.FIELDS ||
-            'id,name,status,object_story_spec,effective_object_story_id',
-          limit: process.env.LIMIT,
-        },
-        {
-          execute: submitEnabled() || process.env.LIVE_READ === '1',
-          label: 'meta-ads-api-creative-read',
-        },
-      );
-    } else if (ACTION === 'delete') {
+    },
+    read: readCreative,
+    list: readCreative,
+    async delete() {
       if (!CREATIVE_ID) throw new Error('CREATIVE_ID required for delete');
       await graphRequest(
         'DELETE',
@@ -124,13 +123,24 @@ try {
         {},
         { label: 'meta-ads-api-creative-delete' },
       );
-    } else {
-      throw new Error(`unsupported creative ACTION=${ACTION}`);
-    }
-  } else {
-    throw new Error('RESOURCE must be creative, image, or video');
-  }
-  console.log(`PASS: Meta creative API ${ACTION} ${RESOURCE} completed`);
+    },
+  },
+};
+
+try {
+  const resource = statedChoice(
+    ['RESOURCE'],
+    RESOURCES,
+    'the creative object acted on',
+  );
+  const actions = RESOURCES[resource];
+  const action = statedChoice(
+    ['ACTION_KIND', 'META_ACTION'],
+    actions,
+    `what is done with the ${resource}`,
+  );
+  await actions[action]();
+  console.log(`PASS: Meta creative API ${action} ${resource} completed`);
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exit(1);

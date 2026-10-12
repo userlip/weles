@@ -1,7 +1,8 @@
 // Meta Marketing API: dedicated campaign/ad set/ad stack wrapper.
 //
 // SUBMIT=1 mutates through wisent-integrations' Meta actions.
-// Set RESOURCE=campaign|adset|ad|stack and ACTION=create|update|read|delete.
+// RESOURCE=campaign|adset|creative|ad|stack and ACTION=create|update|read|
+// list|delete are both required; nothing is created by default.
 
 import {
   adAccountId,
@@ -16,15 +17,13 @@ import {
 } from './marketing_api.mjs';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
 
-const RESOURCE = (
-  process.env.RESOURCE ||
-  process.env.META_RESOURCE ||
-  'stack'
+const RESOURCE = statedText(
+  ['RESOURCE', 'META_RESOURCE'],
+  'the object acted on: campaign, adset, creative, ad or stack',
 ).toLowerCase();
-const ACTION = (
-  process.env.ACTION_KIND ||
-  process.env.META_ACTION ||
-  'create'
+const ACTION = statedText(
+  ['ACTION_KIND', 'META_ACTION'],
+  'what is done with it: create, update, read, list or delete',
 ).toLowerCase();
 const SUBMIT = submitEnabled();
 
@@ -313,9 +312,7 @@ async function updateResource(resource) {
 
 async function readResource(resource) {
   const { id, edge } = resourceSpec(resource);
-  const fields =
-    process.env.FIELDS ||
-    'id,name,status,effective_status,created_time,updated_time';
+  const fields = process.env.FIELDS;
   const readOpts = {
     execute: SUBMIT || boolEnv('LIVE_READ', false),
     label: `meta-ads-api-${resource}-read`,

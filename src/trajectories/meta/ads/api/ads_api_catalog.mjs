@@ -1,4 +1,9 @@
 // Meta Marketing API: product catalog and product set wrapper.
+//
+// RESOURCE (catalog or product_set) and ACTION_KIND (or META_ACTION) are
+// required. Only stated fields are sent: an update never rewrites a field,
+// such as a catalog's vertical, that the caller did not name, and a read
+// returns the fields in FIELDS or, without it, Meta's defaults.
 
 import {
   compactObject,
@@ -7,13 +12,8 @@ import {
   submitEnabled,
   withValidateOnly,
 } from './marketing_api.mjs';
+import { statedChoice } from '../../../_shared/inputs/stated.mjs';
 
-const RESOURCE = (process.env.RESOURCE || 'product_set').toLowerCase();
-const ACTION = (
-  process.env.ACTION_KIND ||
-  process.env.META_ACTION ||
-  'create'
-).toLowerCase();
 const BUSINESS_ID = process.env.BUSINESS_ID || process.env.META_BUSINESS_ID;
 const CATALOG_ID = process.env.CATALOG_ID || process.env.PRODUCT_CATALOG_ID;
 const PRODUCT_SET_ID = process.env.PRODUCT_SET_ID;
@@ -21,7 +21,7 @@ const PRODUCT_SET_ID = process.env.PRODUCT_SET_ID;
 function catalogPayload() {
   return compactObject({
     name: process.env.CATALOG_NAME || process.env.NAME,
-    vertical: process.env.CATALOG_VERTICAL || 'commerce',
+    vertical: process.env.CATALOG_VERTICAL,
   });
 }
 
@@ -37,9 +37,39 @@ function productSetPayload() {
   });
 }
 
-try {
-  if (RESOURCE === 'catalog') {
-    if (ACTION === 'create') {
+const readOpts = (label) => ({
+  execute: submitEnabled() || process.env.LIVE_READ === '1',
+  label,
+});
+
+async function readCatalog() {
+  const path = CATALOG_ID
+    ? `/${CATALOG_ID}`
+    : `/${BUSINESS_ID}/owned_product_catalogs`;
+  await graphRequest(
+    'GET',
+    path,
+    { fields: process.env.FIELDS, limit: process.env.LIMIT },
+    readOpts('meta-ads-api-catalog-read'),
+  );
+}
+
+async function readProductSet() {
+  const path = PRODUCT_SET_ID
+    ? `/${PRODUCT_SET_ID}`
+    : `/${CATALOG_ID}/product_sets`;
+  await graphRequest(
+    'GET',
+    path,
+    { fields: process.env.FIELDS, limit: process.env.LIMIT },
+    readOpts('meta-ads-api-product-set-read'),
+  );
+}
+
+// What each ACTION does to each RESOURCE; `list` is a read without an id.
+const RESOURCES = {
+  catalog: {
+    async create() {
       if (!BUSINESS_ID)
         throw new Error(
           'BUSINESS_ID or META_BUSINESS_ID required for catalog create',
@@ -50,23 +80,10 @@ try {
         withValidateOnly(catalogPayload(), { validateOnly: false }),
         { label: 'meta-ads-api-catalog' },
       );
-    } else if (ACTION === 'read' || ACTION === 'list') {
-      const path = CATALOG_ID
-        ? `/${CATALOG_ID}`
-        : `/${BUSINESS_ID}/owned_product_catalogs`;
-      await graphRequest(
-        'GET',
-        path,
-        {
-          fields: process.env.FIELDS || 'id,name,vertical,product_count',
-          limit: process.env.LIMIT,
-        },
-        {
-          execute: submitEnabled() || process.env.LIVE_READ === '1',
-          label: 'meta-ads-api-catalog-read',
-        },
-      );
-    } else if (ACTION === 'update') {
+    },
+    read: readCatalog,
+    list: readCatalog,
+    async update() {
       if (!CATALOG_ID)
         throw new Error('CATALOG_ID required for catalog update');
       await graphRequest(
@@ -75,11 +92,10 @@ try {
         withValidateOnly(catalogPayload(), { validateOnly: false }),
         { label: 'meta-ads-api-catalog-update' },
       );
-    } else {
-      throw new Error(`unsupported catalog ACTION=${ACTION}`);
-    }
-  } else if (RESOURCE === 'product_set') {
-    if (ACTION === 'create') {
+    },
+  },
+  product_set: {
+    async create() {
       if (!CATALOG_ID)
         throw new Error('CATALOG_ID required for product set create');
       await graphRequest(
@@ -88,23 +104,10 @@ try {
         withValidateOnly(productSetPayload(), { validateOnly: false }),
         { label: 'meta-ads-api-product-set' },
       );
-    } else if (ACTION === 'read' || ACTION === 'list') {
-      const path = PRODUCT_SET_ID
-        ? `/${PRODUCT_SET_ID}`
-        : `/${CATALOG_ID}/product_sets`;
-      await graphRequest(
-        'GET',
-        path,
-        {
-          fields: process.env.FIELDS || 'id,name,filter',
-          limit: process.env.LIMIT,
-        },
-        {
-          execute: submitEnabled() || process.env.LIVE_READ === '1',
-          label: 'meta-ads-api-product-set-read',
-        },
-      );
-    } else if (ACTION === 'update') {
+    },
+    read: readProductSet,
+    list: readProductSet,
+    async update() {
       if (!PRODUCT_SET_ID)
         throw new Error('PRODUCT_SET_ID required for product set update');
       await graphRequest(
@@ -113,7 +116,8 @@ try {
         withValidateOnly(productSetPayload(), { validateOnly: false }),
         { label: 'meta-ads-api-product-set-update' },
       );
-    } else if (ACTION === 'delete') {
+    },
+    async delete() {
       if (!PRODUCT_SET_ID)
         throw new Error('PRODUCT_SET_ID required for product set delete');
       await graphRequest(
@@ -122,13 +126,20 @@ try {
         {},
         { label: 'meta-ads-api-product-set-delete' },
       );
-    } else {
-      throw new Error(`unsupported product_set ACTION=${ACTION}`);
-    }
-  } else {
-    throw new Error('RESOURCE must be catalog or product_set');
-  }
-  console.log(`PASS: Meta catalog API ${ACTION} ${RESOURCE} completed`);
+    },
+  },
+};
+
+try {
+  const resource = statedChoice(['RESOURCE'], RESOURCES, 'the object acted on');
+  const actions = RESOURCES[resource];
+  const action = statedChoice(
+    ['ACTION_KIND', 'META_ACTION'],
+    actions,
+    `what is done with the ${resource}`,
+  );
+  await actions[action]();
+  console.log(`PASS: Meta catalog API ${action} ${resource} completed`);
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exit(1);

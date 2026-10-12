@@ -46,3 +46,18 @@ export function statedText(names, what) {
     );
   return process.env[name].trim();
 }
+
+/**
+ * One of the keys of `table`, stated in the first of `names` that is set
+ * (an action, a resource, a destination). Unset or not a key: refused by name
+ * with the keys that are, never a default.
+ */
+export function statedChoice(names, table, what) {
+  const keys = Object.keys(table).join(', ');
+  const choice = statedText(names, `${what}: one of ${keys}`).toLowerCase();
+  if (!Object.hasOwn(table, choice))
+    throw new Error(
+      `${names.join(' / ')} is "${choice}", not one of ${keys}: ${what}; nothing is assumed`,
+    );
+  return choice;
+}
