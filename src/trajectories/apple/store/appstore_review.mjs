@@ -145,6 +145,12 @@ try {
     console.log('FAIL_COOKIES_STALE: submit redirected to Apple ID sign-in');
     process.exit(2);
   }
+  // The modal collapses only once Apple accepted the review; one that stays
+  // open holds Apple's refusal, and the run fails there rather than report it.
+  await s.page
+    .locator('button:has-text("Send"), button:has-text("Submit")')
+    .first()
+    .waitFor({ state: 'hidden' });
 
   console.log(`PASS: review submitted for app ${APP_ID} (${RATING}★)`);
 } catch (e) {
