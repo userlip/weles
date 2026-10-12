@@ -43,12 +43,21 @@ const s = await WSession.start({
 const _stored = (acct.metadata?.cookies ?? []).filter((c) =>
   /reddit\.com/.test(c.domain ?? ''),
 );
+// A jar that could not be injected leaves the session signed out; the
+// failure is raised inside the try so it is reported and the session closed.
+let cookieInjectError = null;
 if (_stored.length)
   await s.ctx
     .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
-    .catch(() => {});
+    .catch((e) => {
+      cookieInjectError = e;
+    });
 let ban = null;
 try {
+  if (cookieInjectError)
+    throw new Error(
+      `stored cookies could not be injected: ${cookieInjectError.message}`,
+    );
   let author = TARGET_USER;
   if (!author) {
     await s.goto('https://old.reddit.com/');

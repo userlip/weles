@@ -63,13 +63,11 @@ try {
     }
     throw jarErr;
   }
-  await s.ctx
-    .addCookies(
-      stored
-        .filter((c) => c?.name && c?.value && (c.domain || c.url))
-        .map((c) => ({ ...c, path: c.path || '/' })),
-    )
-    .catch(() => {});
+  await s.ctx.addCookies(
+    stored
+      .filter((c) => c?.name && c?.value && (c.domain || c.url))
+      .map((c) => ({ ...c, path: c.path || '/' })),
+  );
 
   await s.goto(VIDEO);
   await humanIdlePause('deliberate');

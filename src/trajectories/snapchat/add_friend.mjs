@@ -57,7 +57,11 @@ try {
           .filter((c) => c?.name && c?.value && (c.domain || c.url))
           .map((c) => ({ ...c, path: c.path || '/' })),
       )
-      .catch(() => {});
+      .catch((e) =>
+        console.log(
+          `[snapchat_add_friend] stored cookies not injected: ${e.message} — falling through to form login`,
+        ),
+      );
 
   await s.goto('https://web.snapchat.com/');
   await humanIdlePause('deliberate');

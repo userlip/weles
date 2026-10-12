@@ -53,13 +53,11 @@ try {
     if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
     throw jarErr;
   }
-  await s.ctx
-    .addCookies(
-      stored
-        .filter((c) => c?.name && c?.value && (c.domain || c.url))
-        .map((c) => ({ ...c, path: c.path || '/' })),
-    )
-    .catch(() => {});
+  await s.ctx.addCookies(
+    stored
+      .filter((c) => c?.name && c?.value && (c.domain || c.url))
+      .map((c) => ({ ...c, path: c.path || '/' })),
+  );
 
   await s.page.goto('https://web.snapchat.com/', {
     waitUntil: 'domcontentloaded',

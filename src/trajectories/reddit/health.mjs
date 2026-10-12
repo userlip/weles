@@ -41,7 +41,7 @@ try {
   const prepared = stored
     .filter((c) => c && c.name && c.value && (c.domain || c.url))
     .map((c) => ({ ...c, path: c.path || '/' }));
-  if (prepared.length > 0) await sIn.ctx.addCookies(prepared).catch(() => {});
+  if (prepared.length > 0) await sIn.ctx.addCookies(prepared);
   await sIn.goto('https://www.reddit.com/api/me.json');
   loggedIn.url = sIn.page.url();
   const meResp = sIn.capturedResponses.find((r) =>

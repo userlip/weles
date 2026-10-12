@@ -64,11 +64,20 @@ try {
   }
   throw jarErr;
 }
+// A jar that could not be injected leaves the session signed out; the
+// failure is raised inside the try so it is reported and the session closed.
+let cookieInjectError = null;
 await s.ctx
   .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
-  .catch(() => {});
+  .catch((e) => {
+    cookieInjectError = e;
+  });
 let ban = null;
 try {
+  if (cookieInjectError)
+    throw new Error(
+      `stored cookies could not be injected: ${cookieInjectError.message}`,
+    );
   let url;
   if (TARGET_URL) url = TARGET_URL;
   else if (TARGET_USER)
