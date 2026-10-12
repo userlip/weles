@@ -9,6 +9,7 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { detectLinkedInBanSignals } from '../../../../dist/platforms/linkedin/ban_signals.js';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
@@ -75,9 +76,7 @@ try {
     const anyLiked = await s.page
       .locator('button[aria-label*="React Like" i][aria-pressed="true"]')
       .count();
-    ban = await detectLinkedInBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    );
+    ban = await banSignalOf(detectLinkedInBanSignals, s, 'after finding it liked');
     console.log(
       `[ban-signal] ${ban?.signal}  PASS: ${anyLiked ? 'already liked' : 'no_likeable_posts_on_page'}`,
     );
@@ -88,17 +87,13 @@ try {
       .locator('button[aria-label*="React Like" i][aria-pressed="true"]')
       .first()
       .waitFor({ state: 'visible' });
-    ban = await detectLinkedInBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    );
+    ban = await banSignalOf(detectLinkedInBanSignals, s, 'after liking');
     console.log(`[ban-signal] ${ban?.signal}  PASS: liked`);
   }
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectLinkedInBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectLinkedInBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {

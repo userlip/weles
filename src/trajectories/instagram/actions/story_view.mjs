@@ -9,6 +9,7 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { detectInstagramBanSignals } from '../../../../dist/platforms/instagram/ban_signals.js';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
@@ -71,16 +72,12 @@ try {
   await s.page.waitForURL((url) => !/\/stories\//.test(url.pathname), {
     timeout: 0,
   });
-  ban = await detectInstagramBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  ban = await banSignalOf(detectInstagramBanSignals, s, 'after viewing');
   console.log(`[ban-signal] ${ban?.signal}  PASS: viewed`);
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectInstagramBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectInstagramBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {
