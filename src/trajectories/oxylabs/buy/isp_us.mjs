@@ -39,10 +39,14 @@ const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
 
 async function shot(s, label) {
   const fp = `${OUT_DIR}/${stamp()}_${label}.png`;
+  // The log names the file only when it exists; a failed capture says why, so
+  // a reader of the purchase log is not sent to evidence that was never taken.
   try {
     await s.page.screenshot({ path: fp, fullPage: true });
-  } catch {}
-  console.log(`[shot] ${fp}`);
+    console.log(`[shot] ${fp}`);
+  } catch (e) {
+    console.log(`[shot] ${label} not captured: ${e.message}`);
+  }
   return fp;
 }
 

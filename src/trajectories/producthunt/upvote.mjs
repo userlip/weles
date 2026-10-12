@@ -153,10 +153,14 @@ async function vote(s) {
     try {
       await loginViaTwitter(s);
     } catch (e) {
-      try {
-        await markCookiesStale(acct.id);
-      } catch {}
-      throw new Error(`sso_recovery_failed: ${e.message}`);
+      // A jar that could not be marked stale is picked again by the next
+      // run; the failure says so beside the sign-in's own cause.
+      const marked = await markCookiesStale(acct.id).then(
+        () => '',
+        (markError) =>
+          `; the cookie jar was not marked stale: ${markError.message}`,
+      );
+      throw new Error(`sso_recovery_failed: ${e.message}${marked}`);
     }
   }
   // PH's homepage SSR cache sometimes serves the logged-out shell to a

@@ -74,10 +74,14 @@ async function postComment(s, acct, sessionMeta) {
     await assertAuthed('producthunt', s, { label: 'producthunt_comment' });
   } catch (probeErr) {
     if (probeErr instanceof AuthProbeError) {
-      try {
-        await markCookiesStale(acct.id);
-      } catch {}
-      throw new Error(`auth_probe_failed: ${probeErr.message}`);
+      // A jar that could not be marked stale is picked again by the next
+      // run; the failure says so beside the probe's own cause.
+      const marked = await markCookiesStale(acct.id).then(
+        () => '',
+        (markError) =>
+          `; the cookie jar was not marked stale: ${markError.message}`,
+      );
+      throw new Error(`auth_probe_failed: ${probeErr.message}${marked}`);
     }
     throw probeErr;
   }
