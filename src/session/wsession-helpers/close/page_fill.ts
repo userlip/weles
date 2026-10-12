@@ -23,7 +23,9 @@ const asV = (p: any) => p as unknown as ScreenshottablePage;
 export function childFrames(s: WSession, allowedOrigin?: string): Frame[] {
   const mainFrame = s.page.mainFrame();
   return (s.page.frames() as Frame[]).filter((frame) => {
-    if (frame === mainFrame) return false;
+    // The main frame is searched separately; a frame the page has already
+    // detached (an ad or widget torn down mid-navigation) holds no control.
+    if (frame === mainFrame || frame.isDetached()) return false;
     if (!allowedOrigin) return true;
     // A frame without a parsable URL (about:srcdoc) belongs to no origin.
     const url = frame.url();
