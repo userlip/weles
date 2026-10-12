@@ -300,7 +300,13 @@ export async function fillPage(
   if (!point) return 'no-field-found';
   await humanClick(s.page, point.x, point.y);
   if (!credentialAuthorized) await assertFocusedLiteralInput(s, value);
-  await s.page.keyboard.press('Meta+a').catch(() => {});
+  // Typing after a failed select-all appends to whatever the field held, so
+  // the field would be submitted with a value nobody asked for.
+  await s.page.keyboard.press('Meta+a').catch((error) => {
+    throw new Error(
+      `could not select the existing text of ${target} before typing: ${error}`,
+    );
+  });
   await humanType(s.page, value);
   return 'filled';
 }
