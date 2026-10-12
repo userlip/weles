@@ -51,24 +51,17 @@ export async function solveLinkedinCaptchaChallenge(page, proxy) {
     );
   }
 
-  // LinkedIn's invisible enterprise reCAPTCHA is picky. Try each captcha
-  // provider in isolation and verify whether the challenge actually clears.
-  // Some providers classify this key as V3/score-based, so try V3 first.
+  // LinkedIn's invisible enterprise reCAPTCHA is picky. Each captcha provider
+  // whose credential is held is tried in isolation, and whether the challenge
+  // actually clears is read after each. A v3/score token comes first; the v3
+  // solver answers no token for a provider that offers no v3 route.
   const allCreds = await getCaptchaCredentials();
-  const providerOrder = [
-    'nopecha',
-    'capsolver',
-    'anticaptcha',
-    'capmonster',
-    'twocaptcha',
-  ];
   const challengeUrl =
     (typeof page.url === 'function' ? page.url() : page?.url) ??
     'https://www.linkedin.com/signup';
   const websiteUrl = challengeUrl;
 
-  for (const provider of providerOrder) {
-    const key = allCreds[provider];
+  for (const [provider, key] of Object.entries(allCreds)) {
     if (!key) continue;
     console.log(
       `[create_account_challenge] trying captcha provider: ${provider}`,
@@ -76,48 +69,42 @@ export async function solveLinkedinCaptchaChallenge(page, proxy) {
     const solver = new CaptchaSolver({ [provider]: key });
 
     // Attempt 1: reCAPTCHA v3 / score-based token.
-    if (
-      provider === 'capsolver' ||
-      provider === 'anticaptcha' ||
-      provider === 'nopecha'
-    ) {
-      const v3Token = await solver.solveRecaptchaV3(
-        sitekey,
-        websiteUrl,
-        'signup',
-        { proxy, dataS, enterprise: true },
+    const v3Token = await solver.solveRecaptchaV3(
+      sitekey,
+      websiteUrl,
+      'signup',
+      { proxy, dataS, enterprise: true },
+    );
+    if (v3Token && typeof v3Token === 'string') {
+      console.log(
+        `[create_account_challenge] ${provider} v3 token_chars=${v3Token.length}`,
       );
-      if (v3Token && typeof v3Token === 'string') {
-        console.log(
-          `[create_account_challenge] ${provider} v3 token_chars=${v3Token.length}`,
-        );
-        const submitResult = await submitLinkedinCaptchaForm(
-          page,
-          v3Token,
-          sitekey,
-          dataS,
-        );
-        if (submitResult.ok) {
-          await pageSettled(page);
-          if (await isChallengeCleared(page)) {
-            console.log(
-              `[create_account_challenge] captcha cleared with ${provider} v3`,
-            );
-            return;
-          }
+      const submitResult = await submitLinkedinCaptchaForm(
+        page,
+        v3Token,
+        sitekey,
+        dataS,
+      );
+      if (submitResult.ok) {
+        await pageSettled(page);
+        if (await isChallengeCleared(page)) {
           console.log(
-            `[create_account_challenge] challenge remained visible after ${provider} v3 submission`,
+            `[create_account_challenge] captcha cleared with ${provider} v3`,
           );
-        } else {
-          console.log(
-            `[create_account_challenge] ${provider} v3 submit failed: ${submitResult.reason}`,
-          );
+          return;
         }
+        console.log(
+          `[create_account_challenge] challenge remained visible after ${provider} v3 submission`,
+        );
       } else {
         console.log(
-          `[create_account_challenge] ${provider} returned no v3 token`,
+          `[create_account_challenge] ${provider} v3 submit failed: ${submitResult.reason}`,
         );
       }
+    } else {
+      console.log(
+        `[create_account_challenge] ${provider} returned no v3 token`,
+      );
     }
 
     // Attempt 2: reCAPTCHA v2 invisible enterprise token. LinkedIn wraps the
