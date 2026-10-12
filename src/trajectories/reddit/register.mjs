@@ -221,9 +221,15 @@ try {
     );
     process.exitCode = 1;
   } else {
-    const cookies = saved.metadata?.cookies ?? [];
-    const hasSession = cookies.some?.((c) =>
-      /reddit_session|token_v2/.test(c?.name ?? ''),
+    // Reddit's own session cookies for a signed-in account, by exact name
+    // (a substring match also took any cookie merely containing them).
+    const REDDIT_SESSION = { reddit_session: true, token_v2: true };
+    const cookies = Array.isArray(saved.metadata?.cookies)
+      ? saved.metadata.cookies
+      : [];
+    const hasSession = cookies.some(
+      (c) =>
+        typeof c?.name === 'string' && Object.hasOwn(REDDIT_SESSION, c.name),
     );
     if (!hasSession) {
       console.log(

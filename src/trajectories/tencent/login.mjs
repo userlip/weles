@@ -74,6 +74,22 @@ async function clickGoogleSsoButton(page) {
   return undefined;
 }
 
+/**
+ * The cookies Tencent Cloud's console sets for a signed-in account (its
+ * QQ/WeChat-era session cookies and the international console's own
+ * session key), by their exact names.
+ */
+const TENCENT_SESSION_COOKIES = {
+  skey: true,
+  p_skey: true,
+  uin: true,
+  tinyid: true,
+  ownerUin: true,
+  appid: true,
+  INTL_SAAS_SYNCED_SESSION_KEY: true,
+  loginType: true,
+};
+
 async function persistJar(page) {
   if (!existsSync(JAR_DIR)) mkdirSync(JAR_DIR, { recursive: true });
   const cookies = await page.context().cookies();
@@ -88,9 +104,7 @@ async function persistJar(page) {
   writeFileSync(JAR_PATH, JSON.stringify(jar, null, 2));
   console.log(`[login] persisted ${tencent.length} cookies to ${JAR_PATH}`);
   const auth = tencent.find((c) =>
-    /^(skey|p_skey|uin|tinyid|ownerUin|appid|INTL_SAAS_SYNCED_SESSION_KEY|loginType)$/i.test(
-      c.name,
-    ),
+    Object.hasOwn(TENCENT_SESSION_COOKIES, c.name),
   );
   if (auth) console.log(`[login] auth-side cookie present: ${auth.name}`);
   else
