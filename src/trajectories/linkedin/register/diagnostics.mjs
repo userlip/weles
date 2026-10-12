@@ -81,8 +81,8 @@ function summarizePostData(postData = '') {
     json_shape: null,
     markers: {
       has_apfc: /\bapfc\b/.test(postData),
-      has_recaptcha: /recaptcha|g-recaptcha|captchaResponse/i.test(postData),
-      has_email: /emailAddress|email-address|email/i.test(postData),
+      has_recaptcha: /recaptcha/i.test(postData),
+      has_email: /email/i.test(postData),
       has_password: /password/i.test(postData),
     },
     redacted: '',

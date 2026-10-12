@@ -359,8 +359,16 @@ async function settleAuthenticatedSession({
       `signup_did_not_complete: URL stayed at ${verifyUrl} — LinkedIn did not accept the registration`,
     );
   }
+  // LinkedIn sends a new member to its email-verification or checkpoint routes
+  // when it wants the emailed PIN; anywhere else is the signed-in redirect.
+  const verifyPath = new URL(verifyUrl).pathname;
   if (
-    !/verify|email-verification|email_verification|checkpoint/.test(verifyUrl)
+    ![
+      '/checkpoint',
+      '/verify',
+      '/email-verification',
+      '/email_verification',
+    ].some((route) => verifyPath.includes(route))
   ) {
     const redirected = await assertLinkedinAuthenticatedRegistration(
       session,
@@ -373,7 +381,8 @@ async function settleAuthenticatedSession({
   }
   // Email verification: poll Resend for 6-digit code → fill PIN input → submit.
   const code = await session.checkEmail(identity.email, 'linkedin');
-  if (!code || /^no (code|email)|^error:/.test(code))
+  // A read code is the digits alone; every other answer explains its absence.
+  if (!/^\d+$/.test(code))
     throw new Error(`linkedin verification email did not arrive: ${code}`);
   const pinIn = session.page
     .locator(

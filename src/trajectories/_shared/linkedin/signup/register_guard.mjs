@@ -56,9 +56,12 @@ export async function assertLinkedinAuthenticatedRegistration(
     );
   }
   if (
-    /verify|email-verification|email_verification|checkpoint/.test(
-      state.final_url,
-    )
+    [
+      '/checkpoint',
+      '/verify',
+      '/email-verification',
+      '/email_verification',
+    ].some((route) => new URL(state.final_url).pathname.includes(route))
   ) {
     throw new Error(
       `signup_verification_incomplete: stage=${stage} final_url=${state.final_url}`,
@@ -74,12 +77,7 @@ export async function assertLinkedinAuthenticatedRegistration(
 
 async function nudgeIntoSignup(page) {
   const url = page.url?.() ?? '';
-  const joinSelectors = [
-    'a[href*="/signup"]:has-text("Join now")',
-    'a:has-text("Join now")',
-    'button:has-text("Join now")',
-    'a[href*="/signup"]',
-  ];
+  const joinSelectors = ['a[href*="/signup"]', 'a[href*="/join"]'];
   for (const sel of joinSelectors) {
     const loc = await firstVisible(page, sel);
     if (!loc) continue;
@@ -162,11 +160,7 @@ export function classifyLinkedinRegisterFailure(
     )
   )
     return 'registration_not_accepted';
-  if (
-    /captcha|challenge|checkpoint/i.test(finalUrl) ||
-    /captcha|challenge|checkpoint/i.test(errorMessage)
-  )
-    return 'captcha_challenge';
+  if (finalUrl.includes('/checkpoint')) return 'captcha_challenge';
   if (/signup_form_unavailable/.test(errorMessage)) return 'form_unavailable';
   return 'action_failed';
 }

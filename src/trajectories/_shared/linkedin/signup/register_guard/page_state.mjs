@@ -71,6 +71,18 @@ export async function summarizeLinkedinPage(page) {
   }, url);
 }
 
+// The hosts a captcha provider serves its challenge frame from.
+export const CAPTCHA_FRAME_HOSTS = [
+  'google.com/recaptcha',
+  'recaptcha.net',
+  'arkoselabs.com',
+  'funcaptcha.com',
+  'hcaptcha.com',
+];
+
+// The challenge the page presents, read from its structure: the checkpoint
+// route, a visible captcha provider or challenge frame while the signup form
+// is gone, and a checkpoint that does not ask for the emailed PIN.
 export function getLinkedinChallengeSignal(summary = {}) {
   const isDormantInvisibleRecaptcha = (f = {}) => {
     try {
@@ -84,68 +96,38 @@ export function getLinkedinChallengeSignal(summary = {}) {
       return false;
     }
   };
-  const inputText = (summary.inputs ?? [])
-    .flatMap((i) => [i.name, i.id, i.type, i.autocomplete])
-    .join(' ');
-  const buttonText = (summary.buttons ?? [])
-    .flatMap((b) => [b.text, b.href])
-    .join(' ');
-  const visibleInputNames = new Set(
-    (summary.inputs ?? [])
-      .filter((i) => i.visible)
-      .flatMap((i) => [i.name, i.id]),
-  );
+  const url = String(summary.url);
+  const visibleInputs = Array.isArray(summary.inputs)
+    ? summary.inputs.filter((input) => input.visible)
+    : [];
   const hasVisibleSignupForm =
-    (visibleInputNames.has('email-address') ||
-      /email-address|\bemail\b/i.test(inputText)) &&
-    (visibleInputNames.has('password') || /password/i.test(inputText)) &&
-    /Agree & Join|Continue/i.test(buttonText);
-  const visibleIframeText = (summary.iframes ?? [])
-    .filter((f) => f.visible && !isDormantInvisibleRecaptcha(f))
-    .flatMap((f) => [f.id, f.name, f.title, f.src])
-    .join(' ');
-  const allIframeText = (summary.iframes ?? [])
-    .filter((f) => !isDormantInvisibleRecaptcha(f))
-    .flatMap((f) => [f.id, f.name, f.title, f.src])
-    .join(' ');
-  const pageText = [
-    summary.url,
-    summary.title,
-    summary.pageKey,
-    summary.bodyText,
-  ]
-    .join(' ')
-    .toLowerCase();
-  const haystack = [pageText, inputText, buttonText, allIframeText]
-    .join(' ')
-    .toLowerCase();
+    visibleInputs.some(
+      (input) => input.name === 'email-address' || input.type === 'email',
+    ) && visibleInputs.some((input) => input.type === 'password');
   // The normal LinkedIn signup page embeds invisible reCAPTCHA Enterprise and
-  // ProTechTS/security-verification iframes while the form remains usable.
-  // Treat those as risk instrumentation, not a blocking challenge.
+  // ProTechTS iframes while the form remains usable: risk instrumentation,
+  // not a blocking challenge.
+  const challengeFrames = (
+    Array.isArray(summary.iframes) ? summary.iframes : []
+  )
+    .filter((frame) => frame.visible && !isDormantInvisibleRecaptcha(frame))
+    .map((frame) => String(frame.src));
   if (
-    /\/checkpoint\/challenge|challengeiframe|arkose/i.test(haystack) &&
-    !hasVisibleSignupForm
+    !hasVisibleSignupForm &&
+    (url.includes('/checkpoint/challenge') ||
+      challengeFrames.some(
+        (src) =>
+          src.includes('challengeIframe') ||
+          CAPTCHA_FRAME_HOSTS.some((host) => src.includes(host)),
+      ))
   )
     return 'challenge_page';
-  if (
-    /recaptcha|captcha|security verification/i.test(visibleIframeText) &&
-    !hasVisibleSignupForm
-  )
-    return 'challenge_page';
-  if (
-    /recaptcha|captcha|security verification|verify you are human|unusual activity/i.test(
-      pageText,
-    ) &&
-    !hasVisibleSignupForm
-  )
-    return 'challenge_page';
-  if (
-    /\/checkpoint|checkpoint/.test(pageText) &&
-    !/email[-_\s]?verification|confirmation code|one-time-code|\bpin\b/.test(
-      pageText,
-    )
-  )
-    return 'checkpoint_page';
+  const asksForPin = visibleInputs.some(
+    (input) =>
+      input.autocomplete === 'one-time-code' ||
+      [input.name, input.id].some((field) => String(field).includes('pin')),
+  );
+  if (url.includes('/checkpoint') && !asksForPin) return 'checkpoint_page';
   return '';
 }
 

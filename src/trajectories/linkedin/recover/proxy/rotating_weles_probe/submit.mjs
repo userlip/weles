@@ -156,7 +156,11 @@ export async function submitSignupCandidate(session) {
       .catch((e) => {
         out.save_error = String(e?.message ?? e);
       });
-  } else if (/verify|email-verification|checkpoint/.test(out.auth.final_url)) {
+  } else if (
+    ['/checkpoint', '/verify', '/email-verification'].some((route) =>
+      new URL(out.auth.final_url).pathname.includes(route),
+    )
+  ) {
     out.result = 'verification_or_checkpoint';
   } else {
     out.result = 'create_account_no_auth';

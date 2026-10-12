@@ -43,6 +43,19 @@ export async function markStaleAndFail(
   if (acct.id) await markCookiesStale(acct.id);
 }
 
+// Chromium's network error codes, by what they say about the route to LinkedIn.
+const EDGE_REFUSALS = [
+  'ERR_HTTP_RESPONSE_CODE_FAILURE',
+  'ERR_BLOCKED_BY_RESPONSE',
+  'ERR_BLOCKED_BY_CLIENT',
+  'ERR_BLOCKED_BY_ADMINISTRATOR',
+];
+const PROXY_FAILURES = [
+  'ERR_TUNNEL_CONNECTION_FAILED',
+  'ERR_PROXY_CONNECTION_FAILED',
+  'ERR_TIMED_OUT',
+];
+
 /**
  * Classify a thrown login error. ERR_HTTP_RESPONSE_CODE_FAILURE = LinkedIn
  * 4xx/5xx at edge (fingerprint or IP blocked), which must read as ip_blocked
@@ -50,21 +63,11 @@ export async function markStaleAndFail(
  * proxy CONNECT failure.
  */
 export function classifyLoginError(message, finalUrl) {
-  if (
-    /ERR_HTTP_RESPONSE_CODE_FAILURE|ERR_BLOCKED_BY_RESPONSE|ERR_BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_ADMINISTRATOR/.test(
-      message,
-    )
-  )
-    return 'ip_blocked';
-  if (/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED/.test(message))
+  if (EDGE_REFUSALS.some((code) => message.includes(code))) return 'ip_blocked';
+  if (PROXY_FAILURES.some((code) => message.includes(code)))
     return 'proxy_failed';
   if (finalUrl.startsWith('chrome-error://')) return 'proxy_failed';
-  if (/Timeout|net::ERR_TIMED_OUT/.test(message)) return 'proxy_failed';
-  if (
-    CHECKPOINT_RE.test(finalUrl) ||
-    /image-selection|select.*buses|solve_captcha/i.test(message)
-  )
-    return 'checkpoint';
+  if (CHECKPOINT_RE.test(finalUrl)) return 'checkpoint';
   return 'unknown_error';
 }
 

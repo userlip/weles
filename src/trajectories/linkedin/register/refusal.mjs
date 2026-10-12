@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { writeSubmitDiagnostics } from './diagnostics.mjs';
+import { CAPTCHA_FRAME_HOSTS } from '../../_shared/linkedin/signup/register_guard/page_state.mjs';
 
 export function loadProxyPreflightSummary() {
   try {
@@ -130,13 +131,6 @@ export async function inspectCreateAccountChallenge(session, challengeUrl) {
   const frames = Array.isArray(out.iframes)
     ? out.iframes.filter((frame) => frame.visible)
     : [];
-  const CAPTCHA_FRAMES = [
-    'google.com/recaptcha',
-    'recaptcha.net',
-    'arkoselabs.com',
-    'funcaptcha.com',
-    'hcaptcha.com',
-  ];
   if (
     inputs.some(
       (input) => input.type === 'tel' || input.autocomplete === 'one-time-code',
@@ -145,7 +139,7 @@ export async function inspectCreateAccountChallenge(session, challengeUrl) {
     out.kind = 'phone_verification';
   } else if (
     frames.some((frame) =>
-      CAPTCHA_FRAMES.some((provider) => String(frame.src).includes(provider)),
+      CAPTCHA_FRAME_HOSTS.some((host) => String(frame.src).includes(host)),
     )
   ) {
     out.kind = 'captcha_gauntlet';
@@ -181,8 +175,7 @@ export async function hasVisibleCaptchaChallenge(page) {
       ).some((f) => {
         const src = f.src || '';
         const title = f.title || '';
-        if (/\/checkpoint\/challengeIframe|challengeIframe/i.test(src))
-          return visible(f);
+        if (src.includes('challengeIframe')) return visible(f);
         if (/recaptcha/i.test(src) || /recaptcha/i.test(title)) {
           try {
             const u = new URL(src);
@@ -205,13 +198,7 @@ export async function hasVisibleCaptchaChallenge(page) {
         if (el.classList?.contains('grecaptcha-badge')) return false;
         return true;
       });
-      return (
-        activeCaptchaIframe ||
-        activeCaptchaDiv ||
-        /complete (the )?(captcha|security verification)/i.test(
-          document.body?.innerText ?? '',
-        )
-      );
+      return activeCaptchaIframe || activeCaptchaDiv;
     })
     .catch(() => false);
 }

@@ -13,6 +13,7 @@ import {
   humanScrollPage,
 } from '../../../../../dist/human/mouse.js';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
+import { pageShows } from '../../../_shared/page/judged/seen.mjs';
 import { readScopedProxy } from '../../../../_shared/scoped-secrets.mjs';
 import { launchGenuineChrome } from '../../../../browser/real_chrome.mjs';
 import {
@@ -199,14 +200,12 @@ try {
     console.log(`[reg-real] post-name url=${page.url()}`);
   }
 
-  // V2 modal: detect by visible "Security verification" modal text (not
-  // by iframe presence, since V3 invisible iframe uses the same selector),
-  // read once the page has settled after the join click.
-  await pageSettled(page);
-  const v2Visible = await page.evaluate(() =>
-    /Security verification|Let.s do a quick security check/i.test(
-      document.body?.innerText || '',
-    ),
+  // V2 modal: the visible security-check modal is what the page shows, not
+  // an iframe (the invisible V3 widget uses the same selector), judged once
+  // the page has settled after the join click.
+  const v2Visible = await pageShows(
+    page,
+    'Does the page show a security verification (captcha) modal?',
   );
   if (v2Visible) {
     console.log('[reg-real] V2 modal detected — finding anchor frame');

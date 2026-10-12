@@ -55,23 +55,20 @@ export function classifySummary(summary) {
       .filter((i) => i.visible)
       .flatMap((i) => [i.name, i.id, i.type]),
   );
-  const buttonText = (summary.buttons || []).map((b) => b.text).join(' ');
   const hasSignupFields =
     (visibleInputs.has('email-address') || visibleInputs.has('email')) &&
-    visibleInputs.has('password') &&
-    /Agree & Join|Continue/i.test(buttonText);
+    visibleInputs.has('password');
   if (signal) return { result: 'challenge', signal };
   if (hasSignupFields) return { result: 'form', signal: '' };
   return { result: 'unknown', signal: '' };
 }
 
+// Every email address and every JSON string value is hidden, so no field the
+// request happens to carry leaks into the report under a name nobody listed.
 export function redactText(text = '') {
   return String(text)
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '<redacted-email>')
-    .replace(
-      /("(?:password|email|emailAddress|firstName|lastName|first-name|last-name|csrfToken|loginCsrfParam)"\s*:\s*)"[^"]*"/gi,
-      '$1"<redacted>"',
-    );
+    .replace(/("[^"]+"\s*:\s*)"[^"]*"/g, '$1"<redacted>"');
 }
 
 export async function summarizeApiResponse(res) {

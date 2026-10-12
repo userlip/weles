@@ -12,6 +12,7 @@
 import { humanFill } from '../../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../../dist/human/mouse.js';
 import { pageSettled } from '../../page/settled.mjs';
+import { clickOffered, pageShows } from '../../page/judged/seen.mjs';
 import { ROLE_TITLES, ROLE_COMPANIES } from './stooge_data.mjs';
 
 function pick(arr) {
@@ -85,13 +86,9 @@ export async function fillPostRegisterOnboarding(page) {
       page.locator('div[role="listbox"] li, ul[role="listbox"] li').first(),
     );
     await pageSettled(page);
-    const saved = await clickIfVisible(
+    const saved = await clickOffered(
       page,
-      page
-        .locator(
-          'button:has-text("Save"), button:has-text("Add to my profile"), button[type="submit"]:has-text("Save")',
-        )
-        .first(),
+      'the button that saves the position to the profile',
     );
     if (titleFilled && companyFilled && saved) {
       roleAdded = true;
@@ -146,13 +143,9 @@ export async function fillPostRegisterOnboarding(page) {
       'Computer Science',
     );
     await pageSettled(page);
-    const saved = await clickIfVisible(
+    const saved = await clickOffered(
       page,
-      page
-        .locator(
-          'button:has-text("Save"), button[type="submit"]:has-text("Save")',
-        )
-        .first(),
+      'the button that saves the education to the profile',
     );
     if (schoolFilled && saved) {
       schoolAdded = true;
@@ -172,19 +165,20 @@ export async function fillPostRegisterOnboarding(page) {
       waitUntil: 'domcontentloaded',
     });
     await pageSettled(page);
-    let body = '';
-    try {
-      body = await page.evaluate(() => document.body.innerText);
-    } catch (e) {
-      console.log(`[onboarding] body read err: ${e.message}`);
-    }
-    const gated =
-      /one step away from viewing|complete one quick step|Add a job or school to continue/i.test(
-        body,
-      );
-    viewable = !gated && body.length > 500;
+    // LinkedIn gates a profile behind "add a job or school" until onboarding
+    // is done; the vision model reads whether the profile itself is shown.
+    const gated = await pageShows(
+      page,
+      'Does the page ask to add a job or school (or complete a step) before the profile can be viewed?',
+    );
+    viewable =
+      !gated &&
+      (await pageShows(
+        page,
+        "Does the page show a person's LinkedIn profile?",
+      ));
     console.log(
-      `[onboarding] post-build profile view: gated=${gated} bodyLen=${body.length} viewable=${viewable}`,
+      `[onboarding] post-build profile view: gated=${gated} viewable=${viewable}`,
     );
   } catch (e) {
     console.log(`[onboarding] view-verify err: ${e.message}`);
