@@ -26,21 +26,14 @@ import {
 } from '../../../_shared/page/settled.mjs';
 import { checkReachable } from '../../../_shared/action-runner.mjs';
 import { readDiscordNoContent } from '../../../_shared/discord/response.mjs';
+import { statedCount } from '../../../_shared/inputs/stated.mjs';
 
 const ACCT_USERNAME = process.env.ACCOUNT_USERNAME;
-const rawLimit = process.env.ACCEPT_LIMIT ?? '3';
-const ACCEPT_LIMIT = Number(rawLimit);
-if (
-  !/^\d+$/.test(rawLimit) ||
-  !Number.isSafeInteger(ACCEPT_LIMIT) ||
-  ACCEPT_LIMIT < 1
-) {
-  console.error(
-    'DISCORD_ACCEPT_LIMIT_INVALID: ACCEPT_LIMIT must be a positive integer; observed',
-    JSON.stringify(rawLimit),
-  );
-  process.exit(1);
-}
+// How many strangers the account befriends is the caller's to say.
+const ACCEPT_LIMIT = statedCount(
+  'ACCEPT_LIMIT',
+  'how many pending friend requests are accepted',
+);
 
 const acct = ACCT_USERNAME
   ? await getSocialAccount('discord', { username: ACCT_USERNAME })
