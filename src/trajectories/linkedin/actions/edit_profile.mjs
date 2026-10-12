@@ -374,71 +374,67 @@ try {
     }
   }
 
-  // Avatar upload — linkedin's profile-photo upload lives at
-  // /in/me/edit-form/profile-photo (or via the photo overlay on the main
-  // profile). The dialog has Add photo / Save controls and a hidden file
-  // input. Navigating directly + setInputFiles avoids modal-state issues.
+  // Avatar upload — 2026 design: photo upload lives behind the "Add photo"
+  // pencil on /in/<vanity>/. Open the profile, click the pencil; the modal
+  // offers an "Upload photo" button (a file chooser) or a hidden file input.
+  // Direct deep-links to /edit-form/profile-photo/ 404. A requested avatar
+  // that could not be read, placed or saved fails the run: a PASS would claim
+  // a picture the profile lacks.
   console.log(
     `[li-profile] entering avatar block (avatarUrl=${avatarUrl ? 'yes' : 'none'})`,
   );
   if (avatarUrl) {
     const tmpAvatar = await loadAvatarFile(avatarUrl);
-    if (tmpAvatar) {
-      try {
-        // 2026 design: photo upload lives behind the "Add photo" pencil on
-        // /in/<vanity>/. Open profile, click pencil, then the modal exposes
-        // the hidden file input. Direct deep-link to /edit-form/profile-
-        // photo/ 404s same as the other edit-form/ paths.
-        const myVanity = s.page.url().match(/\/in\/([^/?]+)/)?.[1] || 'me';
-        await s.page.goto(`https://www.linkedin.com/in/${myVanity}/`, {
-          waitUntil: 'domcontentloaded',
-        });
-        await humanIdlePause('deliberate');
-        const addPhotoBtn = s.page
-          .locator(
-            'a[aria-label="Add photo" i], button[aria-label="Add photo" i]',
-          )
-          .filter({ visible: true })
-          .first();
-        if (await addPhotoBtn.count()) {
-          await humanClickLocator(s.page, addPhotoBtn);
-          await humanIdlePause('deliberate');
-        }
-        // The modal exposes an "Upload photo" button (not file input).
-        // Intercept filechooser BEFORE click.
-        const upBtn = s.page
-          .locator(
-            'button:has-text("Upload photo"), label:has-text("Upload photo")',
-          )
-          .filter({ visible: true })
-          .first();
-        const fcP = (await upBtn.count())
-          ? s.page.waitForEvent('filechooser').catch(() => null)
-          : null;
-        if (await upBtn.count()) await humanClickLocator(s.page, upBtn);
-        const chooser = fcP ? await fcP : null;
-        if (chooser) {
-          await chooser.setFiles(tmpAvatar);
-        } else {
-          const fIn = s.page.locator('input[type="file"]').first();
-          if (await fIn.count()) await fIn.setInputFiles(tmpAvatar);
-        }
-        await humanIdlePause('deliberate');
-        const applyBtn = s.page
-          .locator(
-            'button:has-text("Save photo"), button:has-text("Apply"), button:has-text("Save")',
-          )
-          .filter({ visible: true })
-          .first();
-        if (await applyBtn.count()) {
-          await humanClickLocator(s.page, applyBtn);
-          writes.push('avatar uploaded');
-          await humanIdlePause('deliberate');
-        }
-      } catch (e) {
-        console.log(`[li-profile] avatar err: ${e.message}`);
-      }
+    const myVanity = s.page.url().match(/\/in\/([^/?]+)/)?.[1];
+    if (!myVanity)
+      throw new Error(
+        `the page ${s.page.url()} names no /in/<vanity> profile to open for the avatar; the requested avatar was not uploaded`,
+      );
+    await s.page.goto(`https://www.linkedin.com/in/${myVanity}/`, {
+      waitUntil: 'domcontentloaded',
+    });
+    await humanIdlePause('deliberate');
+    const addPhotoBtn = s.page
+      .locator('a[aria-label="Add photo" i], button[aria-label="Add photo" i]')
+      .filter({ visible: true })
+      .first();
+    if (await addPhotoBtn.count()) {
+      await humanClickLocator(s.page, addPhotoBtn);
+      await humanIdlePause('deliberate');
     }
+    const upBtn = s.page
+      .locator(
+        'button:has-text("Upload photo"), label:has-text("Upload photo")',
+      )
+      .filter({ visible: true })
+      .first();
+    if (await upBtn.count()) {
+      // The chooser is awaited from before the click so it cannot be missed.
+      const chooser = s.page.waitForEvent('filechooser');
+      await humanClickLocator(s.page, upBtn);
+      await (await chooser).setFiles(tmpAvatar);
+    } else {
+      const fIn = s.page.locator('input[type="file"]').first();
+      if (!(await fIn.count()))
+        throw new Error(
+          'the LinkedIn photo dialog offers neither an Upload photo button nor a file input; the requested avatar was not uploaded',
+        );
+      await fIn.setInputFiles(tmpAvatar);
+    }
+    await humanIdlePause('deliberate');
+    const applyBtn = s.page
+      .locator(
+        'button:has-text("Save photo"), button:has-text("Apply"), button:has-text("Save")',
+      )
+      .filter({ visible: true })
+      .first();
+    if (!(await applyBtn.count()))
+      throw new Error(
+        'the LinkedIn photo dialog shows no Save photo, Apply or Save button after the image was placed; the requested avatar was not saved',
+      );
+    await humanClickLocator(s.page, applyBtn);
+    writes.push('avatar uploaded');
+    await humanIdlePause('deliberate');
   }
 
   updateAccountMetadata(acct.id, {
