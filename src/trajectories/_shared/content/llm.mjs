@@ -38,13 +38,28 @@ async function callGenerate(body) {
       messages: [{ role: 'user', content: JSON.stringify(body) }],
     }),
   });
-  const data = await res.json().catch(() => ({}));
+  // The router's own answer is what a failure carries; a body that is not
+  // JSON is quoted, never read as an empty object, and an answer without
+  // text is shown whole.
+  const raw = await res.text();
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Stado model generation answered HTTP ${res.status} with a body that is not JSON (${error.message}): ${raw}`,
+    );
+  }
   if (!res.ok)
     throw new Error(
-      `Stado model generation ${res.status}: ${String(data.error?.message ?? '')}`,
+      `Stado model generation ${res.status}: ${JSON.stringify(data.error ?? data)}`,
     );
-  const text = String(data.choices?.[0]?.message?.content ?? '').trim();
-  if (!text) throw new Error('Stado model generation returned empty text');
+  const content = data.choices?.[0]?.message?.content;
+  const text = typeof content === 'string' ? content.trim() : '';
+  if (!text)
+    throw new Error(
+      `Stado model generation returned no text: ${JSON.stringify(data)}`,
+    );
   return text;
 }
 
