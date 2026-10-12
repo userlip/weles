@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 import { runSemanticScholarKeyFollowup } from '../../../dist/secrets/semantic-scholar-followup.js';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 
 const sourceActionLogId =
   process.env.SOURCE_ACTION_LOG_ID ||
@@ -27,23 +28,27 @@ writeFileSync(
   JSON.stringify({ semantic_scholar_key_followup: result }, null, 2),
 );
 
-if (!['pending', 'validated'].includes(result.status)) {
+// The follow-up's own outcomes that are not a failure: the key request still
+// waits for Semantic Scholar, or the key it sent was validated.
+const STANDING = { pending: true, validated: true };
+if (!Object.hasOwn(STANDING, result.status)) {
   console.error(`FAIL: ${result.status}: ${result.reason}`);
-  process.exit(1);
+  process.exitCode = exitStatusFor(new Error(result.reason));
+} else {
+  console.log(
+    JSON.stringify({
+      status: result.status,
+      validated: result.validated,
+      // Skarbiec v2 returns a vault coordinate, never a credential row id. The
+      // dropped `service_credential_id` belonged to the plaintext service_credentials
+      // path and could not populate under either merge parent.
+      validation_status:
+        'validation_status' in result ? result.validation_status : undefined,
+      vault_item_id:
+        'vault_item_id' in result ? result.vault_item_id : undefined,
+      vault_field: 'vault_field' in result ? result.vault_field : undefined,
+      next_scheduled_at:
+        'next_scheduled_at' in result ? result.next_scheduled_at : undefined,
+    }),
+  );
 }
-
-console.log(
-  JSON.stringify({
-    status: result.status,
-    validated: result.validated,
-    // Skarbiec v2 returns a vault coordinate, never a credential row id. The
-    // dropped `service_credential_id` belonged to the plaintext service_credentials
-    // path and could not populate under either merge parent.
-    validation_status:
-      'validation_status' in result ? result.validation_status : undefined,
-    vault_item_id: 'vault_item_id' in result ? result.vault_item_id : undefined,
-    vault_field: 'vault_field' in result ? result.vault_field : undefined,
-    next_scheduled_at:
-      'next_scheduled_at' in result ? result.next_scheduled_at : undefined,
-  }),
-);
