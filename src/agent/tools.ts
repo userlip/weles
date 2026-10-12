@@ -156,6 +156,9 @@ function browserTool(
   };
 }
 
+// Both are required: a number is only bought in a country the task named.
+const SMS_ARGS = { service: TEXT, country: TEXT };
+
 export const BROWSER_TOOLS: readonly FunctionTool[] = [
   browserTool(
     'click',
@@ -264,14 +267,12 @@ export const BROWSER_TOOLS: readonly FunctionTool[] = [
     { platform: TEXT },
     [],
   ),
-  ((args) =>
-    browserTool(
-      'check_sms',
-      'Request an SMS number for the authorized service in the stated country code; an unsupported country is refused with the supported list.',
-      args,
-      // Both are required: a number is only bought in a country the task named.
-      Object.keys(args),
-    ))({ service: TEXT, country: TEXT }),
+  browserTool(
+    'check_sms',
+    'Request an SMS number for the authorized service in the stated country code; an unsupported country is refused with the supported list.',
+    SMS_ARGS,
+    Object.keys(SMS_ARGS),
+  ),
   browserTool(
     'poll_sms_code',
     'Poll the existing authorized SMS order for its code.',
