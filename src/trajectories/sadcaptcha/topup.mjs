@@ -28,12 +28,8 @@ try {
     .locator('[role="alert"], .alert-danger, .error')
     .filter({ visible: true })
     .first();
-  if ((await submitAnswered(s.page, /\/login/, loginAlert)) === 'message') {
-    console.log(
-      `FAIL: login refused: ${(await loginAlert.innerText()).trim()}`,
-    );
-    process.exit(1);
-  }
+  if ((await submitAnswered(s.page, /\/login/, loginAlert)) === 'message')
+    throw new Error(`login refused: ${(await loginAlert.innerText()).trim()}`);
 
   // SadCaptcha pricing/buy section anchored on home.
   await s.page
@@ -60,10 +56,7 @@ try {
     '../_shared/services/topup_common.mjs'
   );
   const clicked = await findAndClickPayButton(s.page);
-  if (!clicked) {
-    console.log('FAIL: could not find pay/checkout button');
-    process.exit(1);
-  }
+  if (!clicked) throw new Error('could not find pay/checkout button');
   await humanIdlePause('long');
   console.log(`PASS-CHARGED: checkout initiated, url=${s.page.url()}`);
 } catch (e) {

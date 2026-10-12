@@ -74,8 +74,7 @@ try {
     .catch(() => false);
   if (expired) {
     await s.screenshot('session_unusable');
-    console.log('FAIL: the checkout session is expired or already paid');
-    process.exit(1);
+    throw new Error('the checkout session is expired or already paid');
   }
 
   // Stripe Link intercepts with an email OTP that only the account owner can
@@ -247,10 +246,9 @@ try {
         .locator('button, [role="button"]')
         .allInnerTexts()
         .catch(() => []);
-      console.log(
-        `FAIL: no card form to fill (${filled.reason ?? 'partial'}); the page offered: ${offered.filter(Boolean).slice(0, 8).join(' | ')}`,
+      throw new Error(
+        `no card form to fill (${JSON.stringify(filled)}); the page offered: ${offered.filter(Boolean).slice(0, 8).join(' | ')}`,
       );
-      process.exit(1);
     }
     // The hosted page keeps name and postal code outside the Elements frames.
     for (const [selector, value] of [
@@ -297,10 +295,9 @@ try {
     // A live 3-D Secure challenge belongs to the cardholder's bank and phone.
     // Say so, with the screenshot, instead of pretending to wait forever.
     await s.screenshot('3ds_challenge');
-    console.log(
-      'FAIL: the issuer demanded 3-D Secure, which only the cardholder can pass',
+    throw new Error(
+      'the issuer demanded 3-D Secure, which only the cardholder can pass',
     );
-    process.exit(1);
   }
   if (outcome === 'declined') {
     await s.screenshot('declined');
@@ -311,16 +308,13 @@ try {
       .first()
       .innerText()
       .catch(() => '');
-    console.log(`FAIL: card refused on the page: ${text.replace(/\s+/g, ' ')}`);
-    process.exit(1);
+    throw new Error(`card refused on the page: ${text.replace(/\s+/g, ' ')}`);
   }
   await s.screenshot('post_submit');
-  if (outcome !== 'redirected') {
-    console.log(
-      `FAIL: still on the checkout page after submitting; url=${s.page.url()}`,
+  if (outcome !== 'redirected')
+    throw new Error(
+      `still on the checkout page after submitting; url=${s.page.url()}`,
     );
-    process.exit(1);
-  }
   console.log(`PASS-CHARGED: final url=${s.page.url()}`);
 } catch (e) {
   console.log('FAIL:', e.message);

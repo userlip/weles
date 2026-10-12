@@ -153,10 +153,8 @@ try {
     .filter({ visible: true })
     .count()
     .catch(() => 0);
-  if (!echoCount) {
-    console.log('FAIL: composer typed but message not echoed in chat');
-    process.exit(1);
-  }
+  if (!echoCount)
+    throw new Error('composer typed but message not echoed in chat');
   console.log(`PASS: DM sent to @${RECIPIENT}`);
 } catch (e) {
   console.error('FAIL:', e);

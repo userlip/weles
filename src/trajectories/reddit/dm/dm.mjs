@@ -146,14 +146,9 @@ try {
       return hits;
     })
     .catch(() => []);
-  if (errorHits.length) {
-    console.log(`FAIL: ${errorHits.join(',')}`);
-    process.exit(1);
-  }
-  if (!successCount) {
-    console.log('FAIL: no delivery confirmation on response page');
-    process.exit(1);
-  }
+  if (errorHits.length) throw new Error(errorHits.join(','));
+  if (!successCount)
+    throw new Error('no delivery confirmation on response page');
   console.log(`PASS: DM (PM) sent to u/${RECIPIENT}`);
 } catch (e) {
   console.log('FAIL:', e.message);

@@ -34,10 +34,8 @@ try {
     s.page,
     '6LdRfgQqAAAAAMmRfNPmuSunXUrrYxnrJLEhPrdV',
   );
-  if (typeof token !== 'string') {
-    console.log('FAIL: reCAPTCHA solve returned no token');
-    process.exit(1);
-  }
+  if (typeof token !== 'string')
+    throw new Error('reCAPTCHA solve returned no token');
   await s.page.evaluate((t) => {
     const ta = document.getElementById('g-recaptcha-response');
     if (ta) ta.value = t;
@@ -50,10 +48,9 @@ try {
 
   if (/\/register/.test(s.page.url())) {
     const errText = await s.page.evaluate(() => document.body.innerText);
-    console.log(
-      `FAIL: still on /register. Body: ${errText.replace(/\n/g, ' | ')}`,
+    throw new Error(
+      `still on /register. Body: ${errText.replace(/\n/g, ' | ')}`,
     );
-    process.exit(1);
   }
 
   const item = writeServiceCredentials('SadCaptcha', {

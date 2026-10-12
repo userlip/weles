@@ -37,10 +37,8 @@ try {
   await p.pressSequentially(login.password);
   await p.press('Enter');
   await pageSettled(s.page);
-  if (/\/login/.test(s.page.url())) {
-    console.log(`FAIL: packetstream_login_refused (still on ${s.page.url()})`);
-    process.exit(1);
-  }
+  if (/\/login/.test(s.page.url()))
+    throw new Error(`packetstream_login_refused (still on ${s.page.url()})`);
 
   await s.page.goto('https://app.packetstream.io/dashboard/deposit', {
     waitUntil: 'domcontentloaded',
@@ -63,16 +61,13 @@ try {
   await pageSettled(s.page);
   const finalUrl = s.page.url();
   console.log(`[trajectory] post-submit url=${finalUrl}`);
-  if (/paypal\.com|stripe\.com|checkout/i.test(finalUrl)) {
-    console.log(
-      `PASS-CHARGED-PENDING: redirected to checkout (${finalUrl}). PayPal/Stripe will complete the $${target} charge against the saved payment method. Verify via PacketStream's "Recent Payments" or by re-running src/trajectories/packetstream/balance.mjs in 1-2 minutes.`,
+  if (!/paypal\.com|stripe\.com|checkout/i.test(finalUrl))
+    throw new Error(
+      `dropdown change did not redirect to a checkout URL (${finalUrl}). PacketStream may have changed its flow; revisit selectors.`,
     );
-    process.exit(0);
-  }
   console.log(
-    `FAIL: dropdown change did not redirect to a checkout URL (${finalUrl}). PacketStream may have changed its flow; revisit selectors.`,
+    `PASS-CHARGED-PENDING: redirected to checkout (${finalUrl}). PayPal/Stripe will complete the $${target} charge against the saved payment method. Verify via PacketStream's "Recent Payments" or by re-running src/trajectories/packetstream/balance.mjs in 1-2 minutes.`,
   );
-  process.exit(1);
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;
