@@ -3,6 +3,7 @@
 
 import { keeperRequest, keeperSocket } from '../_shared/keeper/client.mjs';
 import { getCredential } from '../../lib/service_credentials.mjs';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 
 function parseArgs() {
   const out = {
@@ -43,25 +44,26 @@ async function url(session) {
   return String(res.url || '');
 }
 
-async function clickText(session, textValue) {
-  return action(session, {
-    action: 'click',
-    selector: `button:has-text("${textValue}"), [role="button"]:has-text("${textValue}"), a:has-text("${textValue}")`,
-  });
+/**
+ * Google's sign-in steps, by the path Google serves each on: where the page
+ * is says which step it is, whatever language its words are in.
+ */
+const GOOGLE_STEPS = [
+  { step: 'email', path: /\/signin\/identifier$/ },
+  { step: 'password', path: /\/challenge\/pwd$/ },
+  { step: 'choose_method', path: /\/challenge\/selection$/ },
+  { step: 'blocked', path: /\/challenge\/recaptcha$|^\/sorry\// },
+  { step: 'consent', path: /\/signin\/oauth\/|\/oauthconsent$/ },
+];
+
+function googleStep(address) {
+  const page = new URL(address);
+  if (page.hostname !== 'accounts.google.com') return 'left_google';
+  const known = GOOGLE_STEPS.find(({ path }) => path.test(page.pathname));
+  return known ? known.step : 'unknown';
 }
 
-async function clickFirstText(session, textValues) {
-  let lastError = null;
-  for (const textValue of textValues) {
-    try {
-      await clickText(session, textValue);
-      return textValue;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError || new Error(`none clickable: ${textValues.join(', ')}`);
-}
+const INDENT = '  ';
 
 async function main() {
   const args = parseArgs();
@@ -82,88 +84,49 @@ async function main() {
   };
 
   await mark('start');
-  if ((await text(args.session)).includes('Email or phone')) {
-    await action(args.session, {
-      action: 'fill',
-      selector:
-        'input[type="email"], input[name="identifier"], input#identifierId',
-      text: credential.login_email,
-    });
-    await clickText(args.session, 'Next');
-    await action(args.session, { action: 'settle' });
-    await mark('email_submitted');
-  }
-
-  const afterEmailText = await text(args.session);
-  if (/recaptcha|unusual traffic|verify it'?s you/i.test(afterEmailText)) {
-    console.log(
-      JSON.stringify(
-        { ok: false, blocked: 'google_challenge_after_email', steps },
-        null,
-        2,
-      ),
-    );
-    process.exit(2);
-  }
-
-  if (
-    !/password/i.test(afterEmailText) &&
-    /Try another way|Enter your password|Use your password/i.test(
-      afterEmailText,
-    )
-  ) {
-    if (/Enter your password/i.test(afterEmailText))
-      await clickText(args.session, 'Enter your password');
-    else if (/Use your password/i.test(afterEmailText))
-      await clickText(args.session, 'Use your password');
-    else await clickText(args.session, 'Try another way');
-    await action(args.session, { action: 'settle' });
-    await mark('password_option_clicked');
-  }
-
-  const beforePassword = await text(args.session);
-  if (/password/i.test(beforePassword)) {
-    await action(args.session, {
-      action: 'fill',
-      selector: 'input[type="password"], input[name="Passwd"]',
-      text: credential.login_password,
-    });
-    await action(args.session, { action: 'press', key: 'Enter' });
-    await action(args.session, { action: 'settle' });
-    await mark('password_submitted');
-  }
-
-  // Google's own redirect ends the sign-in; the URL is read until it leaves
-  // accounts.google.com or settles on a consent screen.
+  // Each step Google shows is answered until the browser leaves Google; a
+  // step that does not move on is answered again, as a person would.
   for (;;) {
-    const current = await url(args.session);
-    if (!current.includes('accounts.google.com')) break;
-    if (
-      /(Continue|Allow|Dalej|Kontynuuj|Zezwól|Zgadzam)/i.test(
-        await text(args.session),
-      )
-    )
-      break;
+    const step = googleStep(await url(args.session));
+    if (step === 'left_google') break;
+    if (step === 'email') {
+      await action(args.session, {
+        action: 'fill',
+        selector: 'input[type="email"]',
+        text: credential.login_email,
+      });
+      await action(args.session, { action: 'press', key: 'Enter' });
+    } else if (step === 'password') {
+      await action(args.session, {
+        action: 'fill',
+        selector: 'input[type="password"]',
+        text: credential.login_password,
+      });
+      await action(args.session, { action: 'press', key: 'Enter' });
+    } else if (step === 'choose_method') {
+      await action(args.session, {
+        action: 'click_described',
+        description: 'the option to sign in by entering the password',
+      });
+    } else if (step === 'consent') {
+      // A consent screen that cannot be answered leaves the account signed
+      // out of the target; the keeper's own refusal fails the run.
+      await action(args.session, {
+        action: 'click_described',
+        description:
+          'the button that grants the application the access it asks for and continues to it',
+      });
+    } else {
+      await mark(`google_${step}`);
+      throw Object.assign(
+        new Error(
+          `GOOGLE_SIGN_IN_${step.toUpperCase()}: Google stopped the sign-in at ${await url(args.session)}; steps: ${JSON.stringify(steps, null, INDENT)}`,
+        ),
+        { steps },
+      );
+    }
     await action(args.session, { action: 'settle' });
-  }
-
-  const currentText = await text(args.session);
-  if (
-    /(Continue|Allow|Dalej|Kontynuuj|Zezwól|Zgadzam)/i.test(currentText) &&
-    (await url(args.session)).includes('accounts.google.com')
-  ) {
-    // A consent screen that cannot be answered leaves the account signed out
-    // of the target; the run fails with the cause instead of reporting ok.
-    const clicked = await clickFirstText(args.session, [
-      'Continue',
-      'Allow',
-      'Dalej',
-      'Kontynuuj',
-      'Zezwól',
-      'Zgadzam',
-    ]);
-    await action(args.session, { action: 'settle' });
-    await mark(`google_consent_${clicked}`);
+    await mark(`google_${step}`);
   }
 
   if (args.targetUrl) {
@@ -181,12 +144,12 @@ async function main() {
         steps,
       },
       null,
-      2,
+      INDENT,
     ),
   );
 }
 
 main().catch((error) => {
-  console.error(error.stack || error.message || String(error));
-  process.exit(1);
+  console.error(error.stack ? error.stack : String(error));
+  process.exitCode = exitStatusFor(error);
 });
