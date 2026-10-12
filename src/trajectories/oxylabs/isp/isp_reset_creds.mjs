@@ -18,6 +18,7 @@ import {
   assertScopedSecretWriter,
   writeScopedSecretItem,
 } from '../../../_shared/scoped-secrets.mjs';
+import { exitStatusFor } from '../../../../dist/cli/usage.js';
 
 const rand = (n) =>
   Array.from(
@@ -71,6 +72,12 @@ try {
   // Look for "wisentisp..." pattern with optional _XXX suffix
   const userMatch = text.match(/\bwisentisp\w+\b/);
   const fullUsername = userMatch ? userMatch[0] : null;
+  // Checked before the password is reset: a reset whose credential cannot be
+  // stored would leave the user with a password nobody holds.
+  if (!fullUsername)
+    throw new Error(
+      `oxylabs_isp_username_unread: no wisentisp user name on ${s.page.url()}, so the password was not reset`,
+    );
 
   // Also try to read input[name="username"] / specific fields if present
   const inputs = await s.page.evaluate(() =>
@@ -120,64 +127,65 @@ try {
     `[trajectory] password input count after reset action: ${passInputs.length}`,
   );
 
-  if (passInputs.length > 0) {
-    const pwLoc = s.page
-      .locator('input[name="password"], input[type="password"]:not([readonly])')
-      .filter({ visible: true })
-      .first();
-    if (await pwLoc.isVisible().catch(() => false)) {
-      await pwLoc.click({ force: true }).catch(() => {});
-      await pwLoc.fill('').catch(() => {});
-      await humanType(s.page, NEW_PASSWORD);
-      console.log(
-        `[trajectory] typed new password (length ${NEW_PASSWORD.length})`,
-      );
-      // Confirm
-      const confirmBtn = s.page
-        .locator(
-          'button:has-text("Save"), button:has-text("Confirm"), button:has-text("Update"), button:has-text("Set"), button[type="submit"]',
-        )
-        .filter({ visible: true })
-        .last();
-      if (await confirmBtn.isVisible().catch(() => false)) {
-        await confirmBtn.click({ force: true }).catch(() => {});
-        await humanIdlePause('long');
-      }
-    }
-  }
+  // The new password is stored only once Oxylabs has taken it: a password
+  // Oxylabs never set, stored in Skarbiec, is a credential the proxy refuses.
+  if (!passInputs.length)
+    throw new Error(
+      `oxylabs_isp_password_field_missing: no password field after the reset action at ${s.page.url()}`,
+    );
+  const pwLoc = s.page
+    .locator('input[name="password"], input[type="password"]:not([readonly])')
+    .filter({ visible: true })
+    .first();
+  await pwLoc.click({ force: true });
+  await pwLoc.fill('');
+  await humanType(s.page, NEW_PASSWORD);
+  console.log(
+    `[trajectory] typed new password (length ${NEW_PASSWORD.length})`,
+  );
+  const confirmBtn = s.page
+    .locator(
+      'button:has-text("Save"), button:has-text("Confirm"), button:has-text("Update"), button:has-text("Set"), button[type="submit"]',
+    )
+    .filter({ visible: true })
+    .last();
+  await confirmBtn.click({ force: true });
+  await humanIdlePause('long');
 
-  if (fullUsername) {
-    writeScopedSecretItem('oxylabsIsp', {
-      username: fullUsername,
-      password: NEW_PASSWORD,
-      host: 'isp.oxylabs.io',
-      ports: Array.from({ length: 10 }, (_, index) =>
-        String(8001 + index),
-      ).join(','),
-    });
-    console.log(
-      '[trajectory] stored reset ISP credential through its exact Skarbiec writer',
+  writeScopedSecretItem('oxylabsIsp', {
+    username: fullUsername,
+    password: NEW_PASSWORD,
+    host: 'isp.oxylabs.io',
+    ports: Array.from({ length: 10 }, (_, index) => String(8001 + index)).join(
+      ',',
+    ),
+  });
+  console.log(
+    '[trajectory] stored reset ISP credential through its exact Skarbiec writer',
+  );
+  // A credential the proxy refuses fails the run instead of printing done.
+  const probe = spawnSync(
+    'curl',
+    [
+      '-s',
+      '-x',
+      `http://${encodeURIComponent(fullUsername)}:${encodeURIComponent(NEW_PASSWORD)}@isp.oxylabs.io:8001`,
+      'https://lumtest.com/myip.json',
+    ],
+    { encoding: 'utf8' },
+  );
+  if (probe.error)
+    throw new Error(
+      `oxylabs_isp_probe_failed: curl could not run to check the stored credential: ${probe.error.message}`,
     );
-    // Probe :8001
-    const probe = spawnSync(
-      'curl',
-      [
-        '-s',
-        '-o',
-        '/dev/null',
-        '-w',
-        '%{http_code}',
-        '-x',
-        `http://${encodeURIComponent(fullUsername)}:${encodeURIComponent(NEW_PASSWORD)}@isp.oxylabs.io:8001`,
-        'https://lumtest.com/myip.json',
-      ],
-      { encoding: 'utf8' },
+  if (probe.status || !probe.stdout)
+    throw new Error(
+      `oxylabs_isp_probe_failed: curl through isp.oxylabs.io:8001 with the reset credential exited ${probe.status}: ${probe.stderr.trim()}`,
     );
-    console.log(`[trajectory] probe :8001 http=${(probe.stdout || '').trim()}`);
-  }
   console.log('[trajectory] done');
 } catch (e) {
   console.log(`FAIL: ${e.message}`);
+  process.exitCode = exitStatusFor(e);
 } finally {
   await s.close().catch(() => {});
 }
