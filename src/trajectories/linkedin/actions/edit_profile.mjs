@@ -358,10 +358,16 @@ try {
       if (cur.trim() !== targetAbout.trim()) {
         await fitsField(aboutIn, targetAbout, 'the LinkedIn about text');
         await humanClickLocator(s.page, aboutIn);
-        await s.page.keyboard.press('Meta+A').catch(() => {});
-        await s.page.keyboard.press('Control+A').catch(() => {});
-        await s.page.keyboard.press('Backspace').catch(() => {});
+        await s.page.keyboard.press('ControlOrMeta+A');
+        await s.page.keyboard.press('Backspace');
         await humanType(s.page, targetAbout);
+        // A select-all that did not take leaves the old About with the new
+        // text appended, which Save would publish as the profile's About.
+        const typed = await aboutIn.inputValue();
+        if (typed.trim() !== targetAbout.trim())
+          throw new Error(
+            `the LinkedIn about field holds ${typed.length} characters, not the ${targetAbout.length} typed; nothing was saved`,
+          );
         const saveBtn = s.page
           .locator('button:has-text("Save")')
           .filter({ visible: true })
