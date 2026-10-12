@@ -200,37 +200,37 @@ try {
     console.log(
       'PASS: no-op (form values already match character; Skarbiec synced)',
     );
-    process.exit(0);
-  }
-  console.log(`[ig-profile] writes: ${writes.join('; ')}`);
+  } else {
+    console.log(`[ig-profile] writes: ${writes.join('; ')}`);
 
-  // Submit. Instagram's submit on this page is a <div role="button"> reading
-  // "Submit" or sometimes a localized variant.
-  const submitBtn = s.page
-    .locator(
-      'div[role="button"]:has-text("Submit"), button[type="submit"]:has-text("Submit")',
-    )
-    .filter({ visible: true })
-    .first();
-  await submitBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, submitBtn);
-  await humanIdlePause('deliberate');
+    // Submit. Instagram's submit on this page is a <div role="button"> reading
+    // "Submit" or sometimes a localized variant.
+    const submitBtn = s.page
+      .locator(
+        'div[role="button"]:has-text("Submit"), button[type="submit"]:has-text("Submit")',
+      )
+      .filter({ visible: true })
+      .first();
+    await submitBtn.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, submitBtn);
+    await humanIdlePause('deliberate');
 
-  // Verify the changes stuck by re-reading the form fields.
-  const verifiedName = await nameIn.inputValue().catch(() => '');
-  const verifiedBio = await bioIn.inputValue().catch(() => '');
-  if (targetName && verifiedName.trim() !== targetName.trim()) {
-    throw new Error(
-      `name mismatch after submit ("${verifiedName}" != "${targetName}")`,
-    );
+    // Verify the changes stuck by re-reading the form fields.
+    const verifiedName = await nameIn.inputValue().catch(() => '');
+    const verifiedBio = await bioIn.inputValue().catch(() => '');
+    if (targetName && verifiedName.trim() !== targetName.trim()) {
+      throw new Error(
+        `name mismatch after submit ("${verifiedName}" != "${targetName}")`,
+      );
+    }
+    if (targetBio && verifiedBio.trim() !== targetBio.trim()) {
+      throw new Error(
+        `bio mismatch after submit ("${verifiedBio}..." != "${targetBio}...")`,
+      );
+    }
+    recordProfile();
+    console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
   }
-  if (targetBio && verifiedBio.trim() !== targetBio.trim()) {
-    throw new Error(
-      `bio mismatch after submit ("${verifiedBio}..." != "${targetBio}...")`,
-    );
-  }
-  recordProfile();
-  console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;

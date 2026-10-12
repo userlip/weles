@@ -186,22 +186,22 @@ try {
     console.log(
       'PASS: no-op (form values already match character; Skarbiec synced)',
     );
-    process.exit(0);
-  }
-  console.log(`[tw-profile] writes: ${writes.join('; ')}`);
+  } else {
+    console.log(`[tw-profile] writes: ${writes.join('; ')}`);
 
-  // Save: Profile_Save_Button (Edit flow) or Next/Done (setup flow).
-  const saveBtn = s.page
-    .locator(
-      'button[data-testid="Profile_Save_Button"], button[data-testid="ocfSelectAvatarNextButton"], button[data-testid="OCF_CallToAction_Button"], div[role="button"]:has-text("Save"), button:has-text("Save"), button:has-text("Done")',
-    )
-    .filter({ visible: true })
-    .first();
-  await saveBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, saveBtn);
-  await humanIdlePause('long');
-  recordProfile();
-  console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
+    // Save: Profile_Save_Button (Edit flow) or Next/Done (setup flow).
+    const saveBtn = s.page
+      .locator(
+        'button[data-testid="Profile_Save_Button"], button[data-testid="ocfSelectAvatarNextButton"], button[data-testid="OCF_CallToAction_Button"], div[role="button"]:has-text("Save"), button:has-text("Save"), button:has-text("Done")',
+      )
+      .filter({ visible: true })
+      .first();
+    await saveBtn.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, saveBtn);
+    await humanIdlePause('long');
+    recordProfile();
+    console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
+  }
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;

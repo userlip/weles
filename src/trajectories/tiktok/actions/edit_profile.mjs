@@ -199,28 +199,26 @@ try {
     console.log(
       'PASS: no-op (form values already match character; Skarbiec synced)',
     );
-    process.exit(0);
-  }
-  console.log(`[tt-profile] writes: ${writes.join('; ')}`);
+  } else {
+    console.log(`[tt-profile] writes: ${writes.join('; ')}`);
 
-  // Save. TikTok's button often reads "Save" — sometimes inside a modal.
-  const saveBtn = s.page
-    .locator('button:has-text("Save"), [data-e2e="save-profile"]')
-    .filter({ visible: true })
-    .first();
-  await saveBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, saveBtn);
-  await humanIdlePause('deliberate');
+    // Save. TikTok's button often reads "Save" — sometimes inside a modal.
+    const saveBtn = s.page
+      .locator('button:has-text("Save"), [data-e2e="save-profile"]')
+      .filter({ visible: true })
+      .first();
+    await saveBtn.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, saveBtn);
+    await humanIdlePause('deliberate');
 
-  const verifiedBio = await bioIn.inputValue().catch(() => '');
-  if (targetBio && verifiedBio.trim() !== targetBio.trim()) {
-    console.log(
-      `FAIL: bio mismatch after save ("${verifiedBio}..." != "${targetBio}...")`,
-    );
-    process.exit(1);
+    const verifiedBio = await bioIn.inputValue().catch(() => '');
+    if (targetBio && verifiedBio.trim() !== targetBio.trim())
+      throw new Error(
+        `bio mismatch after save ("${verifiedBio}..." != "${targetBio}...")`,
+      );
+    recordProfile();
+    console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
   }
-  recordProfile();
-  console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;

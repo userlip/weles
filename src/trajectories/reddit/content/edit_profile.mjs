@@ -211,20 +211,20 @@ try {
     console.log(
       'PASS: no-op (form values already match character; Skarbiec synced)',
     );
-    process.exit(0);
-  }
-  console.log(`[rd-profile] writes: ${writes.join('; ')}`);
+  } else {
+    console.log(`[rd-profile] writes: ${writes.join('; ')}`);
 
-  // shreddit's save uses a Save button at the bottom of the form section.
-  const saveBtn = s.page
-    .locator('button:has-text("Save"), button[type="submit"]')
-    .filter({ visible: true })
-    .first();
-  await saveBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, saveBtn);
-  await humanIdlePause('deliberate');
-  recordProfile();
-  console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
+    // shreddit's save uses a Save button at the bottom of the form section.
+    const saveBtn = s.page
+      .locator('button:has-text("Save"), button[type="submit"]')
+      .filter({ visible: true })
+      .first();
+    await saveBtn.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, saveBtn);
+    await humanIdlePause('deliberate');
+    recordProfile();
+    console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
+  }
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;
