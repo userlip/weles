@@ -6,7 +6,11 @@
 // CLI cannot get past on its own, and a workspace that has device-code
 // authorization switched off says so by rendering its Continue button disabled —
 // a settings problem with its own error code, not something to wait out.
-import { navEval, waitForEnabledThenClick } from './page_controls.mjs';
+import { navEval } from './page_controls.mjs';
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
+
+/** The consent page's own submit control. */
+const CONSENT_SUBMIT = 'form button[type="submit"], form input[type="submit"]';
 
 export function isTerminalHost(host, href) {
   // auth.openai.com is an intermediate redirect (login / callback); the real
@@ -45,29 +49,17 @@ export async function handleCodexConsentPage(page, mark) {
   mark('codex_consent_page');
   const state = await navEval(
     page,
-    () => {
-      const candidates = Array.from(
-        document.querySelectorAll(
-          'button, [role="button"], input[type="submit"]',
-        ),
-      );
-      const btn = candidates.find((el) =>
-        /continue/i.test(
-          (el.innerText || el.textContent || el.value || '').trim(),
-        ),
-      );
+    (selector) => {
+      const btn = document.querySelector(selector);
       if (!btn) return { found: false };
-      const disabled =
-        btn.disabled ||
-        btn.getAttribute('aria-disabled') === 'true' ||
-        btn.getAttribute('disabled') !== null;
       return {
         found: true,
-        disabled,
-        text: (btn.innerText || btn.textContent || btn.value || '').trim(),
+        disabled: btn.matches(':disabled, [aria-disabled="true"]'),
+        text: (btn.innerText || btn.value).trim(),
       };
     },
     { found: false },
+    CONSENT_SUBMIT,
   );
   if (!state.found) return false;
   if (state.disabled) {
@@ -77,7 +69,7 @@ export async function handleCodexConsentPage(page, mark) {
     e.code = 'CODEX_DEVICE_AUTH_DISABLED';
     throw e;
   }
-  await waitForEnabledThenClick(page, /continue/i);
+  await humanClickLocator(page, page.locator(CONSENT_SUBMIT).first());
   mark('codex_consent_clicked');
   // The non-device flow redirects to a local server; the device flow
   // redirects back to auth.openai.com. Wait for either terminal URL, for as

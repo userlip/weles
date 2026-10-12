@@ -10,11 +10,8 @@
 // entry it starts from, the authenticator code that entry answers 2FA with, the
 // two mailbox steps OpenAI demands of a new identity, and the Codex consent page
 // are modules beside it.
-import {
-  fillAndVerify,
-  navEval,
-  waitForEnabledThenClick,
-} from './google_sso/page_controls.mjs';
+import { fillAndVerify, navEval } from './google_sso/page_controls.mjs';
+import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 import {
   enterGoogleCredentials,
   establishGoogleSession,
@@ -35,7 +32,6 @@ import {
 } from '../claude/google_sso/gis_state/page_reading.mjs';
 
 export { establishGoogleSession } from './google_sso/google_credentials.mjs';
-export { waitForEnabledThenClick } from './google_sso/page_controls.mjs';
 
 export async function doGoogleSso({
   page,
@@ -184,7 +180,7 @@ export async function doGoogleSso({
             humanClickLocator,
             humanType,
           );
-          await waitForEnabledThenClick(page, /^(continue|next|dalej)$/i);
+          await emailField.press('Enter');
           await pageSettled(page);
         }
       }
@@ -217,26 +213,19 @@ export async function doGoogleSso({
           }
           if (await advanceGoogleChooser(popupPage)) popupActed = true;
         }
+        // Google asks for consent on its own OAuth consent routes.
         const st = await navEval(
           page,
-          () => {
-            const b = Array.from(
-              document.querySelectorAll('button,[role="button"]'),
-            );
-            const c = b.find(
-              (x) =>
-                /^(authorize|allow)$/i.test(
-                  (x.innerText || x.textContent || '').trim(),
-                ) &&
-                !(x.disabled || x.getAttribute('aria-disabled') === 'true'),
-            );
-            return {
-              host: location.host,
-              pathname: location.pathname,
-              href: location.href,
-              consent: !!c,
-            };
-          },
+          () => ({
+            host: location.host,
+            pathname: location.pathname,
+            href: location.href,
+            consent:
+              location.hostname === 'accounts.google.com' &&
+              ['/signin/oauth/consent', '/signin/oauth/id'].some((route) =>
+                location.pathname.includes(route),
+              ),
+          }),
           { host: '', pathname: '', href: '', consent: false },
         );
         step(`${st.host}${st.pathname}`);
@@ -294,9 +283,9 @@ export async function doGoogleSso({
         }
         if (st.consent) {
           mark('oauth_consent_click');
-          await waitForEnabledThenClick(
+          await clickDescribed(
             page,
-            /^(authorize|allow|continue|dalej|next)$/i,
+            'the enabled button on the Google consent screen that allows the sign-in and continues',
           );
           // Consent granted: Google redirects to auth.openai.com, which then
           // redirects to platform.openai.com/chatgpt.com. Wait for any OpenAI

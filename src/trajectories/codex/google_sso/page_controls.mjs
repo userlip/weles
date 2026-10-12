@@ -1,17 +1,15 @@
-// How this login finds and operates a control on a live page.
+// How this login reads a live page and fills a field on it.
 //
-// Google's and OpenAI's sign-in surfaces are WIZ/React documents whose controls
-// are divs as often as buttons, become enabled a tick after they render, and are
-// replaced under the pointer by the next redirect. So every control here is
-// located by what it says, measured before it is touched, and clicked with a
-// humanized pointer move — a raw dispatch with no movement is the signal that
-// tripped Google's "browser may not be secure" block.
-import { humanClick } from '../../../../dist/human/mouse.js';
+// Google's and OpenAI's sign-in surfaces are WIZ/React documents whose fields
+// ignore keystrokes until their handlers are bound and are replaced by the
+// next redirect. So a read that lost its document means "look again", and a
+// fill is verified by reading the value back. Controls are not found by what
+// they say here: forms submit on Enter, and a control is found by the vision
+// model (`_shared/page/judged/seen.mjs`).
 import {
   DOCUMENT_REPLACED,
   readAcrossNavigation,
 } from '../../_shared/page/navigation/read.mjs';
-import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
 
 // In an OAuth redirect chain a navigation mid-call is the EXPECTED
 // transition, so in poll loops a read whose document was replaced means
@@ -63,82 +61,4 @@ export async function fillAndVerify(
       `fillAndVerify: value mismatch after input dispatch; observed length=${actual.length}, expected length=${text.length}`,
     );
   }
-}
-
-// Wait for the button to be ENABLED then click it with a humanized pointer
-// move+click (humanClick). The earlier raw CDP Input.dispatchMouseEvent issued
-// a press/release with NO pointer movement — a strong automation signal that
-// tripped Google's "browser or app may not be secure" block at sign-in.
-// humanClick is the same primitive gmail_login_search uses to clear that exact
-// gate on this engine. Browser observation and input failures propagate.
-export async function waitForEnabledThenClick(page, namePattern) {
-  const patternSrc = namePattern.source;
-  const state = await pageCondition(
-    page,
-    (src) => {
-      const re = new RegExp(src, 'i');
-      for (const el of document.querySelectorAll('button, [role="button"]')) {
-        const txt = (el.innerText || el.textContent || '').trim();
-        if (!re.test(txt)) continue;
-        const r = el.getBoundingClientRect();
-        if (!r.width || !r.height) continue;
-        if (
-          el.matches(':disabled') ||
-          el.getAttribute('aria-disabled') === 'true' ||
-          el.hasAttribute('disabled')
-        )
-          continue;
-        return {
-          x: r.x + r.width / 2,
-          y: r.y + r.height / 2,
-          tag: el.tagName,
-          txt: txt,
-        };
-      }
-      return null;
-    },
-    patternSrc,
-  );
-  console.log(
-    `[google_sso] clicking /${patternSrc}/i at (${Math.round(state.x)},${Math.round(state.y)}) tag=${state.tag} txt=${state.txt}`,
-  );
-  await humanClick(page, Math.round(state.x), Math.round(state.y));
-}
-
-// Optional controls are an observation, not a condition that must become true.
-// A replaced document and an absent match stay distinct; real failures propagate.
-export async function clickVisibleText(page, pattern) {
-  await pageSettled(page);
-  const source = pattern.source;
-  const hit = await readAcrossNavigation(page, () =>
-    page.evaluate((patternSource) => {
-      const matcher = new RegExp(patternSource, 'i');
-      let best = null;
-      for (const element of document.querySelectorAll(
-        'button,[role="button"],a,[role="link"],li,div,span',
-      )) {
-        const text = (element.innerText || element.textContent || '').trim();
-        // The smallest rendered element whose own text matches is the control;
-        // a container holding it has the same text and a larger box.
-        if (!matcher.test(text)) continue;
-        const box = element.getBoundingClientRect();
-        if (!box.width || !box.height) continue;
-        const area = box.width * box.height;
-        if (!best || area < best.area) {
-          best = {
-            x: box.x + box.width / 2,
-            y: box.y + box.height / 2,
-            area,
-            text: text,
-          };
-        }
-      }
-      return best;
-    }, source),
-  );
-  if (hit === DOCUMENT_REPLACED)
-    return { clicked: false, reason: 'document_replaced' };
-  if (!hit) return { clicked: false, reason: 'not_offered' };
-  await humanClick(page, Math.round(hit.x), Math.round(hit.y));
-  return { clicked: true, text: hit.text };
 }

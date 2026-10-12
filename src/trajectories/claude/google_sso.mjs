@@ -24,7 +24,6 @@ import { dumpGisFailureDom } from './google_sso/failure_dom.mjs';
 import { answerClaudeCaptcha } from './google_sso/captcha_answer.mjs';
 import { pageCondition, pageSettled } from '../_shared/page/settled.mjs';
 
-export { waitForEnabledThenClick } from './google_sso/page_controls.mjs';
 export { readGisState } from './google_sso/gis_state/page_reading.mjs';
 export {
   classifyGisState,

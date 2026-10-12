@@ -14,10 +14,7 @@ import { join } from 'node:path';
 import { humanFill, humanType } from '../../../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../../../dist/human/mouse.js';
 import { readDocument } from '../../../../../../dist/state/skarbiec-records.js';
-import {
-  fillAndVerify,
-  waitForEnabledThenClick,
-} from '../../../../codex/google_sso/page_controls.mjs';
+import { fillAndVerify } from '../../../../codex/google_sso/page_controls.mjs';
 import {
   waitForGooglePassword,
   waitForGooglePasswordResult,
@@ -107,7 +104,9 @@ async function secondFactor(page, login) {
     }
     await code.waitFor({ state: 'visible' });
     await humanFill(page, code, generateTotp(login.seed));
-    await waitForEnabledThenClick(page, /next|verify/i);
+    // Google's sign-in forms submit on Enter, as a person sends them; no
+    // button is looked up by its label.
+    await code.press('Enter');
     await waitForGoogleChallengeExit(page);
     return { ok: true };
   }
@@ -163,7 +162,7 @@ export async function signIn(page, wait, login) {
         humanClickLocator,
         humanType,
       );
-      await waitForEnabledThenClick(page, /next|continue|dalej/i);
+      await email.press('Enter');
     } else if (!onSignIn(page.url())) {
       return { ok: true };
     } else if (!PASSWORD_CHALLENGE.test(page.url())) {
@@ -186,7 +185,7 @@ export async function signIn(page, wait, login) {
     humanClickLocator,
     humanType,
   );
-  await waitForEnabledThenClick(page, /next|sign in|continue|dalej/i);
+  await password.press('Enter');
   await waitForGooglePasswordResult(page);
   return secondFactor(page, login);
 }

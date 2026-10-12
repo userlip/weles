@@ -4,7 +4,7 @@
 // Entry observes a writable field and verifies its value after trusted typing.
 // Native input attributes do not prove WIZ hydration. The Next control must be
 // enabled, and provider refusals are reported by the corresponding stage.
-import { fillAndVerify, waitForEnabledThenClick } from './page_controls.mjs';
+import { fillAndVerify } from './page_controls.mjs';
 import { resolveOtp } from '../../_shared/services/google_sso/sign_in/challenge/seed.mjs';
 import {
   requireAuthenticatorCode,
@@ -61,7 +61,9 @@ export async function enterGoogleCredentials({
       el.dispatchEvent(new Event('focusout', { bubbles: true }));
     }),
   );
-  await waitForEnabledThenClick(page, /next|continue|dalej/i);
+  // Google's sign-in forms submit on Enter in their field, as a person sends
+  // them; no Next button is looked up by its label.
+  await gEmailIn.press('Enter');
   mark('google_email_submitted');
 
   const gPwIn = await waitForGooglePassword({ page, mark, humanClickLocator });
@@ -78,7 +80,7 @@ export async function enterGoogleCredentials({
       el.dispatchEvent(new Event('focusout', { bubbles: true }));
     }),
   );
-  await waitForEnabledThenClick(page, /next|sign in|continue|dalej|zaloguj/i);
+  await gPwIn.press('Enter');
   await waitForGooglePasswordResult(page);
 
   mark('google_2fa_check');

@@ -4,12 +4,9 @@
 // Entry observes a writable field and verifies its value after trusted typing.
 // Native input attributes do not prove WIZ hydration. The Next control must be
 // enabled, and provider refusals are reported by the corresponding stage.
-import {
-  fillAndVerify,
-  navEval,
-  waitForEnabledThenClick,
-} from './page_controls.mjs';
+import { fillAndVerify, navEval } from './page_controls.mjs';
 import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
+import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
 import {
   requireAuthenticatorCode,
   selectAuthenticatorMethod,
@@ -18,6 +15,9 @@ import {
 import { resolveOtp } from '../../_shared/services/google_sso/sign_in/challenge/seed.mjs';
 import { completeGooglePhoneApproval } from '../../_shared/services/google_sso/sign_in/challenge/phone.mjs';
 import { readAcrossNavigation } from '../../_shared/page/navigation/read.mjs';
+
+/** Google's own address for a sign-in it refuses as possibly not secure. */
+const REJECTED = /\/signin\/rejected|deniedsigninrejected/;
 
 export async function establishGoogleSession({
   page,
@@ -41,79 +41,60 @@ export async function establishGoogleSession({
   });
 }
 
-// The password can be an offered method, not a field yet. Selecting it takes
-// precedence over "Try another way", which would leave the usable choice.
-export async function waitForGooglePassword({ page, mark, humanClickLocator }) {
+// Google refuses a sign-in it does not trust on its own rejection route.
+function refuseIfRejected(page) {
+  if (!REJECTED.test(new URL(page.url()).pathname)) return;
+  const error = new Error(`Google refused sign-in at ${page.url()}`);
+  error.code = 'BROWSER_NOT_SECURE';
+  error.fatal2fa = true;
+  throw error;
+}
+
+// The password can be an offered method, not a field yet: Google may list the
+// ways to sign in, or show a passkey screen whose other ways include the
+// password. Each is answered once, by the vision model, in that order.
+export async function waitForGooglePassword({ page, mark }) {
   mark('google_password');
   const password = page
     .locator('input[type="password"]')
     .filter({ visible: true })
     .first();
-  const choiceName =
-    /^(?:enter your password|use (?:your )?password|wpisz hasło|użyj hasła)$/i;
-  const choice = page
-    .getByRole('link', { name: choiceName })
-    .or(page.getByRole('button', { name: choiceName }))
-    .filter({ visible: true })
-    .first();
-  const alternatives = page
-    .getByText(/^(?:try another way|wypr[oó]buj inny spos[oó]b)$/i)
-    .filter({ visible: true })
-    .first();
-  const passkey = page
-    .getByText(/use your passkey|użyj klucza dostępu/i)
-    .filter({ visible: true })
-    .first();
-  const refused = page
-    .getByText(
-      /couldn.?t sign you in|may not be secure|too many failed attempts/i,
-    )
-    .filter({ visible: true })
-    .first();
   let selectedPassword = false;
   let openedAlternatives = false;
   for (;;) {
-    // Whichever of the refusal, the password field, or a method this walk
-    // has not used yet shows up first decides the next step.
-    const watched = [refused, password];
-    if (!selectedPassword) watched.push(choice);
-    if (!selectedPassword && !openedAlternatives) watched.push(alternatives);
-    await Promise.any(
-      watched.map((locator) => locator.waitFor({ state: 'visible' })),
-    );
-    if (await refused.isVisible()) {
-      const detail = await refused.innerText();
-      const error = new Error(`Google refused sign-in: ${detail}`);
-      error.code = /may not be secure|couldn.?t sign you in/i.test(detail)
-        ? 'BROWSER_NOT_SECURE'
-        : 'provider_challenge_refused';
-      error.fatal2fa = true;
-      throw error;
-    }
+    await pageSettled(page);
+    refuseIfRejected(page);
     if (await password.isVisible()) return password;
     if (
       !selectedPassword &&
-      (await choice.isVisible()) &&
-      (await choice.isEnabled())
+      (await pageShows(
+        page,
+        'Does the page list ways to sign in that include entering the account password?',
+      ))
     ) {
       selectedPassword = true;
       mark('google_password_choice');
-      await humanClickLocator(page, choice);
-      await pageSettled(page);
+      await clickDescribed(
+        page,
+        'the option to sign in by entering the account password',
+      );
       mark('google_password');
       continue;
     }
     if (
       !selectedPassword &&
       !openedAlternatives &&
-      (await passkey.isVisible()) &&
-      (await alternatives.isVisible()) &&
-      (await alternatives.isEnabled())
+      (await pageShows(
+        page,
+        'Does the page offer a control that shows other ways to sign in?',
+      ))
     ) {
       openedAlternatives = true;
       mark('google_password_alternatives');
-      await humanClickLocator(page, alternatives);
-      await pageSettled(page);
+      await clickDescribed(
+        page,
+        'the control that shows other ways to sign in',
+      );
       mark('google_password');
       continue;
     }
@@ -124,7 +105,7 @@ export async function waitForGooglePassword({ page, mark, humanClickLocator }) {
     () => ({
       host: location.host,
       path: location.pathname,
-      text: (document.body?.innerText || '').replace(/\s+/g, ' '),
+      text: document.body.innerText.replace(/\s+/g, ' '),
     }),
     { state: 'page navigated before diagnosis' },
   );
@@ -137,51 +118,46 @@ export async function waitForGooglePassword({ page, mark, humanClickLocator }) {
 }
 
 // Remaining on the password screen is pending, not proof of a wrong password.
-// Its explicit invalid state or refusal text is different from leaving it.
+// Google marks a refused password on the field itself (aria-invalid), refuses
+// an untrusted sign-in on its rejection route, and states any other refusal in
+// the page's assertive live region; each is different from leaving the page.
 export async function waitForGooglePasswordResult(page) {
-  const observed = await pageCondition(page, () => {
-    if (!/^https?:$/.test(location.protocol)) return false;
-    const state = { host: location.host, path: location.pathname };
-    if (location.hostname !== 'accounts.google.com') return state;
-    const text = (document.body?.innerText || '').replace(/\s+/g, ' ');
-    const refusal =
-      /couldn.?t sign you in|may not be secure|too many failed attempts/i.exec(
-        text,
-      );
-    if (refusal) {
-      return {
-        ...state,
-        text,
-        code: /may not be secure|couldn.?t sign you in/i.test(refusal[0])
-          ? 'BROWSER_NOT_SECURE'
-          : 'provider_challenge_refused',
-      };
-    }
-    const password = Array.from(
-      document.querySelectorAll('input[type="password"]'),
-    ).find((input) => {
-      const box = input.getBoundingClientRect();
-      return (
-        box.width > 4 &&
-        box.height > 4 &&
-        getComputedStyle(input).visibility === 'visible'
-      );
-    });
-    if (password?.getAttribute('aria-invalid') === 'true') {
-      return {
-        ...state,
-        code: 'GOOGLE_PASSWORD_REJECTED',
-        text,
-        invalidInput: {
-          name: password.name,
-          ariaInvalid: password.getAttribute('aria-invalid'),
-        },
-      };
-    }
-    if (password || /\/challenge\/pwd(?:\/|$)/.test(location.pathname))
-      return false;
-    return state;
-  });
+  const observed = await pageCondition(
+    page,
+    (rejected) => {
+      if (!/^https?:$/.test(location.protocol)) return false;
+      const state = { host: location.host, path: location.pathname };
+      if (location.hostname !== 'accounts.google.com') return state;
+      const text = document.body.innerText.replace(/\s+/g, ' ');
+      if (new RegExp(rejected).test(location.pathname))
+        return { ...state, text, code: 'BROWSER_NOT_SECURE' };
+      const alert = Array.from(
+        document.querySelectorAll('[aria-live="assertive"], [role="alert"]'),
+      )
+        .map((region) => region.innerText.trim())
+        .find(Boolean);
+      if (alert)
+        return { ...state, text: alert, code: 'provider_challenge_refused' };
+      const password = Array.from(
+        document.querySelectorAll('input[type="password"]'),
+      ).find((input) => input.checkVisibility({ visibilityProperty: true }));
+      if (password?.getAttribute('aria-invalid') === 'true') {
+        return {
+          ...state,
+          code: 'GOOGLE_PASSWORD_REJECTED',
+          text,
+          invalidInput: {
+            name: password.name,
+            ariaInvalid: password.getAttribute('aria-invalid'),
+          },
+        };
+      }
+      if (password || /\/challenge\/pwd(?:\/|$)/.test(location.pathname))
+        return false;
+      return state;
+    },
+    REJECTED.source,
+  );
   if (observed.code) {
     const error = new Error(
       `Google password step reports a refusal: ${JSON.stringify(observed)}`,
@@ -234,7 +210,9 @@ export async function enterGoogleCredentials({
       el.dispatchEvent(new Event('focusout', { bubbles: true }));
     }),
   );
-  await waitForEnabledThenClick(page, /next|continue|dalej/i);
+  // Google's sign-in forms submit on Enter in their field, as a person sends
+  // them; no Next button is looked up by its label.
+  await gEmailIn.press('Enter');
   mark('google_email_submitted');
 
   const gPwIn = await waitForGooglePassword({ page, mark, humanClickLocator });
@@ -251,7 +229,7 @@ export async function enterGoogleCredentials({
       el.dispatchEvent(new Event('focusout', { bubbles: true }));
     }),
   );
-  await waitForEnabledThenClick(page, /next|sign in|continue|dalej/i);
+  await gPwIn.press('Enter');
   await waitForGooglePasswordResult(page);
 
   mark('google_2fa_check');
@@ -328,14 +306,6 @@ export async function enterGoogleCredentials({
   mark('google_2fa_authenticator', { required: true, method: 'authenticator' });
   const otp = await requireAuthenticatorCode(page, resolveOtp(login));
   await humanFill(page, gOtp(), otp);
-  await humanClickLocator(
-    page,
-    page
-      .locator(
-        '#totpNext button, button:has-text("Next"), button[type="submit"]',
-      )
-      .filter({ visible: true })
-      .first(),
-  );
+  await gOtp().press('Enter');
   await waitForGoogleChallengeExit(page);
 }

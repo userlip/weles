@@ -1,17 +1,13 @@
-// How this login reads a live page and operates a control on it.
+// How this login reads a live page and fills a field on it.
 //
-// Google's sign-in is a WIZ document: its controls become enabled a tick after
-// they render, its fields ignore keystrokes until their handlers are bound, and
-// an OAuth redirect can destroy the document mid-read. So a read that lost its
-// document means "look again", a fill is verified by reading the value back, and
-// a click waits for the control to be genuinely enabled and then moves the
-// pointer onto it.
-import { humanClick } from '../../../../dist/human/mouse.js';
+// Google's sign-in is a WIZ document: its fields ignore keystrokes until their
+// handlers are bound, and an OAuth redirect can destroy the document
+// mid-read. So a read that lost its document means "look again", and a fill
+// is verified by reading the value back.
 import {
   DOCUMENT_REPLACED,
   readAcrossNavigation,
 } from '../../_shared/page/navigation/read.mjs';
-import { pageCondition } from '../../_shared/page/settled.mjs';
 
 // In an OAuth redirect chain a navigation mid-call is the EXPECTED
 // transition, so in poll loops a read whose document was replaced means
@@ -63,36 +59,4 @@ export async function fillAndVerify(
       `fillAndVerify: value mismatch after input dispatch; observed length=${actual.length}, expected length=${text.length}`,
     );
   }
-}
-
-// Wait for the button to be ENABLED then click it with a humanized pointer
-// move+click (humanClick). The earlier raw CDP Input.dispatchMouseEvent issued
-// a press/release with NO pointer movement — a strong automation signal that
-// tripped Google's "browser or app may not be secure" block at sign-in.
-// humanClick is the same primitive gmail_login_search uses to clear that exact
-// gate on this engine. Browser observation and input failures propagate.
-export async function waitForEnabledThenClick(page, namePattern) {
-  const patternSrc = namePattern.source;
-  const state = await pageCondition(
-    page,
-    (src) => {
-      const re = new RegExp(src, 'i');
-      for (const el of document.querySelectorAll('button, [role="button"]')) {
-        const txt = (el.innerText || el.textContent || '').trim();
-        if (!re.test(txt)) continue;
-        const r = el.getBoundingClientRect();
-        if (r.width < 4 || r.height < 4) continue;
-        if (
-          el.matches(':disabled') ||
-          el.getAttribute('aria-disabled') === 'true' ||
-          el.hasAttribute('disabled')
-        )
-          continue;
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      }
-      return null;
-    },
-    patternSrc,
-  );
-  await humanClick(page, Math.round(state.x), Math.round(state.y));
 }
