@@ -39,6 +39,14 @@ import {
   SAFE_RUN_ID,
 } from '../run/run-outcome.mjs';
 
+// `creds`: redact the run, return it verbatim (raw), or keep the credential
+// and return only its reference (store).
+const CREDENTIAL_MODES = {
+  redact: { raw: false, store: false },
+  raw: { raw: true, store: false },
+  store: { raw: false, store: true },
+};
+
 export async function respondToRun(
   req,
   res,
@@ -65,13 +73,18 @@ export async function respondToRun(
     json(res, 400, { ok: false, error: 'missing_action' });
     return;
   }
+  // A request that names no mode redacts.
   const credsMode =
     typeof body.creds === 'string' ? body.creds.trim() : 'redact';
-  if (!['redact', 'raw', 'store'].includes(credsMode)) {
-    json(res, 400, { ok: false, error: 'creds must be redact|raw|store' });
+  if (!Object.hasOwn(CREDENTIAL_MODES, credsMode)) {
+    json(res, 400, {
+      ok: false,
+      error: `creds is ${credsMode}; it must be one of ${Object.keys(CREDENTIAL_MODES).join(', ')}`,
+    });
     return;
   }
-  if (credsMode === 'raw' && !ALLOW_RAW_CREDS) {
+  const mode = CREDENTIAL_MODES[credsMode];
+  if (mode.raw && !ALLOW_RAW_CREDS) {
     json(res, 403, { ok: false, error: 'raw_creds_forbidden' });
     return;
   }
@@ -259,7 +272,7 @@ export async function respondToRun(
   }
 
   // store mode: persist extracted creds, return only a reference (no raw run).
-  if (credsMode === 'store') {
+  if (mode.store) {
     if (!out.ok) {
       json(res, 502, {
         ok: false,
@@ -306,7 +319,7 @@ export async function respondToRun(
   // parent reauth flow can donate it to Skarbiec. Redact mode returns only
   // credential presence and allowlisted failure identifiers parsed from
   // stderr; raw output and arbitrary failure text stay inside Weles.
-  if (isCredentialTrajectory(action) && credsMode !== 'raw') {
+  if (isCredentialTrajectory(action) && !mode.raw) {
     const result = { credential_produced: out.ok && out.result !== null };
     if (!out.ok) result.failure = credentialFailure(out);
     json(res, out.ok ? 200 : 502, {
@@ -325,6 +338,6 @@ export async function respondToRun(
     res,
     out.ok ? 200 : 502,
     { ...out, coalesced: admission.joined },
-    { redact: credsMode !== 'raw' },
+    { redact: !mode.raw },
   );
 }

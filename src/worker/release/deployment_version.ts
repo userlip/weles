@@ -10,7 +10,7 @@ export type ImmutableReleaseIdentity = {
   artifact_sha256: string;
   deployment_manifest_sha256: string;
   deployment_id: string;
-  ring: 'candidate' | 'development' | 'canary' | 'production';
+  ring: ReleaseRing;
   claims_enabled: boolean;
   chromium_release: string;
   chromium_sha256: string;
@@ -19,6 +19,21 @@ export type ImmutableReleaseIdentity = {
   api_schemas: string[];
 };
 
+/**
+ * The release rings, declared once: the type is read from this table, so a
+ * ring the identity accepts and a ring the reader admits cannot diverge.
+ * Only `claims` decides whether a ring's worker may take queued work.
+ */
+const RELEASE_RINGS = {
+  candidate: { claims: false },
+  development: { claims: false },
+  canary: { claims: false },
+  production: { claims: true },
+} as const;
+type ReleaseRing = keyof typeof RELEASE_RINGS;
+
+/** WELES_CLAIMS_ENABLED as the release manifest writes it. */
+const CLAIM_SWITCH = { '0': false, '1': true } as const;
 export type DeploymentVersionValue = {
   source: 'weles-worker';
   instance_id: string;
@@ -88,13 +103,21 @@ function immutableReleaseIdentity(
   if (values.some((value) => !value)) {
     throw new Error('immutable release identity is partially configured');
   }
-  if (!['candidate', 'development', 'canary', 'production'].includes(ring)) {
-    throw new Error('WELES_DEPLOYMENT_RING must name a release ring');
+  if (!Object.hasOwn(RELEASE_RINGS, ring)) {
+    throw new Error(
+      `WELES_DEPLOYMENT_RING is ${ring}, not a release ring: ${Object.keys(RELEASE_RINGS).join(', ')}`,
+    );
   }
-  if (!['0', '1'].includes(claimsEnabled))
-    throw new Error('WELES_CLAIMS_ENABLED must be 0 or 1');
-  if ((ring === 'production') !== (claimsEnabled === '1')) {
-    throw new Error('only the production release ring may claim queued work');
+  if (!Object.hasOwn(CLAIM_SWITCH, claimsEnabled))
+    throw new Error(
+      `WELES_CLAIMS_ENABLED is ${claimsEnabled}, not ${Object.keys(CLAIM_SWITCH).join(' or ')}`,
+    );
+  const claims = CLAIM_SWITCH[claimsEnabled as keyof typeof CLAIM_SWITCH];
+  const declared = RELEASE_RINGS[ring as ReleaseRing];
+  if (declared.claims !== claims) {
+    throw new Error(
+      `release ring ${ring} ${declared.claims ? 'claims' : 'never claims'} queued work, but WELES_CLAIMS_ENABLED is ${claimsEnabled}`,
+    );
   }
   return {
     schema: 'weles.release-identity.v2',
@@ -103,8 +126,8 @@ function immutableReleaseIdentity(
     artifact_sha256: artifactSha256,
     deployment_manifest_sha256: manifestSha256,
     deployment_id: deploymentId,
-    ring: ring as ImmutableReleaseIdentity['ring'],
-    claims_enabled: claimsEnabled === '1',
+    ring: ring as ReleaseRing,
+    claims_enabled: claims,
     chromium_release: chromiumRelease,
     chromium_sha256: chromiumSha256,
     firefox_release: firefoxRelease,
