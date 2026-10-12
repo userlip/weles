@@ -1,6 +1,11 @@
 {
   "why": "The Umami actions of the analytics service: where each opens, how risky it is, what it is for, and every input it reads, required or optional. The trajectory reads this to refuse a run missing a required input, and the worker reads it to hand a run exactly the inputs its action declares, so a run's params can never set any other environment variable of the child.",
   "platform": "umami",
+  "defaults": {
+    "opens": "dashboard",
+    "signsIn": true,
+    "scrolls": true
+  },
   "bases": {
     "UMAMI_BASE": "https://cloud.umami.is",
     "UMAMI_APP_BASE": "https://cloud.umami.is/analytics/us"
@@ -8,6 +13,7 @@
   "actions": {
     "umami_register": {
       "risk": "admin",
+      "signsIn": false,
       "url": "{UMAMI_BASE}/signup",
       "inputs": {
         "EMAIL": "required",
@@ -54,6 +60,8 @@
     },
     "umami_verify_tracking_script": {
       "risk": "verify",
+      "signsIn": false,
+      "opens": "target_site",
       "url": "{SITE_URL}",
       "inputs": { "SITE_URL": "required", "WEBSITE_ID": "required" },
       "objective": "Verify the target site serves the expected Umami script."
@@ -96,6 +104,8 @@
     },
     "umami_track_custom_event": {
       "risk": "verify",
+      "signsIn": false,
+      "opens": "target_site",
       "url": "{SITE_URL}",
       "inputs": {
         "SITE_URL": "required",

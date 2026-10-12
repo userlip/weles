@@ -1,12 +1,18 @@
 {
   "why": "The Google Analytics actions of the analytics service: where each opens, how risky it is, what it is for, and every input it reads, required or optional. The trajectory reads this to refuse a run missing a required input, and the worker reads it to hand a run exactly the inputs its action declares, so a run's params can never set any other environment variable of the child.",
   "platform": "googleanalytics",
+  "defaults": {
+    "opens": "dashboard",
+    "signsIn": true,
+    "scrolls": true
+  },
   "bases": {
     "GA_BASE": "https://analytics.google.com/analytics/web/"
   },
   "actions": {
     "googleanalytics_register": {
       "risk": "admin",
+      "scrolls": false,
       "url": "{GA_BASE}",
       "inputs": {
         "ACCOUNT_NAME": "required",
@@ -23,6 +29,7 @@
     },
     "googleanalytics_register_needher": {
       "risk": "admin",
+      "scrolls": false,
       "url": "{GA_BASE}",
       "inputs": {
         "ACCOUNT_NAME": "optional",
@@ -107,12 +114,15 @@
     },
     "googleanalytics_install_gtag": {
       "risk": "verify",
+      "signsIn": false,
+      "opens": "target_site",
       "url": "{SITE_URL}",
       "inputs": { "SITE_URL": "required", "MEASUREMENT_ID": "required" },
       "objective": "Verify a target app serves the GA4 tag."
     },
     "googleanalytics_verify_realtime": {
       "risk": "verify",
+      "opens": "target_site_then_dashboard",
       "url": "{GA_BASE}",
       "inputs": { "SITE_URL": "required", "MEASUREMENT_ID": "required" },
       "objective": "Verify GA4 realtime tracking."

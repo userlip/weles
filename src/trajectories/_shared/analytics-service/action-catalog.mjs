@@ -40,21 +40,61 @@ function resolved(template) {
   });
 }
 
+// What each declared risk means for the run: a write or an admin action
+// changes the platform's state and is staged for approval until
+// WRITE_CONFIRM is given.
+const RISKS = {
+  read: { changesState: false },
+  verify: { changesState: false },
+  write: { changesState: true },
+  admin: { changesState: true },
+};
+
+// Where an action's run goes: its dashboard section, the target site it
+// checks, or the target site and then the dashboard that should show it.
+const OPENINGS = {
+  dashboard: { targetSite: false, dashboard: true, interacts: true },
+  target_site: { targetSite: true, dashboard: false, interacts: false },
+  target_site_then_dashboard: {
+    targetSite: true,
+    dashboard: true,
+    interacts: false,
+  },
+};
+
+function declared(table, name, value, what) {
+  if (Object.hasOwn(table, value)) return table[value];
+  throw new Error(
+    `analytics action ${name} declares ${what} ${JSON.stringify(value)}; the catalog knows ${Object.keys(table).join(', ')}`,
+  );
+}
+
 const ACTIONS = Object.fromEntries(
   DECLARATIONS.flatMap((declaration) =>
-    Object.entries(declaration.actions).map(([name, action]) => [
-      name,
-      {
-        platform: declaration.platform,
-        risk: action.risk,
-        url: () => resolved(action.url),
-        inputs: action.inputs,
-        required: Object.keys(action.inputs).filter(
-          (key) => action.inputs[key] === 'required',
-        ),
-        objective: action.objective,
-      },
-    ]),
+    Object.entries(declaration.actions).map(([name, action]) => {
+      // An action states a field itself or takes its platform's declared one.
+      const stated = (field) =>
+        Object.hasOwn(action, field)
+          ? action[field]
+          : declaration.defaults[field];
+      return [
+        name,
+        {
+          platform: declaration.platform,
+          risk: action.risk,
+          changesState: declared(RISKS, name, action.risk, 'risk').changesState,
+          opening: declared(OPENINGS, name, stated('opens'), 'opening'),
+          signsIn: stated('signsIn'),
+          scrolls: stated('scrolls'),
+          url: () => resolved(action.url),
+          inputs: action.inputs,
+          required: Object.keys(action.inputs).filter(
+            (key) => action.inputs[key] === 'required',
+          ),
+          objective: action.objective,
+        },
+      ];
+    }),
   ),
 );
 

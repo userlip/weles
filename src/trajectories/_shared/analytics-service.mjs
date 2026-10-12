@@ -41,19 +41,12 @@ async function run() {
   let actionError = null;
   try {
     await store.injectPlaywright?.(s.ctx, cfg.platform);
-    if (
-      name !== 'umami_register' &&
-      !name.includes('verify_tracking_script') &&
-      !name.includes('track_custom_event') &&
-      !name.includes('install_gtag')
-    ) {
+    if (cfg.signsIn) {
       await ensureLoggedIn(s, cfg);
       await store.capturePlaywright?.(s.ctx, cfg.platform);
     }
 
-    const pending =
-      (cfg.risk === 'write' || cfg.risk === 'admin') &&
-      (await prepareWrite(s, cfg));
+    const pending = cfg.changesState && (await prepareWrite(s, cfg));
     if (pending) {
       await safeGoto(s, resolvedUrl(cfg));
       await captureEvidence(s, cfg, { pending_review: true });
@@ -66,31 +59,18 @@ async function run() {
     }
 
     let extra = {};
-    if (name === 'googleanalytics_verify_realtime') {
-      extra.targetSite = await verifyTargetSite(s, cfg);
-      await safeGoto(s, resolvedUrl(cfg));
-      await pageSettled(s.page);
-      await openExpectedDashboardSection(s);
-    } else if (
-      name.includes('verify_tracking_script') ||
-      name === 'umami_track_custom_event' ||
-      name === 'googleanalytics_install_gtag'
-    ) {
-      extra.targetSite = await verifyTargetSite(s, cfg);
-    } else {
+    const { opening } = cfg;
+    if (opening.targetSite) extra.targetSite = await verifyTargetSite(s, cfg);
+    if (opening.dashboard) {
       await safeGoto(s, resolvedUrl(cfg));
       await pageSettled(s.page);
       if (cfg.platform === 'googleanalytics')
         await openExpectedDashboardSection(s);
-      if (
-        name !== 'googleanalytics_register' &&
-        name !== 'googleanalytics_register_needher'
-      ) {
-        await humanScrollPage(s.page, 'down');
-      }
-      if (cfg.risk === 'write' || cfg.risk === 'admin') {
+    }
+    if (opening.interacts) {
+      if (cfg.scrolls) await humanScrollPage(s.page, 'down');
+      if (cfg.changesState)
         extra = { ...extra, ...(await performConfirmedWrite(s, cfg)) };
-      }
     }
 
     const evidence = await captureEvidence(s, cfg, extra);
