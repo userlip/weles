@@ -18,7 +18,8 @@
 // integration bearer (WELES_STADO_INTEGRATION_TOKEN, STADO_INTEGRATION_API_URL).
 //
 // Exit: 0 all healthy · 3 a domain needs a human · 4 IP not whitelisted · 2 misconfig.
-// Env: WHITELISTED_IPS, MESSAGE_FILE, ALLOW_ANY_IP=1 (test escape hatch).
+// Env: SLACK_CHANNEL (required: who is alerted), WHITELISTED_IPS,
+// MESSAGE_FILE, ALLOW_ANY_IP=1 (test escape hatch).
 
 import { runOutputPath } from '#run-output';
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -35,12 +36,18 @@ import {
   integrationsConfigured,
 } from '../../_shared/integrations.mjs';
 import { listReceived } from '../../_shared/resend-receiving.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
 
 // Absolute so the chained slack_post_message job (separate process) can read it.
 const MESSAGE_FILE = resolve(
   process.env.MESSAGE_FILE || runOutputPath('resend-domains-status.txt'),
 );
-const SLACK_CHANNEL = process.env.SLACK_CHANNEL || 'jakub'; // who Swiatowid messages
+// Who is alerted when a domain needs a human is stated, never a person
+// written here.
+const SLACK_CHANNEL = statedText(
+  ['SLACK_CHANNEL'],
+  'the Slack channel or person Swiatowid alerts when a domain needs a human',
+);
 const SKIP = new Set([
   'wisent.com',
   'agents.trade.wisent.ai',
@@ -111,27 +118,32 @@ function updateRow(domain, status) {
 // WHOIS/registrant-contact-verification hold repoints the nameservers to
 // failed-whois-verification.* / verify-contact-details.* and suspends DNS — no
 // API can clear it; a human must verify the registrant contact at the registrar.
-async function diagnoseBroken(domain) {
-  let ns = [];
+// The resolver's answers that a name has no records, as opposed to a lookup
+// that failed, which is rethrown with its own code instead of being read as
+// a domain without nameservers or MX.
+const NO_RECORDS = { ENOTFOUND: {}, NXDOMAIN: {}, ENODATA: {}, SERVFAIL: {} };
+async function records(lookup) {
   try {
-    ns = await dnsp.resolveNs(domain);
+    return await lookup();
   } catch (e) {
-    if (['ENOTFOUND', 'NXDOMAIN', 'ENODATA', 'SERVFAIL'].includes(e.code))
-      return {
-        code: 'dns_unresolved',
-        label: 'domain does not resolve (NXDOMAIN / no nameservers)',
-      };
+    if (Object.hasOwn(NO_RECORDS, e.code)) return null;
+    throw e;
   }
+}
+async function diagnoseBroken(domain) {
+  const ns = await records(() => dnsp.resolveNs(domain));
+  if (ns === null)
+    return {
+      code: 'dns_unresolved',
+      label: 'domain does not resolve (NXDOMAIN / no nameservers)',
+    };
   if (ns.some((h) => /verify|whois/i.test(h)))
     return {
       code: 'whois_hold',
       label: `WHOIS/registrant-contact verification hold — registrar suspended DNS (ns: ${ns.join(', ')}); a human must verify the registrant contact at the registrar to restore`,
     };
-  let mx = [];
-  try {
-    mx = await dnsp.resolveMx(domain);
-  } catch {}
-  if (!mx.length)
+  const mx = await records(() => dnsp.resolveMx(domain));
+  if (!mx?.length)
     return {
       code: 'no_mx',
       label:
@@ -272,13 +284,19 @@ const main = async () => {
   } else if (!out.healthy.length)
     lines.push(':grey_question: no receiving domains configured');
   const msg = lines.join('\n');
+  // The chained Slack job is handed this file; a write that failed is said,
+  // so a stale or missing file is not posted in silence.
   try {
     mkdirSync(dirname(MESSAGE_FILE), { recursive: true });
     writeFileSync(MESSAGE_FILE, msg + '\n');
-  } catch {}
+  } catch (e) {
+    console.log(
+      `[slack] message file ${MESSAGE_FILE} not written: ${e.message}`,
+    );
+  }
 
   // 5. Swiatowid alert — when a domain needs a human, enqueue a slack_post_message
-  // job (the worker runs the browser Slack post). Messages SLACK_CHANNEL ('jakub').
+  // job (the worker runs the browser Slack post) to the stated SLACK_CHANNEL.
   // SLACK_NOTIFY_ALWAYS=1 posts even when all-healthy (e.g. a daily heartbeat).
   const shouldNotify =
     out.broken.length > 0 || process.env.SLACK_NOTIFY_ALWAYS === '1';
