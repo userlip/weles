@@ -13,6 +13,8 @@ import {
   confirmedFill,
   statedField,
 } from '../../_shared/page/confirmed-fill.mjs';
+import { pageSettled } from '../../_shared/page/settled.mjs';
+import { shows } from '../../_shared/page/shows.mjs';
 import {
   humanClickLocator,
   humanIdlePause,
@@ -202,6 +204,30 @@ try {
     await saveBtn.waitFor({ state: 'visible' });
     await humanClickLocator(s.page, saveBtn);
     await humanIdlePause('long');
+    // A click on Save proves nothing about what X kept: the public profile is
+    // read back, and a name or bio it does not show fails the run.
+    await s.goto(`https://x.com/${acct.username}`);
+    await pageSettled(s.page);
+    if (targetName) {
+      const shownName = await s.page
+        .locator('[data-testid="UserName"]')
+        .first()
+        .innerText();
+      if (!shownName.split('\n').some((line) => shows(line, targetName)))
+        throw new Error(
+          `the X profile shows the name "${shownName}" after Save, not "${targetName}"`,
+        );
+    }
+    if (targetBio) {
+      const shownBio = await s.page
+        .locator('[data-testid="UserDescription"]')
+        .first()
+        .innerText();
+      if (!shows(shownBio, targetBio))
+        throw new Error(
+          `the X profile shows a bio of ${shownBio.length} characters after Save, not the ${targetBio.length} written`,
+        );
+    }
     recordProfile();
     console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
   }
