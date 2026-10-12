@@ -39,33 +39,35 @@ export async function injectPHCookies(s, cookies) {
   return norm.length;
 }
 
+// Product Hunt's own routes under /products/ and /posts/ that are listings,
+// not one product: a slug naming one of them is not a launch page.
+const LISTING_ROUTES = { new: true, 'launching-soon': true, all: true };
+// Paths under a product that are another page of it, not the launch itself.
+const PRODUCT_SUBPAGES = /\/(reviews|alternatives)(?:[/?#]|$)/;
+
 // Select a product launch page that exposes voting and comment composition.
-// Return null when no suitable page is available.
+// Return null when the page lists none; a page that cannot be read is an
+// error with its cause.
 export async function pickFirstProductLaunchUrl(s) {
   // Product pages differ from launch-submission forms and legacy post URLs.
-  const href = await s.page
-    .evaluate(`(() => {
-    function pick(prefix) {
-      var as = Array.from(document.querySelectorAll('a[href*="' + prefix + '"]'));
-      for (var a of as) {
-        var h = a.getAttribute('href') || '';
-        if (h.includes('?ref=footer')) continue;
-        if (h.includes('/reviews')) continue;
-        if (h.includes('/alternatives')) continue;
-        var slug = (h.match(new RegExp('\\\\' + prefix + '([^/?#]+)')) || [])[1];
-        if (!slug) continue;
-        if (slug === 'new' || slug === 'launching-soon' || slug === 'all') continue;
-        return h;
-      }
-      return null;
+  const hrefs = await s.page.evaluate(() =>
+    Array.from(
+      document.querySelectorAll('a[href*="/products/"], a[href*="/posts/"]'),
+      (a) => a.getAttribute('href'),
+    ).filter((href) => href !== null),
+  );
+  const candidates = hrefs
+    .map((href) => new URL(href, 'https://www.producthunt.com'))
+    .filter((url) => url.searchParams.get('ref') !== 'footer')
+    .filter((url) => !PRODUCT_SUBPAGES.test(url.pathname));
+  for (const prefix of ['/products/', '/posts/']) {
+    for (const url of candidates) {
+      if (!url.pathname.startsWith(prefix)) continue;
+      const [slug] = url.pathname.slice(prefix.length).split('/');
+      if (slug && !Object.hasOwn(LISTING_ROUTES, slug)) return url.toString();
     }
-    return pick('/products/') || pick('/posts/');
-  })()`)
-    .catch(() => null);
-  if (!href) return null;
-  return href.startsWith('http')
-    ? href
-    : new URL(href, 'https://www.producthunt.com').toString();
+  }
+  return null;
 }
 
 // Discover the authed user's PH handle. Three register-time failures
