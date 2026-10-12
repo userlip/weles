@@ -4,19 +4,20 @@
 // appInfoLocalizations.name (per locale). This reads the app + its localizations
 // and PATCHes the name; pass DRY=1 to only read.
 //
-// Env: P8_PATH (App Store Connect .p8 key), KID (key id), ISSUER (issuer uuid),
-//      BUNDLE (default ai.wisent.swiatowid), NEW_NAME (required unless DRY=1).
+// Env: BUNDLE (required), NEW_NAME (required unless DRY=1). The App Store
+// Connect API key is the exact Weles item in Skarbiec.
 import crypto from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readScopedSecret } from '../../../../_shared/scoped-secrets.mjs';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
-// The App Store Connect key is the operator's: its file, key id and issuer
-// are given at run time and never live in this repository.
-const P8_PATH = process.env.P8_PATH;
-const KID = process.env.KID;
-const ISSUER = process.env.ISSUER;
-if (!P8_PATH || !KID || !ISSUER)
-  throw new Error('set P8_PATH, KID and ISSUER for the App Store Connect key');
-const BUNDLE = process.env.BUNDLE || 'ai.wisent.swiatowid';
+const KID = readScopedSecret('appleAppStoreConnectApi', 'key_id');
+const ISSUER = readScopedSecret('appleAppStoreConnectApi', 'issuer_id');
+const PEM = readScopedSecret('appleAppStoreConnectApi', 'private_key');
+if (!KID || !ISSUER || !PEM)
+  throw new Error(
+    'the Weles App Store Connect API item in Skarbiec lacks key_id, issuer_id or private_key; no request was signed',
+  );
+const BUNDLE = statedText(['BUNDLE'], 'the bundle id of the app to rename');
 const NEW_NAME = process.env.NEW_NAME;
 const DRY = process.env.DRY === '1';
 if (!NEW_NAME && !DRY) {
@@ -24,7 +25,6 @@ if (!NEW_NAME && !DRY) {
   process.exit(1);
 }
 
-const PEM = readFileSync(P8_PATH, 'utf8');
 const b = (x) =>
   Buffer.from(x)
     .toString('base64')

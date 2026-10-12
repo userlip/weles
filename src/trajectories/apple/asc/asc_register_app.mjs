@@ -1,13 +1,22 @@
 // Creates the App Store Connect app record using the exact Weles ASC API item.
 import crypto from 'node:crypto';
 import { readScopedSecret } from '../../../_shared/scoped-secrets.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
 const KEY_ID = readScopedSecret('appleAppStoreConnectApi', 'key_id');
 const ISSUER = readScopedSecret('appleAppStoreConnectApi', 'issuer_id');
 const PEM = readScopedSecret('appleAppStoreConnectApi', 'private_key');
-const BUNDLE = process.env.ASC_BUNDLE || 'ai.wisent.swiatowid';
-const NAME = process.env.ASC_APP_NAME || 'Swiatowid';
-const SKU = process.env.ASC_SKU || 'swiatowidios2026';
+// The app record's bundle id, public name and SKU are the caller's; an App
+// Store app is never registered under one written here.
+const BUNDLE = statedText(
+  ['ASC_BUNDLE'],
+  'the bundle id the app is registered for',
+);
+const NAME = statedText(['ASC_APP_NAME'], 'the App Store name of the app');
+const SKU = statedText(
+  ['ASC_SKU'],
+  'the SKU App Store Connect records for the app',
+);
 if (!KEY_ID || !ISSUER || !PEM) {
   console.error('Exact Weles App Store Connect API grant unavailable');
   process.exit(2);

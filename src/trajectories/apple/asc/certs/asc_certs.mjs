@@ -3,16 +3,20 @@
 // account has reached the maximum number of certificates" when the team's cert
 // cap is hit; this shows what exists so a stale/expired one can be freed.
 //
-// Env: P8_PATH or ASC_P8 (key PEM), KID (default ZA9F7Q6KQZ), ISSUER (default team issuer).
-//      REVOKE=<certificateId> to delete one certificate (otherwise read-only).
+// Env: REVOKE=<certificateId> to delete one certificate (otherwise read-only).
+// The App Store Connect API key is the exact Weles item in Skarbiec, the same
+// one asc_register_app.mjs signs with; no key id, issuer or key path is
+// written here.
 import crypto from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readScopedSecret } from '../../../../_shared/scoped-secrets.mjs';
 
-const KID = process.env.KID || 'ZA9F7Q6KQZ';
-const ISSUER = process.env.ISSUER || '13148f85-32b2-485c-a7ed-3e1805314299';
-const PEM =
-  process.env.ASC_P8 ||
-  readFileSync(process.env.P8_PATH || '/tmp/asc_working_key.pem', 'utf8');
+const KID = readScopedSecret('appleAppStoreConnectApi', 'key_id');
+const ISSUER = readScopedSecret('appleAppStoreConnectApi', 'issuer_id');
+const PEM = readScopedSecret('appleAppStoreConnectApi', 'private_key');
+if (!KID || !ISSUER || !PEM)
+  throw new Error(
+    'the Weles App Store Connect API item in Skarbiec lacks key_id, issuer_id or private_key; no request was signed',
+  );
 const REVOKE = process.env.REVOKE;
 
 const b = (x) =>
