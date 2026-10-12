@@ -9,6 +9,7 @@
 
 import { humanFill } from '../../../../dist/human/keyboard.js';
 import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
+import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
 import {
   fillStripeElements,
   loadTopupCardEnv,
@@ -22,11 +23,17 @@ const MAX_PAGE = new URL('/upgrade/max', 'https://claude.ai');
 /** A Max tier as Anthropic names it, and the multiplier it carries. */
 const MAX_TIER = /^default_claude_max_(\w+)$/;
 
-/** The control that takes the chosen plan to payment. */
-const PROCEED = /^(upgrade|subscribe|continue|get max|choose|select)/i;
-
-/** The control that submits the payment. */
-const PAY = /^(subscribe|pay|upgrade|confirm|start|purchase)/i;
+/**
+ * Clicks the control `description` names, found by the vision model; a page
+ * without it fails the checkout with `code` and the model's answer.
+ */
+async function clickOrFail(page, description, code, message) {
+  try {
+    await clickDescribed(page, description);
+  } catch (error) {
+    await failOnPage(page, code, 'checkout', `${message}: ${error.message}`);
+  }
+}
 
 /** The card's own name field, when the checkout asks for one. */
 const CARD_NAME =
@@ -100,13 +107,12 @@ export async function buyPlan(session, tier, mark) {
       'checkout',
       `the Max page offers no ${label} choice`,
     );
-  if (!(await clickNamed(page, PROCEED)))
-    await failOnPage(
-      page,
-      'plan_proceed_missing',
-      'checkout',
-      `the Max page offers no control to buy ${label}`,
-    );
+  await clickOrFail(
+    page,
+    `the button that takes the chosen ${label} plan to payment`,
+    'plan_proceed_missing',
+    `the Max page offers no control to buy ${label}`,
+  );
   mark('card_entry');
   const entered = await fillStripeElements(page, purchaseCard);
   if (!entered.ok)
@@ -123,54 +129,55 @@ export async function buyPlan(session, tier, mark) {
     !(await nameField.inputValue())
   )
     await humanFill(page, nameField, purchaseCard.name);
-  if (!(await clickNamed(page, PAY)))
-    await failOnPage(
-      page,
-      'payment_submit_missing',
-      'checkout',
-      'the payment form offers no control to pay',
-    );
+  await clickOrFail(
+    page,
+    'the button that submits the payment for the subscription',
+    'payment_submit_missing',
+    'the payment form offers no control to pay',
+  );
   mark('payment_submitted');
+  // After each change of the page the model reads what it says: a refusal of
+  // the card, or the subscription in place; a bank's challenge over the form
+  // waits for the cardholder.
   for (;;) {
-    const outcome = await pageCondition(
-      page,
-      (challenge) => {
-        const text = document.body.innerText;
-        if (
-          /declined|was not successful|insufficient funds|could not be processed|payment failed/i.test(
-            text,
-          )
-        )
-          return 'declined';
-        if (document.querySelector(challenge)) return 'challenge';
-        if (
-          location.pathname.startsWith('/new') ||
-          /welcome to (claude )?max|you.re (now )?(on|subscribed)|thanks for (upgrading|subscribing)|subscription is active/i.test(
-            text,
-          )
-        )
-          return 'paid';
-        return false;
-      },
-      CHALLENGE,
-    );
-    if (outcome === 'paid') {
-      mark('plan_paid');
-      return { plan: label, tier };
+    await pageSettled(page);
+    if (await page.locator(CHALLENGE).count()) {
+      mark('payment_challenge');
+      requestApproval(label);
+      await pageCondition(
+        page,
+        (challenge) => !document.querySelector(challenge),
+        CHALLENGE,
+      );
+      continue;
     }
-    if (outcome === 'declined')
+    if (
+      await pageShows(
+        page,
+        'Does the page say the card was declined or the payment did not go through?',
+      )
+    )
       await failOnPage(
         page,
         'payment_declined',
         'checkout',
         `claude.ai refused the card for ${label}`,
       );
-    mark('payment_challenge');
-    requestApproval(label);
+    if (
+      new URL(page.url()).pathname.startsWith('/new') ||
+      (await pageShows(
+        page,
+        'Does the page confirm that the Claude Max subscription is now active?',
+      ))
+    ) {
+      mark('plan_paid');
+      return { plan: label, tier };
+    }
+    const shown = await page.evaluate(() => document.body.innerText);
     await pageCondition(
       page,
-      (challenge) => !document.querySelector(challenge),
-      CHALLENGE,
+      (before) => document.body.innerText !== before,
+      shown,
     );
   }
 }

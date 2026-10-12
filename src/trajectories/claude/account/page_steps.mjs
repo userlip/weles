@@ -26,24 +26,17 @@ export async function failOnPage(page, code, stage, sentence) {
   );
 }
 
-/** Click the first visible button or link whose name matches `pattern`;
- * false when the page shows none. */
+/** Click the first visible control - a button, link, radio or option - whose
+ * text matches `pattern`; false when the page shows none. */
 export async function clickNamed(page, pattern) {
-  for (const role of ['button', 'link', 'radio', 'option']) {
-    const control = page
-      .getByRole(role, { name: pattern })
-      .filter({ visible: true })
-      .first();
-    if (await control.count()) {
-      await humanClickLocator(page, control);
-      await pageSettled(page);
-      return true;
-    }
-  }
-  return false;
-}
-
-/** The page's visible text, for deciding which step it is at. */
-export async function visibleText(page) {
-  return page.evaluate(() => document.body.innerText);
+  const control = page
+    .locator(
+      'button, a, [role="button"], [role="link"], [role="radio"], [role="option"]',
+    )
+    .filter({ hasText: pattern, visible: true })
+    .first();
+  if (!(await control.count())) return false;
+  await humanClickLocator(page, control);
+  await pageSettled(page);
+  return true;
 }

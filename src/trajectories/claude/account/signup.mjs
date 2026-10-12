@@ -3,28 +3,20 @@
 // and the onboarding pages that follow are answered from the identity.
 
 import { humanFill } from '../../../../dist/human/keyboard.js';
-import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
 import { emailCodeSignIn } from '../../_shared/subscription-auth/email_code.mjs';
-import { clickNamed, failOnPage, visibleText } from './page_steps.mjs';
+import { failOnPage } from './page_steps.mjs';
 
 /** claude.ai's own sign-in page; a new address is an account created. */
 const LOGIN_PAGE = new URL('/login', 'https://claude.ai');
 
 /** Where the app lands once onboarding is over. */
-const APP_PATHS = /^\/(new|chats?|recents)\b/;
-
-/** The controls onboarding pages move on with. */
-const ADVANCE =
-  /^(continue|next|get started|agree|accept|let.s go|done|skip|start)/i;
+const APP_ROUTES = ['/new', '/chat', '/recents'];
 
 /** A name field onboarding asks to be filled. */
 const NAME_FIELD =
   'input[name*="name" i],input[placeholder*="name" i],input[autocomplete="name"],input[autocomplete="given-name"]';
-
-/** Confirmations onboarding asks to be ticked: age and terms. */
-const CONSENT =
-  /years old|of age|age requirement|terms|agree|policy|acknowledge/i;
 
 async function fillName(page, identity) {
   const field = page.locator(NAME_FIELD).filter({ visible: true }).first();
@@ -34,22 +26,37 @@ async function fillName(page, identity) {
   return true;
 }
 
+// The confirmations onboarding requires - age and terms - are ticked one at a
+// time while the model still sees one unticked; an optional box such as a
+// newsletter opt-in is left as it is.
 async function tickConsents(page) {
   let ticked = false;
-  const boxes = page.getByRole('checkbox').filter({ visible: true });
-  for (const box of await boxes.all()) {
-    if (await box.isChecked()) continue;
-    const label = await box.evaluate(
-      (element) =>
-        element.closest('label')?.innerText ||
-        element.getAttribute('aria-label') ||
-        element.parentElement?.innerText,
+  while (
+    await pageShows(
+      page,
+      'Is there an unticked checkbox that confirms the age requirement or accepts the terms or policies (not a newsletter or marketing opt-in)?',
+    )
+  ) {
+    await clickDescribed(
+      page,
+      'the unticked checkbox that confirms the age requirement or accepts the terms or policies',
     );
-    if (!CONSENT.test(String(label))) continue;
-    await humanClickLocator(page, box);
     ticked = true;
   }
   return ticked;
+}
+
+// The control onboarding moves on with, when the page offers one.
+async function advance(page) {
+  if (
+    !(await pageShows(
+      page,
+      'Does the page offer a button that moves the onboarding forward?',
+    ))
+  )
+    return false;
+  await clickDescribed(page, 'the button that moves the onboarding forward');
+  return true;
 }
 
 /**
@@ -70,12 +77,15 @@ export async function signUp(session, identity, mark) {
   mark('onboarding');
   for (;;) {
     await pageSettled(page);
-    if (APP_PATHS.test(new URL(page.url()).pathname)) {
+    const { pathname } = new URL(page.url());
+    if (APP_ROUTES.some((route) => pathname.startsWith(route))) {
       mark('account_created');
       return;
     }
-    const text = await visibleText(page);
-    if (/phone number|verify your phone/i.test(text))
+    // A phone number is asked for in a telephone field.
+    if (
+      await page.locator('input[type="tel"]').filter({ visible: true }).count()
+    )
       await failOnPage(
         page,
         'phone_verification_required',
@@ -84,7 +94,7 @@ export async function signUp(session, identity, mark) {
       );
     const named = await fillName(page, identity);
     const ticked = await tickConsents(page);
-    const advanced = await clickNamed(page, ADVANCE);
+    const advanced = await advance(page);
     if (!named && !ticked && !advanced)
       await failOnPage(
         page,
