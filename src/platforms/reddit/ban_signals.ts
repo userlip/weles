@@ -7,6 +7,7 @@
  * account surfaces as a typed event, not a free-text failure string.
  */
 import type { Page } from 'playwright';
+import { chromeErrorSignal } from '../_shared/ban_signals_base.js';
 
 export interface BanSignal {
   healthy: boolean;
@@ -73,26 +74,11 @@ export async function detectRedditBanSignals(
   const url = page.url();
   details.final_url = url;
 
-  // Chrome system error page — proxy CONNECT or DNS failed. Same handling as
-  // the base detector: a proxy traffic limit surfaces this fleet-wide.
-  if (url.startsWith('chrome-error://')) {
-    let chromeBody = '';
-    try {
-      chromeBody =
-        (await page
-          .evaluate(() => document.body?.innerText ?? '')
-          .catch(() => '')) || '';
-    } catch {
-      /* noop */
-    }
-    details.body_text_sample = chromeBody;
-    const sig = /HTTP ERROR 407|ERR_PROXY_AUTH/i.test(chromeBody)
-      ? 'proxy_auth_failed'
-      : /HTTP ERROR 4|ERR_HTTP_RESPONSE_CODE/i.test(chromeBody)
-        ? 'ip_blocked'
-        : 'proxy_failed';
-    return { healthy: false, signal: sig as BanSignal['signal'], details };
-  }
+  // Chrome system error page — proxy CONNECT or DNS failed. Classified by the
+  // shared detector; its proxy signals are outside Reddit's own union, as
+  // they were before.
+  if (url.startsWith('chrome-error://'))
+    return (await chromeErrorSignal(page, details)) as unknown as BanSignal;
 
   for (const pat of SUSPENDED_URL_PATTERNS) {
     if (pat.test(url))

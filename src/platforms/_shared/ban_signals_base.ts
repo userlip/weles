@@ -46,6 +46,37 @@ export interface DetectorConfig {
 
 const DEFAULT_CAPTCHA = /recaptcha|hcaptcha|arkoselabs|funcaptcha|geetest/i;
 
+/**
+ * The signal of a Chrome error page (the proxy CONNECT or DNS failed), read
+ * from its text: 407 or proxy auth is proxy_auth_failed, an HTTP 4xx is
+ * ip_blocked, anything else proxy_failed. A text that could not be read is
+ * recorded with its cause, so a proxy_failed reached without any text says
+ * so.
+ */
+export async function chromeErrorSignal(
+  page: Page,
+  details: Record<string, unknown>,
+): Promise<BanSignal> {
+  let chromeBody = '';
+  try {
+    chromeBody = await page.evaluate(() =>
+      document.body === null ? '' : document.body.innerText,
+    );
+  } catch (error) {
+    details.body_text_error =
+      error instanceof Error ? error.message : String(error);
+  }
+  details.body_text_sample = chromeBody;
+  const signal: BanSignalKind = /HTTP ERROR 407|ERR_PROXY_AUTH/i.test(
+    chromeBody,
+  )
+    ? 'proxy_auth_failed'
+    : /HTTP ERROR 4|ERR_HTTP_RESPONSE_CODE/i.test(chromeBody)
+      ? 'ip_blocked'
+      : 'proxy_failed';
+  return { healthy: false, signal, details };
+}
+
 export async function detectFromConfig(
   page: Page,
   responses: Array<{
@@ -67,24 +98,8 @@ export async function detectFromConfig(
   //    returned 'healthy' on these pages because no platform-ban keywords
   //    appear, masking proxy-side failures fleet-wide (a provider
   //    traffic-limit outage reads as hours of misdiagnosis this way).
-  if (url.startsWith('chrome-error://')) {
-    let chromeBody = '';
-    try {
-      chromeBody =
-        (await page
-          .evaluate(() => document.body?.innerText ?? '')
-          .catch(() => '')) || '';
-    } catch {
-      /* noop */
-    }
-    details.body_text_sample = chromeBody;
-    const sig: BanSignalKind = /HTTP ERROR 407|ERR_PROXY_AUTH/i.test(chromeBody)
-      ? ('proxy_auth_failed' as BanSignalKind)
-      : /HTTP ERROR 4|ERR_HTTP_RESPONSE_CODE/i.test(chromeBody)
-        ? 'ip_blocked'
-        : ('proxy_failed' as BanSignalKind);
-    return { healthy: false, signal: sig, details };
-  }
+  if (url.startsWith('chrome-error://'))
+    return chromeErrorSignal(page, details);
 
   // 1. URL patterns
   for (const [sig, patterns] of Object.entries(cfg.url ?? {})) {
