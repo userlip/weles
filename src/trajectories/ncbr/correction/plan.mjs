@@ -19,9 +19,18 @@ export function loadPlan() {
       'NCBR_CORRECTION_PLAN_FILE or NCBR_CORRECTION_PLAN is required',
     );
   const plan = JSON.parse(raw);
-  const mode = process.env.NCBR_CORRECTION_MODE || 'verify';
-  if (!['apply', 'verify', 'inspect'].includes(mode))
-    throw new Error(`unsupported mode: ${mode}`);
+  // What each mode does, declared once: whether it writes to the application.
+  // The mode is stated by the caller; none is assumed.
+  const behaviours = {
+    apply: { writes: true },
+    verify: { writes: false },
+    inspect: { writes: false },
+  };
+  const mode = process.env.NCBR_CORRECTION_MODE;
+  if (!mode || !Object.hasOwn(behaviours, mode))
+    throw new Error(
+      `NCBR_CORRECTION_MODE must be one of ${Object.keys(behaviours).join(', ')}; got ${mode ? JSON.stringify(mode) : 'nothing'}`,
+    );
   if (plan.schema !== 'weles.ncbr.correction-plan.v1')
     throw new Error('unsupported correction schema');
   const project = plan.project;
@@ -44,7 +53,7 @@ export function loadPlan() {
   const deadline = Date.parse(project.deadline);
   if (!Number.isFinite(deadline))
     throw new Error('invalid correction deadline');
-  if (mode === 'apply' && Date.now() > deadline)
+  if (behaviours[mode].writes && Date.now() > deadline)
     throw new Error('correction deadline has passed');
   if ('correctionCard' in plan)
     throw new Error(
