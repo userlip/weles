@@ -1,4 +1,4 @@
-import { pageSettled } from '../_shared/page/settled.mjs';
+import { pageSettled, responseAfterAction } from '../_shared/page/settled.mjs';
 import { WSession } from '../../../dist/session/wsession.js';
 import { generatePersona } from '../../../dist/browser/persona.js';
 import {
@@ -19,9 +19,48 @@ import { probeButton, recordedClicks } from './register/button_probe.mjs';
 import { dumpStuckState } from './register/stuck_diagnostics.mjs';
 import { statedCount } from '../_shared/inputs/stated.mjs';
 
-const URL = 'https://www.tiktok.com/signup';
-// Indicators of a captcha or a rate limit after "Send code", read from the page.
-const PROBE = `(() => { const t = document.body.innerText || ''; const i = []; if (document.querySelector('.captcha-verify-container, .captcha_verify_container, [class*="captcha-"]')) i.push('captcha-container'); if (document.querySelector('iframe[src*="captcha"]')) i.push('captcha-iframe'); if (/drag|puzzle|rotate|slide/i.test(t)) i.push('captcha-text'); if (/too many|attempts|try again later/i.test(t)) i.push('rate-limit'); return { indicators: i, hasResend: /Resend code/i.test(t), url: location.href }; })()`;
+const SIGNUP_URL = 'https://www.tiktok.com/signup';
+// TikTok's own calls: the code request and the sign-up verification.
+const SEND_CODE = /\/passport\/web\/email\/send_code\/?$/;
+const REGISTER_VERIFY = /\/register_verify_login\/?$/;
+// TikTok's captcha widget, as the page renders it.
+const CAPTCHA_SHOWN = `Boolean(document.querySelector('.captcha-verify-container, .captcha_verify_container, [class*="captcha-"], iframe[src*="captcha"]'))`;
+
+const pathOf = (request) => new URL(request.url()).pathname;
+
+/**
+ * TikTok's answer to the request `action` sends to `path`, or the captcha it
+ * shows instead: a captcha widget holds the request back until it is solved.
+ */
+async function answerOrCaptcha(page, path, action) {
+  let decided = false;
+  const captcha = (async () => {
+    while (!decided) {
+      await pageSettled(page);
+      if (await page.evaluate(CAPTCHA_SHOWN)) return { captcha: true };
+    }
+    return { captcha: false };
+  })();
+  const answered = responseAfterAction(
+    page,
+    (request) => path.test(pathOf(request)),
+    action,
+  ).then((response) => ({ response }));
+  const first = await Promise.race([answered, captcha]);
+  decided = true;
+  return first;
+}
+
+/** A TikTok JSON answer, or why it could not be read. */
+async function answerBody(response) {
+  try {
+    return { body: await response.json() };
+  } catch (error) {
+    return {
+      unreadable: `${response.status()} ${response.url()} is not JSON: ${error.message}`,
+    };
+  }
+}
 
 {
   // Single deterministic path — phone-or-email → email tab → fill DOB+email+
@@ -88,7 +127,7 @@ const PROBE = `(() => { const t = document.body.innerText || ''; const i = []; i
           .catch((e) => console.log(`[test] warm-up ${u}: ${e.message}`));
         await pageSettled(s.page);
       }
-      await s.goto(URL);
+      await s.goto(SIGNUP_URL);
       await pageSettled(s.page);
 
       // Verify page is alive
@@ -190,51 +229,36 @@ const PROBE = `(() => { const t = document.body.innerText || ''; const i = []; i
       // Capture Send code button rect + install click listener
       const sendInfo = await probeButton(s.page, 'send-code');
       console.log(`[test] send button: ${JSON.stringify(sendInfo)}`);
-      if (sendInfo.disabled === false) {
-        const r = await s.click('Send code');
-        console.log(`[test] s.click('Send code') => ${r}`);
-      } else {
+      if (sendInfo.disabled !== false) {
         console.log('[test] Send button disabled — skipping');
         continue;
       }
-      // Captcha SDK init + invisible-challenge solve run before /send_code/
-      // fires; the page is read until the "Resend code" countdown, the
-      // send_code response, or a captcha/rate-limit indicator appears.
-      let probe = { hasResend: false, indicators: [] };
-      while (
-        !(probe.hasResend || net.sendCodeSuccess || probe.indicators?.length)
-      ) {
-        await pageSettled(s.page);
-        probe = await s.page.evaluate(PROBE);
-      }
-      console.log(`[test] After Send code: ${JSON.stringify(probe)}`);
+      // TikTok answers the code request itself; its captcha widget, when it
+      // shows, holds that request back. Either is the answer, not page words.
+      const sendCode = await answerOrCaptcha(s.page, SEND_CODE, () =>
+        s.click('Send code'),
+      );
       await screenshotIfPossible(s, `after_send_code_r${retry}`);
-
-      if (!probe.hasResend && !net.sendCodeSuccess) {
+      if (sendCode.captcha) {
+        console.log('FAIL: TikTok showed its captcha before sending the code');
+        break;
+      }
+      const sent = await answerBody(sendCode.response);
+      if (sent.unreadable) {
         console.log(
-          `[test] attempt ${retry + 1}: Send code did not advance form. indicators=${probe.indicators?.join(',') || 'none'}`,
+          `[test] attempt ${retry + 1}: TikTok's send_code answer could not be read: ${sent.unreadable}`,
         );
-        if (probe.indicators?.includes('rate-limit')) {
-          console.log('FAIL: TikTok rate-limited this session');
-          break;
-        }
-        if (probe.indicators?.length) {
-          console.log(`FAIL: captcha detected — ${probe.indicators.join(',')}`);
-          break;
-        }
-        if (process.env.STAY_OPEN_ON_STUCK === '1') {
-          console.log(
-            '[test] STAY_OPEN_ON_STUCK=1 — keeping browser open. Close window manually when done.',
-          );
-          await humanIdlePause('long');
-        }
-        await dumpStuckState(s, 'send_code_no_advance');
+        await dumpStuckState(s, 'send_code_unreadable');
         continue;
       }
-      if (!probe.hasResend && net.sendCodeSuccess)
+      if (sent.body?.message !== 'success') {
+        // TikTok refused this session; its own answer says why (a rate
+        // limit among them), and another identity on it would be refused too.
         console.log(
-          '[test] send_code API succeeded although countdown text did not render — polling inbox anyway',
+          `FAIL: TikTok refused to send the code: ${JSON.stringify(sent.body)}`,
         );
+        break;
+      }
 
       // Poll the inbox for the verification code
       console.log(`[test] Polling email for ${id.email}...`);
@@ -263,95 +287,43 @@ const PROBE = `(() => { const t = document.body.innerText || ''; const i = []; i
       const nextInfo = await probeButton(s.page, 'next');
       console.log(`[test] Next button: ${JSON.stringify(nextInfo)}`);
 
-      if (nextInfo.disabled === false) {
-        const r = await s.click('Next');
-        console.log(`[test] s.click('Next') => ${r}`);
-        await pageSettled(s.page);
-        if (
-          !net.registerVerifySeen &&
-          (s.page.url?.() ?? '').includes('/signup/phone-or-email/email')
-        ) {
-          console.log(
-            '[test] Next click produced no register_verify_login request — trying keyboard activation',
-          );
-          const nextBtn = s.page
-            .getByRole('button', { name: /^\s*Next\s*$/i })
-            .first();
-          await nextBtn
-            .focus()
-            .catch((e) => console.log(`[test] Next focus: ${e.message}`));
-          await press('Enter');
-          await pageSettled(s.page);
-          if (!net.registerVerifySeen) {
-            await press('Space');
-            await pageSettled(s.page);
-          }
-          if (
-            !net.registerVerifySeen &&
-            (await nextBtn.isVisible().catch(() => false))
-          ) {
-            await humanClickLocator(s.page, nextBtn).catch((e) =>
-              console.log(`[test] Next click: ${e.message}`),
-            );
-            await pageSettled(s.page);
-          }
-        }
-      } else {
+      if (nextInfo.disabled !== false) {
         console.log('[test] Next disabled, cannot submit');
         continue;
       }
-      await pageSettled(s.page);
-
+      // TikTok verifies the code and creates the account in one call; its
+      // answer, or its captcha, says what Next did.
+      const verifyCall = await answerOrCaptcha(s.page, REGISTER_VERIFY, () =>
+        s.click('Next'),
+      );
       console.log(`[test] clicks received: ${await recordedClicks(s.page)}`);
-
-      // Wait for URL change OR post-submit state; the page is read until one
-      // of them shows.
-      let postUrl = s.page.url?.() ?? '';
-      for (;;) {
-        await pageSettled(s.page);
-        postUrl = s.page.url?.() ?? '';
-        const t = await s.page.evaluate(
-          '(document.body.innerText || "").toLowerCase()',
-        );
-        if (
-          /create-username|foryou|\/@|onboarding|interests|choose.*username|create a username|profile picture|turn on notifications/i.test(
-            postUrl + ' ' + t,
-          )
-        ) {
-          console.log(`[test] post-next state found: url=${postUrl}`);
-          break;
-        }
-        if (/drag|puzzle|captcha|verify/i.test(t)) {
-          console.log(`[test] captcha-like: ${t}`);
-          break;
-        }
-        if (
-          /incorrect|invalid|attempts reached|try again later|account.*already/i.test(
-            t,
-          )
-        ) {
-          console.log(`[test] error: ${t}`);
-          break;
-        }
-      }
       await screenshotIfPossible(s, `after_next_r${retry}`);
-
-      if (postUrl.includes('/signup/phone-or-email/email')) {
+      if (verifyCall.captcha) {
         console.log(
-          `[test] attempt ${retry + 1}: stuck on signup page — Next didn't create account`,
+          `[test] attempt ${retry + 1}: TikTok showed its captcha on Next`,
+        );
+        await dumpStuckState(s, 'next_captcha');
+        continue;
+      }
+      const verified = await answerBody(verifyCall.response);
+      if (verified.unreadable) {
+        console.log(
+          `[test] attempt ${retry + 1}: TikTok's register_verify_login answer could not be read: ${verified.unreadable}`,
+        );
+        await dumpStuckState(s, 'next_unreadable');
+        continue;
+      }
+      if (verified.body?.message !== 'success') {
+        console.log(
+          `[test] attempt ${retry + 1}: TikTok did not create the account: ${JSON.stringify(verified.body)}`,
         );
         await dumpStuckState(s, 'next_no_account');
         continue;
       }
+      await pageSettled(s.page);
 
-      // Username creation step (extracted to helper)
-      const pageText = await s.page.evaluate('document.body.innerText');
-      const nowOnUsernameStep =
-        /\/signup\/create-username/.test(postUrl) ||
-        /create.{0,3}username|choose.{0,3}username|set.{0,3}username/i.test(
-          pageText,
-        );
-      if (nowOnUsernameStep) {
+      // TikTok sends a new account to its username step by URL.
+      if (/\/signup\/create-username/.test(new URL(s.page.url()).pathname)) {
         id.username = await runUsernameStep(s, id, humanClickLocator);
       }
 
