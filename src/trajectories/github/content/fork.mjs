@@ -6,6 +6,7 @@ import { WSession } from '../../../../dist/session/wsession.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled, submitAnswered } from '../../_shared/page/settled.mjs';
 import { detectGitHubBanSignals } from '../../../../dist/platforms/github/ban_signals.js';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
@@ -60,9 +61,7 @@ try {
   }, acct.username);
   if (alreadyForked) {
     console.log('[fork] already forked this repo — skipping with success');
-    ban = await detectGitHubBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    );
+    ban = await banSignalOf(detectGitHubBanSignals, s, 'after finding the fork');
     console.log(
       `[ban-signal] ${ban?.signal}  PASS: already_forked ${upstreamPath}`,
     );
@@ -97,18 +96,14 @@ try {
   ) {
     throw new Error(`fork_not_created: final url=${finalUrl}`);
   }
-  ban = await detectGitHubBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  ban = await banSignalOf(detectGitHubBanSignals, s, 'after the fork');
   console.log(
     `[ban-signal] ${ban?.signal}  PASS: forked ${upstreamPath} -> ${finalUrl}`,
   );
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectGitHubBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectGitHubBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {

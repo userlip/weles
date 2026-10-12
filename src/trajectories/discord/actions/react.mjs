@@ -7,6 +7,7 @@ import { detectDiscordBanSignals } from '../../../../dist/platforms/discord/ban_
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 
 const channelPath = process.env.SERVER_CHANNEL_PATH || '@me';
@@ -89,18 +90,14 @@ try {
   if (result?.error) throw new Error(`react failed: ${result.error}`);
   if (result?.status !== 204 && result?.status !== 200)
     throw new Error(`react PUT returned ${result?.status}`);
-  ban = await detectDiscordBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  ban = await banSignalOf(detectDiscordBanSignals, s, 'after the reaction');
   console.log(
     `[ban-signal] ${ban?.signal}  PASS: reacted on message ${targetId.messageId}`,
   );
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectDiscordBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectDiscordBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {

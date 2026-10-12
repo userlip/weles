@@ -4,6 +4,7 @@ import {
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { detectGitHubBanSignals } from '../../../../dist/platforms/github/ban_signals.js';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
@@ -126,16 +127,12 @@ try {
   const finalUrl = s.page.url?.() ?? '';
   if (!/\/issues\/\d+/.test(finalUrl))
     throw new Error(`issue_not_submitted: final url=${finalUrl}`);
-  ban = await detectGitHubBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  ban = await banSignalOf(detectGitHubBanSignals, s, 'after opening the issue');
   console.log(`[ban-signal] ${ban?.signal}  PASS: opened ${finalUrl}`);
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectGitHubBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectGitHubBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {

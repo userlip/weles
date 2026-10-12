@@ -4,6 +4,7 @@ import {
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { detectGitHubBanSignals } from '../../../../dist/platforms/github/ban_signals.js';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -93,18 +94,14 @@ try {
   ) {
     throw new Error(`repo_not_created: final url=${finalUrl}`);
   }
-  ban = await detectGitHubBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  ban = await banSignalOf(detectGitHubBanSignals, s, 'after creating the repository');
   console.log(
     `[ban-signal] ${ban?.signal}  PASS: created ${acct.username}/${REPO_NAME}`,
   );
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectGitHubBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectGitHubBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {
