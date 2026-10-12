@@ -113,7 +113,7 @@ export async function upgradeTier(s, plan, currentPlanName) {
     .filter({ visible: true })
     .first();
   if (await payWithoutLink.isVisible().catch(() => false)) {
-    await payWithoutLink.click({ force: true }).catch(() => {});
+    await payWithoutLink.click({ force: true });
     console.log(
       '[trajectory] clicked "Pay without Link" to bypass Stripe Link 2FA',
     );
@@ -164,19 +164,22 @@ export async function upgradeTier(s, plan, currentPlanName) {
     )
     .filter({ visible: true })
     .last();
-  if (await finalBtn.isVisible().catch(() => false)) {
-    await finalBtn.click({ force: true }).catch(() => {});
-    console.log('[trajectory] clicked final Stripe-checkout submit');
-  }
+  if (!(await finalBtn.isVisible()))
+    throw new Error(
+      `no Stripe-checkout submit button is visible at ${s.page.url()}; nothing was charged`,
+    );
+  await finalBtn.click({ force: true });
+  console.log('[trajectory] clicked final Stripe-checkout submit');
   await pageSettled(s.page);
 
   const url = s.page.url();
-  if (stripeChargeFired)
-    console.log(
-      `PASS-CHARGED: Stripe payment_intents/confirm POST fired, url=${url}`,
+  // A checkout that charged nothing has not upgraded the plan; the caller
+  // turns this into FAIL and a failing exit instead of a run that succeeded.
+  if (!stripeChargeFired)
+    throw new Error(
+      `no Stripe charge POST observed by the time the page settled, url=${url}`,
     );
-  else
-    console.log(
-      `FAIL: no Stripe charge POST observed by the time the page settled, url=${url}`,
-    );
+  console.log(
+    `PASS-CHARGED: Stripe payment_intents/confirm POST fired, url=${url}`,
+  );
 }
