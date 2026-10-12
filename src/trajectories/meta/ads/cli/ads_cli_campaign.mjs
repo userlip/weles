@@ -5,8 +5,8 @@
 // CLI, and leaves auth/token setup to Meta's CLI (`meta auth status`).
 //
 // Env:
-//   CAMPAIGN_NAME        optional, defaults to timestamped name
-//   CAMPAIGN_OBJECTIVE   optional, defaults to OUTCOME_TRAFFIC
+//   CAMPAIGN_NAME        required name the campaign is listed under
+//   CAMPAIGN_OBJECTIVE   required Meta objective, e.g. OUTCOME_TRAFFIC
 //   DAILY_BUDGET_USD     optional daily budget
 //   AD_ACCOUNT_ID        optional act_<id> / numeric account id
 //   META_ADS_CLI_ARGS    optional full arg string after `meta`; when set, this
@@ -15,11 +15,18 @@
 //                        still safe because Meta CLI creates resources paused.
 
 import { spawn } from 'node:child_process';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
-const CAMPAIGN_NAME =
-  process.env.CAMPAIGN_NAME ||
-  `Wisent ${new Date().toISOString().slice(0, 19)}`;
-const CAMPAIGN_OBJECTIVE = process.env.CAMPAIGN_OBJECTIVE || 'OUTCOME_TRAFFIC';
+// The campaign's name and objective are the advertiser's choices; a missing
+// one refuses the run by name instead of being picked here.
+const CAMPAIGN_NAME = statedText(
+  ['CAMPAIGN_NAME'],
+  'the name the ad account lists the campaign under',
+);
+const CAMPAIGN_OBJECTIVE = statedText(
+  ['CAMPAIGN_OBJECTIVE'],
+  'the Meta campaign objective, e.g. OUTCOME_TRAFFIC',
+);
 const DAILY_BUDGET_USD = process.env.DAILY_BUDGET_USD;
 const AD_ACCOUNT_ID = process.env.AD_ACCOUNT_ID;
 const META_ADS_CLI_ARGS = process.env.META_ADS_CLI_ARGS;

@@ -14,6 +14,7 @@ import {
   submitEnabled,
   withValidateOnly,
 } from './marketing_api.mjs';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
 const RESOURCE = (
   process.env.RESOURCE ||
@@ -32,10 +33,14 @@ const AD_SET_ID = process.env.AD_SET_ID || process.env.ADSET_ID;
 const AD_ID = process.env.AD_ID;
 const CREATIVE_ID = process.env.CREATIVE_ID;
 
-const campaignName =
-  process.env.CAMPAIGN_NAME ||
-  `Wisent ${new Date().toISOString().slice(0, 19)}`;
-const objective = process.env.CAMPAIGN_OBJECTIVE || 'OUTCOME_TRAFFIC';
+// Names and the objective are the advertiser's choices. Each is read when the
+// object it names is created, refusing a missing one by name; reads, updates
+// and deletes never need them.
+const campaignName = () =>
+  statedText(
+    ['CAMPAIGN_NAME'],
+    'the name the ad account lists the campaign under',
+  );
 const status = (process.env.STATUS || 'PAUSED').toUpperCase();
 const specialAdCategories = parseJsonEnv(
   'SPECIAL_AD_CATEGORIES',
@@ -44,8 +49,11 @@ const specialAdCategories = parseJsonEnv(
 
 const campaignCreate = () =>
   compactObject({
-    name: campaignName,
-    objective,
+    name: campaignName(),
+    objective: statedText(
+      ['CAMPAIGN_OBJECTIVE'],
+      'the Meta campaign objective, e.g. OUTCOME_TRAFFIC',
+    ),
     status,
     special_ad_categories: specialAdCategories,
     buying_type: process.env.BUYING_TYPE,
@@ -138,7 +146,10 @@ const promotedObject = () =>
 
 const adSetCreate = (campaignId = CAMPAIGN_ID) =>
   compactObject({
-    name: process.env.AD_SET_NAME || `${campaignName} ad set`,
+    name: statedText(
+      ['AD_SET_NAME'],
+      'the name the ad account lists the ad set under',
+    ),
     campaign_id: campaignId,
     status: process.env.AD_SET_STATUS || 'PAUSED',
     daily_budget: microsFromUsd(
@@ -200,10 +211,10 @@ const objectStorySpec = () =>
 
 const creativeCreate = () =>
   compactObject({
-    name:
-      process.env.CREATIVE_NAME ||
-      process.env.AD_NAME ||
-      `${campaignName} creative`,
+    name: statedText(
+      ['CREATIVE_NAME', 'AD_NAME'],
+      'the name the ad account lists the creative under',
+    ),
     object_story_spec: objectStorySpec(),
     asset_feed_spec: parseJsonEnv('ASSET_FEED_SPEC_JSON'),
     product_set_id: process.env.PRODUCT_SET_ID,
@@ -212,7 +223,7 @@ const creativeCreate = () =>
 
 const adCreate = (adSetId = AD_SET_ID, creativeId = CREATIVE_ID) =>
   compactObject({
-    name: process.env.AD_NAME || `${campaignName} ad`,
+    name: statedText(['AD_NAME'], 'the name the ad account lists the ad under'),
     adset_id: adSetId,
     creative: creativeId
       ? { creative_id: creativeId }
@@ -221,39 +232,44 @@ const adCreate = (adSetId = AD_SET_ID, creativeId = CREATIVE_ID) =>
     tracking_specs: parseJsonEnv('TRACKING_SPECS_JSON'),
   });
 
+// Each Marketing API object this trajectory handles: the account edge it is
+// created and listed under, the id an update, read or delete addresses, and
+// the body a create sends.
+const RESOURCES = {
+  campaign: {
+    edge: 'campaigns',
+    id: CAMPAIGN_ID,
+    body: () => campaignCreate(),
+  },
+  adset: { edge: 'adsets', id: AD_SET_ID, body: () => adSetCreate() },
+  creative: {
+    edge: 'adcreatives',
+    id: CREATIVE_ID,
+    body: () => creativeCreate(),
+  },
+  ad: { edge: 'ads', id: AD_ID, body: () => adCreate() },
+};
+
+function resourceSpec(resource) {
+  if (!Object.hasOwn(RESOURCES, resource))
+    throw new Error(
+      `unsupported RESOURCE=${resource}; one of ${Object.keys(RESOURCES).join(', ')} or stack`,
+    );
+  return RESOURCES[resource];
+}
+
 async function createResource(resource) {
-  if (resource === 'campaign')
-    return graphRequest(
-      'POST',
-      `/${adAccountId()}/campaigns`,
-      withValidateOnly(campaignCreate()),
-      { label: 'meta-ads-api-campaign' },
-    );
-  if (resource === 'adset')
-    return graphRequest(
-      'POST',
-      `/${adAccountId()}/adsets`,
-      withValidateOnly(adSetCreate()),
-      { label: 'meta-ads-api-adset' },
-    );
-  if (resource === 'creative')
-    return graphRequest(
-      'POST',
-      `/${adAccountId()}/adcreatives`,
-      withValidateOnly(creativeCreate()),
-      { label: 'meta-ads-api-creative' },
-    );
-  if (resource === 'ad')
-    return graphRequest(
-      'POST',
-      `/${adAccountId()}/ads`,
-      withValidateOnly(adCreate()),
-      { label: 'meta-ads-api-ad' },
-    );
-  throw new Error(`unsupported create RESOURCE=${resource}`);
+  const spec = resourceSpec(resource);
+  return graphRequest(
+    'POST',
+    `/${adAccountId()}/${spec.edge}`,
+    withValidateOnly(spec.body()),
+    { label: `meta-ads-api-${resource}` },
+  );
 }
 
 async function updateResource(resource) {
+  const { id } = resourceSpec(resource);
   const fields = parseJsonEnv(
     'UPDATE_JSON',
     compactObject({
@@ -271,14 +287,6 @@ async function updateResource(resource) {
       targeting: process.env.TARGETING_JSON ? targeting() : undefined,
     }),
   );
-  const id =
-    resource === 'campaign'
-      ? CAMPAIGN_ID
-      : resource === 'adset'
-        ? AD_SET_ID
-        : resource === 'ad'
-          ? AD_ID
-          : CREATIVE_ID;
   if (!id) throw new Error(`${resource.toUpperCase()} id required for update`);
   return graphRequest('POST', `/${id}`, withValidateOnly(fields), {
     label: `meta-ads-api-${resource}-update`,
@@ -286,14 +294,7 @@ async function updateResource(resource) {
 }
 
 async function readResource(resource) {
-  const id =
-    resource === 'campaign'
-      ? CAMPAIGN_ID
-      : resource === 'adset'
-        ? AD_SET_ID
-        : resource === 'ad'
-          ? AD_ID
-          : CREATIVE_ID;
+  const { id, edge } = resourceSpec(resource);
   const fields =
     process.env.FIELDS ||
     'id,name,status,effective_status,created_time,updated_time';
@@ -304,21 +305,14 @@ async function readResource(resource) {
   if (id) return graphRequest('GET', `/${id}`, { fields }, readOpts);
   return graphRequest(
     'GET',
-    `/${adAccountId()}/${resource === 'adset' ? 'adsets' : resource === 'creative' ? 'adcreatives' : `${resource}s`}`,
+    `/${adAccountId()}/${edge}`,
     { fields, limit: process.env.LIMIT },
     { ...readOpts, label: `meta-ads-api-${resource}-list` },
   );
 }
 
 async function deleteResource(resource) {
-  const id =
-    resource === 'campaign'
-      ? CAMPAIGN_ID
-      : resource === 'adset'
-        ? AD_SET_ID
-        : resource === 'ad'
-          ? AD_ID
-          : CREATIVE_ID;
+  const { id } = resourceSpec(resource);
   if (!id) throw new Error(`${resource.toUpperCase()} id required for delete`);
   return graphRequest(
     'DELETE',
@@ -327,6 +321,15 @@ async function deleteResource(resource) {
     { label: `meta-ads-api-${resource}-delete` },
   );
 }
+
+// What each ACTION does to a single RESOURCE; `list` is a read without an id.
+const ACTIONS = {
+  create: createResource,
+  update: updateResource,
+  read: readResource,
+  list: readResource,
+  delete: deleteResource,
+};
 
 async function createStack() {
   if (!SUBMIT)
@@ -366,11 +369,11 @@ try {
     if (ACTION !== 'create')
       throw new Error('RESOURCE=stack supports ACTION=create only');
     await createStack();
-  } else if (ACTION === 'create') await createResource(RESOURCE);
-  else if (ACTION === 'update') await updateResource(RESOURCE);
-  else if (ACTION === 'read' || ACTION === 'list') await readResource(RESOURCE);
-  else if (ACTION === 'delete') await deleteResource(RESOURCE);
-  else throw new Error(`unsupported ACTION=${ACTION}`);
+  } else if (Object.hasOwn(ACTIONS, ACTION)) await ACTIONS[ACTION](RESOURCE);
+  else
+    throw new Error(
+      `unsupported ACTION=${ACTION}; one of ${Object.keys(ACTIONS).join(', ')}`,
+    );
   if (RESOURCE !== 'stack')
     console.log(`PASS: Meta Ads API ${ACTION} ${RESOURCE} completed`);
 } catch (e) {
