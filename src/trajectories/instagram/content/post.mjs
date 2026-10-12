@@ -232,6 +232,11 @@ try {
   }
   try {
     unlinkSync(imagePath);
-  } catch {}
+  } catch (e) {
+    // The generated image stays on disk; the log names it so it can be found.
+    console.log(
+      `[instagram:${ACTION}] image removal err: ${imagePath}: ${e.message}`,
+    );
+  }
   await s.close();
 }
