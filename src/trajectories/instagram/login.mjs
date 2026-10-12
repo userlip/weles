@@ -99,7 +99,8 @@ try {
   await pageSettled(s.page);
   const finalUrl = s.page.url();
   console.log(`[instagram_login] post-submit url=${finalUrl}`);
-  // Check for inline error text
+  // The login form's own alert is Instagram's answer: any text it shows is
+  // the refusal, quoted as it is, whatever its words.
   const err = await s.page.evaluate(
     (sel) =>
       Array.from(document.querySelectorAll(sel))
@@ -107,14 +108,7 @@ try {
         .filter(Boolean),
     ERR_SEL,
   );
-  if (
-    err.length &&
-    /incorrect|wasn't recognised|wasn't recognized|password|wait a few minutes/i.test(
-      err.join(' '),
-    )
-  ) {
-    throw new Error(`invalid_credentials_or_block: ${err.join(' | ')}`);
-  }
+  if (err.length) throw new Error(`login form refused: ${err.join(' | ')}`);
   if (/\/accounts\/login/.test(finalUrl))
     throw new Error('login form did not submit / no redirect');
   if (/challenge|checkpoint|two_factor/.test(finalUrl))
@@ -143,22 +137,8 @@ try {
     // proxy host; action_failed leaves the burned IP in rotation. Match the
     // linkedin_login / twitter_login classifier ordering.
     const msg = e.message ?? '';
-    // Instagram's IP-block manifests as a 200 response on /accounts/login with
-    // a soft banner ("Sorry, there was a problem with your request" /
-    // "suspicious activity" / "try again later") — no chrome-error, no
-    // ERR_HTTP_RESPONSE_CODE_FAILURE, no /challenge/ URL. Sniff the page text
-    // before falling through to checkpoint, otherwise the burned IP stays in
-    // rotation (worker.markBurned only fires on ip_blocked).
-    let pageBody = '';
-    try {
-      pageBody =
-        (await s.page?.evaluate?.(() => document.body?.innerText ?? '')) ?? '';
-    } catch (readErr) {
-      // The classification below then works from the URL and error alone.
-      console.log('[ban-signal] page text not read:', readErr.message);
-    }
-    const ipBlockMarkers =
-      /Sorry,?\s+there was a problem|suspicious activity|please try again later|We restrict certain activity|you'?re using automated|temporarily blocked|We can'?t process/i;
+    // The signal is read from the address the page ended on and the
+    // browser's error code; a page's prose is not classified by its words.
     let sig;
     if (/\/accounts\/suspended|\/accounts\/disabled/.test(finalUrl))
       sig = 'suspended';
@@ -175,7 +155,6 @@ try {
     )
       sig = 'proxy_failed';
     else if (finalUrl.startsWith('chrome-error://')) sig = 'proxy_failed';
-    else if (ipBlockMarkers.test(pageBody)) sig = 'ip_blocked';
     // Login form rendered but the trajectory threw before redirect (locator
     // timeout, no form inputs, submit blocked). Still on instagram.com/login
     // means cookies-stale: retrying the same path will hit the same wall.
