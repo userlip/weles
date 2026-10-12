@@ -142,19 +142,11 @@ async function deleteRowsContaining(needle) {
 
 async function fillEdoreczeniaIfPresent() {
   const result = await page.evaluate((value) => {
-    const fields = Array.from(document.querySelectorAll('input, textarea'));
-    const hit = fields.find((el) => {
-      const id = el.id || '';
-      const label = id
-        ? document.querySelector(`label[for="${CSS.escape(id)}"]`)
-            ?.textContent || ''
-        : '';
-      const hay =
-        `${el.name || ''} ${label} ${el.placeholder || ''}`.toLowerCase();
-      return (
-        hay.includes('doręc') || hay.includes('dorec') || hay.includes('ae:')
-      );
-    });
+    // The entity form names the e-Doręczenia address field; it is found by
+    // that name, not by words in its label.
+    const hit = document.querySelector(
+      'input[name$="adres_e_doreczenie_podmiot"], textarea[name$="adres_e_doreczenie_podmiot"]',
+    );
     if (!hit || hit.disabled || hit.readOnly)
       return { found: Boolean(hit), filled: false };
     const proto =
