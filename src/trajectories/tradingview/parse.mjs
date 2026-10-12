@@ -1,7 +1,11 @@
 import FS from 'node:fs';
-const d = JSON.parse(
-  FS.readFileSync(process.argv[2] || '/tmp/tv_drawings.json', 'utf8'),
-);
+// The drawings capture to read is named: drawings.mjs prints where it wrote it.
+const capturePath = process.argv[2];
+if (!capturePath)
+  throw new Error(
+    'no drawings capture given: run with the path drawings.mjs printed; nothing was read',
+  );
+const d = JSON.parse(FS.readFileSync(capturePath, 'utf8'));
 const all = {};
 for (const b of d.network_api || []) {
   let body;

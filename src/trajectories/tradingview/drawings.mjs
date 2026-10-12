@@ -88,7 +88,14 @@ const s = {
 };
 
 const FS = await import('node:fs');
-const OUT_FILE = args.out || '/tmp/tv_drawings.json';
+const { join } = await import('node:path');
+const { runRecordingsDir } = await import(
+  '../../../dist/session/run-recordings.js'
+);
+// The capture belongs to this run, kept with its recordings unless --out names
+// a file; a shared /tmp file was overwritten by the next run.
+const OUT_FILE =
+  args.out ?? join(runRecordingsDir('tradingview_drawings'), 'drawings.json');
 
 try {
   // Enable network monitoring with large buffers
