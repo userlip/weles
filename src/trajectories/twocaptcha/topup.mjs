@@ -65,10 +65,7 @@ try {
     '../_shared/services/topup_common.mjs'
   );
   const clicked = await findAndClickPayButton(s.page);
-  if (!clicked) {
-    console.log('FAIL: could not find pay/checkout button');
-    process.exit(1);
-  }
+  if (!clicked) throw new Error('could not find pay/checkout button');
   await pageSettled(s.page);
   console.log(`PASS-CHARGED: checkout initiated, url=${s.page.url()}`);
 } catch (e) {

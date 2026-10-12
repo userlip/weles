@@ -74,8 +74,7 @@ try {
 
   if (/\/register/.test(s.page.url())) {
     const err = await s.page.evaluate(() => document.body.innerText);
-    console.log(`FAIL: still on /register. Body: ${err.replace(/\n/g, ' | ')}`);
-    process.exit(1);
+    throw new Error(`still on /register. Body: ${err.replace(/\n/g, ' | ')}`);
   }
 
   const item = writeServiceCredentials('2Captcha', {

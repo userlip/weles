@@ -64,10 +64,8 @@ try {
   await answered;
   await pageSettled(s.page);
   console.log(`[trajectory] post-login url=${s.page.url()}`);
-  if (/\/auth\/login/.test(s.page.url())) {
-    console.log('FAIL: native form rejected creds (still on /auth/login).');
-    process.exit(1);
-  }
+  if (/\/auth\/login/.test(s.page.url()))
+    throw new Error('native form rejected creds (still on /auth/login)');
 
   // If account not yet confirmed, read the code from Skrzynka and submit it.
   if (/\/auth\/confirm-email/.test(s.page.url())) {
@@ -75,15 +73,9 @@ try {
       '[trajectory] account needs email confirmation; reading the code from Skrzynka',
     );
     const msg = (await messagesTo(login.email, '2captcha'))[0];
-    if (!msg) {
-      console.log('FAIL: no 2Captcha email found in Skrzynka');
-      process.exit(1);
-    }
+    if (!msg) throw new Error('no 2Captcha email found in Skrzynka');
     const code = msg.body_text.match(/\b(\d{6})\b/)?.[1];
-    if (!code) {
-      console.log('FAIL: could not extract 6-digit code from email');
-      process.exit(1);
-    }
+    if (!code) throw new Error('could not extract 6-digit code from email');
     console.log(`[trajectory] confirmation code=${code}`);
     // Fill the code into whatever input the page has
     // 2Captcha uses 6 split otp-1..otp-6 inputs; the form auto-submits when
@@ -136,18 +128,14 @@ try {
     const notWritten = missing.length
       ? `; not written: ${missing.join(', ')}`
       : '';
-    console.log(
-      `FAIL: 2Captcha balance regex did not match — full dashboard text dumped to ${dir}/${notWritten}`,
+    throw new Error(
+      `2Captcha balance regex did not match — full dashboard text dumped to ${dir}/${notWritten}`,
     );
-    process.exit(1);
   }
   console.log(`[trajectory] balance=$${balance}`);
 
   const patched = await patchServiceBalance(DISPLAY_NAME, balance);
-  if (!patched) {
-    console.log('FAIL: PATCH service_credentials failed');
-    process.exit(1);
-  }
+  if (!patched) throw new Error('PATCH service_credentials failed');
   console.log(`PASS: balance=$${balance} (persisted)`);
 } catch (e) {
   console.log('FAIL:', e.message);

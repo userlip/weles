@@ -60,12 +60,10 @@ try {
     clicked = { ok: true, tag: 'locator' };
   }
   console.error(`[chart] clicked tab "${tab}": ${JSON.stringify(clicked)}`);
-  if (!clicked.ok) {
-    console.error(
-      `FAIL: tab "${tab}" not found in page (candidates=${clicked.count})`,
+  if (!clicked.ok)
+    throw new Error(
+      `tab "${tab}" not found in page (candidates=${clicked.count})`,
     );
-    process.exit(1);
-  }
   await pageSettled(s.page); // let chart re-render
 
   // Find the chart container: the page's largest svg/canvas by drawn area is
@@ -94,10 +92,9 @@ try {
       clip: { x: box.x, y: box.y, width: box.width, height: box.height },
     });
   } else {
-    console.error(
-      `FAIL: no chart container found for tab "${tab}": ${JSON.stringify(box)}`,
+    throw new Error(
+      `no chart container found for tab "${tab}": ${JSON.stringify(box)}`,
     );
-    process.exit(1);
   }
   console.error(`[chart] saved to ${outPath}`);
 

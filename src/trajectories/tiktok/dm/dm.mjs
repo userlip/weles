@@ -142,12 +142,11 @@ try {
       )
       .count()
       .catch(() => 0);
-    console.log(
+    throw new Error(
       restrictNoteCount > 0
-        ? 'FAIL: recipient does not accept DMs (privacy restriction)'
-        : 'FAIL: composer not visible after recipient selected',
+        ? 'recipient does not accept DMs (privacy restriction)'
+        : 'composer not visible after recipient selected',
     );
-    process.exit(1);
   }
   const composer = s.page
     .locator(composerSel)
@@ -179,12 +178,10 @@ try {
     .filter({ visible: true })
     .count()
     .catch(() => 0);
-  if (!echoCount) {
-    console.log(
-      'FAIL: composer typed but message not echoed in conversation pane',
+  if (!echoCount)
+    throw new Error(
+      'composer typed but message not echoed in conversation pane',
     );
-    process.exit(1);
-  }
   console.log(`PASS: DM sent to @${RECIPIENT}`);
 } catch (e) {
   console.error('FAIL:', e);

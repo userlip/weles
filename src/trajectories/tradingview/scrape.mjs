@@ -67,12 +67,8 @@ try {
   const finalUrl = s.page.url();
   const m = finalUrl.match(/\/symbols\/([A-Z]+-[A-Z0-9.]+)\//);
   const symbolId = m ? m[1] : null;
-  if (!symbolId) {
-    console.error(
-      `FAIL: could not resolve exchange prefix, landed at ${finalUrl}`,
-    );
-    process.exit(1);
-  }
+  if (!symbolId)
+    throw new Error(`could not resolve exchange prefix, landed at ${finalUrl}`);
   console.error(`[tv] resolved ${ticker} -> ${symbolId}`);
 
   const base = `https://www.tradingview.com/symbols/${symbolId}`;
