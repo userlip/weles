@@ -21,18 +21,19 @@ import {
 } from '../../../_shared/page/settled.mjs';
 import { checkReachable } from '../../../_shared/action-runner.mjs';
 import { readDiscordReply } from '../../../_shared/discord/response.mjs';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
 // Distinct from discord/organic_message.mjs (which posts into a guild channel
 // at SERVER_CHANNEL_PATH). This one is a real 1:1 DM via the Cmd/Ctrl+K
 // quick-switcher → search by username → recipient row → composer.
-const RECIPIENT = (process.env.RECIPIENT_HANDLE || '').replace(/^@/, '');
-const MESSAGE = process.env.DM_MESSAGE || 'Hello from weles agent';
-if (!RECIPIENT.trim()) {
-  console.error(
-    'DISCORD_DM_RECIPIENT_REQUIRED: RECIPIENT_HANDLE must name a Discord username',
-  );
-  process.exit(1);
-}
+const RECIPIENT = statedText(
+  ['RECIPIENT_HANDLE'],
+  'the Discord username the DM goes to',
+).replace(/^@/, '');
+const MESSAGE = statedText(
+  ['DM_MESSAGE'],
+  'the text sent from a real account to a real person',
+);
 
 const acct = await getSocialAccount('discord');
 if (!acct) {

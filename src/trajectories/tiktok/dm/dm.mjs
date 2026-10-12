@@ -17,12 +17,16 @@ import {
   loadFreshCookieJarOrFail,
   CookieJarStaleError,
 } from '../../_shared/auth/cookie-freshness.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
-const RECIPIENT = (process.env.RECIPIENT_HANDLE || 'wisent.ai').replace(
-  /^@/,
-  '',
+const RECIPIENT = statedText(
+  ['RECIPIENT_HANDLE'],
+  'the TikTok username the DM goes to',
+).replace(/^@/, '');
+const MESSAGE = statedText(
+  ['DM_MESSAGE'],
+  'the text sent from a real account to a real person',
 );
-const MESSAGE = process.env.DM_MESSAGE || 'Hello from weles agent';
 
 const acct = await getSocialAccount('tiktok');
 if (!acct) {

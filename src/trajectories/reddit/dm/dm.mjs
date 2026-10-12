@@ -17,6 +17,7 @@ import {
   loadFreshCookieJarOrFail,
   CookieJarStaleError,
 } from '../../_shared/auth/cookie-freshness.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
 // Reddit messaging surfaces:
 //   * legacy PM at old.reddit.com/message/compose — subject + body, persistent,
@@ -25,11 +26,20 @@ import {
 //     and a separate cookie minted by the chat OAuth flow.
 // We use the legacy PM surface — only deterministic path the routine layer
 // already permits.
-const RECIPIENT = (process.env.RECIPIENT_HANDLE || 'reddit')
+const RECIPIENT = statedText(
+  ['RECIPIENT_HANDLE'],
+  'the Reddit username the message goes to',
+)
   .replace(/^u\//, '')
   .replace(/^\//, '');
-const SUBJECT = process.env.DM_SUBJECT || 'hi';
-const MESSAGE = process.env.DM_MESSAGE || 'Hello from weles agent';
+const SUBJECT = statedText(
+  ['DM_SUBJECT'],
+  'the subject line of the message a real person receives',
+);
+const MESSAGE = statedText(
+  ['DM_MESSAGE'],
+  'the text sent from a real account to a real person',
+);
 
 const acct = await getSocialAccount('reddit');
 if (!acct) {

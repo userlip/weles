@@ -18,9 +18,16 @@ import {
   loadFreshCookieJarOrFail,
   CookieJarStaleError,
 } from '../../../_shared/auth/cookie-freshness.mjs';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
-const RECIPIENT = process.env.RECIPIENT_HANDLE || 'wisent_ai';
-const MESSAGE = process.env.DM_MESSAGE || 'Hello from weles agent';
+const RECIPIENT = statedText(
+  ['RECIPIENT_HANDLE'],
+  'the X handle the DM goes to',
+);
+const MESSAGE = statedText(
+  ['DM_MESSAGE'],
+  'the text sent from a real account to a real person',
+);
 
 const acct = await getSocialAccount('twitter');
 if (!acct) {
@@ -146,7 +153,13 @@ try {
     .first();
   await sendBtn.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, sendBtn);
-  await humanIdlePause('deliberate');
+  // The DM counts once the conversation shows it as a sent message; a send
+  // the server refused leaves no message entry and fails here.
+  await s.page
+    .locator('[data-testid="messageEntry"]')
+    .filter({ hasText: MESSAGE.trim() })
+    .first()
+    .waitFor({ state: 'visible' });
   console.log(`PASS: DM sent to @${RECIPIENT}`);
 } catch (e) {
   console.log('FAIL:', e.message);

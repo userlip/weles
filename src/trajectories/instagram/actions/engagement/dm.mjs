@@ -17,9 +17,16 @@ import {
   loadFreshCookieJarOrFail,
   CookieJarStaleError,
 } from '../../../_shared/auth/cookie-freshness.mjs';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
-const RECIPIENT = process.env.RECIPIENT_HANDLE || 'wisent.ai';
-const MESSAGE = process.env.DM_MESSAGE || 'Hello from weles agent';
+const RECIPIENT = statedText(
+  ['RECIPIENT_HANDLE'],
+  'the Instagram handle the DM goes to',
+);
+const MESSAGE = statedText(
+  ['DM_MESSAGE'],
+  'the text sent from a real account to a real person',
+);
 
 const acct = await getSocialAccount('instagram');
 if (!acct) {

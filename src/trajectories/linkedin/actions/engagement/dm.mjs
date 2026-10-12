@@ -15,15 +15,22 @@ import {
   loadFreshCookieJarOrFail,
   CookieJarStaleError,
 } from '../../../_shared/auth/cookie-freshness.mjs';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
 // RECIPIENT_HANDLE accepts vanity ("williamhgates") or full /in/ URL. We
 // always click "Message" on the public profile — the only deterministic
 // LinkedIn DM path. The /messaging/ composer typeahead surfaces "Connect"
 // cohort users mis-matched against the intended recipient on small accounts.
-const RECIPIENT = (process.env.RECIPIENT_HANDLE || 'williamhgates')
+const RECIPIENT = statedText(
+  ['RECIPIENT_HANDLE'],
+  'the LinkedIn vanity or /in/ URL the DM goes to',
+)
   .replace(/^@/, '')
   .replace(/\/$/, '');
-const MESSAGE = process.env.DM_MESSAGE || 'Hello from weles agent';
+const MESSAGE = statedText(
+  ['DM_MESSAGE'],
+  'the text sent from a real account to a real person',
+);
 const profileUrl = /^https?:\/\//.test(RECIPIENT)
   ? RECIPIENT
   : `https://www.linkedin.com/in/${encodeURIComponent(RECIPIENT)}/`;
