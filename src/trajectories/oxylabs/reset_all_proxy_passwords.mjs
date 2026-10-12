@@ -148,16 +148,18 @@ try {
         })
         .filter({ visible: true })
         .last();
-      if (await saveBtn.isVisible().catch(() => false)) {
-        await saveBtn.click({ force: true }).catch(() => {});
-        await humanIdlePause('deliberate');
+      // Without a save the new password exists only here; storing it would
+      // replace a working credential with one Oxylabs never set.
+      if (!(await saveBtn.isVisible())) {
+        results.push({ product, status: 'save_button_not_found' });
+        return;
       }
+      await saveBtn.click({ force: true });
+      await humanIdlePause('deliberate');
 
       // Verify success toast. Oxylabs shows "Success!" + "Your user has been
       // updated successfully!" or "Password changed for user <username>".
-      const bodyText = await s.page
-        .evaluate(() => document.body.innerText)
-        .catch(() => '');
+      const bodyText = await s.page.evaluate(() => document.body.innerText);
       const hasSuccess = /success|updated successfully|password changed/i.test(
         bodyText,
       );
@@ -206,8 +208,15 @@ try {
 
   console.log('Results:');
   for (const r of results) {
-    console.log(`  ${r.product}: ${r.status}`);
+    console.log(`  ${r.product}: ${r.status}${r.error ? ` (${r.error})` : ''}`);
   }
+  // A product whose password was not set keeps its old credential; the run
+  // says which ones instead of ending as if every reset went through.
+  const unset = results.filter((r) => r.status !== 'password_set');
+  if (unset.length)
+    throw new Error(
+      `oxylabs_password_reset_incomplete: ${unset.map((r) => `${r.product}=${r.status}`).join(', ')}`,
+    );
 } catch (e) {
   console.log('FAIL:', e.message || String(e));
   process.exit(1);
