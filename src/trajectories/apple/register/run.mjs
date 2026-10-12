@@ -53,16 +53,17 @@ async function fillCodeBoxes(boxes, code, refusal) {
 
     await s.goto(URL);
 
-    // Resolve the signup frame — iframe-hosted on appleid.apple.com.
-    const iframeHandle = await s.page
-      .waitForSelector(
-        'iframe[src*="appleid.apple.com"], iframe[name*="auth"], iframe[id*="auth"]',
-      )
-      .catch(() => null);
-    const frame = iframeHandle
-      ? await iframeHandle.contentFrame()
-      : s.page.mainFrame();
-    if (!frame) throw new Error('no_signup_frame');
+    // Resolve the signup frame — iframe-hosted on appleid.apple.com. Filling
+    // the outer page instead fails much later on a field it does not hold,
+    // with nothing saying the frame never appeared.
+    const iframeHandle = await s.page.waitForSelector(
+      'iframe[src*="appleid.apple.com"], iframe[name*="auth"], iframe[id*="auth"]',
+    );
+    const frame = await iframeHandle.contentFrame();
+    if (!frame)
+      throw new Error(
+        `no_signup_frame: the appleid.apple.com frame on ${s.page.url()} has no content`,
+      );
 
     // 1. Country (Apple defaults to GeoIP — pin US for predictable downstream).
     // A select that refuses the value fails the run: an account registered in
