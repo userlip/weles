@@ -56,16 +56,13 @@ export async function collectPageState(page) {
         all.push({ el, root: label });
     }
 
+    // A control is an element the page makes interactive: a form or link
+    // element, an ARIA role, a click handler or a tab stop.
     const controls = all
-      .filter(
-        ({ el }) =>
-          /^(a|button|input|select|textarea|option)$/i.test(el.tagName) ||
-          el.getAttribute('role') ||
-          el.onclick ||
-          el.tabIndex >= 0 ||
-          /button|select|dropdown|calendar|date|menu|filter|download|export/i.test(
-            el.className || '',
-          ),
+      .filter(({ el }) =>
+        el.matches(
+          'a, button, input, select, textarea, option, [role], [onclick], [tabindex]',
+        ),
       )
       .map(({ el, root }, index) => {
         const rect = el.getBoundingClientRect();
@@ -110,13 +107,10 @@ export async function collectPageState(page) {
       );
 
     const rows = all
-      .filter(
-        ({ el }) =>
-          /^(tr|li|section|article)$/i.test(el.tagName) ||
-          el.getAttribute('role') === 'row',
-      )
+      .filter(({ el }) => el.matches('tr, li, section, article, [role="row"]'))
       .map(({ el, root }) => ({
         root,
+        tableRow: el.matches('tr, [role="row"]'),
         tag: el.tagName,
         role: el.getAttribute('role') || '',
         text: norm(el.innerText ?? el.textContent),
@@ -125,42 +119,27 @@ export async function collectPageState(page) {
       }))
       .filter((row) => row.visible && row.text);
 
-    const storage = {};
-    for (const storeName of ['localStorage', 'sessionStorage']) {
-      try {
-        const store = window[storeName];
-        storage[storeName] = Array.from({ length: store.length }, (_, i) => {
-          const key = store.key(i);
-          const value = key ? store.getItem(key) : '';
-          return {
-            key,
-            valueLength: value?.length || 0,
-            valuePreview:
-              /date|report|campaign|org|account|app|time|filter/i.test(
-                key || '',
-              )
-                ? norm(value)
-                : undefined,
-          };
-        });
-      } catch {
-        storage[storeName] = [];
-      }
-    }
+    // Storage is listed by key and size; a value may hold a session token.
+    const listed = (store) =>
+      Array.from({ length: store.length }, (_, i) => {
+        const key = store.key(i);
+        return { key, valueLength: store.getItem(key).length };
+      });
+    const storage = {
+      localStorage: listed(window.localStorage),
+      sessionStorage: listed(window.sessionStorage),
+    };
 
+    // The resources Apple Ads itself served.
     const resources = performance
       .getEntriesByType('resource')
+      .filter((entry) => new URL(entry.name).hostname === location.hostname)
       .map((entry) => ({
         name: entry.name,
         initiatorType: entry.initiatorType,
-        transferSize: Math.round(entry.transferSize || 0),
-        duration: Math.round(entry.duration || 0),
-      }))
-      .filter((entry) =>
-        /app-ads\.apple\.com|searchads|report|campaign|budget|spend|analytics|api/i.test(
-          entry.name,
-        ),
-      );
+        transferSize: Math.round(entry.transferSize),
+        duration: Math.round(entry.duration),
+      }));
 
     return {
       url: location.href,

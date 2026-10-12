@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { generatePersona } from '../../../../../dist/browser/persona.js';
 import { USER_DATA_DIR } from './settings.mjs';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
+import { pageShows } from '../../../_shared/page/judged/seen.mjs';
 
 export function stableProfilePersona() {
   const p = join(USER_DATA_DIR, 'persona.json');
@@ -76,19 +77,14 @@ export async function gotoAndWait(page, url) {
   return (page.url?.() || '') !== 'about:blank';
 }
 
+// The reports page has its own route; anywhere else the vision model is asked
+// whether the page is the campaigns or reports view.
 export async function ensureReportPage(page) {
-  const url = page.url?.() || '';
-  if (/\/report/i.test(url)) return true;
-  const text = await page
-    .evaluate(() => document.body?.innerText || '')
-    .catch(() => '');
-  if (
-    /Manage Your Campaigns|Reporting is not in real time|Create Campaign|Campaign end date reached/i.test(
-      text,
-    )
-  )
-    return true;
-  return false;
+  if (/\/report/i.test(page.url())) return true;
+  return pageShows(
+    page,
+    'Is this the Apple Ads campaigns or reports view, with a table of campaigns?',
+  );
 }
 
 export function installNetworkCapture(page) {
@@ -124,10 +120,8 @@ export function installNetworkCapture(page) {
           return;
         const headers = response.headers();
         const contentType = String(headers['content-type'] || '');
-        let body = '';
-        if (/json|text|javascript|html|xml/i.test(contentType)) {
-          body = await response.text().catch(() => '');
-        }
+        // The capture holds Apple Ads' own API answers only, all of them text.
+        const body = await response.text();
         responses.push({
           ts: Date.now(),
           method: response.request()?.method?.() || 'GET',

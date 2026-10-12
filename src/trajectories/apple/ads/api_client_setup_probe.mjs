@@ -3,6 +3,9 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 //
 // Opens Apple Ads Account Settings/API only through an already authenticated session.
 // Authentication is delegated exclusively to an explicitly authorized apple_login run.
+// Whether a page is the API settings page, and the settings and API entries
+// themselves, are judged and found by the vision model
+// (`_shared/page/judged/seen.mjs`) rather than matched against label words.
 
 import { existsSync } from 'node:fs';
 import {
@@ -16,13 +19,21 @@ import {
   USER_DATA_DIR,
 } from './api_client_setup_probe/settings.mjs';
 import {
-  clickText,
   keepOpen,
   pageDiag,
   requireAuthenticatedSession,
   stableProfilePersona,
 } from './api_client_setup_probe/page.mjs';
 import { inspectExistingAppleAdsApi } from './api_client_setup_probe/artifacts.mjs';
+import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
+
+/** Whether the page is the Apple Ads API settings page. */
+function onApiSettings(page) {
+  return pageShows(
+    page,
+    'Is this the Apple Ads API settings page, showing API client credentials or asking for a public key?',
+  );
+}
 
 async function main() {
   const acct = await getSocialAccount('apple');
@@ -77,25 +88,19 @@ async function main() {
         s.page,
         `url_${Buffer.from(url).toString('hex').slice(0, 16)}`,
       );
-      const text = await s.page
-        .evaluate(() => document.body?.innerText || '')
-        .catch(() => '');
-      if (
-        /API|Public Key|Generate API client|Client ID|Team ID|Key ID/i.test(
-          text,
-        )
-      )
-        break;
+      if (await onApiSettings(s.page)) break;
     }
 
-    await clickText(s.page, /Account Settings|Settings/i, 'settings').catch(
-      () => false,
-    );
-    await clickText(
-      s.page,
-      /^API$|API Access|Campaign Management API|Public Key/i,
-      'api',
-    ).catch(() => false);
+    if (!(await onApiSettings(s.page))) {
+      await clickDescribed(
+        s.page,
+        'the account settings entry of the Apple Ads account menu',
+      );
+      await clickDescribed(
+        s.page,
+        'the API tab of the Apple Ads account settings',
+      );
+    }
     const finalState = await pageDiag(s.page, 'final');
     const existing = await inspectExistingAppleAdsApi(s.page, finalState);
 
@@ -112,14 +117,9 @@ async function main() {
       return;
     }
 
-    const protectedUrl = new URL(s.page.url?.() ?? 'about:blank');
-    const authenticatedProtectedPage =
-      protectedUrl.hostname === 'app-ads.apple.com' &&
-      !/signin|login/i.test(protectedUrl.pathname) &&
-      (existing.hasExistingAppleAdsApiClient ||
-        existing.canGenerateApiClient ||
-        existing.hasAppleAdsApiSurface);
-    if (!authenticatedProtectedPage) {
+    // Apple signs in on its own identity host, so a page still on the Apple
+    // Ads host after the checks above is a signed-in one.
+    if (new URL(s.page.url()).hostname !== 'app-ads.apple.com') {
       console.log(
         'FAIL_CLOSED: authenticated Apple Ads API page was not confirmed; run an explicitly authorized apple_login before retrying.',
       );

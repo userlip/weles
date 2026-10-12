@@ -3,11 +3,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { generatePersona } from '../../../../../dist/browser/persona.js';
-import { humanClickLocator } from '../../../../../dist/human/mouse.js';
-import {
-  pageSettled,
-  reviewUntilClosed,
-} from '../../../_shared/page/settled.mjs';
+import { reviewUntilClosed } from '../../../_shared/page/settled.mjs';
 import { CLOSE_AFTER_PROBE, DIAG_DIR, USER_DATA_DIR } from './settings.mjs';
 
 export function stableProfilePersona() {
@@ -132,18 +128,6 @@ export async function pageDiag(page, label) {
   return data;
 }
 
-// Click the control if the page is showing it. Polling for eight seconds
-// reported "not there" about a page that was still rendering and "there"
-// about one that had just rendered it; the presence of the control is the
-// fact this probe reports, and it reads it once.
-export async function clickText(page, pattern, label) {
-  const loc = page.getByText(pattern).filter({ visible: true }).first();
-  if (!(await loc.isVisible())) return false;
-  await humanClickLocator(page, loc);
-  console.log(`[apple-ads-api-setup] clicked ${label}`);
-  await pageSettled(page);
-  return true;
-}
 export async function keepOpen(session, loggedIn) {
   try {
     if (loggedIn && !CLOSE_AFTER_PROBE && !session.page.isClosed()) {

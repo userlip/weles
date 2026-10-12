@@ -1,7 +1,14 @@
-// What the Apple Ads API page and the local key files say about the API client setup.
+// What the Apple Ads API page and the local key files say about the API client
+// setup. An existing client is one whose three credentials (client, team and
+// key id) can be read off the page; whether the page offers to generate a
+// client or upload a public key is judged by the vision model
+// (`_shared/page/judged/seen.mjs`) rather than matched against button words.
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DIAG_DIR, PRIVATE_KEY_PATH, PUBLIC_KEY_PATH } from './settings.mjs';
+import { pageShows } from '../../../_shared/page/judged/seen.mjs';
+
+const INDENT = '  ';
 
 export function extractValuesNearLabels(text) {
   const compact = String(text || '')
@@ -20,42 +27,19 @@ export function extractValuesNearLabels(text) {
   return out;
 }
 
-export function summarizeAppleArtifacts(pageState, localState) {
+export function summarizeAppleArtifacts(pageState, localState, judged) {
   const frames = Array.isArray(pageState?.frames) ? pageState.frames : [];
   const frameText = frames.map((frame) => frame.text || '').join('\n');
   const text = [pageState?.text || '', frameText].join('\n');
   const values = extractValuesNearLabels(text);
-  const buttons = [
-    ...(pageState?.buttons || []),
-    ...frames.flatMap((frame) => frame.buttons || []),
-  ].filter(Boolean);
-
-  const hasCredentialLabels = /Client ID|Team ID|Key ID/i.test(text);
-  const hasApiSurface =
-    /API|Public Key|Generate API client|Campaign Management API/i.test(text);
-  const hasCreateButton = buttons.some((button) =>
-    /Generate API client|Create API client|Add API client|Generate/i.test(
-      button,
-    ),
-  );
-
   return {
-    hasExistingAppleAdsApiClient: hasCredentialLabels,
-    hasAppleAdsApiSurface: hasApiSurface,
-    canGenerateApiClient: hasCreateButton || /Public Key/i.test(text),
+    hasExistingAppleAdsApiClient: Boolean(
+      values.clientId && values.teamId && values.keyId,
+    ),
+    hasAppleAdsApiSurface: judged.apiSurface,
+    canGenerateApiClient: judged.canGenerate,
     extracted: values,
     local: localState,
-    matchedButtons: buttons.filter((button) =>
-      /API|Client|Key|Generate|Create|Public Key/i.test(button),
-    ),
-    textMatches: {
-      clientId: /Client ID/i.test(text),
-      teamId: /Team ID/i.test(text),
-      keyId: /Key ID/i.test(text),
-      publicKey: /Public Key/i.test(text),
-      generateApiClient:
-        /Generate API client|Create API client|Add API client/i.test(text),
-    },
   };
 }
 
@@ -73,65 +57,42 @@ export async function inspectExistingAppleAdsApi(page, pageState) {
       hasPrivateKeyPath: Boolean(process.env.ASC_ADS_PRIVATE_KEY_PATH),
     },
   };
-
-  const domState = await page
-    .evaluate(() => {
-      const norm = (value) =>
-        String(value || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-      const visible = (el) =>
-        Boolean(
-          el.offsetWidth || el.offsetHeight || el.getClientRects().length,
-        );
-      const rows = Array.from(
-        document.querySelectorAll('tr, [role="row"], li, section, article'),
-      )
-        .filter(visible)
-        .map((el) => norm(el.innerText || el.textContent))
-        .filter((text) =>
-          /API|Client|Team ID|Key ID|Public Key|Generate|Create/i.test(text),
-        );
-      const controls = Array.from(
-        document.querySelectorAll('button, [role="button"], a'),
-      )
-        .filter(visible)
-        .map((el) => ({
-          text: norm(
-            el.innerText || el.textContent || el.getAttribute('aria-label'),
-          ),
-          href: el.href || '',
-        }))
-        .filter((item) =>
-          /API|Client|Key|Generate|Create|Public Key/i.test(
-            `${item.text} ${item.href}`,
-          ),
-        );
-      return { rows, controls };
-    })
-    .catch((error) => ({ error: error.message, rows: [], controls: [] }));
-
+  const judged = {
+    apiSurface: await pageShows(
+      page,
+      'Is this the Apple Ads API settings page (the Campaign Management API section of account settings)?',
+    ),
+    canGenerate: await pageShows(
+      page,
+      'Does the page offer to generate or create an API client, or ask for a public key to be uploaded?',
+    ),
+  };
+  const controls = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('button, [role="button"], a'))
+      .filter((el) => el.getClientRects().length)
+      .map((el) => ({
+        text: el.innerText.replace(/\s+/g, ' ').trim(),
+        href: el.href,
+      })),
+  );
   const summary = {
-    ...summarizeAppleArtifacts(pageState, localState),
-    dom: domState,
-    url: pageState?.url || page.url?.() || '',
-    title: pageState?.title || '',
+    ...summarizeAppleArtifacts(pageState, localState, judged),
+    controls,
+    url: page.url(),
+    title: pageState?.title,
   };
   const outPath = join(DIAG_DIR, 'apple_ads_api_existing.json');
-  writeFileSync(outPath, JSON.stringify(summary, null, 2));
+  writeFileSync(outPath, JSON.stringify(summary, null, INDENT));
   console.log(`[apple-ads-api-setup] existing_api json=${outPath}`);
+  const brief = {
+    hasExistingAppleAdsApiClient: summary.hasExistingAppleAdsApiClient,
+    hasAppleAdsApiSurface: summary.hasAppleAdsApiSurface,
+    canGenerateApiClient: summary.canGenerateApiClient,
+    extracted: summary.extracted,
+    local: summary.local,
+  };
   console.log(
-    `[apple-ads-api-setup] existing_api ${JSON.stringify(
-      {
-        hasExistingAppleAdsApiClient: summary.hasExistingAppleAdsApiClient,
-        hasAppleAdsApiSurface: summary.hasAppleAdsApiSurface,
-        canGenerateApiClient: summary.canGenerateApiClient,
-        extracted: summary.extracted,
-        local: summary.local,
-      },
-      null,
-      2,
-    )}`,
+    `[apple-ads-api-setup] existing_api ${JSON.stringify(brief, null, INDENT)}`,
   );
   return summary;
 }

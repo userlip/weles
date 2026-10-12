@@ -1,28 +1,22 @@
-// The captured responses and requests, reduced to what the report says.
+// The captured responses and requests, reduced to what the report says. The
+// session's response ledger holds every host the page talked to; the ones
+// Apple Ads itself answered are kept, each with its whole body.
 import { norm } from './session.mjs';
 
-export function responseIsRelevant(response) {
-  return /app-ads\.apple\.com|searchads|report|campaign|budget|spend|analytics|api/i.test(
-    response.url || '',
-  );
-}
+const APPLE_ADS_HOST = 'app-ads.apple.com';
 
 export function sanitizeResponses(responses) {
-  return responses.filter(responseIsRelevant).map((response) => {
-    const contentType = String(response.headers?.['content-type'] || '');
-    const body = String(response.body || '');
-    return {
+  return responses
+    .filter((response) => new URL(response.url).hostname === APPLE_ADS_HOST)
+    .map((response) => ({
       ts: response.ts,
       method: response.method,
       url: response.url,
       status: response.status,
-      contentType,
-      bodyLength: body.length,
-      bodyPreview: /json|text|javascript|html|xml/i.test(contentType)
-        ? body
-        : '',
-    };
-  });
+      contentType: response.headers['content-type'],
+      bodyLength: response.body.length,
+      bodyPreview: response.body,
+    }));
 }
 
 export function summarizeReport(pageState, responses) {
@@ -30,51 +24,16 @@ export function summarizeReport(pageState, responses) {
   const totalsMatch = text.match(
     /TOTALS\s+(\$[0-9,.]+)\s+(\$[0-9,.]+)\s+(\$[0-9,.]+)\s+(\$[0-9,.]+)/i,
   );
-  const campaigns = [];
-  for (const row of pageState.rows || []) {
-    const rowText = norm(row.text);
-    if (
-      !/Search Results|\$\d|Campaign end date reached|Paused|Running|Ended/i.test(
-        rowText,
-      )
-    )
-      continue;
-    if (/TOTALS|Copyright|Terms of Service/i.test(rowText)) continue;
-    campaigns.push(rowText);
-  }
+  // The report table's rows, by the table's own structure; the totals row is
+  // the one the totals pattern read above.
+  const campaigns = pageState.rows
+    .filter((row) => row.tableRow)
+    .map((row) => norm(row.text));
   return {
     url: pageState.url,
     title: pageState.title,
     totals: totalsMatch ? totalsMatch.slice(1) : [],
     campaignRows: campaigns,
-    dateControls: (pageState.controls || []).filter((control) =>
-      /date|time|calendar|range|UTC|\d{4}|\d{1,2}\/\d{1,2}/i.test(
-        [
-          control.text,
-          control.ariaLabel,
-          control.title,
-          control.placeholder,
-          control.value,
-          control.className,
-          control.name,
-          control.id,
-        ].join(' '),
-      ),
-    ),
-    reportControls: (pageState.controls || []).filter((control) =>
-      /report|filter|view|column|download|export|campaign|spend|impression|tap|install/i.test(
-        [
-          control.text,
-          control.ariaLabel,
-          control.title,
-          control.placeholder,
-          control.value,
-          control.className,
-          control.name,
-          control.id,
-        ].join(' '),
-      ),
-    ),
     relevantResponseCount: responses.length,
     relevantResponseUrls: [
       ...new Set(responses.map((response) => response.url)),

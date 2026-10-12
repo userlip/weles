@@ -95,18 +95,13 @@ async function main() {
       exitCode = 4;
       return;
     }
-    const protectedUrl = new URL(s.page.url?.() || 'about:blank');
-    const protectedText = await s.page
-      .evaluate(() => document.body?.innerText || '')
-      .catch(() => '');
-    const protectedMarker = protectedText.match(
-      /Manage Your Campaigns|Reporting is not in real time|Create Campaign|Campaign end date reached/i,
-    )?.[0];
+    // Apple signs in on its own identity host, so the reports route on the
+    // Apple Ads host, which ensureReportPage just confirmed, is a signed-in
+    // page.
+    const protectedUrl = new URL(s.page.url());
     const authenticatedProtectedPage =
       protectedUrl.hostname === 'app-ads.apple.com' &&
-      !/signin|login/i.test(protectedUrl.pathname) &&
-      /\/report(?:\/|$)/i.test(protectedUrl.pathname) &&
-      Boolean(protectedMarker);
+      /\/report(?:\/|$)/i.test(protectedUrl.pathname);
     if (!authenticatedProtectedPage) {
       console.log(
         'FAIL_CLOSED: authenticated Apple Ads report page was not confirmed; run an explicitly authorized apple_login before retrying.',
