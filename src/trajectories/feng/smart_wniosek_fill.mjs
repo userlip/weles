@@ -109,6 +109,19 @@ async function fillRadio(s, selector, optionValue) {
   await humanClickLocator(s.page, locator);
 }
 
+// How each declared field type of the form map is written; a type the map
+// declares and this table lacks is reported as skipped by name.
+const FILLERS = {
+  text: (s, sel, spec, payload) => fillTextLike(s, sel, payload.value),
+  textarea: (s, sel, spec, payload) => fillTextLike(s, sel, payload.value),
+  select: (s, sel, spec, payload) =>
+    fillSelect(s, sel, spec.option || payload.value),
+  checkbox: (s, sel, spec, payload) =>
+    fillCheckbox(s, sel, payload.value.trim().toUpperCase() === 'TAK'),
+  radio: (s, sel, spec, payload) =>
+    fillRadio(s, sel, spec.option || payload.value),
+};
+
 async function applyField(s, name, spec, payload, summary) {
   const sel = spec.selector;
   if (!sel || sel.startsWith('TODO')) {
@@ -116,19 +129,12 @@ async function applyField(s, name, spec, payload, summary) {
     return;
   }
   try {
-    if (spec.type === 'text' || spec.type === 'textarea') {
-      await fillTextLike(s, sel, payload.value);
-    } else if (spec.type === 'select') {
-      await fillSelect(s, sel, spec.option || payload.value);
-    } else if (spec.type === 'checkbox') {
-      const want = payload.value.trim().toUpperCase() === 'TAK';
-      await fillCheckbox(s, sel, want);
-    } else if (spec.type === 'radio') {
-      await fillRadio(s, sel, spec.option || payload.value);
-    } else {
+    const fill = Object.hasOwn(FILLERS, spec.type) && FILLERS[spec.type];
+    if (!fill) {
       summary.skipped.push({ name, reason: `unknown type ${spec.type}` });
       return;
     }
+    await fill(s, sel, spec, payload);
     summary.filled.push({ name, length: payload.length });
   } catch (e) {
     summary.errors.push({ name, error: e.message || '' });

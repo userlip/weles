@@ -13,10 +13,8 @@ import { registrationPassword } from '../../../../dist/utils/identity/password.j
 
 import { WSession } from '../../../../dist/session/wsession.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
+import { humanIdlePause } from '../../../../dist/human/mouse.js';
+import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
 
 const EMAIL = process.env.PARP_EMAIL;
 if (!EMAIL) throw new Error('set PARP_EMAIL to the PARP account address');
@@ -26,19 +24,12 @@ const RESET_SENDER = process.env.PARP_RESET_SENDER || 'lsi@parp.gov.pl';
 const LOGIN_URL = 'https://lsi.parp.gov.pl/';
 const SKRZYNKA = process.env.SKRZYNKA_BIN || 'skrzynka';
 
-const RESET_TRIGGERS = [
-  'Zapomniałem hasła',
-  'Nie pamiętam hasła',
-  'Reset hasła',
-  'Przypomnij hasło',
-];
 const EMAIL_SELECTORS = [
   'input[type="email"]',
   'input[name="email"]',
   'input[id*="email" i]',
   'input[placeholder*="email" i]',
 ];
-const SUBMIT_TEXTS = ['Resetuj hasło', 'Wyślij link', 'Wyślij', 'Submit'];
 const PASSWORD_SELECTORS_NEW = [
   'input[type="password"][name*="new" i]',
   'input[type="password"]:nth-of-type(1)',
@@ -48,7 +39,6 @@ const PASSWORD_SELECTORS_CONFIRM = [
   'input[type="password"][name*="confirm" i]',
   'input[type="password"]:nth-of-type(2)',
 ];
-const CONFIRM_TEXTS = ['Ustaw hasło', 'Zapisz', 'Zatwierdź', 'Potwierdź'];
 
 function logn(msg) {
   console.log(`[parp_login] ${msg}`);
@@ -68,16 +58,11 @@ async function screenshot(s, name) {
   return path;
 }
 
-async function clickByAnyText(s, texts) {
-  for (const text of texts) {
-    const locator = s.page.getByText(text, { exact: false }).first();
-    if ((await locator.count()) > 0) {
-      logn(`klikam: "${text}"`);
-      await humanClickLocator(s, locator);
-      return true;
-    }
-  }
-  return false;
+// Each control is found by the vision model from what it does
+// (`_shared/page/judged/seen.mjs`), so a reworded PARP page is still read.
+async function clickControl(s, description) {
+  logn(`klikam: ${description}`);
+  await clickDescribed(s.page, description);
 }
 
 async function fillByAnySelector(s, selectors, value) {
@@ -85,7 +70,7 @@ async function fillByAnySelector(s, selectors, value) {
     const locator = s.page.locator(sel).first();
     if ((await locator.count()) > 0) {
       logn(`fill: ${sel}`);
-      await humanFill(s, locator, value);
+      await humanFill(s.page, locator, value);
       return true;
     }
   }
@@ -161,12 +146,10 @@ async function main() {
   await screenshot(s, 'login_page');
 
   logn('klikam link reset hasła');
-  if (!(await clickByAnyText(s, RESET_TRIGGERS))) {
-    logn('FAIL: nie znalazłem linka reset hasła');
-    process.exitCode = 1;
-    await s.close();
-    return;
-  }
+  await clickControl(
+    s,
+    'the link on the login form for a forgotten password (password reset)',
+  );
   await humanIdlePause('deliberate');
   await screenshot(s, 'reset_form');
 
@@ -180,12 +163,7 @@ async function main() {
   await humanIdlePause('short');
 
   const requestedAt = Date.now();
-  if (!(await clickByAnyText(s, SUBMIT_TEXTS))) {
-    logn('FAIL: nie znalazłem przycisku submit');
-    process.exitCode = 1;
-    await s.close();
-    return;
-  }
+  await clickControl(s, 'the button that sends the password reset request');
   await humanIdlePause('deliberate');
   await screenshot(s, 'reset_submitted');
 
@@ -236,7 +214,7 @@ async function main() {
   logn(`pola hasła wypełnione (confirm: ${confirmFilled})`);
   await humanIdlePause('short');
 
-  await clickByAnyText(s, CONFIRM_TEXTS);
+  await clickControl(s, 'the button that saves the new password');
   await humanIdlePause('deliberate');
   await screenshot(s, 'after_password_set');
 
