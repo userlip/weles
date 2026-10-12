@@ -49,11 +49,7 @@ try {
       currentPersona: persona,
     });
   } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) {
-      console.log(`FAIL: ${jarErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
     throw jarErr;
   }
   await s.ctx
@@ -69,18 +65,13 @@ try {
   });
   await humanIdlePause('long');
   if (/login|signup|accounts\.snapchat\.com/.test(s.page.url())) {
-    console.log(`FAIL: cookies stale, redirected to ${s.page.url()}`);
     await markCookiesStale(acct.id);
-    process.exit(1);
+    throw new Error(`cookies stale, redirected to ${s.page.url()}`);
   }
   try {
     await assertAuthed('snapchat', s, { label: 'snapchat_dm' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
 

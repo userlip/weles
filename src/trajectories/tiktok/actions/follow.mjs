@@ -76,11 +76,7 @@ try {
   try {
     await assertAuthed('tiktok', s, { label: 'tiktok_follow' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
   // Idempotent: if already following, exit clean.
@@ -89,7 +85,11 @@ try {
     .filter({ visible: true })
     .first();
   if ((await followingBtn.count().catch(() => 0)) > 0) {
-    ban = await banSignalOf(detectTikTokBanSignals, s, 'after finding it followed');
+    ban = await banSignalOf(
+      detectTikTokBanSignals,
+      s,
+      'after finding it followed',
+    );
     console.log(
       `[ban-signal] ${ban?.signal}  PASS: already following @${TARGET_USER}`,
     );

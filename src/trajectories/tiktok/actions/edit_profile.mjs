@@ -78,11 +78,7 @@ try {
         { platform: 'tiktok' },
       );
   } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) {
-      console.log(`FAIL: ${jarErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
     throw jarErr;
   }
   await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
@@ -95,18 +91,13 @@ try {
   });
   await humanIdlePause('long');
   if (/\/login(\/|$)/.test(s.page.url())) {
-    console.log(`FAIL: cookies stale, redirected to login (${s.page.url()})`);
     await markCookiesStale(acct.id);
-    process.exit(1);
+    throw new Error(`cookies stale, redirected to login (${s.page.url()})`);
   }
   try {
     await assertAuthed('tiktok', s, { label: 'tiktok_edit_profile' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
 

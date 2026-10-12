@@ -70,11 +70,7 @@ try {
   try {
     await assertAuthed('tiktok', s, { label: 'tiktok_watch_through' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
   // Sit on the first video for ~30s (avg TikTok length ~15s, so this is a

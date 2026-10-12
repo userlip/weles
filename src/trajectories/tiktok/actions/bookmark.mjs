@@ -78,11 +78,7 @@ try {
   try {
     await assertAuthed('tiktok', s, { label: 'tiktok_bookmark' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
   // Bookmark/favorite button: data-e2e="video-save" on the right-hand
@@ -111,7 +107,11 @@ try {
   const alreadySaved =
     beforePressed === 'true' || /^Added to/i.test(beforeLabel);
   if (alreadySaved) {
-    ban = await banSignalOf(detectTikTokBanSignals, s, 'after finding it saved');
+    ban = await banSignalOf(
+      detectTikTokBanSignals,
+      s,
+      'after finding it saved',
+    );
     console.log(`[ban-signal] ${ban?.signal}  PASS: already saved`);
   } else {
     await humanClickLocator(s.page, saveBtn);

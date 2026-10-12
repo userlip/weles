@@ -80,11 +80,7 @@ try {
   try {
     await assertAuthed('tiktok', s, { label: 'tiktok_like' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
   // If we landed on a profile / hashtag grid, navigate into the first video.
@@ -108,7 +104,11 @@ try {
   await likeBtn.scrollIntoViewIfNeeded();
   const before = await likeBtn.getAttribute('aria-pressed').catch(() => null);
   if (before === 'true') {
-    ban = await banSignalOf(detectTikTokBanSignals, s, 'after finding it liked');
+    ban = await banSignalOf(
+      detectTikTokBanSignals,
+      s,
+      'after finding it liked',
+    );
     console.log(`[ban-signal] ${ban?.signal}  PASS: already liked`);
   } else {
     await humanClickLocator(s.page, likeBtn);
