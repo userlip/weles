@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { WSession } from '../../../dist/session/wsession.js';
-import { humanType } from '../../../dist/human/keyboard.js';
+import { humanFill, humanType } from '../../../dist/human/keyboard.js';
 import {
   humanClickLocator,
   humanIdlePause,
@@ -12,7 +12,6 @@ import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 const LABEL = 'yahoo_register';
 const SIGNUP_URL =
   'https://login.yahoo.com/account/create?specId=usernameregsimplified&done=https%3A%2F%2Ffinance.yahoo.com%2F';
-const FINANCE_URL = 'https://finance.yahoo.com/';
 
 function writeJson(name, value) {
   const dir = runRecordingsDir(LABEL);
@@ -195,6 +194,7 @@ async function fillSignupForm(s, id) {
     await checkbox(page);
   }
   await submitNext(page);
+  return existingEmail ? 'existing_email' : 'yahoo_address';
 }
 
 async function maybeHandlePhone(s) {
@@ -224,7 +224,20 @@ async function maybeHandlePhone(s) {
   return true;
 }
 
-async function maybeHandleCode(s, id) {
+/** Captcha frames by the vendor that serves them. */
+const CAPTCHA_FRAME =
+  /\/recaptcha\/|hcaptcha\.com|arkoselabs\.com|funcaptcha\.com/;
+
+function captchaShown(page) {
+  return page.frames().some((frame) => CAPTCHA_FRAME.test(frame.url()));
+}
+
+/**
+ * The code Yahoo sent for this sign-up: to the e-mail address the form was
+ * given when the sign-up registered an existing address, to the phone
+ * otherwise. The form variant decides it, not words on the code page.
+ */
+async function maybeHandleCode(s, id, variant) {
   const page = s.page;
   const codeInput = page
     .locator(
@@ -234,9 +247,8 @@ async function maybeHandleCode(s, id) {
     .first();
   if (!(await codeInput.count()) || !(await codeInput.isVisible()))
     return false;
-  const text = await bodyText(page);
-  let code = null;
-  if (/email|e-mail|inbox|verification code/i.test(text)) {
+  let code;
+  if (variant === 'existing_email') {
     code = await s.checkEmail(id.email, 'yahoo');
     if (!code || /^no (code|email)|^error/i.test(code))
       throw new Error(`yahoo_email_otp_failed: ${code}`);
@@ -280,8 +292,6 @@ async function maybeHandlePassword(page, password) {
 }
 
 async function maybeOpenPasswordSetup(page) {
-  const text = await bodyText(page);
-  if (!/Welcome to Yahoo/i.test(text) || !/password/i.test(text)) return false;
   const change = page
     .locator(
       'a:has-text("Change password"), a:has-text("Create password"), button:has-text("Change password"), button:has-text("Create password")',
@@ -294,43 +304,23 @@ async function maybeOpenPasswordSetup(page) {
   return true;
 }
 
+/** The cookies Yahoo sets on .yahoo.com for a signed-in account. */
+const YAHOO_SESSION = { T: true, Y: true };
+
+/**
+ * Signed in is Yahoo's own session on the context, not words on whatever
+ * page the flow ended on: a sign-up page that mentions "password" or a
+ * finance page that says "Sign in" both misled the old reading.
+ */
 async function successState(s) {
-  let url = s.page.url?.() ?? '';
-  let text = await bodyText(s.page);
-  if (/Welcome to Yahoo/i.test(text)) {
-    const done = s.page
-      .locator('button:has-text("Done")')
-      .filter({ visible: true })
-      .first();
-    if ((await done.count()) && (await done.isVisible())) {
-      await humanClickLocator(s.page, done);
-      await humanIdlePause('long');
-    }
-  } else if (
-    /login\.yahoo\.com/.test(url) &&
-    /create a yahoo account|verification code|phone|password|next/i.test(text)
-  ) {
-    return { ok: false, url, accountUi: 0, sample: text };
-  }
-  // The account is judged signed in from Yahoo Finance; a load that failed
-  // would judge it from the sign-up page instead.
-  await s.goto(FINANCE_URL);
-  await humanIdlePause('deliberate');
-  url = s.page.url?.() ?? '';
-  text = await bodyText(s.page);
-  const loggedOut =
-    /sign in|create account|login\.yahoo/i.test(text) &&
-    /login\.yahoo\.com/.test(url);
-  const accountUi = await s.page
-    .locator(
-      'button[aria-label*="account" i], a[href*="account" i], a[href*="login.yahoo.com/account"]',
-    )
-    .count();
+  const held = (await s.ctx.cookies('https://login.yahoo.com'))
+    .filter((cookie) => cookie.value !== '')
+    .map((cookie) => cookie.name);
   return {
-    ok: !loggedOut && (/finance\.yahoo\.com/.test(url) || accountUi > 0),
-    url,
-    accountUi,
-    sample: text,
+    ok: Object.keys(YAHOO_SESSION).every((name) => held.includes(name)),
+    url: s.page.url(),
+    cookies: held,
+    sample: await bodyText(s.page),
   };
 }
 
@@ -349,16 +339,15 @@ async function successState(s) {
 
     await s.goto(SIGNUP_URL);
     await humanIdlePause('deliberate');
-    await fillSignupForm(s, id);
+    const variant = await fillSignupForm(s, id);
     await humanIdlePause('long');
 
     // However many steps Yahoo shows are walked. A settled page that offers
-    // none of the known steps and is not the signed-in account is the
-    // failure, named by its URL and text.
+    // none of the known steps and holds no Yahoo session is the failure,
+    // named by its URL and text.
     for (;;) {
       await pageSettled(s.page);
-      const text = await bodyText(s.page);
-      if (/captcha|robot|verify you are human|security check/i.test(text)) {
+      if (captchaShown(s.page)) {
         const solved = await s
           .solveCaptcha()
           .catch((e) => `captcha err: ${e.message}`);
@@ -367,7 +356,7 @@ async function successState(s) {
       }
       if (await maybeOpenPasswordSetup(s.page)) continue;
       if (await maybeHandlePhone(s)) continue;
-      if (await maybeHandleCode(s, id)) continue;
+      if (await maybeHandleCode(s, id, variant)) continue;
       if (await maybeHandlePassword(s.page, id.password)) continue;
       const state = await successState(s);
       if (state.ok) {
@@ -383,7 +372,7 @@ async function successState(s) {
           username: id.username,
           email: accountEmail,
           final_url: state.url,
-          accountUi: state.accountUi,
+          cookies: state.cookies,
           completed_at: new Date().toISOString(),
         };
         writeJson('yahoo_register_result.json', payload);
