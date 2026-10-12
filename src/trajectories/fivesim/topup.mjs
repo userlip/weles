@@ -43,7 +43,9 @@ try {
   await urlMatching(s.page, LANDED);
   // The pay button is looked for on whatever page is open; a top-up that
   // never reached the finance page must stop with the cause, not pay elsewhere.
-  await s.page.goto('https://5sim.net/finance', { waitUntil: 'domcontentloaded' });
+  await s.page.goto('https://5sim.net/finance', {
+    waitUntil: 'domcontentloaded',
+  });
   await humanIdlePause('long');
 
   const amtIn = s.page
@@ -63,10 +65,7 @@ try {
     '../_shared/services/topup_common.mjs'
   );
   const clicked = await findAndClickPayButton(s.page);
-  if (!clicked) {
-    console.log('FAIL: could not find pay/checkout button');
-    process.exit(1);
-  }
+  if (!clicked) throw new Error('could not find pay/checkout button');
   await humanIdlePause('long');
   console.log(`PASS-CHARGED: checkout initiated, url=${s.page.url()}`);
 } catch (e) {

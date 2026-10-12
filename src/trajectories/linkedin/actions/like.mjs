@@ -61,9 +61,8 @@ try {
     },
   );
   if (!opened.ok) {
-    console.log(`FAIL: inline relogin failed: ${opened.reason}`);
     await markCookiesStale(acct.id);
-    process.exit(1);
+    throw new Error(`inline relogin failed: ${opened.reason}`);
   }
   // LinkedIn's like button is a <button aria-label="React Like"> that flips
   // aria-pressed false→true on click. The React-Like label excludes
@@ -76,7 +75,11 @@ try {
     const anyLiked = await s.page
       .locator('button[aria-label*="React Like" i][aria-pressed="true"]')
       .count();
-    ban = await banSignalOf(detectLinkedInBanSignals, s, 'after finding it liked');
+    ban = await banSignalOf(
+      detectLinkedInBanSignals,
+      s,
+      'after finding it liked',
+    );
     console.log(
       `[ban-signal] ${ban?.signal}  PASS: ${anyLiked ? 'already liked' : 'no_likeable_posts_on_page'}`,
     );

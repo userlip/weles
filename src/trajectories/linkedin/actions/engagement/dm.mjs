@@ -87,14 +87,12 @@ try {
       !/auth_wall/.test(String(gateErr?.message))
     )
       throw gateErr;
-    console.log(`FAIL: still signed out after relogin: ${gateErr.message}`);
     await markCookiesStale(acct.id);
-    process.exit(1);
+    throw new Error(`still signed out after relogin: ${gateErr.message}`);
   }
   if (!opened.ok) {
-    console.log(`FAIL: inline relogin failed: ${opened.reason}`);
     await markCookiesStale(acct.id);
-    process.exit(1);
+    throw new Error(`inline relogin failed: ${opened.reason}`);
   }
 
   await s.page.goto(profileUrl, { waitUntil: 'domcontentloaded' });
@@ -109,12 +107,10 @@ try {
     .filter({ visible: true })
     .count()
     .catch(() => 0);
-  if (!msgCount) {
-    console.log(
-      'FAIL: recipient profile has no Message button (not connected; InMail required)',
+  if (!msgCount)
+    throw new Error(
+      'recipient profile has no Message button (not connected; InMail required)',
     );
-    process.exit(1);
-  }
   await humanClickLocator(
     s.page,
     s.page.locator(msgSel).filter({ visible: true }).first(),
@@ -147,10 +143,8 @@ try {
     .filter({ visible: true })
     .count()
     .catch(() => 0);
-  if (!echoCount) {
-    console.log('FAIL: composer typed but message not echoed in conversation');
-    process.exit(1);
-  }
+  if (!echoCount)
+    throw new Error('composer typed but message not echoed in conversation');
   console.log(`PASS: DM sent to ${RECIPIENT}`);
 } catch (e) {
   console.log('FAIL:', e.message);

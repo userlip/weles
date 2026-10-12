@@ -36,67 +36,66 @@ try {
   // If already logged in, Linear redirects /login → workspace home.
   if (SUCCESS_URL_RE.test(s.page.url())) {
     console.log(`PASS: already logged in, landed on ${s.page.url()}`);
-    process.exit(0);
-  }
-
-  const googleBtn = s.page
-    .getByRole('button', { name: /continue with google/i })
-    .or(s.page.getByRole('link', { name: /continue with google/i }));
-  if (
-    !(await googleBtn
-      .first()
-      .isVisible()
-      .catch(() => false))
-  ) {
-    console.log('FAIL: Continue with Google button not visible');
-    process.exit(1);
-  }
-  await humanClickLocator(s.page, googleBtn.first());
-  await humanIdlePause('long');
-
-  // Google email step. The popup may inherit the prior workspace SSO cookie
-  // and skip straight to consent — handle both.
-  const emailInput = s.page.locator('input[type="email"]').first();
-  if (await emailInput.isVisible().catch(() => false)) {
-    await humanFill(s.page, emailInput, creds.email);
-    await s.page.keyboard.press('Enter');
+  } else {
+    const googleBtn = s.page
+      .getByRole('button', { name: /continue with google/i })
+      .or(s.page.getByRole('link', { name: /continue with google/i }));
+    if (
+      !(await googleBtn
+        .first()
+        .isVisible()
+        .catch(() => false))
+    )
+      throw new Error('Continue with Google button not visible');
+    await humanClickLocator(s.page, googleBtn.first());
     await humanIdlePause('long');
-  }
 
-  // Password step (Workspace SSO; passkey path mirrors slack/create_app.mjs).
-  async function fillPasswordWhenAvailable() {
-    const pwd = s.page.locator('input[type="password"]');
-    if ((await pwd.count()) === 0) return false;
-    await humanFill(s.page, pwd, creds.password);
-    await s.page.keyboard.press('Enter');
-    await humanIdlePause('long');
-    return true;
-  }
-  if (!(await fillPasswordWhenAvailable())) {
-    const tryOther = s.page
-      .getByRole('button', { name: /try another way/i })
-      .or(s.page.getByRole('link', { name: /try another way/i }));
-    if ((await tryOther.count()) > 0) {
-      await humanClickLocator(s.page, tryOther.first());
+    // Google email step. The popup may inherit the prior workspace SSO cookie
+    // and skip straight to consent — handle both.
+    const emailInput = s.page.locator('input[type="email"]').first();
+    if (await emailInput.isVisible().catch(() => false)) {
+      await humanFill(s.page, emailInput, creds.email);
+      await s.page.keyboard.press('Enter');
       await humanIdlePause('long');
-      const enterPwd = s.page.getByText(/enter your password/i).first();
-      if ((await enterPwd.count()) > 0) {
-        await humanClickLocator(s.page, enterPwd);
+    }
+
+    // Password step (Workspace SSO; passkey path mirrors slack/create_app.mjs).
+    async function fillPasswordWhenAvailable() {
+      const pwd = s.page.locator('input[type="password"]');
+      if ((await pwd.count()) === 0) return false;
+      await humanFill(s.page, pwd, creds.password);
+      await s.page.keyboard.press('Enter');
+      await humanIdlePause('long');
+      return true;
+    }
+    if (!(await fillPasswordWhenAvailable())) {
+      const tryOther = s.page
+        .getByRole('button', { name: /try another way/i })
+        .or(s.page.getByRole('link', { name: /try another way/i }));
+      if ((await tryOther.count()) > 0) {
+        await humanClickLocator(s.page, tryOther.first());
         await humanIdlePause('long');
-        await fillPasswordWhenAvailable();
+        const enterPwd = s.page.getByText(/enter your password/i).first();
+        if ((await enterPwd.count()) > 0) {
+          await humanClickLocator(s.page, enterPwd);
+          await humanIdlePause('long');
+          await fillPasswordWhenAvailable();
+        }
       }
     }
-  }
 
-  const continueBtn = s.page.getByRole('button', { name: /^\s*continue\s*$/i });
-  if ((await continueBtn.count()) > 0) {
-    await humanClickLocator(s.page, continueBtn.first());
-    await humanIdlePause('long');
-  }
+    const continueBtn = s.page.getByRole('button', {
+      name: /^\s*continue\s*$/i,
+    });
+    if ((await continueBtn.count()) > 0) {
+      await humanClickLocator(s.page, continueBtn.first());
+      await humanIdlePause('long');
+    }
 
-  // The sign-in is over when the page reaches a Linear workspace URL.
-  await s.page.waitForURL((url) => SUCCESS_URL_RE.test(String(url)));
-  console.log(`PASS: landed on ${s.page.url()}`);
+    // The sign-in is over when the page reaches a Linear workspace URL.
+    await s.page.waitForURL((url) => SUCCESS_URL_RE.test(String(url)));
+    console.log(`PASS: landed on ${s.page.url()}`);
+  }
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;

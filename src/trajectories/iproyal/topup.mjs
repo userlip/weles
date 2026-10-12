@@ -27,19 +27,13 @@ try {
     .first()
     .click();
   const popup = await popupPromise; // allow-raw-playwright: the popup the click produced
-  if (!popup) {
-    console.log('FAIL: popup did not open');
-    process.exit(1);
-  }
+  if (!popup) throw new Error('popup did not open');
   await popup.waitForLoadState('domcontentloaded').catch(() => {});
   const ok = await googleSso(s, login, {
     originHost: 'iproyal.com',
     page: popup,
   });
-  if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
-    process.exit(1);
-  }
+  if (!ok) throw new Error('Google SSO did not complete');
 
   await urlMatching(s.page, /^(?!.*\/login)/);
 
@@ -60,8 +54,7 @@ try {
     console.log('[trajectory] clicked "Add funds" topbar button');
     await humanIdlePause('deliberate');
   } else {
-    console.log('FAIL: "Add funds" button not visible on dashboard home');
-    process.exit(1);
+    throw new Error('"Add funds" button not visible on dashboard home');
   }
 
   const amtIn = s.page
@@ -138,22 +131,18 @@ try {
   );
   const fill = await fillStripeElements(s.page);
   console.log(`[trajectory] stripe elements fill: ${JSON.stringify(fill)}`);
-  if (!fill.ok) {
-    console.log(
-      `FAIL: stripe elements not fully filled — reason=${fill.reason ?? 'partial'}`,
+  if (!fill.ok)
+    throw new Error(
+      `stripe elements not fully filled: ${JSON.stringify(fill)}`,
     );
-    process.exit(1);
-  }
 
   // The actual charge button on iproyal is labelled "Deposit", not "Pay".
   const depositBtn = s.page
     .locator('button:has-text("Deposit"), button:has-text("Complete deposit")')
     .filter({ visible: true })
     .first();
-  if (!(await depositBtn.isVisible().catch(() => false))) {
-    console.log('FAIL: Deposit button not visible');
-    process.exit(1);
-  }
+  if (!(await depositBtn.isVisible().catch(() => false)))
+    throw new Error('Deposit button not visible');
 
   // Watch for Stripe payment_intents POST to confirm the charge actually fires.
   let stripeChargeFired = false;
@@ -195,14 +184,13 @@ try {
     });
     console.log('[diag] post-deposit:', JSON.stringify(post));
   } catch {}
-  if (stripeChargeFired)
-    console.log(
-      `PASS-CHARGED: Stripe payment_intents/confirm POST fired, url=${s.page.url()}`,
+  if (!stripeChargeFired)
+    throw new Error(
+      `Deposit clicked but no Stripe charge POST observed by the time the page settled, url=${s.page.url()}`,
     );
-  else
-    console.log(
-      `FAIL: Deposit clicked but no Stripe charge POST observed by the time the page settled, url=${s.page.url()}`,
-    );
+  console.log(
+    `PASS-CHARGED: Stripe payment_intents/confirm POST fired, url=${s.page.url()}`,
+  );
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;

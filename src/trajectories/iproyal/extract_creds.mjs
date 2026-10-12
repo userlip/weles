@@ -52,10 +52,7 @@ try {
     originHost: 'iproyal.com',
     page: popup,
   });
-  if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
-    process.exit(1);
-  }
+  if (!ok) throw new Error('Google SSO did not complete');
 
   await urlMatching(s.page, /^(?!.*\/login)/);
   console.log(`[extract] post-login url=${s.page.url()}`);
@@ -146,10 +143,9 @@ try {
       `PASS: extracted IPRoyal creds username=${found.username} host=${found.host ?? '?'} port=${found.port ?? '?'} (password ${found.password.length} chars) -> ${OUT}/extracted.json`,
     );
   } else {
-    console.log(
-      `FAIL: could not parse IPRoyal proxy creds — inspect dumps in ${OUT}/ (txt+html+png per candidate page)`,
+    throw new Error(
+      `could not parse IPRoyal proxy creds — inspect dumps in ${OUT}/ (txt+html+png per candidate page)`,
     );
-    process.exit(1);
   }
 } catch (e) {
   console.log('FAIL:', e.message || String(e));

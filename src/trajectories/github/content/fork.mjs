@@ -69,41 +69,39 @@ try {
     console.log(
       `[ban-signal] ${ban?.signal}  PASS: already_forked ${upstreamPath}`,
     );
-    await s.close();
-    process.exit(0);
-  }
+  } else {
+    // The /fork route renders a form with one submit button — green "Create fork".
+    // GitHub uses <button type="submit"> within the wrapping <form action="/<owner>/<repo>/fork">.
+    const submitBtn = s.page
+      .locator(
+        'form[action$="/fork"] button[type="submit"], button[type="submit"]:has-text("Create fork")',
+      )
+      .filter({ visible: true })
+      .first();
+    await submitBtn.waitFor({ state: 'visible' });
+    await submitBtn.scrollIntoViewIfNeeded().catch(() => {});
+    await humanClickLocator(s.page, submitBtn);
 
-  // The /fork route renders a form with one submit button — green "Create fork".
-  // GitHub uses <button type="submit"> within the wrapping <form action="/<owner>/<repo>/fork">.
-  const submitBtn = s.page
-    .locator(
-      'form[action$="/fork"] button[type="submit"], button[type="submit"]:has-text("Create fork")',
-    )
-    .filter({ visible: true })
-    .first();
-  await submitBtn.waitFor({ state: 'visible' });
-  await submitBtn.scrollIntoViewIfNeeded().catch(() => {});
-  await humanClickLocator(s.page, submitBtn);
-
-  await submitAnswered(
-    s.page,
-    /\/fork\b/,
-    s.page
-      .locator('.flash-error, [role="alert"]')
-      .filter({ hasText: /\S/ })
-      .first(),
-  );
-  const finalUrl = s.page.url?.() ?? '';
-  if (
-    !new RegExp(`github\\.com/${acct.username}/`).test(finalUrl) ||
-    /\/fork/.test(finalUrl)
-  ) {
-    throw new Error(`fork_not_created: final url=${finalUrl}`);
+    await submitAnswered(
+      s.page,
+      /\/fork\b/,
+      s.page
+        .locator('.flash-error, [role="alert"]')
+        .filter({ hasText: /\S/ })
+        .first(),
+    );
+    const finalUrl = s.page.url?.() ?? '';
+    if (
+      !new RegExp(`github\\.com/${acct.username}/`).test(finalUrl) ||
+      /\/fork/.test(finalUrl)
+    ) {
+      throw new Error(`fork_not_created: final url=${finalUrl}`);
+    }
+    ban = await banSignalOf(detectGitHubBanSignals, s, 'after the fork');
+    console.log(
+      `[ban-signal] ${ban?.signal}  PASS: forked ${upstreamPath} -> ${finalUrl}`,
+    );
   }
-  ban = await banSignalOf(detectGitHubBanSignals, s, 'after the fork');
-  console.log(
-    `[ban-signal] ${ban?.signal}  PASS: forked ${upstreamPath} -> ${finalUrl}`,
-  );
 } catch (e) {
   ban =
     e.banSignal ??

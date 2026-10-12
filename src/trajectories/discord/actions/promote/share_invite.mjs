@@ -77,12 +77,10 @@ try {
   const inviteIcon = s.page
     .locator('button[aria-label="Create Invite"], button[aria-label*="Invite"]')
     .first();
-  if ((await inviteIcon.count()) === 0) {
-    console.log(
-      'FAIL: Invite People icon not visible — does this account have Create Invite permission?',
+  if ((await inviteIcon.count()) === 0)
+    throw new Error(
+      'Invite People icon not visible — does this account have Create Invite permission?',
     );
-    process.exit(1);
-  }
   await humanClickLocator(s.page, inviteIcon);
   await humanIdlePause('deliberate');
 
@@ -95,10 +93,7 @@ try {
     );
     return match ? match.value : null;
   });
-  if (!inviteUrl) {
-    console.log('FAIL: invite URL not found in modal');
-    process.exit(1);
-  }
+  if (!inviteUrl) throw new Error('invite URL not found in modal');
   console.log(`[share_invite] generated: ${inviteUrl}`);
 
   const sent = [];

@@ -82,25 +82,18 @@ try {
     .locator('div')
     .filter({ hasText: /^Phone Number$/ })
     .first();
-  if ((await phoneRow.count()) === 0) {
-    console.log('FAIL: Phone Number row not found in My Account');
-    process.exit(1);
-  }
+  if ((await phoneRow.count()) === 0)
+    throw new Error('Phone Number row not found in My Account');
   // The Add button is typically the closest sibling button with text "Add"
   const addBtn = s.page.locator('button').filter({ hasText: /^Add$/ }).first();
-  if ((await addBtn.count()) === 0) {
-    console.log('FAIL: Add button next to Phone Number not found');
-    process.exit(1);
-  }
+  if ((await addBtn.count()) === 0)
+    throw new Error('Add button next to Phone Number not found');
   await humanClickLocator(s.page, addBtn);
   await humanIdlePause('deliberate');
 
   // Get a number from juicysms
   num = await getNumber('discord', COUNTRY);
-  if (!num) {
-    console.log(`FAIL: no ${COUNTRY} number available from juicysms`);
-    process.exit(1);
-  }
+  if (!num) throw new Error(`no ${COUNTRY} number available from juicysms`);
   console.log(
     `[phone_verify] number=${num.phone} order=${num.orderId} provider=${num.provider}`,
   );
@@ -112,11 +105,8 @@ try {
       'input[type="tel"], input[placeholder*="phone"], input[placeholder*="Phone"]',
     )
     .first();
-  if ((await phoneInput.count()) === 0) {
-    console.log('FAIL: phone input not found in the Add modal');
-    await cancelOrder(num.orderId, num.provider);
-    process.exit(1);
-  }
+  if ((await phoneInput.count()) === 0)
+    throw new Error('phone input not found in the Add modal');
   // strip + for fill (Discord's input strips the country-code lead);
   // humanFill clears+types.
   await humanFill(s.page, phoneInput, num.phone.replace(/^\+/, ''));
@@ -126,11 +116,8 @@ try {
     .locator('button')
     .filter({ hasText: /^(Send|Next|Continue)$/ })
     .first();
-  if ((await sendBtn.count()) === 0) {
-    console.log('FAIL: Send/Next button on phone modal not found');
-    await cancelOrder(num.orderId, num.provider);
-    process.exit(1);
-  }
+  if ((await sendBtn.count()) === 0)
+    throw new Error('Send/Next button on phone modal not found');
   await humanClickLocator(s.page, sendBtn);
   await humanIdlePause('deliberate');
 
@@ -156,10 +143,8 @@ try {
       'input[placeholder*="code"], input[autocomplete="one-time-code"], input[maxlength="6"]',
     )
     .first();
-  if ((await codeInput.count()) === 0) {
-    console.log('FAIL: SMS code input not found');
-    process.exit(1);
-  }
+  if ((await codeInput.count()) === 0)
+    throw new Error('SMS code input not found');
   await humanFill(s.page, codeInput, code);
   await humanIdlePause('short');
   const verifyBtn = s.page
@@ -176,12 +161,10 @@ try {
     .locator('div')
     .filter({ hasText: new RegExp(num.phone.replace(/^\+/, '').slice(-7)) })
     .first();
-  if ((await phoneRow2.count()) === 0) {
-    console.log(
-      'FAIL: phone number not visible on My Account after verify — likely rejected (VOIP, invalid, etc.)',
+  if ((await phoneRow2.count()) === 0)
+    throw new Error(
+      'phone number not visible on My Account after verify — likely rejected (VOIP, invalid, etc.)',
     );
-    process.exit(1);
-  }
   console.log('[phone_verify] phone visible on My Account — verify complete');
 
   if (!acct.id) throw new Error('Discord account has no Skarbiec item id');

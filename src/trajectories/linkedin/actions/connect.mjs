@@ -50,9 +50,8 @@ try {
     },
   );
   if (!opened.ok) {
-    console.log(`FAIL: inline relogin failed: ${opened.reason}`);
     await markCookiesStale(acct.id);
-    process.exit(1);
+    throw new Error(`inline relogin failed: ${opened.reason}`);
   }
   // PYMK card "Connect" buttons live as <button aria-label="Invite NAME to connect">.
   // Filter to invite (not Follow). Take the first non-disabled one in
