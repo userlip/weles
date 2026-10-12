@@ -16,16 +16,18 @@ import {
   loadFreshCookieJarOrFail,
   CookieJarStaleError,
 } from '../_shared/auth/cookie-freshness.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
 
 // Post a comment on a Product Hunt launch.
 // PRODUCTHUNT_URL=https://www.producthunt.com/products/<slug>  -> launch page
-// PH_COMMENT="text"                                            -> overrides default
+// PH_COMMENT="text"                                            -> required
 // When PRODUCTHUNT_URL is unset, the trajectory navigates to the homepage
 // and selects a /products/<slug> launch page with a comment composer.
 
-const EXPLICIT_TARGET = process.env.PRODUCTHUNT_URL || '';
-const COMMENT_TEXT =
-  process.env.PH_COMMENT || 'Looks really clean — congrats on the launch!';
+const EXPLICIT_TARGET = process.env.PRODUCTHUNT_URL;
+// The comment is published under the account's name; its words are the
+// caller's, never a stock compliment written here.
+const COMMENT_TEXT = statedText(['PH_COMMENT'], 'the comment text to publish');
 import { pageSettled } from '../_shared/page/settled.mjs';
 
 async function postComment(s, acct, sessionMeta) {
@@ -89,7 +91,7 @@ async function postComment(s, acct, sessionMeta) {
   // Resolve target launch URL. Caller-supplied PRODUCTHUNT_URL wins; else
   // pick the first /products/<slug> launch from the authed homepage —
   // /products is the only page shape with a tiptap composer.
-  const targetUrl = EXPLICIT_TARGET || (await pickFirstProductLaunchUrl(s));
+  const targetUrl = EXPLICIT_TARGET ?? (await pickFirstProductLaunchUrl(s));
   if (!targetUrl) throw new Error('no_launch_url_discovered');
   console.log(`[ph-comment] target=${targetUrl}`);
   await s.goto(targetUrl);

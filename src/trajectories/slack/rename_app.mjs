@@ -4,14 +4,16 @@
 // `slack-app-configuration`. Weles holds no Slack token; the bot token could
 // not do this anyway (not_allowed_token_type).
 //
-// Env: APP_ID (default A0B5UP3MRPT = Swiatowid), NEW_NAME (default Oko).
+// Env: APP_ID and NEW_NAME, both required: which app is renamed, and to
+// what, are the caller's.
 import {
   integrationAction,
   integrationsConfigured,
 } from '../../_shared/integrations.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
 
-const APP_ID = process.env.APP_ID || 'A0B5UP3MRPT';
-const NEW_NAME = process.env.NEW_NAME || 'Oko';
+const APP_ID = statedText(['APP_ID'], 'the Slack app to rename');
+const NEW_NAME = statedText(['NEW_NAME'], 'the name the Slack app takes');
 if (!integrationsConfigured()) {
   console.log(
     'FAIL: STADO_INTEGRATION_API_URL and WELES_STADO_INTEGRATION_TOKEN are required',

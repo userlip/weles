@@ -106,7 +106,9 @@ export async function listMembers() {
 
 /**
  * Where the message goes: an explicit channel id, explicit DM user ids, a
- * channel by name when one resolves, else one DM per recipient group.
+ * channel by name, else one DM per recipient group. A channel named but not
+ * found (or a channel list that could not be read) refuses: a message meant
+ * for a channel is never sent to people instead.
  */
 export async function resolveTargets() {
   if (TARGET_CHAN) return [TARGET_CHAN];
@@ -114,24 +116,19 @@ export async function resolveTargets() {
     return parseCsv(process.env.SLACK_TARGET_USER_IDS);
   if (process.env.SLACK_TARGET_USER_ID)
     return [process.env.SLACK_TARGET_USER_ID];
-  // A real channel by name only if it actually resolves; a name that is a
-  // person, not a channel, is answered by the recipient groups below.
   if (process.env.SLACK_TARGET_CHANNEL_NAME) {
-    try {
-      const list = await slackPost('conversations.list', {
-        types: 'public_channel,private_channel',
-        limit: '1000',
-      });
-      const c = (list.channels || []).find(
-        (x) => (x.name || '').toLowerCase() === TARGET_NAME,
+    const list = await slackPost('conversations.list', {
+      types: 'public_channel,private_channel',
+      limit: '1000',
+    });
+    const c = list.channels.find(
+      (x) => x.name && x.name.toLowerCase() === TARGET_NAME,
+    );
+    if (!c)
+      throw new Error(
+        `no visible channel named "${TARGET_NAME}" among ${list.channels.length}; nothing was posted`,
       );
-      if (c) return [c.id];
-      console.log(
-        `[slack] no visible channel named "${TARGET_NAME}" — resolving user targets instead`,
-      );
-    } catch (e) {
-      console.log(`[slack] conversations.list skipped: ${e.message}`);
-    }
+    return [c.id];
   }
   // DM one user per recipient group, resolved by name/email matcher.
   const groups = process.env.SLACK_TARGET_USER_MATCHERS

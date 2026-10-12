@@ -15,8 +15,13 @@ import {
   AuthProbeError,
 } from '../../_shared/auth/auth-probe.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
-const SUBREDDIT = (process.env.SUBREDDIT || 'popular').replace(/^r\//, '');
+// Which subreddit the account joins is the caller's; none is chosen here.
+const SUBREDDIT = statedText(['SUBREDDIT'], 'the subreddit to join').replace(
+  /^r\//,
+  '',
+);
 
 const acct = await getSocialAccount('reddit');
 if (!acct) {
@@ -71,7 +76,11 @@ try {
       .isVisible()
       .catch(() => false)
   ) {
-    ban = await banSignalOf(detectRedditBanSignals, s, 'after finding it joined');
+    ban = await banSignalOf(
+      detectRedditBanSignals,
+      s,
+      'after finding it joined',
+    );
     console.log(
       `[ban-signal] ${ban?.signal}  PASS: already joined r/${SUBREDDIT}`,
     );

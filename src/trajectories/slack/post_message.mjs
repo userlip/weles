@@ -192,43 +192,36 @@ if (!channelId) {
   const named = list.channels.find(
     (c) => c.name && c.name.toLowerCase() === TARGET_NAME,
   );
-  const general = list.channels.find(
-    (c) => c.name && c.name.toLowerCase() === 'general',
-  );
+  // Only the channel asked for: a message meant for one channel is never
+  // posted to #general instead.
   if (named) channelId = named.id;
-  else if (general) channelId = general.id;
-  else {
+  else
     console.log(
-      `[slack] ${list.channels.length} channels visible, none match "${TARGET_NAME}" or "general"`,
+      `[slack] ${list.channels.length} channels visible, none named "${TARGET_NAME}": ${list.channels.map((c) => c.name).join(', ')}`,
     );
-    console.log(
-      `[slack] visible channels: ${list.channels.map((c) => c.name).join(', ')}`,
-    );
-  }
 }
-// Still no channel: open a DM with the first user the matchers name.
-if (!channelId) {
+// Still no channel: a DM with the first member SLACK_TARGET_USER_MATCHERS
+// names, when the caller named people; nobody is messaged by default.
+if (!channelId && process.env.SLACK_TARGET_USER_MATCHERS) {
   const matchers = parseCsv(
-    (
-      process.env.SLACK_TARGET_USER_MATCHERS || 'jakub,kuba,towarek'
-    ).toLowerCase(),
+    process.env.SLACK_TARGET_USER_MATCHERS.toLowerCase(),
   );
   console.log(`[slack] users.list to find ${matchers.join('/')}`);
   const members = await workspaceMembers();
   const hit = resolveUsersFromMembers(members, [matchers])[0];
-  if (!hit)
-    await fail(
-      4,
+  if (hit) {
+    console.log(
+      `[slack] opening DM with user ${hit.id} (${hit.real_name || hit.name})`,
+    );
+    const dm = await slackApi('conversations.open', {
+      token: xoxc,
+      users: hit.id,
+    });
+    channelId = dm.channel.id;
+  } else
+    console.log(
       `[slack] no user matched ${matchers.join('/')} in ${members.length} workspace members`,
     );
-  console.log(
-    `[slack] opening DM with user ${hit.id} (${hit.real_name || hit.name})`,
-  );
-  const dm = await slackApi('conversations.open', {
-    token: xoxc,
-    users: hit.id,
-  });
-  channelId = dm.channel.id;
 }
 if (!channelId) await fail(4, '[slack] no channel id');
 

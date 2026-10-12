@@ -15,11 +15,19 @@ import {
   AuthProbeError,
 } from '../../_shared/auth/auth-probe.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
-const TARGET_USER = (process.env.TARGET_USER || '')
+// Either a named user is followed, or the newest author in a named
+// subreddit; neither the user nor the subreddit is chosen here.
+const TARGET_USER = process.env.TARGET_USER?.trim()
   .replace(/^u\//, '')
   .replace(/^\/u\//, '');
-const SUBREDDIT = (process.env.SUBREDDIT || 'popular').replace(/^r\//, '');
+const SUBREDDIT = TARGET_USER
+  ? undefined
+  : statedText(
+      ['SUBREDDIT'],
+      'the subreddit whose newest author is followed when TARGET_USER is unset',
+    ).replace(/^r\//, '');
 
 const acct = await getSocialAccount('reddit');
 if (!acct) {
@@ -108,7 +116,11 @@ try {
       .isVisible()
       .catch(() => false)
   ) {
-    ban = await banSignalOf(detectRedditBanSignals, s, 'after finding it followed');
+    ban = await banSignalOf(
+      detectRedditBanSignals,
+      s,
+      'after finding it followed',
+    );
     console.log(
       `[ban-signal] ${ban?.signal}  PASS: already following u/${author}`,
     );
