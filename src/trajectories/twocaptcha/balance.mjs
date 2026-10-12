@@ -117,17 +117,27 @@ try {
     const dir = runRecordingsDir('twocaptcha_balance');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'dashboard-text.txt'), text);
+    // The failure names each dump that could not be written, rather than
+    // pointing the reader at a directory missing them.
+    const missing = [];
     try {
       writeFileSync(join(dir, 'dashboard.html'), await s.page.content());
-    } catch {}
+    } catch (e) {
+      missing.push(`dashboard.html (${e.message})`);
+    }
     try {
       await s.page.screenshot({
         path: join(dir, 'dashboard.png'),
         fullPage: true,
       });
-    } catch {}
+    } catch (e) {
+      missing.push(`dashboard.png (${e.message})`);
+    }
+    const notWritten = missing.length
+      ? `; not written: ${missing.join(', ')}`
+      : '';
     console.log(
-      `FAIL: 2Captcha balance regex did not match — full dashboard text dumped to ${dir}/`,
+      `FAIL: 2Captcha balance regex did not match — full dashboard text dumped to ${dir}/${notWritten}`,
     );
     process.exit(1);
   }

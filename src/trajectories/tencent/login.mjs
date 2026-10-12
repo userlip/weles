@@ -254,9 +254,15 @@ async function main() {
         );
       console.log('[login] clicking submit on verify form');
       await humanClickLocator(s.page, submit);
+      // A code file left behind is read by the next run as a fresh code; a
+      // removal that fails says so, naming the file.
       try {
         unlinkSync(VERIFY_CODE_PATH);
-      } catch {}
+      } catch (e) {
+        console.log(
+          `[login] used verification code ${VERIFY_CODE_PATH} not removed: ${e.message}`,
+        );
+      }
       await urlMatching(s.page, CONSOLE);
     }
     console.log(`[login] post-forward URL: ${s.page.url()}`);
