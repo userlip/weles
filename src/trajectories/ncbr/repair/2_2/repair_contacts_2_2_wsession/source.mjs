@@ -1,5 +1,5 @@
-// What repair_contacts_2_2_wsession.mjs writes: the contact, the e-Doreczenia address, and the
-// section 2.2 features and factors parsed out of the application's markdown source.
+// What repair_contacts_2_2_wsession.mjs writes besides the contacts: the e-Doreczenia address, and
+// the section 2.2 features and factors parsed out of the application's markdown source.
 import { readFileSync } from 'node:fs';
 
 export const MD22 = (await import('#ncbr-settings')).applicationFile(
@@ -11,8 +11,6 @@ const md = readFileSync(MD22, 'utf8');
 export const EDORECZENIA = (await import('#ncbr-settings')).applicantField(
   'e_doreczenie',
 );
-export const CONTACT = (await import('#ncbr-settings')).applicantRecord()
-  .contacts[1];
 
 function clean(s) {
   return String(s || '')

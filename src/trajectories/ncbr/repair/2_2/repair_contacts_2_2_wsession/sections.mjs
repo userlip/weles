@@ -4,7 +4,14 @@ import {
   humanIdlePause,
 } from '../../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../../dist/human/keyboard.js';
-import { CONTACT, FACTORS, FEATURES } from './source.mjs';
+import { FACTORS, FEATURES } from './source.mjs';
+
+// The record's contacts are the people section 1.3 must list; a contact that
+// is missing takes over the row of one of its withdrawn_contacts.
+const CONTACTS = (await import('#ncbr-settings')).applicantList('contacts');
+const WITHDRAWN = (await import('#ncbr-settings')).applicantList(
+  'withdrawn_contacts',
+);
 
 export function contactRepairs({
   page,
@@ -28,42 +35,22 @@ export function contactRepairs({
     );
     const edoreczenia = await fillEdoreczeniaIfPresent();
     const edited = [];
-    const hasZuzanna = await page.evaluate(() =>
-      (document.body.innerText || '')
-        .replace(/\s+/g, ' ')
-        .includes('Zuzanna Bartoszcze'),
-    ); // allow-raw-playwright: inspect current contact rows
-    if (!hasZuzanna) {
-      const hasWeronika = await page.evaluate(() =>
-        (document.body.innerText || '')
-          .replace(/\s+/g, ' ')
-          .includes('Weronika Pernak'),
-      ); // allow-raw-playwright: inspect current contact rows
-      if (!hasWeronika)
+    for (const contact of CONTACTS) {
+      const person = `${contact.imie} ${contact.nazwisko}`;
+      if (await listed(person)) continue;
+      const withdrawn = await listedWithdrawn();
+      if (!withdrawn)
         throw new Error(
-          'neither Zuzanna nor Weronika contact row is visible in 1.3 edit form',
+          `${person} is not listed and no withdrawn contact row is left in the entity edit form to take over`,
         );
-      const row = page
-        .locator('table tbody tr')
-        .filter({ hasText: 'Weronika Pernak' })
-        .first();
-      await humanClickLocator(
-        page,
-        row.locator('button[aria-label="overflow-options"]'),
-      ); // allow-raw-playwright: open visible stale contact row menu
-      await humanIdlePause('deliberate');
-      await page
-        .getByRole('menuitem', { name: 'Edytuj', exact: true })
-        .first()
-        .dispatchEvent('click'); // allow-raw-playwright: edit visible stale contact row
-      await humanIdlePause('long');
+      await editContactRow(withdrawn);
       await fillAny(
         [
           'imie',
           'imie_osoby_do_kontaktu',
           'osoby_do_kontaktu_kolekcja[1].imie',
         ],
-        CONTACT.imie,
+        contact.imie,
       );
       await fillAny(
         [
@@ -71,7 +58,7 @@ export function contactRepairs({
           'nazwisko_osoby_do_kontaktu',
           'osoby_do_kontaktu_kolekcja[1].nazwisko',
         ],
-        CONTACT.nazwisko,
+        contact.nazwisko,
       );
       await fillAny(
         [
@@ -80,7 +67,7 @@ export function contactRepairs({
           'nr_telefonu',
           'osoby_do_kontaktu_kolekcja[1].telefon',
         ],
-        CONTACT.telefon,
+        contact.telefon,
       );
       await fillAny(
         [
@@ -89,13 +76,42 @@ export function contactRepairs({
           'adres_email_osoby_do_kontaktu',
           'osoby_do_kontaktu_kolekcja[1].adres_email',
         ],
-        CONTACT.email,
+        contact.email,
       );
       await saveVisibleForm();
-      edited.push('Weronika Pernak -> Zuzanna Bartoszcze');
+      edited.push(`${withdrawn} -> ${person}`);
     }
     await saveVisibleForm();
     return { edoreczenia, edited, readback: await readTables(URLS['1.3']) };
+  }
+
+  async function listed(person) {
+    return page.evaluate(
+      (name) => document.body.innerText.replace(/\s+/g, ' ').includes(name),
+      person,
+    ); // allow-raw-playwright: inspect current contact rows
+  }
+
+  async function listedWithdrawn() {
+    for (const person of WITHDRAWN) if (await listed(person)) return person;
+    return undefined;
+  }
+
+  async function editContactRow(person) {
+    const row = page
+      .locator('table tbody tr')
+      .filter({ hasText: person })
+      .first();
+    await humanClickLocator(
+      page,
+      row.locator('button[aria-label="overflow-options"]'),
+    ); // allow-raw-playwright: open visible contact row menu
+    await humanIdlePause('deliberate');
+    await page
+      .getByRole('menuitem', { name: 'Edytuj', exact: true })
+      .first()
+      .dispatchEvent('click'); // allow-raw-playwright: edit visible contact row
+    await humanIdlePause('long');
   }
 
   async function diag13() {
@@ -264,20 +280,12 @@ export function contactRepairs({
     await openFirstRowEdit(
       (await import('#ncbr-settings')).applicantShortName(),
     );
-    const row = page
-      .locator('table tbody tr')
-      .filter({ hasText: 'Weronika Pernak' })
-      .first();
-    await humanClickLocator(
-      page,
-      row.locator('button[aria-label="overflow-options"]'),
-    ); // allow-raw-playwright: open visible nested contact row menu
-    await humanIdlePause('deliberate');
-    await page
-      .getByRole('menuitem', { name: 'Edytuj', exact: true })
-      .first()
-      .dispatchEvent('click'); // allow-raw-playwright: edit visible nested contact row
-    await humanIdlePause('long');
+    const withdrawn = await listedWithdrawn();
+    if (!withdrawn)
+      throw new Error(
+        'no withdrawn contact row is listed in the entity edit form to inspect',
+      );
+    await editContactRow(withdrawn);
     return await page.evaluate(() => ({
       fields: Array.from(document.querySelectorAll('input, textarea'))
         .map((el) => {

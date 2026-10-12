@@ -16,7 +16,12 @@ const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const SECTION_URL = (await import('#ncbr-settings')).sectionUrl('1_3');
 // People's names, phones and addresses live in the applicant record in the
 // private application folder, never in this repository.
-const CONTACTS = (await import('#ncbr-settings')).applicantRecord().contacts;
+// The record's contacts are the people the section must list; its
+// withdrawn_contacts ("imie nazwisko") are removed from the section.
+const CONTACTS = (await import('#ncbr-settings')).applicantList('contacts');
+const WITHDRAWN = (await import('#ncbr-settings')).applicantList(
+  'withdrawn_contacts',
+);
 const EDORECZENIA = (await import('#ncbr-settings')).applicantField(
   'e_doreczenie',
 );
@@ -190,7 +195,9 @@ async function fillEdoreczeniaIfPresent() {
   return result;
 }
 
-const deleted = await deleteRowsContaining('Weronika Pernak');
+const deleted = [];
+for (const person of WITHDRAWN)
+  deleted.push(...(await deleteRowsContaining(person)));
 const edoreczenia = await fillEdoreczeniaIfPresent();
 const added = [];
 for (const c of CONTACTS) {

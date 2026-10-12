@@ -15,28 +15,17 @@ if (!page) {
 
 await page.goto(SECTION_URL, { waitUntil: 'domcontentloaded' });
 await humanIdlePause('long');
-const out = await page.evaluate(() => {
-  const body = document.body.innerText || '';
-  const tables = Array.from(document.querySelectorAll('table')).map(
-    (table, i) => ({
-      i,
-      rows: table.querySelectorAll('tbody tr').length,
-      text: Array.from(table.querySelectorAll('tbody tr')).map((r) =>
-        r.innerText.trim().replace(/\s+/g, ' '),
-      ),
-    }),
-  );
-  return {
-    url: location.href,
-    tables,
-    names: {
-      linh: body.includes('Linh Le'),
-      lb: body.includes('Łukasz Bartoszcze'),
-      szpruch: body.includes('Łukasz Szpruch'),
-      pernak: body.includes('Weronika Pernak'),
-      zuza: body.includes('Zuzanna Bartoszcze'),
-    },
-  };
-});
+// Every row's text is reported; which people it names is read from the rows,
+// not checked against names written here.
+const out = await page.evaluate(() => ({
+  url: location.href,
+  tables: Array.from(document.querySelectorAll('table')).map((table, i) => ({
+    i,
+    rows: table.querySelectorAll('tbody tr').length,
+    text: Array.from(table.querySelectorAll('tbody tr')).map((r) =>
+      r.innerText.trim().replace(/\s+/g, ' '),
+    ),
+  })),
+}));
 console.log(JSON.stringify(out, null, 2));
 process.exit(0);

@@ -97,15 +97,21 @@ try {
 } catch (e) {
   /* auto-assigned */
 }
-await setAuto('miejsce_realizacji_wojewodztwo', 'LUBELSKIE');
-await setAuto('miejsce_realizacji_powiat', 'Lublin');
-await setAuto('miejsce_realizacji_gmina', 'Lublin');
-await setAuto('miejsce_realizacji_miejscowosc', 'Lublin');
-await setAuto('miejsce_realizacji_ulica', 'Frezerów');
+// The implementation place is the applicant record's miejsce_realizacji_*
+// fields, under the form's own field names.
+const PLACE = (await import('#ncbr-settings')).applicantField;
+for (const name of [
+  'miejsce_realizacji_wojewodztwo',
+  'miejsce_realizacji_powiat',
+  'miejsce_realizacji_gmina',
+  'miejsce_realizacji_miejscowosc',
+  'miejsce_realizacji_ulica',
+])
+  await setAuto(name, PLACE(name));
 await humanFill(
   page,
   page.locator("[name$='miejsce_realizacji_nr_budynku']").first(),
-  '3',
+  PLACE('miejsce_realizacji_nr_budynku'),
 );
 await humanIdlePause('deliberate');
 await humanIdlePause('deliberate');

@@ -156,3 +156,16 @@ export function applicantField(name) {
 export function applicantShortName() {
   return applicantField('nazwa_skrocona');
 }
+
+/**
+ * One list of the applicant record (contacts, withdrawn_contacts), refused by
+ * name when the record does not state it; an empty list is a stated list.
+ */
+export function applicantList(name) {
+  const list = applicantRecord()[name];
+  if (!Array.isArray(list))
+    throw new Error(
+      `the applicant record ${applicantRecordFile()} states no ${name} list; nothing is assumed`,
+    );
+  return list;
+}
