@@ -15,6 +15,10 @@ export function initScript(policyVersion: string): void {
       });
     } catch {}
   };
+  // A withholding the page refused to install leaves that API reachable; the
+  // ledger records it as unenforced, as a refusal the network route could not
+  // deliver is, instead of the run carrying a policy version that covers it.
+  const unenforced = (api: string) => report('page_api_unenforced', api);
   const denied = () =>
     new DOMException(
       'Withheld by Weles browser-evidence policy',
@@ -26,8 +30,9 @@ export function initScript(policyVersion: string): void {
     category: string,
     prefix: string,
   ) => {
-    if (!owner || (typeof owner !== 'object' && typeof owner !== 'function'))
-      return;
+    // Only an object or a function carries methods: Object() returns any
+    // other value (an absent API included) as a different, wrapped value.
+    if (Object(owner) !== owner) return;
     for (const method of methods) {
       try {
         const record = owner as Record<string, unknown>;
@@ -39,7 +44,9 @@ export function initScript(policyVersion: string): void {
             throw denied();
           },
         });
-      } catch {}
+      } catch {
+        unenforced(`${prefix}.${method}`);
+      }
     }
   };
 
@@ -62,7 +69,9 @@ export function initScript(policyVersion: string): void {
         },
       });
     }
-  } catch {}
+  } catch {
+    unenforced('permissions.query');
+  }
 
   try {
     Object.defineProperty(globalThis, 'Notification', {
@@ -81,7 +90,9 @@ export function initScript(policyVersion: string): void {
         }
       },
     });
-  } catch {}
+  } catch {
+    unenforced('Notification');
+  }
 
   try {
     const media = navigator.mediaDevices;
@@ -91,7 +102,9 @@ export function initScript(policyVersion: string): void {
       'browser_permission_api',
       'mediaDevices',
     );
-  } catch {}
+  } catch {
+    unenforced('mediaDevices');
+  }
 
   try {
     const geo = navigator.geolocation;
@@ -130,7 +143,9 @@ export function initScript(policyVersion: string): void {
         },
       });
     }
-  } catch {}
+  } catch {
+    unenforced('geolocation');
+  }
 
   try {
     denyAsyncMethods(
@@ -139,7 +154,9 @@ export function initScript(policyVersion: string): void {
       'browser_permission_api',
       'clipboard',
     );
-  } catch {}
+  } catch {
+    unenforced('clipboard');
+  }
   const navigatorCapabilities = navigator as unknown as Record<string, unknown>;
   denyAsyncMethods(
     navigatorCapabilities.usb,
@@ -197,7 +214,9 @@ export function initScript(policyVersion: string): void {
           throw denied();
         },
       });
-    } catch {}
+    } catch {
+      unenforced(picker);
+    }
   }
 
   try {
@@ -210,7 +229,9 @@ export function initScript(policyVersion: string): void {
         }
       },
     });
-  } catch {}
+  } catch {
+    unenforced('PaymentRequest');
+  }
   for (const rtcName of ['RTCPeerConnection', 'webkitRTCPeerConnection']) {
     try {
       if (!(rtcName in globalThis)) continue;
@@ -223,7 +244,9 @@ export function initScript(policyVersion: string): void {
           }
         },
       });
-    } catch {}
+    } catch {
+      unenforced(rtcName);
+    }
   }
   try {
     Object.defineProperty(globalThis, 'open', {
@@ -233,7 +256,9 @@ export function initScript(policyVersion: string): void {
         return null;
       },
     });
-  } catch {}
+  } catch {
+    unenforced('window.open');
+  }
   try {
     Object.defineProperty(navigator, 'registerProtocolHandler', {
       configurable: false,
@@ -242,7 +267,9 @@ export function initScript(policyVersion: string): void {
         throw denied();
       },
     });
-  } catch {}
+  } catch {
+    unenforced('navigator.registerProtocolHandler');
+  }
 
   Object.defineProperty(globalThis, '__welesBrowserEvidencePolicyVersion', {
     configurable: false,
