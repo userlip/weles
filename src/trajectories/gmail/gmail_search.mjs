@@ -14,13 +14,17 @@
 //     text, printing a structured PASS report.
 //
 // Run:  node src/trajectories/gmail/gmail_search.mjs
-// Env:  GM_QUERY  overrides the Gmail search query
+// Env:  GM_QUERY  the Gmail search query (required; no mailbox is read
+//                 without one)
 //       GM_OPEN=0 skips opening thread bodies (list only)
 import { launchRealChrome } from '../../browser/real_chrome.mjs';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
 
-const QUERY = process.env.GM_QUERY || 'newer_than:1y in:anywhere';
+// What is read from the mailbox is the caller's; a built-in query read a
+// year of every message.
+const QUERY = statedText(['GM_QUERY'], 'the Gmail search query to read');
 const OPEN_BODIES = process.env.GM_OPEN !== '0';
 const SEARCH_URL =
   'https://mail.google.com/mail/u/0/#search/' + encodeURIComponent(QUERY);
