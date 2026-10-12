@@ -297,6 +297,16 @@ export const BROWSER_TOOLS: readonly FunctionTool[] = [
   ),
 ];
 
+/**
+ * Tools whose call is a judgement of the page as it is now: `read` answers
+ * from the current screenshot and `done` claims the goal is met. A replay
+ * never reuses a recorded one; the model decides it again on the live page.
+ */
+export const DECIDED_ON_LIVE_PAGE: Readonly<Record<string, true>> = {
+  read: true,
+  done: true,
+};
+
 export async function dispatch(
   session: WSession,
   tool: string,

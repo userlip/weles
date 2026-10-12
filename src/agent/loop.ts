@@ -8,7 +8,7 @@
  */
 
 import type { WSession } from '../session/wsession.js';
-import { dispatch } from './tools.js';
+import { DECIDED_ON_LIVE_PAGE, dispatch } from './tools.js';
 import { Capture } from '../capture/capture.js';
 import { loadFlow, saveFlow, replayFlow } from '../session/flows.js';
 import { pageSettled } from '../browser/settled.js';
@@ -171,7 +171,8 @@ export async function execute(
     if (
       replay &&
       step < replay.length &&
-      (options?.replayOnly || !['read', 'done'].includes(replay[step].tool))
+      (options?.replayOnly ||
+        !Object.hasOwn(DECIDED_ON_LIVE_PAGE, replay[step].tool))
     ) {
       decision = replay[step];
       console.log(
