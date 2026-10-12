@@ -27,11 +27,36 @@ export const SIGN_PATH = '/v1/artifacts/sign';
 export const OBJECT_PATH = '/v1/artifacts/object';
 const SUBSCRIPTIONS_PATH = '/v1/subscriptions';
 const WELES_ARTIFACT_PREFIX = 'stado://weles/recordings/';
-// The four kinds of artifact a run produces, from `artifact-kinds.json`
-// beside this module. Exported because the uploading client used to keep
-// its own copy of the same names, so a kind added here was signed by the
-// server and never uploaded by the client.
-export const ARTIFACT_KINDS = declaredKinds.kinds as readonly string[];
+// The kinds of artifact a run produces, the keys of `artifact-kinds.json`
+// beside this module (each with what it holds). Exported because the
+// uploading client used to keep its own copy of the same names, so a kind
+// added here was signed by the server and never uploaded by the client.
+export const ARTIFACT_KINDS: readonly string[] = Object.keys(
+  declaredKinds.kinds,
+);
+
+/** The kind a run's file is uploaded under and the content type it is stored with. */
+export type ArtifactFileType = { kind: string; contentType: string };
+
+const DECLARED_FILE_TYPES: Readonly<Record<string, ArtifactFileType>> =
+  Object.fromEntries(
+    Object.entries(declaredKinds.kinds).flatMap(([kind, declared]) =>
+      Object.entries(declared.files as Record<string, string>).map(
+        ([extension, contentType]) => [extension, { kind, contentType }],
+      ),
+    ),
+  );
+
+/**
+ * The declared kind and content type of a file with this extension; a type
+ * no kind declares is uploaded as the declaration's `undeclared` says, so a
+ * capture is never skipped by its extension.
+ */
+export function artifactFileType(extension: string): ArtifactFileType {
+  if (Object.hasOwn(DECLARED_FILE_TYPES, extension))
+    return DECLARED_FILE_TYPES[extension];
+  return declaredKinds.undeclared;
+}
 export const MILLIS_PER_SECOND = 1000;
 // A signature is the hex digest of the HMAC's own algorithm, so its length is
 // that digest's, not a number kept beside it.
@@ -123,12 +148,7 @@ export function normalizeArtifactLocators(value: unknown): ArtifactLocatorSet {
     );
   }
 
-  const normalized = {
-    screenshots: [],
-    videos: [],
-    dom: [],
-    logs: [],
-  } as ArtifactLocatorSet;
+  const normalized: ArtifactLocatorSet = {};
   for (const kind of ARTIFACT_KINDS) {
     const entries = value[kind];
     if (!Array.isArray(entries))

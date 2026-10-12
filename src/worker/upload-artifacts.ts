@@ -13,7 +13,12 @@
 import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { ArtifactLocatorSet } from './artifacts/artifact-delivery.js';
+import {
+  ARTIFACT_KINDS,
+  artifactFileType,
+  type ArtifactFileType,
+  type ArtifactLocatorSet,
+} from './artifacts/artifact-delivery.js';
 
 const RECORDINGS_ROOT =
   process.env.WELES_RECORDINGS_ROOT ??
@@ -32,35 +37,6 @@ const ARTIFACT_PREFIX = 'recordings';
 const UPLOAD_PROOF_NAME = '.uploaded.json';
 
 let stadoObjectConfig: { apiUrl: string; token: string } | null = null;
-
-const KIND_BY_EXT: Record<
-  string,
-  'screenshots' | 'videos' | 'dom' | 'logs' | null
-> = {
-  '.png': 'screenshots',
-  '.jpg': 'screenshots',
-  '.jpeg': 'screenshots',
-  '.webm': 'videos',
-  '.mp4': 'videos',
-  '.html': 'dom',
-  '.ndjson': 'logs',
-  '.log': 'logs',
-  // The merged fingerprint dump written by net_record.ts + finalize.ts —
-  // accesses, requests, console, pageerrors, persona, proxy, versions in
-  // one file. Uploaded as a 'logs' artifact so it appears in the existing
-  // /weles inspection UI's logs column without a schema change.
-  '.json': 'logs',
-  // G5: source_diff.patch — the full `git diff` captured when a run executed
-  // against a dirty repo/trajectory. Uploaded as 'logs' so the exact uncommitted
-  // source that produced the row is recoverable from storage.
-  '.patch': 'logs',
-  // G17: forensic captures — full HAR (request/response + bodies) and the raw
-  // packet capture (decryptable with the sibling sslkey.log). Previously
-  // excluded by extension; now uploaded so the capture is truly complete.
-  '.har': 'logs',
-  '.pcap': 'logs',
-  '.txt': 'logs',
-};
 
 function requireStadoObjectConfig(): { apiUrl: string; token: string } {
   if (stadoObjectConfig) return stadoObjectConfig;
@@ -282,27 +258,14 @@ async function uploadOne(
   return putPrivateStadoObject(OBJECT_NAMESPACE, objectKey, body, contentType);
 }
 
-function contentTypeFor(ext: string): string {
-  if (ext === '.png') return 'image/png';
-  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
-  if (ext === '.webm') return 'video/webm';
-  if (ext === '.mp4') return 'video/mp4';
-  if (ext === '.html') return 'text/html';
-  if (ext === '.json' || ext === '.har') return 'application/json';
-  if (ext === '.ndjson') return 'application/x-ndjson';
-  if (ext === '.pcap') return 'application/vnd.tcpdump.pcap';
-  if (ext === '.log' || ext === '.txt' || ext === '.patch') return 'text/plain';
-  return 'application/octet-stream';
-}
-
-type Kind = 'screenshots' | 'videos' | 'dom' | 'logs';
+type RunFile = { path: string; rel: string; type: ArtifactFileType };
 
 // Recursively collect every file under a run directory, preserving the path
 // relative to it (so the storage layout mirrors the on-disk tree).
 async function collectTree(
   root: string,
   relBase: string,
-  out: Array<{ path: string; rel: string; ext: string; kind: Kind }>,
+  out: RunFile[],
 ): Promise<void> {
   let entries: Awaited<ReturnType<typeof readdir>> = [];
   try {
@@ -324,10 +287,13 @@ async function collectTree(
       await collectTree(full, rel, out);
       continue;
     }
-    const ext = extname(name).toLowerCase();
-    // Full capture: never skip by extension — unknown types upload as 'logs'.
-    const kind: Kind = (KIND_BY_EXT[ext] ?? 'logs') as Kind;
-    out.push({ path: full, rel, ext, kind });
+    // Full capture: every file goes up, under the kind and content type
+    // artifact-kinds.json declares for its extension.
+    out.push({
+      path: full,
+      rel,
+      type: artifactFileType(extname(name).toLowerCase()),
+    });
   }
 }
 
@@ -340,32 +306,19 @@ export async function uploadArtifacts(
   requireStadoObjectConfig();
 
   const runDir = join(RECORDINGS_ROOT, logId);
-  const files: Array<{ path: string; rel: string; ext: string; kind: Kind }> =
-    [];
+  const files: RunFile[] = [];
   await collectTree(runDir, '', files);
   if (!files.length) return null;
 
-  const locators: ArtifactLocatorSet = {
-    screenshots: [],
-    videos: [],
-    dom: [],
-    logs: [],
-  };
+  const locators: ArtifactLocatorSet = Object.fromEntries(
+    ARTIFACT_KINDS.map((kind) => [kind, []]),
+  );
   for (const f of files) {
     const objectKey = `${ARTIFACT_PREFIX}/${logId}/${f.rel}`;
-    const locator = await uploadOne(f.path, objectKey, contentTypeFor(f.ext));
-    (locators[f.kind] as string[]).push(locator);
+    const locator = await uploadOne(f.path, objectKey, f.type.contentType);
+    locators[f.type.kind].push(locator);
   }
 
-  if (
-    !(
-      locators.screenshots.length +
-      locators.videos.length +
-      locators.dom.length +
-      locators.logs.length
-    )
-  )
-    return null;
   await writeUploadProof(runDir, logId, files);
   return locators;
 }

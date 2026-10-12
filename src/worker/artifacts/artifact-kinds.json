@@ -1,4 +1,37 @@
 {
-  "why": "What a run produces and the delivery path carries: the screenshots, the videos, the DOM snapshots and the logs. The signing server and the uploading client each kept their own copy of these four names, so a kind added on one side is signed and never uploaded, or uploaded and never signed. Declared as data so adding a kind here changes both sides at once, and the locator set's type follows it.",
-  "kinds": ["screenshots", "videos", "dom", "logs"]
+  "why": "What a run produces and the delivery path carries: each kind with what it holds and the file types (extension and the content type it is stored with) that belong to it. The signing server, the uploading client and the uploader's sorting of a run's files each kept their own copy of these names, so a kind or a file type added on one side was signed and never uploaded, or uploaded under the wrong kind. Declared as data so adding a kind or a file type here changes every side at once, and the locator set's type follows it.",
+  "kinds": {
+    "screenshots": {
+      "holds": "Still images of the page taken during the run.",
+      "files": {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg"
+      }
+    },
+    "videos": {
+      "holds": "Recordings of the browser for the whole run.",
+      "files": { ".webm": "video/webm", ".mp4": "video/mp4" }
+    },
+    "dom": {
+      "holds": "Snapshots of the page's document as the run saw it.",
+      "files": { ".html": "text/html" }
+    },
+    "logs": {
+      "holds": "Everything else the run wrote: its output, the merged fingerprint dump (.json), the source diff of a dirty checkout (.patch), the full HAR and the packet capture with its key log. A run's file of a type no kind declares is kept here too, so a capture is never skipped by its extension.",
+      "files": {
+        ".ndjson": "application/x-ndjson",
+        ".log": "text/plain",
+        ".json": "application/json",
+        ".patch": "text/plain",
+        ".har": "application/json",
+        ".pcap": "application/vnd.tcpdump.pcap",
+        ".txt": "text/plain"
+      }
+    }
+  },
+  "undeclared": {
+    "kind": "logs",
+    "contentType": "application/octet-stream"
+  }
 }
