@@ -241,48 +241,48 @@ export function buildSiblingManifest(dir: string, instFn: string): any[] {
   }
 }
 
-// Process-wide console capture. Each WSession owns its own list of console
-// lines from startInstrumentation on; the patched console appends every line to
-// the list of every session still alive, so concurrent sessions see only their
-// own lines and nothing is dropped. A session's list is held weakly here: when
-// the session is gone, so is its list, which bounds memory by the sessions that
-// exist rather than by a line count. Patches console once per process; safe to
-// call from every WSession.start.
-import { CONSOLE_LEVELS } from './capture/capture_constants.js';
-type ConsoleLine = { t: number; level: string; line: string };
+// Process-wide output capture. Each WSession owns its own list of the lines
+// the process printed from startInstrumentation on; every write to the
+// process's stdout and stderr streams is appended to the list of every session
+// still alive, so concurrent sessions see only their own lines and nothing is
+// dropped, whichever console method or direct write printed it. Each line
+// names the file descriptor it was written to. A session's list is held
+// weakly here: when the session is gone, so is its list, which bounds memory
+// by the sessions that exist rather than by a line count. Patches the streams
+// once per process; safe to call from every WSession.start.
+type ConsoleLine = { t: number; fd: number; line: string };
 const SESSION_LINES = new Set<WeakRef<ConsoleLine[]>>();
-let _consolePatched = false;
-function patchConsoleOnce(): void {
-  if (_consolePatched) return;
-  _consolePatched = true;
-  const formats = (args: any[]) =>
-    args
-      .map((a) => {
-        try {
-          return typeof a === 'string' ? a : JSON.stringify(a);
-        } catch {
-          return String(a);
-        }
-      })
-      .join(' ');
-  for (const level of CONSOLE_LEVELS) {
-    const orig = (console as any)[level].bind(console);
-    (console as any)[level] = (...args: any[]) => {
-      try {
-        const entry = { t: Date.now(), level, line: formats(args) };
-        for (const reference of SESSION_LINES) {
-          const lines = reference.deref();
-          if (lines) lines.push(entry);
-          else SESSION_LINES.delete(reference);
-        }
-      } catch {}
-      orig(...args);
+let _streamsPatched = false;
+function teeStream(
+  stream: typeof process.stdout | typeof process.stderr,
+): void {
+  const write = stream.write.bind(stream) as (...args: unknown[]) => boolean;
+  stream.write = ((chunk: unknown, ...rest: unknown[]) => {
+    const entry = {
+      t: Date.now(),
+      fd: stream.fd,
+      line:
+        typeof chunk === 'string'
+          ? chunk
+          : Buffer.from(chunk as Uint8Array).toString('utf8'),
     };
-  }
+    for (const reference of SESSION_LINES) {
+      const lines = reference.deref();
+      if (lines) lines.push(entry);
+      else SESSION_LINES.delete(reference);
+    }
+    return write(chunk, ...rest);
+  }) as typeof stream.write;
+}
+function patchStreamsOnce(): void {
+  if (_streamsPatched) return;
+  _streamsPatched = true;
+  teeStream(process.stdout);
+  teeStream(process.stderr);
 }
 export function attachStdoutCapture(ws: { _instStdout?: ConsoleLine[] }): void {
   try {
-    patchConsoleOnce();
+    patchStreamsOnce();
     const lines: ConsoleLine[] = [];
     ws._instStdout = lines;
     SESSION_LINES.add(new WeakRef(lines));
