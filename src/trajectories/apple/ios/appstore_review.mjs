@@ -157,10 +157,11 @@ async function writeReviewButton(sid) {
 // tree, observed rather than counted: a scroll that leaves the UI source
 // unchanged means the listing ended without one. The drag count and screen
 // coordinates once here assumed one phone size.
+// The App Store renders a listing as a collection view.
 async function scrollToWriteReview(sid) {
   const listing = await findFirst(
     sid,
-    `type == "XCUIElementTypeCollectionView" OR type == "XCUIElementTypeScrollView"`,
+    `type == "XCUIElementTypeCollectionView"`,
   );
   if (!listing) {
     await dumpUiSource(sid, 'listing-missing');
@@ -216,11 +217,13 @@ try {
   await humanIdlePause('deliberate');
 
   // 4. Sign-in modal. If the Apple ID isn't signed into Media & Purchases,
-  // iOS shows a system sheet — we can't dismiss it programmatically because
-  // the operator chose not to sign in. Fail loud so the operator notices.
+  // iOS shows a system sheet asking for the Apple ID password, which is the
+  // only secure text field this flow can meet. We can't dismiss it
+  // programmatically because the operator chose not to sign in. Fail loud so
+  // the operator notices.
   const signInPrompt = await findFirst(
     sid,
-    `name == "Sign In" OR name == "Apple ID Password"`,
+    `type == "XCUIElementTypeSecureTextField"`,
   );
   if (signInPrompt) {
     await dumpUiSource(sid, 'sign-in-prompt');
@@ -242,12 +245,9 @@ try {
   await tapElement(sid, starBtn);
   await humanIdlePause('deliberate');
 
-  // 6. Title field. The review sheet textfield labelled "Title" is the
-  // top input.
-  const titleField = await findFirst(
-    sid,
-    `type == "XCUIElementTypeTextField" AND (name == "Title" OR label == "Title")`,
-  );
+  // 6. Title field: the review sheet's single-line text field (the body below
+  // it is a text view).
+  const titleField = await findFirst(sid, `type == "XCUIElementTypeTextField"`);
   if (!titleField) {
     await dumpUiSource(sid, 'title-field-missing');
     console.log('FAIL: title text field not found');
