@@ -1,185 +1,50 @@
-// The Cleverbridge and Stripe checkout: never Link; manual card entry from the shared
-// card loader, the cardholder fields, and the most committal button at every step.
-import { fillStripeElements } from '../../../_shared/services/topup_common.mjs';
-import { humanIdlePause } from '../../../../../dist/human/mouse.js';
+// The Cleverbridge steps up to Stripe, then Stripe's own checkout.
+//
+// Cleverbridge's steps (plan, payment method) are each a form; each is
+// submitted through its own submit control until the browser is handed to
+// checkout.stripe.com. There the shared payer (stripe/hosted_checkout.mjs)
+// enters the topup card by hand, never through Link, and answers Stripe's own
+// verdict on the payment: the subscription is bought when Stripe says the
+// payment intent succeeded, not when an address holds a success word. A step
+// that offers no form to submit stops the run naming the page and its
+// buttons.
 import { pageSettled } from '../../../_shared/page/settled.mjs';
-import { humanType } from '../../../../../dist/human/keyboard.js';
+import {
+  CHECKOUT_HOST,
+  payHostedCheckout,
+  topupCard,
+} from '../../../stripe/hosted_checkout.mjs';
 import { shot } from './evidence.mjs';
 
 export async function completeCheckout(s) {
-  // Cleverbridge → Stripe checkout. Path:
-  //   /payment-method [Continue] → checkout.stripe.com (Stripe Link OTP modal)
-  //   → "Send code to email instead" → poll real-Chrome Gmail tab for the OTP
-  //     via osascript runJs (same pattern as gw_migrate_gmail.mjs) → fill 6
-  //     cells → saved card auto-charges → success URL.
-  // No manual card entry — Link uses the card already stored under the
-  // shared Google SSO account, only the OTP gates it.
-  // However many steps the checkout shows are walked; it ends on a success
-  // address or a step with no committal control.
-  for (let step = 0; ; step++) {
+  const card = topupCard();
+  for (;;) {
     await pageSettled(s.page);
     const url = s.page.url();
-    const btns = await s.page.evaluate(() =>
-      Array.from(document.querySelectorAll('button'))
-        .filter((b) => b.offsetParent)
-        .map((b) => (b.textContent || '').trim())
-        .filter(Boolean),
-    );
-    console.log(
-      `[trajectory] checkout step ${step}: url=${url} btns=${JSON.stringify(btns)}`,
-    );
-    await shot(s, `checkout_step${step}`);
-
-    // Success page detection.
-    if (/success|thank-you|order-confirmation|subscribe-success/i.test(url)) {
-      console.log(`[trajectory] reached success URL: ${url}`);
+    const at = new URL(url);
+    await shot(s, `checkout${at.pathname.replace(/\W+/g, '_')}`);
+    if (at.hostname === CHECKOUT_HOST) {
+      const intent = await payHostedCheckout(s, { card, email: null });
+      console.log(
+        `[trajectory] Stripe charged the subscription: payment intent ${intent.id}; now at ${s.page.url()}`,
+      );
       await shot(s, 'success');
-      break;
+      return intent;
     }
-
-    // Stripe Link OTP modal detection: 6 single-digit cells.
-    // EXPLICIT: We do NOT use Link. If the modal appears, click "Pay without
-    // Link" to drop to manual card entry, then fillStripeElements with creds
-    // from whichever source the shared loader answered with / TOPUP_CARD_* env.
-    const linkOtpVisible = await s.page
-      .evaluate(() => {
-        const cells = Array.from(
-          document.querySelectorAll(
-            'input[maxlength="1"], input[inputmode="numeric"]',
-          ),
-        ).filter((i) => i.offsetParent !== null);
-        return cells.length >= 6;
-      })
-      .catch(() => false);
-
-    if (linkOtpVisible) {
-      console.log(
-        '[trajectory] Stripe Link OTP modal detected — clicking "Pay without Link" (per directive: never use Link)',
-      );
-      const noLinkBtn = s.page
-        .locator(
-          'button:has-text("Pay without Link"), a:has-text("Pay without Link")',
-        )
+    const submit = s.page
+      .locator('form button[type="submit"], form input[type="submit"]')
+      .filter({ visible: true })
+      .last();
+    if (!(await submit.isVisible())) {
+      const offered = await s.page
+        .locator('button, [role="button"]')
         .filter({ visible: true })
-        .first();
-      if (!(await noLinkBtn.isVisible().catch(() => false))) {
-        console.log('FAIL: "Pay without Link" not visible');
-        await shot(s, 'no_pay_without_link');
-        process.exit(2);
-      }
-      await noLinkBtn.click({ force: true });
-      await pageSettled(s.page);
-      await shot(s, 'after_pay_without_link');
-
-      // Fill card fields using the shared helper.
-      const filled = await fillStripeElements(s.page);
-      console.log(`[trajectory] fillStripeElements: ${JSON.stringify(filled)}`);
-      if (!filled.ok) {
-        console.log(
-          `FAIL: card fill failed: ${filled.reason || JSON.stringify(filled.filled)}`,
-        );
-        await shot(s, 'card_fill_failed');
-        process.exit(2);
-      }
-      await humanIdlePause('deliberate');
-
-      // The Cleverbridge subscribe form also requires the cardholder name and
-      // billing address beyond what fillStripeElements covers. They come from
-      // the card's own TOPUP_CARD_NAME, TOPUP_CARD_STREET and TOPUP_CARD_CITY:
-      // an address written here would bill the card at a street that is not
-      // its owner's, which the issuer can decline or flag.
-      const billing = {
-        name: process.env.TOPUP_CARD_NAME,
-        street: process.env.TOPUP_CARD_STREET,
-        city: process.env.TOPUP_CARD_CITY,
-      };
-      const missing = Object.entries(billing)
-        .filter(([, value]) => !value)
-        .map(([field]) => `TOPUP_CARD_${field.toUpperCase()}`);
-      if (missing.length)
-        throw new Error(
-          `the card's billing details are not set (${missing.join(', ')}), so the subscription was not submitted`,
-        );
-      const { name, street, city } = billing;
-      const fillExtra = async (selector, value) => {
-        const loc = s.page.locator(selector).filter({ visible: true }).first();
-        if (!(await loc.isVisible())) return false;
-        await loc.click({ force: true });
-        await loc.fill('');
-        await humanType(s.page, value);
-        return true;
-      };
-      const nameFilled = await fillExtra(
-        'input[name="billingName"], input[autocomplete="cc-name"], input[placeholder*="Full name on card" i], input[placeholder*="Cardholder" i]',
-        name,
+        .allInnerTexts();
+      throw new Error(
+        `OXYLABS_CHECKOUT_STEP: ${url} offers no form to submit before Stripe; its buttons: ${offered.join(' | ')}`,
       );
-      const streetFilled = await fillExtra(
-        'input[name="billingAddressLine1"], input[autocomplete="address-line1"], input[placeholder="Address" i]',
-        street,
-      );
-      const cityFilled = await fillExtra(
-        'input[name="billingLocality"], input[autocomplete="address-level2"], input[placeholder="City" i]',
-        city,
-      );
-      console.log(
-        `[trajectory] extra fields: name=${nameFilled} street=${streetFilled} city=${cityFilled}`,
-      );
-      await humanIdlePause('short');
-      await shot(s, 'after_card_fill');
-      // Click Subscribe / Pay.
-      const subBtn = s.page
-        .locator('button:has-text("Subscribe"), button:has-text("Pay")')
-        .filter({ visible: true })
-        .last();
-      if (!(await subBtn.isVisible().catch(() => false))) {
-        console.log('FAIL: no Subscribe/Pay button after card fill');
-        await shot(s, 'no_subscribe_after_fill');
-        process.exit(2);
-      }
-      await shot(s, 'before_final_subscribe');
-      console.log('[trajectory] clicking final Subscribe…');
-      await subBtn.click({ force: true });
-      await pageSettled(s.page);
-      await shot(s, 'after_final_subscribe');
-      continue;
     }
-
-    // No OTP modal — pick the most-committal button.
-    const commitOrder = [
-      'button:has-text("Subscribe")',
-      'button:has-text("Pay")',
-      'button:has-text("Place order")',
-      'button:has-text("Complete")',
-      'button:has-text("Confirm")',
-      'button:has-text("Continue")',
-    ];
-    let clicked = false;
-    for (const sel of commitOrder) {
-      const btn = s.page.locator(sel).filter({ visible: true }).last();
-      if (await btn.isVisible().catch(() => false)) {
-        const txt = await btn.textContent().catch(() => '');
-        // Defensive: do NOT click "Pay without Link" — that drops to manual
-        // card entry. We want the saved-card path via Link OTP.
-        if (/without\s+link/i.test(txt || '')) {
-          console.log(
-            `[trajectory] skipping "${(txt || '').trim()}" — would drop to manual card form`,
-          );
-          continue;
-        }
-        await shot(
-          s,
-          `before_click_${(txt || '').trim().slice(0, 16).replace(/\W+/g, '_')}_step${step}`,
-        );
-        console.log(`[trajectory] clicking "${(txt || '').trim()}"…`);
-        await btn.click({ force: true });
-        clicked = true;
-        break;
-      }
-    }
-    if (!clicked) {
-      console.log(`[trajectory] no committal button at step ${step}`);
-      break;
-    }
-    await pageSettled(s.page);
+    console.log(`[trajectory] checkout step: submitting ${url}`);
+    await submit.click();
   }
 }
