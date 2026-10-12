@@ -27,6 +27,7 @@ import {
 import { loadAvatarFile } from '../../_shared/runner/avatar-loader.mjs';
 import { updateAccountMetadata } from '../../_shared/skarbiec/accounts.mjs';
 import { fitsField } from '../../_shared/page/fits.mjs';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 
 const acct = await getSocialAccount('reddit');
 if (!acct) {
@@ -133,6 +134,33 @@ try {
     }
   }
 
+  // The text is saved, and read back from a reloaded settings page, before
+  // the avatar step navigates to the user page: leaving first discarded the
+  // typed name and about, and a click on Save proves nothing about what
+  // Reddit kept.
+  if (writes.length) {
+    const saveBtn = s.page
+      .locator('button:has-text("Save"), button[type="submit"]')
+      .filter({ visible: true })
+      .first();
+    await saveBtn.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, saveBtn);
+    await pageSettled(s.page);
+    await s.page.reload({ waitUntil: 'domcontentloaded' });
+    await pageSettled(s.page);
+    for (const [field, target, what] of [
+      [nameIn, targetName, 'display name'],
+      [bioIn, targetBio, 'about text'],
+    ]) {
+      if (!target) continue;
+      const kept = await field.inputValue();
+      if (kept.trim() !== target.trim())
+        throw new Error(
+          `Reddit kept a ${what} of ${kept.length} characters after Save, not the ${target.length} written`,
+        );
+    }
+  }
+
   // Avatar upload — reddit's avatar-edit affordance lives on the user
   // profile page:
   //   1. nav /user/<u>/
@@ -216,15 +244,6 @@ try {
     );
   } else {
     console.log(`[rd-profile] writes: ${writes.join('; ')}`);
-
-    // shreddit's save uses a Save button at the bottom of the form section.
-    const saveBtn = s.page
-      .locator('button:has-text("Save"), button[type="submit"]')
-      .filter({ visible: true })
-      .first();
-    await saveBtn.waitFor({ state: 'visible' });
-    await humanClickLocator(s.page, saveBtn);
-    await humanIdlePause('deliberate');
     recordProfile();
     console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
   }
