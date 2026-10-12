@@ -9,17 +9,25 @@ import {
   VERIFY_CODE,
 } from './accounts_center_add_phone/settings.mjs';
 import {
+  asksForCode,
   bringBrowserToFront,
+  offersPhoneForm,
   snapshot,
   stableProfilePersona,
 } from './accounts_center_add_phone/page.mjs';
 import {
-  clickFirst,
+  clickControl,
+  clickWhenShown,
   fillCode,
   fillPhone,
+  SUBMIT_FORM,
   selectPhoneAssociationAccount,
-  waitAndClickFirst,
 } from './accounts_center_add_phone/steps.mjs';
+
+const PASSKEY_OFFERED =
+  'Does the page offer to create a passkey, with a way to decline it for now?';
+const DECLINE_PASSKEY =
+  'the button that declines creating a passkey for now (not the one that creates it)';
 
 const s = await WSession.start({
   label: 'meta_accounts_center_add_phone',
@@ -40,116 +48,85 @@ try {
       waitUntil: 'domcontentloaded',
     },
   );
-  const initial = await snapshot(s.page, 'contact_points_initial');
+  await snapshot(s.page, 'contact_points_initial');
   if (CODE_ONLY) {
     if (!VERIFY_CODE)
       throw new Error(
         'META_VERIFY_CODE is required when META_VERIFY_CODE_ONLY=1',
       );
-    if (!initial.statusHints.code) {
-      await clickFirst(
+    if (!(await asksForCode(s.page))) {
+      await clickControl(
         s.page,
         'open_pending_contact',
-        /Oczekuje na potwierdzenie|Pending confirmation|pending/i,
+        'the phone number contact that is waiting for confirmation',
       );
     }
-    let codeScreen = await snapshot(s.page, 'code_only_screen');
-    if (!codeScreen.statusHints.code) {
-      await clickFirst(
+    await snapshot(s.page, 'code_only_screen');
+    if (!(await asksForCode(s.page))) {
+      await clickControl(
         s.page,
         'confirm_pending_contact',
-        /Potwierdź numer|Confirm number|Verify number/i,
+        'the button that confirms the pending phone number',
       );
-      codeScreen = await snapshot(s.page, 'code_only_confirm_screen');
+      await snapshot(s.page, 'code_only_confirm_screen');
     }
-    if (!codeScreen.statusHints.code && codeScreen.statusHints.phoneChoice) {
+    if (!(await asksForCode(s.page)) && (await offersPhoneForm(s.page))) {
       await fillPhone(s.page);
       await selectPhoneAssociationAccount(s.page);
       await snapshot(s.page, 'code_only_phone_form_ready');
-      const phoneSubmitted = await clickFirst(
-        s.page,
-        'submit_code_only_phone_form',
-        /^(Dalej|Next|Wyślij|Send|Kontynuuj|Continue)$/i,
-      );
-      if (!phoneSubmitted)
-        throw new Error(
-          'No enabled submit button found while reopening pending phone confirmation',
-        );
-      codeScreen = await snapshot(s.page, 'code_only_after_phone_submit');
+      await clickControl(s.page, 'submit_code_only_phone_form', SUBMIT_FORM);
+      await snapshot(s.page, 'code_only_after_phone_submit');
     }
-    if (!codeScreen.statusHints.code)
+    if (!(await asksForCode(s.page)))
       throw new Error(
         'No confirmation code screen found for META_VERIFY_CODE_ONLY=1',
       );
     if (!(await fillCode(s.page)))
       throw new Error('No confirmation code input found');
     await snapshot(s.page, 'code_only_filled');
-    const submitted = await clickFirst(
-      s.page,
-      'submit_code_only',
-      /^(Dalej|Next|Wyślij|Send|Kontynuuj|Continue)$/i,
-    );
-    if (!submitted)
-      throw new Error(
-        'No enabled code submit button found in META_VERIFY_CODE_ONLY=1',
-      );
+    await clickControl(s.page, 'submit_code_only', SUBMIT_FORM);
     await snapshot(s.page, 'after_code_only_submit');
-    await waitAndClickFirst(
+    await clickWhenShown(
       s.page,
       'skip_passkey',
-      /^(Nie teraz|Not now)$/i,
-      /Utwórz|Create/i,
+      PASSKEY_OFFERED,
+      DECLINE_PASSKEY,
     );
     await snapshot(s.page, 'after_code_only_passkey_skip');
     await bringBrowserToFront(s);
   } else {
-    const add = await clickFirst(
+    await clickControl(
       s.page,
       'add_new_contact',
-      /Dodaj nowy kontakt|Add new contact/i,
+      'the control that adds a new contact point',
     );
-    if (!add) throw new Error('No Add new contact control found');
     await snapshot(s.page, 'after_add_new_contact');
-    await clickFirst(
+    await clickControl(
       s.page,
       'choose_phone',
-      /Dodaj numer telefonu|Add.*phone|Mobile number|Numer telefonu/i,
+      'the option that adds a mobile phone number as the new contact',
     );
     await snapshot(s.page, 'phone_form');
     if (!(await fillPhone(s.page))) throw new Error('No phone input found');
     await snapshot(s.page, 'phone_filled');
     await selectPhoneAssociationAccount(s.page);
     await snapshot(s.page, 'after_select_account');
-    const submitted = await clickFirst(
-      s.page,
-      'submit_phone',
-      /^(Dalej|Next|Wyślij|Send|Kontynuuj|Continue)$/i,
-    );
-    if (!submitted)
-      throw new Error('No enabled submit button found after filling phone');
-    const afterSubmit = await snapshot(s.page, 'after_submit');
-    if (afterSubmit.statusHints.code) {
+    await clickControl(s.page, 'submit_phone', SUBMIT_FORM);
+    await snapshot(s.page, 'after_submit');
+    if (await asksForCode(s.page)) {
       if (!VERIFY_CODE) {
         console.log(
           'NEED_CODE: META_VERIFY_CODE is required to submit the confirmation code',
         );
       } else if (await fillCode(s.page)) {
         await snapshot(s.page, 'code_filled');
-        const codeSubmitted = await clickFirst(
-          s.page,
-          'submit_code',
-          /^(Dalej|Next|Wyślij|Send|Kontynuuj|Continue)$/i,
-        );
-        if (!codeSubmitted)
-          throw new Error(
-            'No enabled code submit button found after entering confirmation code',
-          );
+        await clickControl(s.page, 'submit_code', SUBMIT_FORM);
         await snapshot(s.page, 'after_code_submit');
-        await waitAndClickFirst(
+        await clickWhenShown(
           s.page,
           'skip_passkey',
-          /^(Nie teraz|Not now)$/i,
-          /Utwórz|Create/i,
+          PASSKEY_OFFERED,
+          DECLINE_PASSKEY,
         );
         await snapshot(s.page, 'after_passkey_skip');
       } else {

@@ -1,10 +1,17 @@
-// The Accounts Center page: the stable persona, sanitised URLs and snapshots.
+// The Accounts Center page: the stable persona, sanitised URLs and snapshots,
+// and the two questions the flow asks of the page - whether it asks for the
+// SMS code, and whether it offers the phone-number form - answered by the
+// vision model (`_shared/page/judged/seen.mjs`) in the account's language.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { generatePersona } from '../../../../../dist/browser/persona.js';
 import { USER_DATA_DIR } from './settings.mjs';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
+import { pageShows } from '../../../_shared/page/judged/seen.mjs';
+import { redactedUrl } from '../../../_shared/page/navigation/redacted.mjs';
+
+const INDENT = '  ';
 
 export function stableProfilePersona() {
   const p = join(USER_DATA_DIR, 'persona.json');
@@ -20,18 +27,20 @@ export function sanitize(text) {
     .replace(/\b\d{7,}\b/g, '<number-redacted>');
 }
 
-export function sanitizedUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.hash = parsed.hash ? '#<redacted>' : '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|code|secret|state|session|auth/i.test(key))
-        parsed.searchParams.set(key, '<redacted>');
-    }
-    return parsed.toString();
-  } catch {
-    return '<invalid-url>';
-  }
+/** Whether the page asks for the confirmation code sent to the phone. */
+export function asksForCode(page) {
+  return pageShows(
+    page,
+    'Does the page ask for a confirmation code that was sent to a phone number?',
+  );
+}
+
+/** Whether the page shows the form for entering a phone number. */
+export function offersPhoneForm(page) {
+  return pageShows(
+    page,
+    'Does the page show a form for entering a mobile phone number?',
+  );
 }
 
 export async function bringBrowserToFront(s) {
@@ -100,39 +109,21 @@ export async function snapshot(page, label) {
       title: document.title || null,
       bodyText: bodyText,
       controls,
-      statusHints: {
-        contactInfo: /Informacje kontaktowe|Contact info/i.test(bodyText),
-        addContact: /Dodaj nowy kontakt|Add new contact/i.test(bodyText),
-        phoneChoice:
-          /Dodaj numer telefonu|Add.*phone|Mobile number|Numer telefonu/i.test(
-            bodyText,
-          ),
-        code: /kod|code|SMS|confirmation/i.test(bodyText),
-        error: /problem|error|nie można|cannot|invalid|nieprawidł/i.test(
-          bodyText,
-        ),
-      },
     };
   });
-  console.log(
-    JSON.stringify(
-      {
-        stage: 'snapshot',
-        label,
-        url: sanitizedUrl(page.url?.() || ''),
-        title: data.title,
-        bodyText: sanitize(data.bodyText),
-        controls: data.controls.map((control) => ({
-          ...control,
-          text: sanitize(control.text),
-          href: sanitizedUrl(control.href),
-          placeholder: sanitize(control.placeholder),
-        })),
-        statusHints: data.statusHints,
-      },
-      null,
-      2,
-    ),
-  );
+  const record = {
+    stage: 'snapshot',
+    label,
+    url: redactedUrl(page.url()),
+    title: data.title,
+    bodyText: sanitize(data.bodyText),
+    controls: data.controls.map((control) => ({
+      ...control,
+      text: sanitize(control.text),
+      href: control.href && redactedUrl(control.href, page.url()),
+      placeholder: sanitize(control.placeholder),
+    })),
+  };
+  console.log(JSON.stringify(record, null, INDENT));
   return data;
 }

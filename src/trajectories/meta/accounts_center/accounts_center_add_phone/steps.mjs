@@ -1,96 +1,36 @@
-// The phone steps: choosing a control by its label, the phone and code fields, and the account chooser.
+// The phone steps: pressing a described control, the phone and code fields,
+// and the account chooser. Every control is found by the vision model from
+// its description (`_shared/page/judged/seen.mjs`), in the account's language.
 import { humanClickLocator } from '../../../../../dist/human/mouse.js';
 import { humanType } from '../../../../../dist/human/keyboard.js';
 import { USER_DATA_DIR, VERIFY_CODE, VERIFY_PHONE } from './settings.mjs';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
-import { sanitize } from './page.mjs';
+import {
+  clickDescribed,
+  pageShows,
+} from '../../../_shared/page/judged/seen.mjs';
 
-export async function clickFirst(
-  page,
-  label,
-  allow,
-  deny = /delete|remove|usuń|anuluj|cancel/i,
-) {
-  const target = await page
-    .evaluate(
-      ({ allowSource, allowFlags, denySource, denyFlags }) => {
-        const allowRe = new RegExp(allowSource, allowFlags);
-        const denyRe = new RegExp(denySource, denyFlags);
-        const textOf = (el) =>
-          (
-            el.innerText ||
-            el.textContent ||
-            el.getAttribute('aria-label') ||
-            ''
-          )
-            .replace(/\s+/g, ' ')
-            .trim();
-        const visible = (el) => {
-          const style = window.getComputedStyle(el);
-          const rect = el.getBoundingClientRect();
-          return (
-            style.visibility !== 'hidden' &&
-            style.display !== 'none' &&
-            rect.width > 0 &&
-            rect.height > 0
-          );
-        };
-        const nodes = Array.from(
-          document.querySelectorAll(
-            'button, [role="button"], a, [role="menuitem"]',
-          ),
-        )
-          .filter(visible)
-          .map((el) => {
-            const rect = el.getBoundingClientRect();
-            return {
-              text: textOf(el),
-              disabled:
-                el.disabled === true ||
-                el.getAttribute('aria-disabled') === 'true',
-              x: Math.round(rect.left + rect.width / 2),
-              y: Math.round(rect.top + rect.height / 2),
-              area: rect.width * rect.height,
-            };
-          })
-          .filter(
-            (item) =>
-              item.text &&
-              !item.disabled &&
-              allowRe.test(item.text) &&
-              !denyRe.test(item.text),
-          )
-          .sort((a, b) => a.area - b.area);
-        return nodes[0] || null;
-      },
-      {
-        allowSource: allow.source,
-        allowFlags: allow.flags,
-        denySource: deny.source,
-        denyFlags: deny.flags,
-      },
-    )
-    .catch(() => null);
-  if (!target) return null;
-  await page.mouse.click(target.x, target.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked',
-      label,
-      text: sanitize(target.text),
-      x: target.x,
-      y: target.y,
-    }),
-  );
-  return target;
+const INDENT = '  ';
+
+/** Clicks the control `description` names; throws when the page has none. */
+export async function clickControl(page, label, description) {
+  const target = await clickDescribed(page, description);
+  console.log(JSON.stringify({ stage: 'clicked', label, ...target }));
 }
 
-/** Click the first matching control once the page has settled; null when the page offers none. */
-export async function waitAndClickFirst(page, label, allow, deny) {
-  await pageSettled(page);
-  return clickFirst(page, label, allow, deny);
+/**
+ * Clicks the control `description` names when the page shows what `question`
+ * asks about; says whether it did.
+ */
+export async function clickWhenShown(page, label, question, description) {
+  if (!(await pageShows(page, question))) return false;
+  await clickControl(page, label, description);
+  return true;
 }
+
+/** The button that sends the open phone or code form. */
+export const SUBMIT_FORM =
+  'the enabled button that sends the open phone number or confirmation code form';
 
 /** The digits of `text`; Meta formats a phone field as it is typed. */
 function digits(text) {
@@ -114,11 +54,11 @@ async function typeInto(page, input, text, stage) {
   return true;
 }
 
+// The phone field is the form's telephone input, or its one text input when
+// the form does not declare the type.
 export async function fillPhone(page) {
   const input = await page
-    .locator(
-      'input[type="tel"], input[placeholder*="phone" i], input[aria-label*="phone" i], input[placeholder*="telefon" i], input[aria-label*="telefon" i], input[type="text"]',
-    )
+    .locator('input[type="tel"], input[autocomplete="tel"], input[type="text"]')
     .filter({ visible: true })
     .last();
   if (!(await input.isVisible())) return false;
@@ -132,78 +72,23 @@ export async function fillCode(page) {
   return typeInto(page, input, VERIFY_CODE, 'filled_code');
 }
 
-export async function selectPhoneAssociationAccount(page) {
-  const target = await page
-    .evaluate(() => {
-      const textOf = (el) =>
-        (el.innerText || el.textContent || el.getAttribute('aria-label') || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-      const visible = (el) => {
-        const style = window.getComputedStyle(el);
-        const rect = el.getBoundingClientRect();
-        return (
-          style.visibility !== 'hidden' &&
-          style.display !== 'none' &&
-          rect.width > 0 &&
-          rect.height > 0
-        );
-      };
-      const candidates = Array.from(
-        document.querySelectorAll(
-          'button, [role="button"], [role="group"], label, div',
-        ),
-      )
-        .filter(visible)
-        .map((el) => {
-          const rect = el.getBoundingClientRect();
-          return {
-            text: textOf(el),
-            role: el.getAttribute('role') || el.tagName.toLowerCase(),
-            // A grouped account row is preferred over the parts inside it.
-            group: el.matches('[role="group"]'),
-            disabled:
-              el.disabled === true ||
-              el.getAttribute('aria-disabled') === 'true',
-            x: Math.round(rect.left + rect.width / 2),
-            y: Math.round(rect.top + rect.height / 2),
-            area: rect.width * rect.height,
-          };
-        })
-        .filter(
-          (item) =>
-            /Wisent Wisent Facebook/i.test(item.text) &&
-            item.y > 500 &&
-            !item.disabled,
-        )
-        .sort((a, b) => Number(b.group) - Number(a.group) || a.area - b.area);
-      return candidates[0] || null;
-    })
-    .catch(() => null);
-  if (!target) return null;
-  await page.mouse.click(target.x, target.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked',
-      label: 'select_phone_association_account',
-      text: sanitize(target.text),
-      role: target.role,
-      x: target.x,
-      y: target.y,
-    }),
+/**
+ * Picks the Facebook account the phone number is added to, when the form asks
+ * which account it is for; Accounts Center lists the accounts of the signed-in
+ * person, so the account is the Facebook one among them.
+ */
+export function selectPhoneAssociationAccount(page) {
+  return clickWhenShown(
+    page,
+    'select_phone_association_account',
+    'Does the form ask which account the phone number should be added to?',
+    'the Facebook account option in the list of accounts the phone number is added to',
   );
-  return target;
 }
 
-console.log(
-  JSON.stringify(
-    {
-      stage: 'start',
-      userDataDir: USER_DATA_DIR,
-      headless: process.env.META_VERIFY_HEADLESS === '1',
-    },
-    null,
-    2,
-  ),
-);
+const start = {
+  stage: 'start',
+  userDataDir: USER_DATA_DIR,
+  headless: process.env.META_VERIFY_HEADLESS === '1',
+};
+console.log(JSON.stringify(start, null, INDENT));
