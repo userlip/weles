@@ -61,30 +61,21 @@ try {
   await humanIdlePause('long');
 
   const gsiFrame = s.page.frames().find((f) => /gsi\/button/.test(f.url()));
-  if (!gsiFrame) {
-    console.log('FAIL: no GSI iframe');
-    process.exit(1);
-  }
+  if (!gsiFrame) throw new Error('no GSI iframe');
   const popupPromise = s.page.waitForEvent('popup');
   await humanClickLocator(
     s.page,
     gsiFrame.locator('div[role="button"]').first(),
   );
   const popup = await popupPromise;
-  if (!popup) {
-    console.log('FAIL: popup did not open');
-    process.exit(1);
-  }
+  if (!popup) throw new Error('popup did not open');
   await popup.waitForLoadState('domcontentloaded');
 
   const ok = await googleSso(s, login, {
     originHost: 'oxylabs.io',
     page: popup,
   });
-  if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
-    process.exit(1);
-  }
+  if (!ok) throw new Error('Google SSO did not complete');
 
   await urlMatching(
     s.page,

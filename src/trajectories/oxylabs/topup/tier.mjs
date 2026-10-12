@@ -13,19 +13,17 @@ export async function upgradeTier(s, plan, currentPlanName) {
   // env var. Auto-topup cron never sets this flag, so the cron path can only
   // hit the PAYG branch above. Manual operator can run with the flag set
   // when they intentionally want to upgrade tier.
-  if (process.env.OXYLABS_ALLOW_TIER_CHANGE !== '1') {
-    console.log(
-      `FAIL: current plan=${currentPlanName} but OXYLABS_ALLOW_TIER_CHANGE not set — refusing to commit to a recurring tier subscription from auto-context`,
+  if (process.env.OXYLABS_ALLOW_TIER_CHANGE !== '1')
+    throw new Error(
+      `current plan=${currentPlanName} but OXYLABS_ALLOW_TIER_CHANGE not set — refusing to commit to a recurring tier subscription from auto-context`,
     );
-    process.exit(1);
-  }
   const currentRank = PLANS.findIndex((p) => p.name === currentPlanName);
   const requestedRank = PLANS.findIndex((p) => p.name === plan.name);
   if (currentRank >= requestedRank) {
     console.log(
       `PASS-NOOP: current plan ${currentPlanName} is at or above requested ${plan.name} — no charge needed`,
     );
-    process.exit(0);
+    return;
   }
 
   // Real tier upgrade (gated)
@@ -37,22 +35,18 @@ export async function upgradeTier(s, plan, currentPlanName) {
   const changePlanBtns = await s.page
     .locator('button:has-text("Change plan"), a:has-text("Change plan")')
     .all();
-  if (changePlanBtns.length === 0) {
-    console.log('FAIL: no Change plan button found');
-    process.exit(1);
-  }
+  if (changePlanBtns.length === 0)
+    throw new Error('no Change plan button found');
   await changePlanBtns[0].click();
   await humanIdlePause('long');
   const planIndex = requestedRank;
   const pricingBtns = await s.page
     .locator('button:has-text("Change plan")')
     .all();
-  if (pricingBtns.length <= planIndex) {
-    console.log(
-      `FAIL: could not find Change plan button for ${plan.name} (found ${pricingBtns.length} buttons)`,
+  if (pricingBtns.length <= planIndex)
+    throw new Error(
+      `could not find Change plan button for ${plan.name} (found ${pricingBtns.length} buttons)`,
     );
-    process.exit(1);
-  }
   console.log(
     `[trajectory] clicking ${plan.name} Change plan button (index ${planIndex})`,
   );
@@ -62,10 +56,8 @@ export async function upgradeTier(s, plan, currentPlanName) {
   const continueBtn = s.page
     .locator('button:has-text("Continue to checkout")')
     .first();
-  if (!(await continueBtn.isVisible().catch(() => false))) {
-    console.log('FAIL: Continue to checkout button not found');
-    process.exit(1);
-  }
+  if (!(await continueBtn.isVisible().catch(() => false)))
+    throw new Error('Continue to checkout button not found');
   console.log(
     `[trajectory] found Continue to checkout for ${plan.name} ($${plan.price})`,
   );
@@ -150,12 +142,10 @@ export async function upgradeTier(s, plan, currentPlanName) {
   );
   const fill = await fillStripeElements(s.page);
   console.log(`[trajectory] stripe elements fill: ${JSON.stringify(fill)}`);
-  if (!fill.ok) {
-    console.log(
-      `FAIL: stripe elements not fully filled — reason=${fill.reason ?? 'partial'}`,
+  if (!fill.ok)
+    throw new Error(
+      `stripe elements not fully filled: ${JSON.stringify(fill)}`,
     );
-    process.exit(1);
-  }
 
   // Stripe-hosted checkout: the final Pay button text varies (Subscribe / Pay).
   const finalBtn = s.page

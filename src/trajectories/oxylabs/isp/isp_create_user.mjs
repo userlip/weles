@@ -71,9 +71,8 @@ try {
   await humanIdlePause('long');
   const gsiFrame = s.page.frames().find((f) => /gsi\/button/.test(f.url()));
   if (!gsiFrame) {
-    console.log('FAIL: GSI iframe not found');
     await shot(s, 'no_gsi');
-    process.exit(1);
+    throw new Error('GSI iframe not found');
   }
   const popupPromise = s.page.waitForEvent('popup').catch(() => null);
   await humanClickLocator(
@@ -81,19 +80,13 @@ try {
     gsiFrame.locator('div[role="button"]').first(),
   );
   const popup = await popupPromise; // allow-raw-playwright: the popup the click produced
-  if (!popup) {
-    console.log('FAIL: popup did not open');
-    process.exit(1);
-  }
+  if (!popup) throw new Error('popup did not open');
   await popup.waitForLoadState('domcontentloaded').catch(() => {});
   const ok = await googleSso(s, login, {
     originHost: 'oxylabs.io',
     page: popup,
   });
-  if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
-    process.exit(1);
-  }
+  if (!ok) throw new Error('Google SSO did not complete');
   await urlMatching(
     s.page,
     /^(?!https:\/\/dashboard\.oxylabs\.io\/en\/?(\?.*)?$)/,

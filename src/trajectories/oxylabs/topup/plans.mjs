@@ -49,11 +49,9 @@ export async function detectCurrentPlan(s, plan) {
   console.log(
     `[trajectory] current plan=${currentPlanName ?? 'unknown'}; requested=${plan.name}`,
   );
-  if (!currentPlanName) {
-    console.log(
-      `FAIL: could not detect current Oxylabs plan from /overview/MP — refusing to charge with unknown state`,
+  if (!currentPlanName)
+    throw new Error(
+      'could not detect current Oxylabs plan from /overview/MP — refusing to charge with unknown state',
     );
-    process.exit(1);
-  }
   return { isPayAsYouGo, currentPlanName };
 }

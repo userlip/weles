@@ -73,9 +73,8 @@ try {
 
   const gsiFrame = s.page.frames().find((f) => /gsi\/button/.test(f.url()));
   if (!gsiFrame) {
-    console.log('FAIL: GSI iframe not found');
     await shot(s, 'no_gsi');
-    process.exit(1);
+    throw new Error('GSI iframe not found');
   }
 
   let popupErr;
@@ -93,11 +92,8 @@ try {
   );
   const popup = await popupPromise; // allow-raw-playwright: the popup the click produced
   if (!popup) {
-    console.log(
-      `FAIL: popup did not open ${popupErr ? '(' + popupErr.message + ')' : ''}`,
-    );
     await shot(s, 'no_popup');
-    process.exit(1);
+    throw new Error(`popup did not open: ${popupErr.message}`);
   }
   try {
     await popup.waitForLoadState('domcontentloaded');
@@ -108,9 +104,8 @@ try {
     page: popup,
   });
   if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
     await shot(s, 'sso_fail');
-    process.exit(1);
+    throw new Error('Google SSO did not complete');
   }
 
   await urlMatching(
@@ -137,9 +132,8 @@ try {
     .filter({ visible: true })
     .first();
   if (!(await isVisible(buyBtn))) {
-    console.log('FAIL: no Buy/Change-IP-setup button on /overview/ISP');
     await shot(s, 'no_buy');
-    process.exit(1);
+    throw new Error('no Buy/Change-IP-setup button on /overview/ISP');
   }
   await humanClickLocator(s.page, buyBtn);
   await pageSettled(s.page);
@@ -157,9 +151,8 @@ try {
     .filter({ visible: true })
     .first();
   if (!(await isVisible(step1Continue))) {
-    console.log('FAIL: no Continue on step 1');
     await shot(s, 'no_step1_continue');
-    process.exit(1);
+    throw new Error('no Continue on step 1');
   }
   await humanClickLocator(s.page, step1Continue);
   await pageSettled(s.page);
@@ -210,9 +203,8 @@ try {
     .locator('button', { hasText: /^Add$/ })
     .first();
   if (!(await isVisible(usAddLoc))) {
-    console.log('FAIL: no Add button next to United States');
     await shot(s, 'no_us_add');
-    process.exit(1);
+    throw new Error('no Add button next to United States');
   }
   await humanClickLocator(s.page, usAddLoc);
   await pageSettled(s.page);
@@ -245,9 +237,8 @@ try {
     .filter({ visible: true })
     .first();
   if (!(await isVisible(changePlanBtn))) {
-    console.log('FAIL: no Change-plan/Continue on step 2');
     await shot(s, 'no_continue_step2');
-    process.exit(1);
+    throw new Error('no Change-plan/Continue on step 2');
   }
   await humanClickLocator(s.page, changePlanBtn);
   await pageSettled(s.page);

@@ -1,5 +1,5 @@
 // The pay-as-you-go top-up: Add more traffic, the GB amount, the non-refundable
-// acknowledgement, and the Stripe form. Exits with the charge outcome.
+// acknowledgement, and the Stripe form. Throws when any step or the charge fails.
 import { humanIdlePause } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
@@ -16,12 +16,10 @@ export async function topUpPayAsYouGo(s, usd) {
     )
     .filter({ visible: true })
     .first();
-  if (!(await addTrafficBtn.isVisible().catch(() => false))) {
-    console.log(
-      'FAIL: "Add more traffic" button not visible on /overview/MP — Pay-as-you-go topup path requires this button',
+  if (!(await addTrafficBtn.isVisible().catch(() => false)))
+    throw new Error(
+      '"Add more traffic" button not visible on /overview/MP — Pay-as-you-go topup path requires this button',
     );
-    process.exit(1);
-  }
   // The PAYG modal states its own per-GB price next to the amount input.
   // The price is read from that modal, never assumed: a price written here
   // would buy the wrong amount the day Oxylabs changes it. GB is computed
@@ -36,12 +34,10 @@ export async function topUpPayAsYouGo(s, usd) {
     .catch(() => {});
   const modalText = await s.page.evaluate(() => document.body.innerText || '');
   const priceMatch = modalText.match(/\$\s*(\d+(?:\.\d+)?)\s*(?:\/|per)\s*GB/i);
-  if (!priceMatch) {
-    console.log(
-      `FAIL: the "Add more traffic" modal states no per-GB price; read: ${JSON.stringify(modalText.replace(/\s+/g, ' '))}`,
+  if (!priceMatch)
+    throw new Error(
+      `the "Add more traffic" modal states no per-GB price; read: ${JSON.stringify(modalText.replace(/\s+/g, ' '))}`,
     );
-    process.exit(1);
-  }
   const gbPrice = Number(priceMatch[1]);
   const targetGb = Math.floor(usd / gbPrice);
   // Rounding a budget below one GB up to a whole GB would charge more than
@@ -68,10 +64,8 @@ export async function topUpPayAsYouGo(s, usd) {
     console.log(
       `[trajectory] slider moved ${cur} -> ${after} (target ${targetGb})`,
     );
-    if (after !== targetGb) {
-      console.log(`FAIL: slider stopped at ${after} not target ${targetGb}`);
-      process.exit(1);
-    }
+    if (after !== targetGb)
+      throw new Error(`slider stopped at ${after} not target ${targetGb}`);
     amountSet = true;
   }
   if (!amountSet) {
@@ -165,10 +159,7 @@ export async function topUpPayAsYouGo(s, usd) {
       }
     }
   }
-  if (!amountSet) {
-    console.log('FAIL: no working increment button found');
-    process.exit(1);
-  }
+  if (!amountSet) throw new Error('no working increment button found');
   // The confirmation checkbox starts unchecked, and Continue is
   // disabled until ticked. Click the wrapper label (input itself is
   // hidden by Stripe-style styling so direct click is no-op).
@@ -188,10 +179,7 @@ export async function topUpPayAsYouGo(s, usd) {
     }
     const now = await refundCb.isChecked().catch(() => false);
     console.log(`[trajectory] non-refundable: was=${was} now=${now}`);
-    if (!now) {
-      console.log('FAIL: could not check non-refundable acknowledgement');
-      process.exit(1);
-    }
+    if (!now) throw new Error('could not check non-refundable acknowledgement');
   }
 
   // CONFIRM: Click Continue → Stripe form → fill + submit.
@@ -208,10 +196,8 @@ export async function topUpPayAsYouGo(s, usd) {
     .locator('button:has-text("Continue")')
     .filter({ visible: true })
     .first();
-  if (!(await continueBtn.isVisible().catch(() => false))) {
-    console.log('FAIL: Continue button not visible');
-    process.exit(1);
-  }
+  if (!(await continueBtn.isVisible().catch(() => false)))
+    throw new Error('Continue button not visible');
   await continueBtn.click({ force: true });
   console.log('[trajectory] clicked Continue — expecting Stripe form');
   await humanIdlePause('long');
@@ -220,12 +206,8 @@ export async function topUpPayAsYouGo(s, usd) {
   );
   const fill = await fillStripeElements(s.page);
   console.log(`[trajectory] stripe elements fill: ${JSON.stringify(fill)}`);
-  if (!fill.ok) {
-    console.log(
-      `FAIL: stripe elements not filled — reason=${fill.reason ?? 'partial'}`,
-    );
-    process.exit(1);
-  }
+  if (!fill.ok)
+    throw new Error(`stripe elements not filled: ${JSON.stringify(fill)}`);
   const finalBtn = s.page
     .locator(
       'button:has-text("Pay"), button:has-text("Subscribe"), button[type="submit"]',
@@ -239,13 +221,11 @@ export async function topUpPayAsYouGo(s, usd) {
   await finalBtn.click({ force: true });
   console.log('[trajectory] clicked final Stripe submit');
   await pageSettled(s.page);
-  if (stripeChargeFired)
-    console.log(
-      `PASS-CHARGED: Stripe payment_intents/confirm POST fired — purchased ${targetGb} GB at $${gbPrice}/GB ($${targetGb * gbPrice})`,
+  if (!stripeChargeFired)
+    throw new Error(
+      `no Stripe charge POST observed by the time the page settled, url=${s.page.url()}`,
     );
-  else
-    console.log(
-      `FAIL: no Stripe charge POST observed by the time the page settled, url=${s.page.url()}`,
-    );
-  process.exit(stripeChargeFired ? 0 : 1);
+  console.log(
+    `PASS-CHARGED: Stripe payment_intents/confirm POST fired — purchased ${targetGb} GB at $${gbPrice}/GB ($${targetGb * gbPrice})`,
+  );
 }

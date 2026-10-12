@@ -50,9 +50,8 @@ export async function startCheckout(s) {
     .filter({ visible: true })
     .first();
   if (!(await buyBtn.isVisible().catch(() => false))) {
-    console.log('FAIL: no Buy-style button visible on /overview/ISP');
     await shot(s, 'no_buy_btn');
-    process.exit(1);
+    throw new Error('no Buy-style button visible on /overview/ISP');
   }
   await buyBtn.click({ force: true }).catch(() => {});
   await humanIdlePause('long');
@@ -93,9 +92,8 @@ export async function startCheckout(s) {
     .filter({ visible: true })
     .first();
   if (!(await buyRandomBtn.isVisible().catch(() => false))) {
-    console.log('FAIL: "Buy random locations" button not visible on step 1');
     await shot(s, 'no_buy_random');
-    process.exit(1);
+    throw new Error('"Buy random locations" button not visible on step 1');
   }
   await shot(s, 'before_buy_random');
   console.log('[trajectory] clicking "Buy random locations"…');

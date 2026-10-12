@@ -42,10 +42,7 @@ try {
   await humanIdlePause('long');
 
   const gsiFrame = s.page.frames().find((f) => /gsi\/button/.test(f.url()));
-  if (!gsiFrame) {
-    console.log('FAIL: Oxylabs Google GSI iframe not found');
-    process.exit(1);
-  }
+  if (!gsiFrame) throw new Error('Oxylabs Google GSI iframe not found');
   const popupPromise = s.page.waitForEvent('popup');
   await humanClickLocator(
     s.page,
@@ -58,10 +55,7 @@ try {
     originHost: 'oxylabs.io',
     page: popup,
   });
-  if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
-    process.exit(1);
-  }
+  if (!ok) throw new Error('Google SSO did not complete');
 
   await urlMatching(
     s.page,
@@ -100,8 +94,7 @@ try {
       path: join(OUT, '01_no_launcher.png'),
       fullPage: true,
     });
-    console.log(`FAIL: no chat launcher found — see ${OUT}/01_no_launcher.png`);
-    process.exit(1);
+    throw new Error(`no chat launcher found — see ${OUT}/01_no_launcher.png`);
   }
   await humanIdlePause('long');
   await s.page.screenshot({
@@ -140,10 +133,7 @@ try {
         fullPage: true,
       });
     } catch {}
-    console.log(
-      `FAIL: chat composer not found — see ${OUT}/03_no_composer.png`,
-    );
-    process.exit(1);
+    throw new Error(`chat composer not found — see ${OUT}/03_no_composer.png`);
   }
 
   await humanClickLocator(s.page, composer);

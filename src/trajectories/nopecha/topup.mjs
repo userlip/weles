@@ -26,10 +26,7 @@ try {
     .first()
     .click();
   const ok = await googleSso(s, login, { originHost: 'nopecha.com' });
-  if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
-    process.exit(1);
-  }
+  if (!ok) throw new Error('Google SSO did not complete');
   await humanIdlePause('long');
 
   // NopeCHA funds via Manage Billing or Subscribe page.
@@ -55,10 +52,7 @@ try {
     '../_shared/services/topup_common.mjs'
   );
   const clicked = await findAndClickPayButton(s.page);
-  if (!clicked) {
-    console.log('FAIL: could not find pay/checkout button');
-    process.exit(1);
-  }
+  if (!clicked) throw new Error('could not find pay/checkout button');
   await humanIdlePause('long');
   console.log(`PASS-CHARGED: checkout initiated, url=${s.page.url()}`);
 } catch (e) {
