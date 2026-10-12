@@ -44,7 +44,9 @@ const googleCookies = cookies.filter(
 writeFileSync(OUT, JSON.stringify(googleCookies, null, 2));
 console.log(`[export] Saved ${googleCookies.length} cookies to ${OUT}`);
 const auth = googleCookies
-  .filter((c) => /^(SID|HSID|SSID|SAPISID|APISID|__Secure-\w+)/.test(c.name))
+  // Google's session cookies all end in SID (SID, HSID, SSID, APISID,
+  // SAPISID); the hardened ones carry the __Secure- prefix.
+  .filter((c) => /SID$|^__Secure-/.test(c.name))
   .map((c) => c.name);
 console.log(`[export] Auth cookies present: ${auth.join(', ')}`);
 await s.close();

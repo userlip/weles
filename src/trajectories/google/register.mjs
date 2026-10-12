@@ -274,9 +274,7 @@ async function signup(s) {
   // Success is the account session, not what the page says.
   const cookies = await s.ctx.cookies();
   const googleCookies = cookies.filter(
-    (c) =>
-      c.domain?.includes('google.com') &&
-      /^(SID|HSID|SSID|SAPISID|APISID|__Secure-\w+)/.test(c.name),
+    (c) => c.domain?.includes('google.com') && /SID$|^__Secure-/.test(c.name),
   );
   console.log(
     `[google] final url: ${page.url()}, auth cookies: ${googleCookies.map((c) => c.name).join(',')}`,
