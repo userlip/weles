@@ -189,10 +189,6 @@ try {
           title: document.title || null,
           headings,
           rows,
-          empty:
-            /No campaigns|No results|There are no campaigns|Nie ma kampanii/i.test(
-              bodyText,
-            ),
           accountHints: Array.from(
             new Set(
               (bodyText.match(/\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b/g) || []).map(

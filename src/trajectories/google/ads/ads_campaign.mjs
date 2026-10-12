@@ -58,18 +58,17 @@ import {
 } from './ads_campaign/settings.mjs';
 import {
   bringBrowserToFront,
-  clickAny,
-  clickText,
   ensureCustomer,
-  fillAny,
-  fillTextNearLabel,
   isLoginUrl,
   navigate,
-  pageText,
   stableProfilePersona,
-  typeListIntoFirstVisible,
-  waitForPageText,
 } from './ads_campaign/page.mjs';
+import { humanType } from '../../../../dist/human/keyboard.js';
+import {
+  clickDescribed,
+  fillDescribed,
+  pageShows,
+} from '../../_shared/page/judged/seen.mjs';
 
 if (!ADS_URL && !CUSTOMER_ID && !WAIT_FOR_LOGIN) {
   console.log('FAIL: GOOGLE_ADS_CUSTOMER_ID or ADS_URL required');
@@ -120,168 +119,83 @@ try {
 
   await ensureCustomer(s);
 
-  const newCampaignClicked =
-    /\/campaigns\/new/i.test(s.page.url?.() ?? '') ||
-    (await clickAny(
-      s,
-      [
-        'button:has-text("New campaign")',
-        'material-button:has-text("New campaign")',
-        '[aria-label*="New campaign" i]',
-      ],
-      'New campaign',
-    ));
-  await clickText(s, CAMPAIGN_OBJECTIVE, `objective ${CAMPAIGN_OBJECTIVE}`);
-  await waitForPageText(
-    s,
-    /Select a campaign type|Drive website traffic from Google Search|Performance Max|App installs|App engagement|App promotion/i,
+  // Every control and field below is found by the vision model from what it
+  // does (`_shared/page/judged/seen.mjs`), in the account's interface
+  // language; a stated value whose field is not on the page fails by name.
+  if (!/\/campaigns\/new/i.test(s.page.url())) {
+    await clickDescribed(s.page, 'the button that creates a new campaign');
+  }
+  await clickDescribed(
+    s.page,
+    `the campaign objective option labelled "${CAMPAIGN_OBJECTIVE}"`,
   );
   if (!/app$/i.test(CAMPAIGN_TYPE)) {
-    await clickText(s, CAMPAIGN_TYPE, `campaign type ${CAMPAIGN_TYPE}`);
+    await clickDescribed(
+      s.page,
+      `the campaign type option labelled "${CAMPAIGN_TYPE}"`,
+    );
   }
   if (IS_APP_INSTALL) {
-    await clickText(
-      s,
-      APP_CAMPAIGN_SUBTYPE,
-      `app campaign subtype ${APP_CAMPAIGN_SUBTYPE}`,
+    await clickDescribed(
+      s.page,
+      `the app campaign subtype option labelled "${APP_CAMPAIGN_SUBTYPE}"`,
     );
     if (APP_PLATFORM)
-      await clickText(s, APP_PLATFORM, `app platform ${APP_PLATFORM}`);
+      await clickDescribed(
+        s.page,
+        `the app platform option labelled "${APP_PLATFORM}"`,
+      );
   }
-  await clickAny(
-    s,
-    ['button:has-text("Continue")', 'material-button:has-text("Continue")'],
-    'Continue',
-  );
-  await pageSettled(s.page);
-
-  let filledCount = 0;
-  if (IS_APP_INSTALL) {
-    if (
-      await fillAny(
-        s,
-        [
-          'input[aria-label*="app" i]',
-          'input[placeholder*="app" i]',
-          'input[aria-label*="package" i]',
-          'input[placeholder*="package" i]',
-        ],
-        APP_NAME || PACKAGE_NAME || APP_ID,
-        'app',
-      )
-    )
-      filledCount += 1;
-    else if (
-      await fillTextNearLabel(
-        s,
-        /app|package|Google Play|iOS|Android/,
-        APP_NAME || PACKAGE_NAME || APP_ID,
-        'app',
-      )
-    )
-      filledCount += 1;
-  }
-  if (
-    await fillAny(
-      s,
-      [
-        'input[aria-label*="Campaign name" i]',
-        'input[placeholder*="Campaign name" i]',
-        'input[name*="campaign" i]',
-        'material-input:has-text("Campaign name") input',
-        'div:has-text("Campaign name") input',
-        'label:has-text("Campaign name") input',
-      ],
-      CAMPAIGN_NAME,
-      'campaign name',
-    )
-  )
-    filledCount += 1;
-  if (
-    await fillAny(
-      s,
-      [
-        'input[aria-label*="Budget" i]',
-        'input[placeholder*="Budget" i]',
-        'label:has-text("Budget") input',
-      ],
-      DAILY_BUDGET_USD,
-      'daily budget',
-    )
-  )
-    filledCount += 1;
-  if (
-    await fillAny(
-      s,
-      [
-        'input[aria-label*="Final URL" i]',
-        'input[aria-label*="Website URL" i]',
-        'input[aria-label*="Website" i]',
-        'input[placeholder*="URL" i]',
-        'input[type="url"]',
-        'material-input:has-text("Final URL") input',
-        'material-input:has-text("Website URL") input',
-        'div:has-text("Final URL") input',
-        'div:has-text("Website URL") input',
-      ],
-      FINAL_URL,
-      'final URL',
-    )
-  )
-    filledCount += 1;
-  if (
-    await typeListIntoFirstVisible(
-      s,
-      ['input[aria-label*="location" i]', 'input[placeholder*="location" i]'],
-      LOCATIONS,
-      'locations',
-    )
-  )
-    filledCount += 1;
-  if (
-    await typeListIntoFirstVisible(
-      s,
-      [
-        'textarea[aria-label*="keyword" i]',
-        'input[aria-label*="keyword" i]',
-        'textarea[placeholder*="keyword" i]',
-      ],
-      KEYWORDS,
-      'keywords',
-    )
-  )
-    filledCount += 1;
-  if (
-    await fillAny(
-      s,
-      ['input[aria-label*="Headline" i]', 'textarea[aria-label*="Headline" i]'],
-      HEADLINE,
-      'headline',
-    )
-  )
-    filledCount += 1;
-  if (
-    await fillAny(
-      s,
-      [
-        'textarea[aria-label*="Description" i]',
-        'input[aria-label*="Description" i]',
-      ],
-      DESCRIPTION,
-      'description',
-    )
-  )
-    filledCount += 1;
-
-  await clickAny(
-    s,
-    ['button:has-text("Save and continue")', 'button:has-text("Next")'],
-    'Save and continue',
+  await clickDescribed(
+    s.page,
+    'the button that continues to the next step of the campaign setup',
   );
 
-  if (!newCampaignClicked || filledCount === 0) {
+  const filled = [];
+  const fill = async (description, value) => {
+    if (!value) return;
+    await fillDescribed(s.page, description, value);
+    console.log(`[google-ads] filled: ${description}`);
+    filled.push(description);
+  };
+  // A list (locations, keywords) is stated comma-separated and typed into its
+  // field one entry per line.
+  const fillList = async (description, csv) => {
+    if (!csv) return;
+    const values = csv
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!values.length) return;
+    await clickDescribed(s.page, description);
+    for (const value of values) {
+      await humanType(s.page, value);
+      await s.page.keyboard.press('Enter');
+    }
+    console.log(`[google-ads] filled: ${description}`);
+    filled.push(description);
+  };
+  if (IS_APP_INSTALL)
+    await fill(
+      'the field that finds the app to promote by its name or package',
+      APP_NAME || PACKAGE_NAME || APP_ID,
+    );
+  await fill('the campaign name field', CAMPAIGN_NAME);
+  await fill('the daily budget field of the campaign', DAILY_BUDGET_USD);
+  await fill('the final URL (website) field of the ad', FINAL_URL);
+  await fillList('the field that adds target locations', LOCATIONS);
+  await fillList('the field that adds keywords', KEYWORDS);
+  await fill('the headline field of the ad', HEADLINE);
+  await fill('the description field of the ad', DESCRIPTION);
+
+  await clickDescribed(
+    s.page,
+    'the button that saves this step and continues to the next one',
+  );
+
+  if (!filled.length) {
     console.log(
-      `FAIL: Google Ads campaign form was not reached (newCampaignClicked=${newCampaignClicked}, filled=${filledCount}, url=${s.page.url?.() ?? ''})`,
+      `FAIL: Google Ads campaign form took none of the stated values (url=${s.page.url()})`,
     );
     process.exit(1);
   }
@@ -293,28 +207,16 @@ try {
     process.exit(0);
   }
 
-  const published = await clickAny(
-    s,
-    [
-      'button:has-text("Publish campaign")',
-      'button:has-text("Publish")',
-      'button:has-text("Submit")',
-    ],
-    'Publish campaign',
-    10000,
+  await clickDescribed(
+    s.page,
+    'the enabled button that publishes the campaign',
   );
-  if (!published) {
-    console.log('FAIL: Publish campaign button not found');
-    process.exit(1);
-  }
-  await pageSettled(s.page);
-  const finalText = await pageText(s);
-  const status =
-    /published|eligible|under review|campaign has been created|success/i.test(
-      finalText,
-    )
-      ? 'confirmed'
-      : 'clicked';
+  const status = (await pageShows(
+    s.page,
+    'Does the page say the campaign was published, created, is eligible or under review?',
+  ))
+    ? 'confirmed'
+    : 'clicked';
   console.log(
     `PASS: Google Ads campaign publish ${status} for "${CAMPAIGN_NAME}"`,
   );

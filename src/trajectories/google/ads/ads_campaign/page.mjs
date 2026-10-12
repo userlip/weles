@@ -1,10 +1,10 @@
 import { pageSettled } from '../../../_shared/page/settled.mjs';
-// The Google Ads page as the campaign trajectory drives it: clicks, fills, waits and the customer switch.
+// The Google Ads page as the campaign trajectory drives it: the stable
+// persona, navigation, the sign-in route and the customer switch. Controls
+// and fields are found by the vision model in the trajectory itself.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { generatePersona } from '../../../../../dist/browser/persona.js';
-import { humanClickLocator } from '../../../../../dist/human/mouse.js';
-import { humanFill, humanType } from '../../../../../dist/human/keyboard.js';
 import { CUSTOMER_ID, USER_DATA_DIR } from './settings.mjs';
 
 export function stableProfilePersona() {
@@ -14,149 +14,6 @@ export function stableProfilePersona() {
   writeFileSync(p, JSON.stringify(persona, null, 2));
   return persona;
 }
-// Click the first of these selectors the page is showing. The old shape
-// polled for five seconds, raced every click against another five, and
-// logged "click timed out" about a page that was merely busy; what the page
-// shows is a fact it states now.
-export async function clickAny(s, selectors, label) {
-  for (const sel of selectors) {
-    const loc = s.page.locator(sel).filter({ visible: true }).first();
-    if (!(await loc.isVisible())) continue;
-    await humanClickLocator(s.page, loc);
-    console.log(`[google-ads] clicked: ${label}`);
-    await pageSettled(s.page);
-    return true;
-  }
-  return false;
-}
-
-export async function clickText(s, text, label = text) {
-  const escaped = String(text).replaceAll('"', '\\"');
-  const clicked = await clickAny(
-    s,
-    [
-      `[role="radio"]:has-text("${escaped}")`,
-      `material-radio:has-text("${escaped}")`,
-      `material-list-item:has-text("${escaped}")`,
-    ],
-    label,
-  );
-  if (clicked) return true;
-  const fallback = s.page
-    .locator(
-      'button,[role="button"],[role="radio"],material-radio,material-list-item',
-    )
-    .filter({ hasText: text, visible: true })
-    .first();
-  if ((await fallback.count()) === 0) return false;
-  await humanClickLocator(s.page, fallback);
-  console.log(`[google-ads] clicked: ${label}`);
-  await pageSettled(s.page);
-  return true;
-}
-
-export async function fillAny(s, selectors, value, label) {
-  if (!value) return false;
-  for (const sel of selectors) {
-    const loc = s.page.locator(sel).filter({ visible: true }).first();
-    if (await loc.isVisible()) {
-      await humanFill(s.page, loc, String(value));
-      console.log(`[google-ads] filled: ${label}`);
-      await pageSettled(s.page);
-      return true;
-    }
-  }
-  console.log(`[google-ads] WARN: field not found: ${label}`);
-  return false;
-}
-
-export async function fillTextNearLabel(s, labelPattern, value, label) {
-  if (!value) return false;
-  const filled = await s.page.evaluate(
-    ({ pattern, value }) => {
-      const re = new RegExp(pattern, 'i');
-      const norm = (text) =>
-        String(text || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-      const roots = Array.from(
-        document.querySelectorAll(
-          'material-input, material-textarea, label, div, section, form',
-        ),
-      ).filter((el) =>
-        re.test(
-          norm(el.innerText || el.textContent || el.getAttribute('aria-label')),
-        ),
-      );
-      for (const root of roots) {
-        const input = root.querySelector?.(
-          'input,textarea,[contenteditable="true"]',
-        );
-        if (!input) continue;
-        input.focus();
-        if (input.isContentEditable) input.textContent = value;
-        else input.value = value;
-        input.dispatchEvent(
-          new InputEvent('input', {
-            bubbles: true,
-            inputType: 'insertText',
-            data: value,
-          }),
-        );
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      }
-      return false;
-    },
-    { pattern: labelPattern.source, value: String(value) },
-  );
-  if (filled) {
-    console.log(`[google-ads] filled: ${label}`);
-    await pageSettled(s.page);
-  } else {
-    console.log(`[google-ads] WARN: field not found: ${label}`);
-  }
-  return filled;
-}
-
-export async function typeListIntoFirstVisible(s, selectors, csv, label) {
-  if (!csv) return false;
-  const values = csv
-    .split(',')
-    .map((v) => v.trim())
-    .filter(Boolean);
-  if (!values.length) return false;
-  for (const sel of selectors) {
-    const loc = s.page.locator(sel).filter({ visible: true }).first();
-    if (!(await loc.isVisible())) continue;
-    await humanClickLocator(s.page, loc);
-    for (const value of values) {
-      await humanType(s.page, value);
-      await s.page.keyboard.press('Enter');
-      await pageSettled(s.page);
-    }
-    console.log(`[google-ads] entered: ${label} (${values.length})`);
-    return true;
-  }
-  console.log(`[google-ads] WARN: list field not found: ${label}`);
-  return false;
-}
-
-export async function pageText(s) {
-  return await s.page.evaluate(() => document.body?.innerText || '');
-}
-
-// The page shows the text when it has rendered it; polling until it does is
-// what this wait is for, and the fifteen seconds it used to carry made a
-// slow Google Ads screen look like a screen that never loaded.
-export async function waitForPageText(s, pattern) {
-  for (;;) {
-    const text = await pageText(s);
-    if (pattern.test(text)) return true;
-    await pageSettled(s.page);
-  }
-}
-
 export async function navigate(s, url) {
   await s.page.goto(url, { waitUntil: 'domcontentloaded' });
 }

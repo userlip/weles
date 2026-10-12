@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { pageCondition, urlMatching } from '../_shared/page/settled.mjs';
+import { pageShows } from '../_shared/page/judged/seen.mjs';
 
 const execFileP = promisify(execFile);
 
@@ -136,20 +137,27 @@ async function decodeQr(pngBuf) {
 }
 
 // Chromium leaves the QR screen when the phone approves: either it navigates
-// off the QR URL, or the page drops its "QR code / scan" prompt in place.
+// off the QR URL, or the page drops its QR code in place, which the vision
+// model reads after each change of the page.
 async function waitForApprovalAdvance(page) {
-  const initialUrl = page.url?.() ?? '';
+  const initialUrl = page.url();
+  const qrDropped = async () => {
+    for (;;) {
+      if (!(await pageShows(page, 'Does the page show a QR code to scan?')))
+        return;
+      const shown = await page.evaluate(() => document.body.innerText);
+      await pageCondition(
+        page,
+        (before) => document.body.innerText !== before,
+        shown,
+      );
+    }
+  };
   await Promise.any([
     urlMatching(
       page,
       (u) => u !== initialUrl && !/qrcode|qrsignin|qr_code/i.test(u),
     ),
-    pageCondition(
-      page,
-      () =>
-        !/qr code|scan/.test(
-          ((document.body && document.body.innerText) || '').toLowerCase(),
-        ),
-    ),
+    qrDropped(),
   ]);
 }
