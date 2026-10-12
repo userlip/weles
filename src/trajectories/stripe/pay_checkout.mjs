@@ -154,13 +154,20 @@ try {
       ],
     ];
     for (const [name, attempt] of attempts) {
-      await attempt().catch(() => {});
+      // An attempt that threw names why; one that ran and changed nothing says
+      // only that it did not open the form.
+      const failure = await attempt().then(
+        () => '',
+        (error) => `: ${error.message}`,
+      );
       await pageSettled(s.page);
       if (await cardVisible()) {
         console.log(`[stripe-checkout] card method selected by ${name}`);
         break;
       }
-      console.log(`[stripe-checkout] ${name} did not open the card form`);
+      console.log(
+        `[stripe-checkout] ${name} did not open the card form${failure}`,
+      );
     }
   }
 
@@ -172,7 +179,9 @@ try {
   for (let i = 0; i < saveCount; i++) {
     const box = saveInfo.nth(i);
     if (await box.isChecked().catch(() => false)) {
-      await box.uncheck({ force: true }).catch(() => {});
+      // A box that stays checked turns the payment into a Link enrolment on a
+      // phone nobody here confirms; the checkout stops with the cause.
+      await box.uncheck({ force: true });
       console.log('[stripe-checkout] declined "save my information"');
     }
   }
