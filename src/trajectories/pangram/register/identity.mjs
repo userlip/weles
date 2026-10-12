@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { registrationPassword as generatedPassword } from '../../../../dist/utils/identity/password.js';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
+// The mailbox domains a service address may use are the ones whose mail this
+// deployment receives; they are stated, never assumed.
 function pickEmailDomain() {
-  const domains = (process.env.PANGRAM_EMAIL_DOMAINS || 'wisentmedia.com')
+  const domains = statedText(
+    ['PANGRAM_EMAIL_DOMAINS'],
+    'the comma-separated mailbox domains a generated Pangram address may use',
+  )
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);

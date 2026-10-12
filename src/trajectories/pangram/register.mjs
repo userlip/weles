@@ -9,6 +9,7 @@ import {
 import { humanFill, humanType } from '../../../dist/human/keyboard.js';
 import { generatePersona } from '../../../dist/browser/persona.js';
 import { generateEmail, registrationPassword } from './register/identity.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
 import {
   countryHintFromProxy,
   selectRegistrationProxy,
@@ -31,8 +32,15 @@ import {
 const SIGNUP_URL =
   process.env.PANGRAM_SIGNUP_URL || 'https://www.pangram.com/signup';
 const EMAIL = generateEmail();
-const FIRST_NAME = process.env.PANGRAM_FIRST_NAME || 'Wisent';
-const LAST_NAME = process.env.PANGRAM_LAST_NAME || 'Audit';
+// The name the account is registered under is the caller's.
+const FIRST_NAME = statedText(
+  ['PANGRAM_FIRST_NAME'],
+  'the first name the Pangram account is registered under',
+);
+const LAST_NAME = statedText(
+  ['PANGRAM_LAST_NAME'],
+  'the last name the Pangram account is registered under',
+);
 const PASSWORD = registrationPassword();
 
 const regProxy = selectRegistrationProxy();
