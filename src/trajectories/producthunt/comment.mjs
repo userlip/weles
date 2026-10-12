@@ -111,12 +111,18 @@ async function postComment(s, acct, sessionMeta) {
   await s.page.keyboard.press('Control+Enter').catch(() => {});
   await pageSettled(s.page);
 
-  const found = await s.page
-    .evaluate(
-      `(() => (document.body?.innerText || '').includes(${JSON.stringify(COMMENT_TEXT)}))()`,
-    )
-    .catch(() => false);
-  if (found) return targetUrl;
+  // The editor still holds the typed draft, so a body that contains the text
+  // proves nothing; the comment is posted only when the text shows outside
+  // every editable field.
+  const postedOutsideEditor = () =>
+    s.page.evaluate((text) => {
+      const page = document.body.cloneNode(true);
+      page
+        .querySelectorAll('[contenteditable="true"], textarea, input')
+        .forEach((field) => field.remove());
+      return page.textContent.includes(text);
+    }, COMMENT_TEXT);
+  if (await postedOutsideEditor()) return targetUrl;
 
   // Otherwise click a submit button by label via Playwright locator.
   const submitBtn = s.page
@@ -134,12 +140,7 @@ async function postComment(s, acct, sessionMeta) {
   console.log(`[ph-comment] explicit submit button: ${btnClicked}`);
   await pageSettled(s.page);
 
-  const found2 = await s.page
-    .evaluate(
-      `(() => (document.body?.innerText || '').includes(${JSON.stringify(COMMENT_TEXT)}))()`,
-    )
-    .catch(() => false);
-  if (!found2)
+  if (!(await postedOutsideEditor()))
     throw new Error(`comment_not_found_after_post: url=${s.page.url()}`);
   return targetUrl;
 }
