@@ -26,7 +26,7 @@ export async function topUpPayAsYouGo(s, usd) {
   // The price is read from that modal, never assumed: a price written here
   // would buy the wrong amount the day Oxylabs changes it. GB is computed
   // with floor so the charge never exceeds the budget ceiling.
-  await addTrafficBtn.click({ force: true }).catch(() => {});
+  await addTrafficBtn.click({ force: true });
   await humanIdlePause('long');
   await s.page
     .screenshot({
@@ -43,7 +43,13 @@ export async function topUpPayAsYouGo(s, usd) {
     process.exit(1);
   }
   const gbPrice = Number(priceMatch[1]);
-  const targetGb = Math.max(1, Math.floor(usd / gbPrice));
+  const targetGb = Math.floor(usd / gbPrice);
+  // Rounding a budget below one GB up to a whole GB would charge more than
+  // the caller allowed, so it is refused instead.
+  if (!targetGb)
+    throw new Error(
+      `the budget $${usd} buys no whole GB at $${gbPrice}/GB; nothing was bought`,
+    );
   console.log(
     `[trajectory] targeting ${targetGb} GB at $${gbPrice}/GB read from the modal (total $${targetGb * gbPrice} for budget $${usd})`,
   );
@@ -226,10 +232,12 @@ export async function topUpPayAsYouGo(s, usd) {
     )
     .filter({ visible: true })
     .last();
-  if (await finalBtn.isVisible().catch(() => false)) {
-    await finalBtn.click({ force: true }).catch(() => {});
-    console.log('[trajectory] clicked final Stripe submit');
-  }
+  if (!(await finalBtn.isVisible()))
+    throw new Error(
+      `no Stripe submit button is visible at ${s.page.url()}; nothing was charged`,
+    );
+  await finalBtn.click({ force: true });
+  console.log('[trajectory] clicked final Stripe submit');
   await pageSettled(s.page);
   if (stripeChargeFired)
     console.log(
