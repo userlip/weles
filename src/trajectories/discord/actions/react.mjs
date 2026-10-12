@@ -24,18 +24,27 @@ const s = await WSession.start({
 const _stored = (acct.metadata?.cookies ?? []).filter((c) =>
   /discord\.com/.test(c.domain ?? ''),
 );
+// Without its stored session the run lands on the login wall and reports a
+// failed reaction with no word of why, so a failed injection fails the run.
+let unauthenticated = null;
 if (_stored.length)
   await s.ctx
     .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
-    .catch(() => {});
+    .catch((error) => {
+      unauthenticated = `the stored discord cookies could not be injected: ${error}`;
+    });
 if (acct.metadata?.discord_token)
   await s.ctx
     .addInitScript(
       `localStorage.setItem("token",${JSON.stringify(JSON.stringify(acct.metadata.discord_token))})`,
     )
-    .catch(() => {});
+    .catch((error) => {
+      const token = `the stored discord token could not be injected: ${error}`;
+      unauthenticated = unauthenticated ? `${unauthenticated}; ${token}` : token;
+    });
 let ban = null;
 try {
+  if (unauthenticated) throw new Error(unauthenticated);
   await s.goto(`https://discord.com/channels/${channelPath}`);
   checkReachable(s, 'discord');
   // Wait for chat messages to render — each message <li id="chat-messages-{channelId}-{messageId}">.
