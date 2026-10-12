@@ -23,6 +23,7 @@ import {
 import { dumpGisFailureDom } from './google_sso/failure_dom.mjs';
 import { answerClaudeCaptcha } from './google_sso/captcha_answer.mjs';
 import { pageCondition, pageSettled } from '../_shared/page/settled.mjs';
+import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 
 export { readGisState } from './google_sso/gis_state/page_reading.mjs';
 export {
@@ -312,13 +313,8 @@ export async function doGoogleSso({
         const enabled = pageCondition(active, () =>
           Array.from(document.querySelectorAll('button,[role="button"]')).some(
             (el) =>
-              /^(authorize|allow|zezwól|zezwol|autoryzuj)$/i.test(
-                (el.innerText || el.textContent || '')
-                  .replace(/\s+/g, ' ')
-                  .trim(),
-              ) &&
-              !el.disabled &&
-              el.getAttribute('aria-disabled') !== 'true',
+              el.checkVisibility() &&
+              !el.matches(':disabled, [aria-disabled="true"]'),
           ),
         );
         await anyPageChange(page, views, enabled);
@@ -413,7 +409,12 @@ export async function doGoogleSso({
       if (variant === 'oauth_consent') {
         claim();
         mark('oauth_consent_click');
-        await clickOfferedControl(active, 'consent');
+        // The grant screen offers Authorize and Decline; the vision model
+        // finds the grant in whatever language the screen speaks.
+        await clickDescribed(
+          active,
+          'the button that authorizes the requested access (not the one that declines it)',
+        );
         // The SPA POSTs /v1/oauth/.../authorize (slow in headless, renders a
         // spinner) and then redirects to platform.claude.com. That redirect is
         // just another state this same loop observes.

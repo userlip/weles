@@ -2,9 +2,9 @@
 // for that prompt to end. The code itself comes only from the account's seed
 // (sign_in/challenge/seed.mjs); the credential driver handles an offered phone
 // approval when no seed is held.
-import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { navEval } from './page_controls.mjs';
-import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
+import { pageCondition } from '../../_shared/page/settled.mjs';
+import { clickOffered } from '../../_shared/page/judged/seen.mjs';
 import { clickTryAnotherWay } from '../../_shared/services/google_sso/authenticator_challenge.mjs';
 import { logGooglePageDiag } from '../../_shared/services/google_sso/page_diagnostics.mjs';
 
@@ -13,12 +13,10 @@ async function googleChallengeState(page, terminalOnly = false) {
     const observed = {
       host: location.host,
       path: location.pathname,
+      // Google's second-factor screens live on its challenge routes.
       challenge:
         location.hostname === 'accounts.google.com' &&
-        (/\/challenge(?:\/|$)/.test(location.pathname) ||
-          /2-step verification|get a code to sign in|verify it.s you|weryfikacja dwuetapowa/i.test(
-            document.body?.innerText || '',
-          )),
+        /\/challenge(?:\/|$)/.test(location.pathname),
     };
     if (waitForTerminal && observed.challenge) {
       let invalidInput = null;
@@ -94,10 +92,10 @@ export async function waitForGoogleChallengeExit(page) {
   );
 }
 
-// Select only an authenticator method the supplied login can answer. The
-// method is the control whose accessible name is Google Authenticator; when
-// the challenge shows another method, Google's own "Try another way" control
-// (clickTryAnotherWay) opens the chooser that lists it.
+// Select only an authenticator method the supplied login can answer: the
+// Google Authenticator option, found by the vision model; when the challenge
+// shows another method, Google's own other-ways control (clickTryAnotherWay)
+// opens the chooser that lists it.
 export async function selectAuthenticatorMethod(page, hasCode) {
   const observed = await googleChallengeState(page);
   if (observed.challenge === false) return 'no-2fa';
@@ -109,18 +107,11 @@ export async function selectAuthenticatorMethod(page, hasCode) {
     );
   }
   if (!hasCode) await requireAuthenticatorCode(page, null);
-  const chooseAuthenticator = async () => {
-    const offered = page
-      .getByRole('link', { name: /Google Authenticator/i })
-      .or(page.getByRole('button', { name: /Google Authenticator/i }))
-      .or(page.getByRole('option', { name: /Google Authenticator/i }))
-      .filter({ visible: true })
-      .first();
-    if (!(await offered.isVisible())) return false;
-    await humanClickLocator(page, offered);
-    await pageSettled(page);
-    return true;
-  };
+  const chooseAuthenticator = () =>
+    clickOffered(
+      page,
+      'the option to get a verification code from the Google Authenticator app',
+    );
   // Google can open the method chooser directly, without another menu step.
   if (await chooseAuthenticator()) return 'switched';
   if (!(await clickTryAnotherWay(page))) return 'stuck';

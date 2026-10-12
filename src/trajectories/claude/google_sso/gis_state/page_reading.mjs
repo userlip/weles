@@ -8,8 +8,8 @@ import { humanClick } from '../../../../../dist/human/mouse.js';
 import { navEval } from '../page_controls.mjs';
 
 // The smallest box that counts as a rendered control. A 1x1 tracking pixel
-// with role="button" is not an affordance; 4px is the same floor
-// waitForEnabledThenClick uses. Titles, identifiers and the body are read whole.
+// with role="button" is not an affordance. Titles, identifiers and the body
+// are read whole.
 const GIS_MIN_BOX_PX = 4;
 
 // One read of one page: everything the state machine decides on, collected in a
@@ -66,17 +66,21 @@ export const readGisState = (arg) => {
       )
     : null;
   // A different account is not a substitute, even when it is the only row.
-  // "Use another account" is a separate control, never another identity's row.
+  // "Use another account" is a separate control, never another identity's row:
+  // the chooser's list entry that carries no account identifier.
+  const [firstRow] = rows;
+  const chooserList = firstRow ? firstRow.closest('ul') : null;
+  const otherAccount = chooserList
+    ? Array.from(chooserList.querySelectorAll(':scope > li')).find(
+        (item) => !item.querySelector('[data-identifier]') && shown(item),
+      )
+    : null;
 
-  // Google's affirmative control. Wording first, because that is the only thing
-  // that separates it from "Anuluj"/"Cancel" beside it (both are
-  // button[jsname="LgbsSe"] with identical classes on the confirm screen), and a
-  // negative label is never clicked. #submit_approve_access is Google's own id on
-  // the older scope screen and wins when present.
-  const affirmative =
-    /^(continue|next|allow|confirm|agree|i agree|kontynuuj|dalej|zezwól|potwierdź|zgadzam się)$/i;
-  const negative =
-    /^(cancel|back|not now|no thanks|deny|anuluj|wstecz|nie teraz|odmów)$/i;
+  // Google's affirmative control. #submit_approve_access is Google's own id on
+  // the older scope screen and [data-primary-action-label] marks the primary
+  // action elsewhere; on the confirm screen, where "Continue" and "Cancel" are
+  // identical buttons, Google's action row puts the affirmative one last, at
+  // the bottom right, so the bottom-right live button is it.
   const affirmativeButton = () => {
     const structural = pick(
       '#submit_approve_access button, #submit_approve_access, [data-primary-action-label] button',
@@ -85,10 +89,32 @@ export const readGisState = (arg) => {
     if (structural) return structural;
     const buttons = Array.from(
       document.querySelectorAll('button, [role="button"]'),
-    ).filter((el) => shown(el) && live(el) && !negative.test(label(el)));
-    const named = buttons.find((el) => affirmative.test(label(el)));
-    return named ? point(named, 'primary') : null;
+    ).filter((el) => shown(el) && live(el));
+    const [last] = buttons.sort(
+      (a, b) =>
+        rect(b).bottom - rect(a).bottom || rect(b).right - rect(a).right,
+    );
+    return last ? point(last, 'primary') : null;
   };
+  // claude.ai's grant screen is its /oauth/authorize route; it renders its
+  // buttons disabled while it loads the authorize data, and the grant itself is
+  // found by the vision model when clicked.
+  const claudeHost = ['claude.ai', 'claude.com'].some(
+    (domain) =>
+      location.hostname === domain || location.hostname.endsWith(`.${domain}`),
+  );
+  const grantScreen =
+    claudeHost && location.pathname.startsWith('/oauth/authorize');
+  const grantButtons = grantScreen
+    ? Array.from(document.querySelectorAll('button,[role="button"]')).filter(
+        shown,
+      )
+    : [];
+  // The sign-in-with-Google control carries Google's brand name in every
+  // language ("Continue with Google", "Kontynuuj z Google").
+  const googleButtons = Array.from(
+    document.querySelectorAll('button,[role="button"]'),
+  ).filter((el) => shown(el) && /google/i.test(label(el)));
 
   const state = {
     ok: true,
@@ -100,44 +126,20 @@ export const readGisState = (arg) => {
     rowIdentifiers: rows.map((el) => el.getAttribute('data-identifier')),
     accountRow: mine ? point(mine, 'account_row') : null,
     accountRowMatchedBy: mine ? 'data_identifier' : null,
-    otherAccountRow: pick(
-      'button,[role="button"],[role="link"],li,a',
-      'other_account',
-      /^(use another account|add account|dodaj konto|inne konto|użyj innego konta)$/i,
-    ),
-    // claude.ai's own grant affordance, in either language this fleet sees.
-    consent: pick(
-      'button,[role="button"]',
-      'consent',
-      /^(authorize|allow|zezwól|zezwol|autoryzuj)$/i,
-    ),
+    otherAccountRow: otherAccount ? point(otherAccount, 'other_account') : null,
+    consent: grantButtons.some(live),
     // The grant screen renders Authorize and Decline disabled while it loads
     // its authorize data: a run read the screen moments after
     // /v1/oauth/<org>/authorize was requested, both buttons disabled="".
-    consentPending: Array.from(
-      document.querySelectorAll('button,[role="button"]'),
-    ).some(
-      (el) =>
-        shown(el) &&
-        !live(el) &&
-        /^(authorize|allow|zezwól|zezwol|autoryzuj)$/i.test(label(el)),
-    ),
-    gisButton: pick(
-      'button,[role="button"]',
-      'gis_button',
-      /continue with google|^google$/i,
-    ),
+    consentPending: Boolean(grantButtons.length) && !grantButtons.some(live),
+    gisButton: (() => {
+      const ready = googleButtons.find(live);
+      return ready ? point(ready, 'gis_button') : null;
+    })(),
     // claude.ai renders its "Continue with Google" button disabled until its
     // Google library is ready: a run failed on that page as 'unknown'
     // moments after the authorize URL loaded.
-    gisButtonPending: Array.from(
-      document.querySelectorAll('button,[role="button"]'),
-    ).some(
-      (el) =>
-        shown(el) &&
-        !live(el) &&
-        /continue with google|^google$/i.test(label(el)),
-    ),
+    gisButtonPending: googleButtons.some((el) => !live(el)),
     // claude.ai serves its authorize page as an app shell that renders later:
     // one run recorded claude.ai/oauth/authorize titled "Claude" with an
     // empty #root under [data-page-loading] and no control at all, and another
@@ -162,9 +164,16 @@ export const readGisState = (arg) => {
     ).some(shown),
     bodyText: document.body ? document.body.innerText.replace(/\s+/g, ' ') : '',
   };
-  // Only look for the affirmative button once no row is waiting to be picked:
-  // picking the account always precedes confirming it.
-  state.googlePrimary = state.accountRow ? null : affirmativeButton();
+  // Only look for the affirmative button once no row is waiting to be picked
+  // (picking the account always precedes confirming it), and only on Google's
+  // confirm screens: the account chooser and the OAuth scope routes.
+  const confirmScreen =
+    location.hostname === 'accounts.google.com' &&
+    ['/signin/accountchooser', '/signin/oauth', '/o/oauth2'].some((route) =>
+      location.pathname.includes(route),
+    );
+  state.googlePrimary =
+    state.accountRow || !confirmScreen ? null : affirmativeButton();
   return state;
 };
 
