@@ -12,13 +12,29 @@ import { humanType } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled, submitAnswered } from '../../_shared/page/settled.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
-const REPO_URL = process.env.REPO_URL || '';
-const FILE_PATH = process.env.FILE_PATH || 'README.md';
-const COMMIT_MESSAGE = process.env.COMMIT_MESSAGE || 'update notes';
-const FILE_APPEND =
-  process.env.FILE_APPEND ||
-  `\n- ${new Date().toISOString().slice(0, 10)}: quick note\n`;
+// The repository, file, message and text are the caller's: a commit lands in
+// a real repository's history under the account's name, so none is written
+// here.
+const REPO_URL = statedText(
+  ['REPO_URL'],
+  'the GitHub repository (URL or owner/name) the commit goes to',
+);
+const FILE_PATH = statedText(
+  ['FILE_PATH'],
+  'the repository file the commit appends to',
+);
+const COMMIT_MESSAGE = statedText(
+  ['COMMIT_MESSAGE'],
+  'the commit message the repository history records',
+);
+// Kept exactly as given: its leading and trailing newlines are part of it.
+const FILE_APPEND = process.env.FILE_APPEND;
+if (!FILE_APPEND?.trim())
+  throw new Error(
+    'FILE_APPEND is not set: the text the commit appends to the file; nothing is assumed',
+  );
 
 function normalize(raw) {
   if (!raw) return '';

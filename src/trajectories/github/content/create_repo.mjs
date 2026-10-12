@@ -7,30 +7,25 @@ import { detectGitHubBanSignals } from '../../../../dist/platforms/github/ban_si
 import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
 import { checkReachable } from '../../_shared/action-runner.mjs';
 import { humanFill } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled, submitAnswered } from '../../_shared/page/settled.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
-// Word pool used to generate organic-looking repo names when REPO_NAME isn't
-// supplied. Set WELES_GITHUB_REPO_WORDS to override (comma-separated) so the
-// orchestrator can diversify the pool without touching trajectory code.
-const WORD_POOL = (
-  process.env.WELES_GITHUB_REPO_WORDS ??
-  'notes,scratch,dotfiles,playground,sandbox,learning,snippets,configs,bits,practice'
-).split(',');
-function slug() {
-  const w =
-    WORD_POOL[Math.floor(Math.random() * WORD_POOL.length)].trim() || 'scratch';
-  return `${w}-${randomBytes(3).toString('hex')}`;
-}
-
-const REPO_NAME = (process.env.REPO_NAME || slug())
+// The repository's name and description are public under the account's name
+// and are the caller's; neither is drawn from a word pool or written here.
+const REPO_NAME = statedText(
+  ['REPO_NAME'],
+  'the name of the repository to create',
+)
   // GitHub decides how long a name may be and says so; no cut is chosen here.
   .replace(/[^a-zA-Z0-9_.-]/g, '');
-const REPO_DESC = process.env.REPO_DESC || 'personal workspace';
+const REPO_DESC = statedText(
+  ['REPO_DESC'],
+  'the public description of the repository',
+);
 
 const acct = await getSocialAccount('github');
 if (!acct) {
