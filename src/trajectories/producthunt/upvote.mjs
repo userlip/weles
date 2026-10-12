@@ -196,6 +196,12 @@ async function vote(s) {
   // gave us a /posts/ launch URL, we vote on the homepage feed directly.
   const cur = s.page.url();
   if (cur.includes('/products/') && !TARGET_URL.includes('/products/')) {
+    // A requested launch that redirected to its hub must not be answered by a
+    // vote on whatever leads the homepage feed, reported as the one asked for.
+    if (process.env.PRODUCTHUNT_URL)
+      throw new Error(
+        `launch_page_unavailable: ${TARGET_URL} redirected to the product hub ${cur}, which records no launch vote; nothing was voted`,
+      );
     console.log('[ph-vote] redirected to product hub — going back to homepage');
     await s.goto('https://www.producthunt.com/');
     await pageSettled(s.page);
