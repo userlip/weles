@@ -125,7 +125,15 @@ try {
     .first();
   await submit.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, submit);
-  await humanIdlePause('deliberate');
+  // The comment counts once YouTube lists it in the thread; a click that
+  // posted nothing (a held or rejected comment) fails here with the cause.
+  await s.page
+    .locator(
+      'ytd-comment-thread-renderer #content-text, ytd-comment-view-model #content-text',
+    )
+    .filter({ hasText: COMMENT.trim() })
+    .first()
+    .waitFor({ state: 'visible' });
   console.log(`PASS: commented`);
 } catch (e) {
   console.error('FAIL:', e);
