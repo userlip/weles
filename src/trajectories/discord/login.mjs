@@ -406,7 +406,7 @@ try {
     )
       sig = 'proxy_failed';
     else if (finalUrl.startsWith('chrome-error://')) sig = 'proxy_failed';
-    else if (/hcaptcha|captcha/i.test(msg) || /\/login/.test(finalUrl))
+    else if (/captcha/i.test(msg) || /\/login/.test(finalUrl))
       sig = 'checkpoint';
     fs.writeFileSync(
       path.join(dir, 'ban_signal.json'),
