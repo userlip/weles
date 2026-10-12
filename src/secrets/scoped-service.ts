@@ -234,6 +234,21 @@ export function isWelesAcquiredSecretValue(
   );
 }
 
+/**
+ * The operations a credential write may commit for, each with whether it
+ * only makes sense for a password contract: a reset commits a value whose
+ * predecessor was never known to us, an adopt one the operator already knew,
+ * and a rollback restores one.
+ */
+const WRITE_OPERATIONS: Readonly<Record<string, { passwordOnly: boolean }>> = {
+  acquire: { passwordOnly: false },
+  rotate: { passwordOnly: false },
+  verify: { passwordOnly: false },
+  adopt: { passwordOnly: true },
+  reset: { passwordOnly: true },
+  rollback: { passwordOnly: true },
+};
+
 export function writeWelesAcquiredSecret(
   secretName: WelesAcquiredSecret,
   field: string,
@@ -268,23 +283,18 @@ export function writeWelesAcquiredSecret(
     );
   const requestId = context.requestId ?? '';
   const operation = context.operation ?? '';
-  if (
-    !/^[a-f0-9]{64}$/i.test(requestId) ||
-    !['acquire', 'adopt', 'rotate', 'reset', 'verify', 'rollback'].includes(
-      operation,
-    )
-  ) {
+  if (!/^[a-f0-9]{64}$/i.test(requestId)) {
     throw new Error(
-      `credential write requires an exact request id and operation for ${secretName}`,
+      `credential write for ${secretName} needs the operation's request id (64 hex digits); it was given ${JSON.stringify(requestId)}`,
     );
   }
-  // A reset commits a value whose predecessor was never known to us, an adopt
-  // commits one the operator already knew, and a rollback restores one: all
-  // three only make sense for a password contract.
+  if (!Object.hasOwn(WRITE_OPERATIONS, operation)) {
+    throw new Error(
+      `credential write for ${secretName} names operation ${JSON.stringify(operation)}; a write is one of ${Object.keys(WRITE_OPERATIONS).join(', ')}`,
+    );
+  }
   if (
-    (operation === 'rollback' ||
-      operation === 'reset' ||
-      operation === 'adopt') &&
+    WRITE_OPERATIONS[operation].passwordOnly &&
     contract.shape !== 'password'
   ) {
     throw new Error(
