@@ -264,12 +264,14 @@ export const BROWSER_TOOLS: readonly FunctionTool[] = [
     { platform: TEXT },
     [],
   ),
-  browserTool(
-    'check_sms',
-    'Request an SMS number for the authorized service in the stated country (US, UK, CA, NL or DE).',
-    { service: TEXT, country: TEXT },
-    ['service', 'country'],
-  ),
+  ((args) =>
+    browserTool(
+      'check_sms',
+      'Request an SMS number for the authorized service in the stated country code; an unsupported country is refused with the supported list.',
+      args,
+      // Both are required: a number is only bought in a country the task named.
+      Object.keys(args),
+    ))({ service: TEXT, country: TEXT }),
   browserTool(
     'poll_sms_code',
     'Poll the existing authorized SMS order for its code.',
