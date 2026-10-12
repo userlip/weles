@@ -10,12 +10,10 @@ import {
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { confirmedFill } from '../../_shared/page/confirmed-fill.mjs';
-import { humanType } from '../../../../dist/human/keyboard.js';
 import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
-import { nativeSelectAllAndDelete } from '../../../../dist/human/mouse-native.js';
 import {
   assertAuthed,
   AuthProbeError,
@@ -213,13 +211,13 @@ try {
       console.log(`[li-profile] ${label}: locator missing — skipping`);
       continue;
     }
-    await el.scrollIntoViewIfNeeded().catch(() => {});
-    const cur = await el.inputValue().catch(() => '');
+    await el.scrollIntoViewIfNeeded();
+    const cur = await el.inputValue();
     if (cur.trim() === target.trim()) continue;
     await fitsField(el, target, `the LinkedIn ${label}`);
-    await humanClickLocator(s.page, el);
-    nativeSelectAllAndDelete();
-    await humanType(s.page, target);
+    // Read back before Save: a clear that did not take would save the old
+    // value with the new one appended.
+    await confirmedFill(s.page, el, target, `the LinkedIn ${label} field`);
     if (label === 'industry') {
       await humanIdlePause('short');
       const sugg = s.page
