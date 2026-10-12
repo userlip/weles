@@ -41,9 +41,9 @@ try {
   if (!ok) throw new Error('Google SSO did not complete');
 
   await urlMatching(s.page, LANDED);
-  await s.page
-    .goto('https://5sim.net/finance', { waitUntil: 'domcontentloaded' })
-    .catch(() => {});
+  // The pay button is looked for on whatever page is open; a top-up that
+  // never reached the finance page must stop with the cause, not pay elsewhere.
+  await s.page.goto('https://5sim.net/finance', { waitUntil: 'domcontentloaded' });
   await humanIdlePause('long');
 
   const amtIn = s.page

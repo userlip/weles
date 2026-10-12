@@ -45,11 +45,11 @@ try {
   await urlMatching(s.page, LEFT_LOGIN);
 
   // Capsolver's recharge page.
-  await s.page
-    .goto('https://dashboard.capsolver.com/dashboard/recharge', {
-      waitUntil: 'domcontentloaded',
-    })
-    .catch(() => {});
+  // The pay button is looked for on whatever page is open; a top-up that
+  // never reached the recharge page must stop with the cause, not pay elsewhere.
+  await s.page.goto('https://dashboard.capsolver.com/dashboard/recharge', {
+    waitUntil: 'domcontentloaded',
+  });
   await humanIdlePause('long');
 
   const amtIn = s.page

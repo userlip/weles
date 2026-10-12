@@ -38,11 +38,11 @@ try {
   }
 
   await humanIdlePause('long');
-  await s.page
-    .goto('https://dash.capmonster.cloud/Profile/AddFunds', {
-      waitUntil: 'domcontentloaded',
-    })
-    .catch(() => {});
+  // The pay button is looked for on whatever page is open; a top-up that
+  // never reached Add Funds must stop with the cause, not pay elsewhere.
+  await s.page.goto('https://dash.capmonster.cloud/Profile/AddFunds', {
+    waitUntil: 'domcontentloaded',
+  });
   await humanIdlePause('long');
 
   // Fill amount if input exists
