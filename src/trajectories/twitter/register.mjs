@@ -140,6 +140,10 @@ async function signup(s) {
     throw new Error('signup form offers no Next after the date of birth');
   console.log('[tw] clicked Next, waiting for page change...');
 
+  // The flow's own steps (step()) after which it asks for something only
+  // the new account holds: the code it sent, or the password it sets.
+  const ASKS_FOR_SECRET = { code: true, password: true };
+
   // Each round reads what the page now offers and acts on it: the Arkose
   // frame, the Authenticate button, a prompt page with only Next, the
   // logged-out home, or the next input of the flow. Rounds continue until the
@@ -161,7 +165,7 @@ async function signup(s) {
       await solveArkose(s, ark);
       continue;
     }
-    if (current === 'code' || current === 'password') break;
+    if (Object.hasOwn(ASKS_FOR_SECRET, current)) break;
     if (await clickFirst(page, 'button', ['Authenticate'])) continue;
     if (current === null && (await press(page, NEXT))) continue;
     if (
