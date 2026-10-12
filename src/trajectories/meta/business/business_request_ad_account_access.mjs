@@ -1,4 +1,9 @@
-// Request non-transfer access to an existing Meta ad account from Business Settings.
+// Request non-transfer access to an existing Meta ad account from Business
+// Settings. Each control - Add, the access-request option, Next, the role and
+// the confirmation - is found by the vision model from its description, and
+// each state the flow branches on - a refusal, a role still to choose, the
+// dialog still open - is judged by it (`_shared/page/judged/seen.mjs`), in the
+// language the account's Business Settings speak.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -9,6 +14,12 @@ import { humanType } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
+import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
+import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
+
+const INDENT = '  ';
+const NEVER =
+  'Never a control that cancels, closes, transfers or creates a new ad account.';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -30,20 +41,6 @@ function stableProfilePersona() {
   const persona = generatePersona({ os: 'macos', browser: 'chromium' });
   writeFileSync(p, JSON.stringify(persona, null, 2));
   return persona;
-}
-
-function sanitizedUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.hash = parsed.hash ? '#<redacted>' : '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|code|secret|state|session|auth/i.test(key))
-        parsed.searchParams.set(key, '<redacted>');
-    }
-    return parsed.toString();
-  } catch {
-    return '<invalid-url>';
-  }
 }
 
 async function snapshot(page, label) {
@@ -95,138 +92,36 @@ async function snapshot(page, label) {
       title: document.title || null,
       bodyText: bodyText,
       controls,
-      statusHints: {
-        technicalError:
-          /niespodziewany problem techniczny|unexpected technical problem|try again|spróbuj ponownie/i.test(
-            bodyText,
-          ),
-        permissionDenied:
-          /brak dostępu|permission denied|access denied|not authorized|nie masz dostępu|nie możesz poprosić|nie możesz uzyskać|odmówiono/i.test(
-            bodyText,
-          ),
-        missingAdAccountId:
-          /zanim przejdziesz dalej, dodaj identyfikator konta reklamowego|add the ad account id|enter an ad account id/i.test(
-            bodyText,
-          ),
-        missingRole:
-          /zanim przejdziesz dalej, wybierz rolę|choose a role|select a role/i.test(
-            bodyText,
-          ),
-        requestFlowOpen:
-          /request access to an ad account|poproś o dostęp do konta reklamowego|choose the role you need|wybierz role|wybierz rolę|wybierz konto reklamowe/i.test(
-            bodyText,
-          ),
-        submitted: /wysłano|submitted|prośba została|request has been/i.test(
-          bodyText,
-        ),
-        accountPresent:
-          bodyText.includes(adAccountId) ||
-          fields.some((field) => field.value.includes(adAccountId)),
-      },
+      accountPresent:
+        bodyText.includes(adAccountId) ||
+        fields.some((field) => field.value.includes(adAccountId)),
     };
   }, AD_ACCOUNT_ID);
-  console.log(
-    JSON.stringify(
-      {
-        stage: 'snapshot',
-        label,
-        url: sanitizedUrl(page.url?.() || ''),
-        ...data,
-      },
-      null,
-      2,
-    ),
-  );
+  const record = {
+    stage: 'snapshot',
+    label,
+    url: redactedUrl(page.url()),
+    ...data,
+  };
+  console.log(JSON.stringify(record, null, INDENT));
   return data;
 }
 
-async function clickFirst(
-  page,
-  label,
-  allow,
-  deny = /delete|remove|usuń|anuluj|cancel|zamknij|przenieś|transfer|utwórz nowe/i,
-) {
-  const target = await page
-    .evaluate(
-      ({ allowSource, allowFlags, denySource, denyFlags }) => {
-        const allowRe = new RegExp(allowSource, allowFlags);
-        const denyRe = new RegExp(denySource, denyFlags);
-        const textOf = (el) =>
-          (
-            el.innerText ||
-            el.textContent ||
-            el.getAttribute('aria-label') ||
-            ''
-          )
-            .replace(/\s+/g, ' ')
-            .trim();
-        const visible = (el) => {
-          const style = window.getComputedStyle(el);
-          const rect = el.getBoundingClientRect();
-          return (
-            style.visibility !== 'hidden' &&
-            style.display !== 'none' &&
-            rect.width > 0 &&
-            rect.height > 0
-          );
-        };
-        const nodes = Array.from(
-          document.querySelectorAll(
-            'button, [role="button"], a, [role="menuitem"], div, span',
-          ),
-        )
-          .filter(visible)
-          .map((el) => {
-            const rect = el.getBoundingClientRect();
-            const text = textOf(el);
-            const area = rect.width * rect.height;
-            let score = Math.max(0, 500000 - area);
-            if (el.matches('button, [role="button"], a, [role="menuitem"]'))
-              score += 100000;
-            if (rect.left > 300) score += 10000;
-            return {
-              text,
-              x: Math.round(rect.left + rect.width / 2),
-              y: Math.round(rect.top + rect.height / 2),
-              disabled:
-                el.disabled === true ||
-                el.getAttribute('aria-disabled') === 'true',
-              area,
-              score,
-            };
-          })
-          .filter((item) => item.area < 500000)
-          .filter(
-            (item) =>
-              item.text &&
-              !item.disabled &&
-              allowRe.test(item.text) &&
-              !denyRe.test(item.text),
-          )
-          .sort((a, b) => b.score - a.score);
-        return nodes[0] || null;
-      },
-      {
-        allowSource: allow.source,
-        allowFlags: allow.flags,
-        denySource: deny.source,
-        denyFlags: deny.flags,
-      },
-    )
-    .catch(() => null);
-  if (!target) return null;
-  await page.mouse.click(target.x, target.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked',
-      label,
-      text: target.text,
-      x: target.x,
-      y: target.y,
-    }),
+async function clickControl(page, label, description) {
+  const target = await clickDescribed(page, `${description}. ${NEVER}`);
+  console.log(JSON.stringify({ stage: 'clicked', label, ...target }));
+}
+
+/** Throws with the page text when Meta shows an error or a refusal. */
+async function refuseOnError(page, result, step) {
+  const failed = await pageShows(
+    page,
+    'Does the page show an error, a refusal of access, or a message that the ad account ID is missing or invalid?',
   );
-  return target;
+  if (failed)
+    throw new Error(
+      `Meta refused or failed the ad-account access request for ${AD_ACCOUNT_ID} ${step}: ${result.bodyText}`,
+    );
 }
 
 // The id goes into the open dialog's text field, found on the page, so no
@@ -257,154 +152,14 @@ async function fillAdAccountId(page) {
   );
 }
 
-async function clickEnabledDialogAction(page, label, allow) {
-  const target = await page
-    .evaluate(
-      ({ allowSource, allowFlags }) => {
-        const allowRe = new RegExp(allowSource, allowFlags);
-        const textOf = (el) =>
-          (
-            el.innerText ||
-            el.textContent ||
-            el.getAttribute('aria-label') ||
-            ''
-          )
-            .replace(/\s+/g, ' ')
-            .trim();
-        const visible = (el) => {
-          const style = window.getComputedStyle(el);
-          const rect = el.getBoundingClientRect();
-          return (
-            style.visibility !== 'hidden' &&
-            style.display !== 'none' &&
-            rect.width > 0 &&
-            rect.height > 0
-          );
-        };
-        const nodes = Array.from(
-          document.querySelectorAll('button, [role="button"], a'),
-        )
-          .filter(visible)
-          .map((el) => {
-            const rect = el.getBoundingClientRect();
-            return {
-              text: textOf(el),
-              x: Math.round(rect.left + rect.width / 2),
-              y: Math.round(rect.top + rect.height / 2),
-              disabled:
-                el.disabled === true ||
-                el.getAttribute('aria-disabled') === 'true',
-              top: rect.top,
-              left: rect.left,
-            };
-          })
-          .filter(
-            (item) => item.text && allowRe.test(item.text) && !item.disabled,
-          )
-          .sort((a, b) => b.top - a.top || b.left - a.left);
-        return nodes[0] || null;
-      },
-      {
-        allowSource: allow.source,
-        allowFlags: allow.flags,
-      },
-    )
-    .catch(() => null);
-  if (!target) return null;
-  await page.mouse.click(target.x, target.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked',
-      label,
-      text: target.text,
-      x: target.x,
-      y: target.y,
-    }),
-  );
-  return target;
-}
-
-async function selectRole(page) {
-  const target = await page
-    .evaluate(() => {
-      const allowRe =
-        /zarządzaj kontami reklamowymi|manage ad accounts|admin access|pełny dostęp|full access/i;
-      const textOf = (el) =>
-        (el.innerText || el.textContent || el.getAttribute('aria-label') || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-      const visible = (el) => {
-        const style = window.getComputedStyle(el);
-        const rect = el.getBoundingClientRect();
-        return (
-          style.visibility !== 'hidden' &&
-          style.display !== 'none' &&
-          rect.width > 0 &&
-          rect.height > 0
-        );
-      };
-      const nodes = Array.from(
-        document.querySelectorAll(
-          '[role="switch"], input[type="checkbox"], button, [role="button"]',
-        ),
-      )
-        .filter(visible)
-        .map((el) => {
-          const rect = el.getBoundingClientRect();
-          return {
-            text: textOf(el),
-            x: Math.round(rect.left + rect.width / 2),
-            y: Math.round(rect.top + rect.height / 2),
-            checked:
-              el.checked === true ||
-              el.getAttribute('aria-checked') === 'true' ||
-              el.value === 'true',
-            disabled:
-              el.disabled === true ||
-              el.getAttribute('aria-disabled') === 'true',
-            role: el.getAttribute('role') || el.tagName.toLowerCase(),
-          };
-        })
-        .filter(
-          (item) => item.text && allowRe.test(item.text) && !item.disabled,
-        )
-        .sort((a, b) => {
-          const aSwitch = /switch|checkbox/i.test(a.role) ? 1 : 0;
-          const bSwitch = /switch|checkbox/i.test(b.role) ? 1 : 0;
-          return bSwitch - aSwitch || b.y - a.y;
-        });
-      return nodes[0] || null;
-    })
-    .catch(() => null);
-  if (!target) return null;
-  if (!target.checked) await page.mouse.click(target.x, target.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'selected_role',
-      text: target.text,
-      x: target.x,
-      y: target.y,
-      alreadyChecked: target.checked,
-    }),
-  );
-  return target;
-}
-
-console.log(
-  JSON.stringify(
-    {
-      stage: 'start',
-      userDataDir: USER_DATA_DIR,
-      businessId: BUSINESS_ID,
-      adAccountId: AD_ACCOUNT_ID,
-      headless: process.env.META_BUSINESS_HEADLESS !== '0',
-    },
-    null,
-    2,
-  ),
-);
+const start = {
+  stage: 'start',
+  userDataDir: USER_DATA_DIR,
+  businessId: BUSINESS_ID,
+  adAccountId: AD_ACCOUNT_ID,
+  headless: process.env.META_BUSINESS_HEADLESS !== '0',
+};
+console.log(JSON.stringify(start, null, INDENT));
 
 const s = await WSession.start({
   label: 'meta_business_request_ad_account_access',
@@ -421,88 +176,60 @@ try {
   const url = `https://business.facebook.com/latest/settings/ad_accounts?business_id=${encodeURIComponent(BUSINESS_ID)}`;
   await s.page.goto(url, { waitUntil: 'domcontentloaded' });
   await snapshot(s.page, 'initial_ad_accounts');
-  await clickFirst(s.page, 'add', /^add$|^dodaj$/i);
+  await clickControl(
+    s.page,
+    'add',
+    'the enabled button that adds an ad account on the Ad accounts page of Business Settings',
+  );
   await snapshot(s.page, 'add_menu');
-  const choseRequest = await clickFirst(
+  await clickControl(
     s.page,
     'request_access',
-    /poproś o dostęp do konta reklamowego|request access to an ad account|uzyskaj dostęp do konta reklamowego/i,
+    'the option in the open Add menu that requests access to an existing ad account',
   );
-  if (!choseRequest)
-    throw new Error(
-      'Meta did not expose the non-transfer ad-account access request option',
-    );
   await snapshot(s.page, 'request_form');
   await fillAdAccountId(s.page);
   const filled = await snapshot(s.page, 'ad_account_id_filled');
-  if (
-    filled.statusHints.missingAdAccountId ||
-    !filled.statusHints.accountPresent
-  ) {
+  if (!filled.accountPresent)
     throw new Error(
-      `Meta did not accept ad-account id ${AD_ACCOUNT_ID} in the request form`,
+      `Meta did not keep ad-account id ${AD_ACCOUNT_ID} in the request form`,
     );
-  }
-  const next = await clickEnabledDialogAction(
+  await clickControl(
     s.page,
     'next_or_submit',
-    /^dalej$|^next$|^wyślij prośbę$|^send request$|^poproś o dostęp$|^request access$/i,
+    'the enabled button that moves the open access request dialog to its next step or sends it',
   );
-  if (!next)
-    throw new Error(
-      'Meta did not expose an enabled ad-account access request submit button',
-    );
   let result = await snapshot(s.page, 'after_submit');
-  if (result.statusHints.missingAdAccountId)
-    throw new Error(
-      `Meta still requires an ad-account id after submitting ${AD_ACCOUNT_ID}`,
-    );
-  if (result.statusHints.technicalError)
-    throw new Error(
-      `Meta returned a technical error requesting ad account ${AD_ACCOUNT_ID}`,
-    );
-  if (result.statusHints.permissionDenied)
-    throw new Error(
-      `Meta refused ad-account access request for ${AD_ACCOUNT_ID}`,
-    );
+  await refuseOnError(s.page, result, 'after the id was submitted');
   if (
-    result.statusHints.missingRole ||
-    /choose the role you need|wybierz rolę|wybierz role/i.test(result.bodyText)
+    await pageShows(
+      s.page,
+      'Does the open dialog ask to choose the role or access level being requested?',
+    )
   ) {
-    const role = await selectRole(s.page);
-    if (!role)
-      throw new Error(
-        'Meta did not expose an ad-account role control to select',
-      );
+    await clickControl(
+      s.page,
+      'select_role',
+      'the switch or option that requests full control to manage the ad account, unless it is already on',
+    );
     await snapshot(s.page, 'role_selected');
-    const confirm = await clickEnabledDialogAction(
+    await clickControl(
       s.page,
       'confirm_request',
-      /^potwierdź$|^confirm$|^wyślij prośbę$|^send request$/i,
+      'the enabled button that confirms and sends the access request',
     );
-    if (!confirm)
-      throw new Error(
-        'Meta did not expose an enabled confirmation button after selecting a role',
-      );
     result = await snapshot(s.page, 'after_confirm');
-    if (result.statusHints.missingRole)
-      throw new Error(
-        `Meta still requires an ad-account role after selecting one for ${AD_ACCOUNT_ID}`,
-      );
-    if (result.statusHints.technicalError)
-      throw new Error(
-        `Meta returned a technical error confirming ad-account request for ${AD_ACCOUNT_ID}`,
-      );
-    if (result.statusHints.permissionDenied)
-      throw new Error(
-        `Meta refused confirmed ad-account access request for ${AD_ACCOUNT_ID}`,
-      );
-    if (result.statusHints.requestFlowOpen && !result.statusHints.submitted) {
-      throw new Error(
-        `Meta kept the ad-account request dialog open after confirmation for ${AD_ACCOUNT_ID}`,
-      );
-    }
+    await refuseOnError(s.page, result, 'after the role was confirmed');
   }
+  if (
+    await pageShows(
+      s.page,
+      'Is the dialog for requesting access to an ad account still open, without a message that the request was sent?',
+    )
+  )
+    throw new Error(
+      `Meta kept the ad-account request dialog open for ${AD_ACCOUNT_ID}: ${result.bodyText}`,
+    );
   console.log('PASS: Meta ad-account access request flow submitted');
 } catch (error) {
   exitCode = 1;

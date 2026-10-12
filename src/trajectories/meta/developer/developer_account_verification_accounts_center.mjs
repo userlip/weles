@@ -16,6 +16,7 @@ import {
   bringBrowserToFront,
   snapshot,
   stableProfilePersona,
+  verificationState,
 } from './developer_account_verification_accounts_center/page.mjs';
 import {
   clickAccountsCenter,
@@ -50,17 +51,17 @@ try {
     'https://developers.facebook.com/async/developer/account/verification/',
     { waitUntil: 'domcontentloaded' },
   );
-  const initial = await snapshot(s.page, 'initial');
-  if (initial.statusHints.initialTerms && !initial.statusHints.phoneStep) {
+  await snapshot(s.page, 'initial');
+  const initial = await verificationState(s.page);
+  if (initial.termsOnly) {
     throw new Error(
       'Meta is on the terms/registration screen; explicit user acceptance is required before continuing',
     );
   }
   if (OPEN_UPDATE_PHONE) {
-    const clicked = await clickUpdateMobileNumber(s.page);
-    if (!clicked) throw new Error('No Update Mobile Number control found');
-    const updateState = await snapshot(s.page, 'after_update_mobile_number');
-    if (VERIFY_PHONE && updateState.statusHints.phoneStep) {
+    await clickUpdateMobileNumber(s.page);
+    await snapshot(s.page, 'after_update_mobile_number');
+    if (VERIFY_PHONE && (await verificationState(s.page)).phoneStep) {
       const phoneResult = await fillPhoneAndSend(s.page);
       console.log(
         JSON.stringify(
@@ -78,8 +79,8 @@ try {
     await bringBrowserToFront(s);
     finishedDeveloperCode = true;
   }
-  if (!finishedDeveloperCode && (initial.statusHints.smsCode || CODE_ONLY)) {
-    if (!initial.statusHints.smsCode)
+  if (!finishedDeveloperCode && (initial.smsCode || CODE_ONLY)) {
+    if (!initial.smsCode)
       throw new Error(
         'No developer verification code screen found for META_VERIFY_CODE_ONLY=1',
       );
@@ -108,8 +109,8 @@ try {
   }
   if (
     !finishedDeveloperCode &&
-    initial.statusHints.phoneStep &&
-    !initial.statusHints.accountsCenterRequired
+    initial.phoneStep &&
+    !initial.accountsCenterRequired
   ) {
     const phoneResult = await fillPhoneAndSend(s.page);
     console.log(
@@ -123,8 +124,8 @@ try {
         2,
       ),
     );
-    const afterPhone = await snapshot(s.page, 'after_phone_submit');
-    if (afterPhone.statusHints.smsCode) {
+    await snapshot(s.page, 'after_phone_submit');
+    if ((await verificationState(s.page)).smsCode) {
       if (!VERIFY_CODE) {
         console.log(
           'NEED_CODE: META_VERIFY_CODE is required to submit the developer verification code',
@@ -150,11 +151,7 @@ try {
     }
   }
   if (!finishedDeveloperCode) {
-    const clicked = await clickAccountsCenter(s.page);
-    if (!clicked)
-      throw new Error(
-        'No visible Accounts Center link found on the Meta verification page',
-      );
+    await clickAccountsCenter(s.page);
     await snapshot(s.page, 'after_accounts_center_click');
     await bringBrowserToFront(s);
   }

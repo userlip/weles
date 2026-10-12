@@ -1,6 +1,8 @@
 // Open Meta developer account verification visibly and wait for the user to
 // complete Meta-controlled registration/verification. Does not accept terms or
-// submit phone/card data on behalf of the user.
+// submit phone/card data on behalf of the user. Completion is read from Meta's
+// own route: the run waits until the page has left the verification and
+// registration-dialog addresses, not until some words disappear.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -40,37 +42,14 @@ async function bringBrowserToFront(s) {
   );
 }
 
+const VERIFICATION_ROUTE = /account\/verification|registration\/dialog/i;
+
 async function pageState(page) {
-  return page
-    .evaluate(() => {
-      const text = (
-        document.body?.innerText ||
-        document.body?.textContent ||
-        ''
-      )
-        .replace(/\s+/g, ' ')
-        .trim();
-      return {
-        url: location.href,
-        title: document.title || '',
-        text: text,
-        registerDialog:
-          /Create a Meta for Developers account|Register Verify account Contact info About you/i.test(
-            text,
-          ),
-        phoneOrCard: /phone|mobile|telefon|credit card|debit card|karta/i.test(
-          text,
-        ),
-        developerHome: /Meta for Developers|Social technologies/i.test(text),
-        appDashboard:
-          /App Dashboard|Dashboard|App settings|Roles/i.test(text) &&
-          /App ID|app id|Identyfikator aplikacji/i.test(text),
-      };
-    })
-    .catch((error) => ({
-      error: error.message || String(error),
-      url: page.url?.() || '',
-    }));
+  return page.evaluate(() => ({
+    url: location.href,
+    title: document.title,
+    text: document.body.innerText.replace(/\s+/g, ' ').trim(),
+  }));
 }
 
 console.log(
@@ -97,41 +76,22 @@ const s = await WSession.start({
 let exitCode = 0;
 try {
   await bringBrowserToFront(s);
-  await s.page
-    .goto(
-      'https://developers.facebook.com/async/developer/account/verification/',
-      { waitUntil: 'domcontentloaded' },
-    )
-    .catch(() => {});
+  await s.page.goto(
+    'https://developers.facebook.com/async/developer/account/verification/',
+    { waitUntil: 'domcontentloaded' },
+  );
   await bringBrowserToFront(s);
   // The operator completes the registration in this window; the run waits
-  // until the page no longer shows the dialog or the phone/card step, for as
-  // long as that takes, and is ended by cancellation otherwise.
-  await pageCondition(s.page, () => {
-    const text = (document.body?.innerText || '').replace(/\s+/g, ' ');
-    return (
-      !/Create a Meta for Developers account|Register Verify account Contact info About you/i.test(
-        text,
-      ) &&
-      !/phone|mobile|telefon|credit card|debit card|karta/i.test(text) &&
-      !/account\/verification|registration\/dialog/i.test(location.href)
-    );
-  });
-  console.log(
-    JSON.stringify({ stage: 'complete_candidate', url: s.page.url() }, null, 2),
+  // until the page has left Meta's verification and registration routes, for
+  // as long as that takes, and is ended by cancellation otherwise.
+  await pageCondition(
+    s.page,
+    (route) => !new RegExp(route, 'i').test(location.href),
+    VERIFICATION_ROUTE.source,
   );
   const finalState = await pageState(s.page);
-  console.log(
-    JSON.stringify(
-      { stage: 'final', ...finalState, text: finalState.text },
-      null,
-      2,
-    ),
-  );
-  if (
-    finalState.registerDialog ||
-    /account\/verification|registration\/dialog/i.test(finalState.url || '')
-  ) {
+  console.log(JSON.stringify({ stage: 'final', ...finalState }, null, '  '));
+  if (VERIFICATION_ROUTE.test(finalState.url)) {
     exitCode = 2;
     console.log(
       'FAIL: developer registration/verification not completed in Weles profile',

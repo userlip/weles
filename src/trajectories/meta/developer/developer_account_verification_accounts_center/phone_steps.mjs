@@ -1,280 +1,111 @@
-// The phone steps: sending the number, updating a stored one, and confirming the code.
+// The phone steps: sending the number, updating a stored one, and confirming
+// the code. Every control - the country selector and the country, Send
+// Verification SMS, Update Mobile Number, Continue - is found by the vision
+// model from its description (`_shared/page/judged/seen.mjs`), in the
+// language the account's Meta pages speak. A field that does not hold what was
+// typed, or a control that is not there, fails the step by name.
 import { humanClickLocator } from '../../../../../dist/human/mouse.js';
-import { humanFill, humanType } from '../../../../../dist/human/keyboard.js';
+import { humanType } from '../../../../../dist/human/keyboard.js';
 import { USER_DATA_DIR, VERIFY_CODE, VERIFY_PHONE } from './settings.mjs';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
-import { phoneNationalNumber, snapshot } from './page.mjs';
-import { selectCountryForPhone } from './navigation.mjs';
+import { clickDescribed } from '../../../_shared/page/judged/seen.mjs';
+import { phoneCountry, phoneNationalNumber, snapshot } from './page.mjs';
+
+const INDENT = '  ';
+const UNKNOWN_COUNTRY = 'unknown';
+
+async function clickControl(page, label, description) {
+  const target = await clickDescribed(page, description);
+  console.log(JSON.stringify({ stage: 'clicked', label, ...target }));
+}
+
+/** The digits `input` holds. */
+async function heldDigits(input) {
+  return (await input.inputValue()).replace(/\D/g, '');
+}
+
+/** Clicks `input`, replaces what it holds with `text`, and returns the digits it then holds. */
+async function typeInto(page, input, text) {
+  await humanClickLocator(page, input);
+  await page.keyboard.press('ControlOrMeta+A');
+  await humanType(page, text);
+  await pageSettled(page);
+  return heldDigits(input);
+}
+
+/** Picks the country of `phone` in the number field's country selector. */
+async function selectCountryForPhone(page, phone) {
+  const code = phoneCountry(phone);
+  if (code === UNKNOWN_COUNTRY) return;
+  await clickControl(
+    page,
+    'country_selector',
+    'the country code selector of the mobile number field',
+  );
+  await clickControl(
+    page,
+    'country',
+    `the country whose dialling code is ${code} in the open country list`,
+  );
+  await snapshot(page, 'after_country_select');
+}
 
 export async function fillPhoneAndSend(page) {
   if (!VERIFY_PHONE) return { filled: false, clicked: false };
-  const countryChanged = await selectCountryForPhone(page, VERIFY_PHONE);
-  if (countryChanged) {
-    await snapshot(page, 'after_country_select');
-  }
+  await selectCountryForPhone(page, VERIFY_PHONE);
   const input = page
-    .locator(
-      'input[placeholder*="phone" i], input[aria-label*="phone" i], input[placeholder*="mobile" i], input[aria-label*="mobile" i], input[type="tel"]',
-    )
+    .locator('input[type="tel"], input[autocomplete="tel"], input[type="text"]')
     .filter({ visible: true })
     .last();
-  if (!(await input.isVisible().catch(() => false)))
-    return { filled: false, clicked: false };
-  const inputValue = phoneNationalNumber(VERIFY_PHONE) || VERIFY_PHONE;
-  const rect = await input.boundingBox().catch(() => null);
-  if (rect)
-    await page.mouse
-      .click(rect.x + rect.width / 2, rect.y + rect.height / 2)
-      .catch(() => {});
-  await input.focus().catch(() => {});
-  await page.keyboard.press('ControlOrMeta+A').catch(() => {});
-  await humanType(page, inputValue).catch(async () => {
-    await humanFill(page, input, inputValue).catch(() => {});
-  });
-  await input.dispatchEvent('input').catch(() => {});
-  await input.dispatchEvent('change').catch(() => {});
-  await pageSettled(page);
-  let inputState = await input
-    .evaluate((el) => {
-      const digits = (el.value || '').replace(/\D/g, '');
-      return {
-        valueLength: digits.length,
-        valueSuffix: digits.slice(-2),
-        placeholder: el.getAttribute('placeholder') || '',
-        type: el.getAttribute('type') || '',
-        maxLength: el.maxLength,
-      };
-    })
-    .catch(() => ({
-      valueLength: null,
-      valueSuffix: null,
-      placeholder: '',
-      type: '',
-      maxLength: null,
-    }));
-  if (inputState.valueLength === 0) {
-    await input
-      .evaluate((el, value) => {
-        const setter = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype,
-          'value',
-        )?.set;
-        if (setter) setter.call(el, value);
-        else el.value = value;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      }, inputValue)
-      .catch(() => {});
-    await pageSettled(page);
-    inputState = await input
-      .evaluate((el) => {
-        const digits = (el.value || '').replace(/\D/g, '');
-        return {
-          valueLength: digits.length,
-          valueSuffix: digits.slice(-2),
-          placeholder: el.getAttribute('placeholder') || '',
-          type: el.getAttribute('type') || '',
-          maxLength: el.maxLength,
-        };
-      })
-      .catch(() => ({
-        valueLength: null,
-        valueSuffix: null,
-        placeholder: '',
-        type: '',
-        maxLength: null,
-      }));
-  }
+  await input.waitFor({ state: 'visible' });
+  const national = phoneNationalNumber(VERIFY_PHONE);
+  const held = await typeInto(page, input, national);
   // A field that holds nothing, or other digits, would send Meta a number
   // nobody typed and the code would go elsewhere.
-  const typedDigits = String(inputValue).replace(/\D/g, '');
-  if (inputState.valueLength !== typedDigits.length)
+  if (held !== national)
     throw new Error(
-      `developer phone field holds ${inputState.valueLength} digits after typing ${typedDigits.length}; the number was not entered`,
+      `developer phone field holds ${held.length} digits after typing ${national.length}; the number was not entered`,
     );
   console.log(
-    JSON.stringify({
-      stage: 'filled_phone_input',
-      valueLength: inputState.valueLength,
-      valueSuffix: inputState.valueSuffix,
-      placeholder: inputState.placeholder,
-      type: inputState.type,
-      maxLength: inputState.maxLength,
-    }),
+    JSON.stringify({ stage: 'filled_phone_input', valueLength: held.length }),
   );
-  const clicked = await page.evaluate(() => {
-    const textOf = (el) =>
-      (el.innerText || el.textContent || el.getAttribute('aria-label') || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    const visible = (el) => {
-      const style = window.getComputedStyle(el);
-      const rect = el.getBoundingClientRect();
-      return (
-        style.visibility !== 'hidden' &&
-        style.display !== 'none' &&
-        rect.width > 0 &&
-        rect.height > 0
-      );
-    };
-    const candidates = Array.from(
-      document.querySelectorAll('button, [role="button"]'),
-    )
-      .filter(visible)
-      .map((el) => {
-        const rect = el.getBoundingClientRect();
-        return {
-          text: textOf(el),
-          disabled:
-            el.disabled === true || el.getAttribute('aria-disabled') === 'true',
-          x: Math.round(rect.left + rect.width / 2),
-          y: Math.round(rect.top + rect.height / 2),
-        };
-      })
-      .filter(
-        (item) => !item.disabled && /Send Verification SMS/i.test(item.text),
-      );
-    return candidates[0] || null;
-  });
-  if (!clicked) return { filled: true, clicked: false };
-  await page.mouse.click(clicked.x, clicked.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked',
-      label: 'send_verification_sms',
-      text: clicked.text,
-      x: clicked.x,
-      y: clicked.y,
-    }),
+  await clickControl(
+    page,
+    'send_verification_sms',
+    'the enabled button that sends the verification SMS to the entered number',
   );
   return { filled: true, clicked: true };
 }
 
 export async function clickUpdateMobileNumber(page) {
-  const target = await page.evaluate(() => {
-    const textOf = (el) =>
-      (el.innerText || el.textContent || el.getAttribute('aria-label') || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    const visible = (el) => {
-      const style = window.getComputedStyle(el);
-      const rect = el.getBoundingClientRect();
-      return (
-        style.visibility !== 'hidden' &&
-        style.display !== 'none' &&
-        rect.width > 0 &&
-        rect.height > 0
-      );
-    };
-    const candidates = Array.from(
-      document.querySelectorAll('button, [role="button"]'),
-    )
-      .filter(visible)
-      .map((el) => {
-        const rect = el.getBoundingClientRect();
-        return {
-          text: textOf(el),
-          disabled:
-            el.disabled === true || el.getAttribute('aria-disabled') === 'true',
-          x: Math.round(rect.left + rect.width / 2),
-          y: Math.round(rect.top + rect.height / 2),
-        };
-      })
-      .filter(
-        (item) =>
-          !item.disabled &&
-          /Update Mobile Number|Zaktualizuj numer|Zmień numer/i.test(item.text),
-      );
-    return candidates[0] || null;
-  });
-  if (!target) return null;
-  await page.mouse.click(target.x, target.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked',
-      label: 'update_mobile_number',
-      text: target.text,
-      x: target.x,
-      y: target.y,
-    }),
+  await clickControl(
+    page,
+    'update_mobile_number',
+    'the enabled button that updates or changes the mobile number used for verification',
   );
-  return target;
+  return true;
 }
 
 export async function fillCodeAndContinue(page) {
   if (!VERIFY_CODE) return { filled: false, clicked: false };
   const input = page.locator('input').filter({ visible: true }).last();
-  if (!(await input.isVisible().catch(() => false)))
-    return { filled: false, clicked: false };
-  await humanClickLocator(page, input).catch(() => {});
-  await page.keyboard.press('ControlOrMeta+A').catch(() => {});
-  await humanType(page, VERIFY_CODE).catch(async () => {
-    await page.keyboard.insertText(VERIFY_CODE).catch(() => {});
-  });
-  await pageSettled(page);
-  const heldCode = (await input.inputValue()).replace(/\D/g, '');
-  if (heldCode !== String(VERIFY_CODE).replace(/\D/g, ''))
+  await input.waitFor({ state: 'visible' });
+  const held = await typeInto(page, input, VERIFY_CODE);
+  if (held !== String(VERIFY_CODE).replace(/\D/g, ''))
     throw new Error(
-      `developer code field holds ${heldCode.length} digits, not the code typed; the code was not entered`,
+      `developer code field holds ${held.length} digits, not the code typed; the code was not entered`,
     );
-  const clicked = await page.evaluate(() => {
-    const textOf = (el) =>
-      (el.innerText || el.textContent || el.getAttribute('aria-label') || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    const visible = (el) => {
-      const rect = el.getBoundingClientRect();
-      return (
-        rect.width > 0 &&
-        rect.height > 0 &&
-        el.checkVisibility({ visibilityProperty: true })
-      );
-    };
-    const candidates = Array.from(
-      document.querySelectorAll('button, [role="button"]'),
-    )
-      .filter(visible)
-      .map((el) => {
-        const rect = el.getBoundingClientRect();
-        return {
-          text: textOf(el),
-          disabled:
-            el.disabled === true || el.getAttribute('aria-disabled') === 'true',
-          x: Math.round(rect.left + rect.width / 2),
-          y: Math.round(rect.top + rect.height / 2),
-        };
-      })
-      .filter(
-        (item) =>
-          !item.disabled && /^(Continue|Kontynuuj|Dalej)$/i.test(item.text),
-      );
-    return candidates[0] || null;
-  });
-  if (!clicked) return { filled: true, clicked: false };
-  await page.mouse.click(clicked.x, clicked.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked',
-      label: 'developer_code_continue',
-      text: clicked.text,
-      x: clicked.x,
-      y: clicked.y,
-    }),
+  await clickControl(
+    page,
+    'developer_code_continue',
+    'the enabled button that continues after the verification code was entered',
   );
   return { filled: true, clicked: true };
 }
 
-console.log(
-  JSON.stringify(
-    {
-      stage: 'start',
-      userDataDir: USER_DATA_DIR,
-      headless: process.env.META_VERIFY_HEADLESS === '1',
-    },
-    null,
-    2,
-  ),
-);
+const start = {
+  stage: 'start',
+  userDataDir: USER_DATA_DIR,
+  headless: process.env.META_VERIFY_HEADLESS === '1',
+};
+console.log(JSON.stringify(start, null, INDENT));

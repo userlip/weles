@@ -1,10 +1,17 @@
-// The Accounts Center page (persona, sanitised URLs, snapshots) and the phone number shapes.
+// The Accounts Center page (persona, sanitised URLs, snapshots), the phone
+// number shapes, and what the verification page asks for - the terms alone,
+// a phone number, Accounts Center, the SMS code - judged by the vision model
+// (`_shared/page/judged/seen.mjs`) instead of English phrases.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { generatePersona } from '../../../../../dist/browser/persona.js';
 import { USER_DATA_DIR } from './settings.mjs';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
+import { pageShows } from '../../../_shared/page/judged/seen.mjs';
+import { redactedUrl } from '../../../_shared/page/navigation/redacted.mjs';
+
+const INDENT = '  ';
 
 export function stableProfilePersona() {
   const p = join(USER_DATA_DIR, 'persona.json');
@@ -14,18 +21,26 @@ export function stableProfilePersona() {
   return persona;
 }
 
-export function sanitizedUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.hash = parsed.hash ? '#<redacted>' : '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|code|secret|state|session|auth|code/i.test(key))
-        parsed.searchParams.set(key, '<redacted>');
-    }
-    return parsed.toString();
-  } catch {
-    return '<invalid-url>';
-  }
+/** What the developer verification page asks for, as the model reads it. */
+export async function verificationState(page) {
+  return {
+    termsOnly: await pageShows(
+      page,
+      "Does the page only ask to accept Meta's Platform Terms and Developer Policies, without a field for a phone number?",
+    ),
+    phoneStep: await pageShows(
+      page,
+      'Does the page ask for a mobile number to send a verification SMS to?',
+    ),
+    accountsCenterRequired: await pageShows(
+      page,
+      'Does the page say this action can only be completed in Accounts Center?',
+    ),
+    smsCode: await pageShows(
+      page,
+      'Does the page ask for a verification code that was sent by SMS?',
+    ),
+  };
 }
 
 export async function bringBrowserToFront(s) {
@@ -94,44 +109,19 @@ export async function snapshot(page, label) {
       title: document.title || null,
       bodyText: bodyText,
       controls,
-      statusHints: {
-        initialTerms:
-          /By proceeding, you agree to the Meta's Platform Terms and Developer Policies/i.test(
-            bodyText,
-          ),
-        phoneStep:
-          /Verify Your Account|Mobile number|Send Verification SMS/i.test(
-            bodyText,
-          ),
-        accountsCenterRequired:
-          /only complete this action in Accounts Center|Go to Accounts Center/i.test(
-            bodyText,
-          ),
-        accountsCenter:
-          /Accounts Center|Account settings|Personal details/i.test(bodyText),
-        smsCode:
-          /verification code|confirmation code|SMS code|security code|kod/i.test(
-            bodyText,
-          ),
-      },
     };
   });
-  console.log(
-    JSON.stringify(
-      {
-        stage: 'snapshot',
-        label,
-        url: sanitizedUrl(page.url?.() || ''),
-        ...data,
-        controls: data.controls.map((control) => ({
-          ...control,
-          href: sanitizedUrl(control.href),
-        })),
-      },
-      null,
-      2,
-    ),
-  );
+  const record = {
+    stage: 'snapshot',
+    label,
+    url: redactedUrl(page.url()),
+    ...data,
+    controls: data.controls.map((control) => ({
+      ...control,
+      href: control.href && redactedUrl(control.href, page.url()),
+    })),
+  };
+  console.log(JSON.stringify(record, null, INDENT));
   return data;
 }
 
@@ -146,7 +136,6 @@ export function normalizePhone(raw) {
       : digits.startsWith('1')
         ? '+1'
         : 'unknown',
-    suffix: digits.slice(-2),
     digitCount: digits.length,
   };
 }
@@ -160,7 +149,7 @@ export function phoneCountry(phone) {
 
 export function phoneNationalNumber(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
-  if (digits.startsWith('48')) return digits.slice(2);
+  if (digits.startsWith('48')) return digits.slice('48'.length);
   if (digits.startsWith('1')) return digits.slice(1);
   return digits;
 }
