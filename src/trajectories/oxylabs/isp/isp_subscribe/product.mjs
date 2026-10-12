@@ -6,11 +6,9 @@ import { OUT_DIR, shot, stamp } from './evidence.mjs';
 
 export async function openIspProduct(s) {
   // Navigate to ISP product page.
-  await s.page
-    .goto('https://dashboard.oxylabs.io/en/products', {
-      waitUntil: 'domcontentloaded',
-    })
-    .catch(() => {});
+  await s.page.goto('https://dashboard.oxylabs.io/en/products', {
+    waitUntil: 'domcontentloaded',
+  });
   await humanIdlePause('long');
   console.log(`[trajectory] products url=${s.page.url()}`);
   await shot(s, 'products_overview');

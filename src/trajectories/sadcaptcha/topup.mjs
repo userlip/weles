@@ -32,11 +32,11 @@ try {
     throw new Error(`login refused: ${(await loginAlert.innerText()).trim()}`);
 
   // SadCaptcha pricing/buy section anchored on home.
-  await s.page
-    .goto('https://www.sadcaptcha.com/dashboard', {
-      waitUntil: 'domcontentloaded',
-    })
-    .catch(() => {});
+  // A failed navigation stops the run: the pay button is looked for on
+  // whatever page is open.
+  await s.page.goto('https://www.sadcaptcha.com/dashboard', {
+    waitUntil: 'domcontentloaded',
+  });
   await humanIdlePause('long');
 
   const amtIn = s.page

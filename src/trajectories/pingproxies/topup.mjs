@@ -54,9 +54,11 @@ try {
   // Options" that may reveal the saved cards on file. The wallet variant of
   // the modal (entered from /billing/wallet) does NOT show them — only New
   // Card + Crypto. Going via home to reach the saved-card option.
-  await s.page
-    .goto('https://dashboard.byteful.com/', { waitUntil: 'domcontentloaded' })
-    .catch(() => {});
+  // A failed navigation stops the run: the balance controls are looked for
+  // on whatever page is open.
+  await s.page.goto('https://dashboard.byteful.com/', {
+    waitUntil: 'domcontentloaded',
+  });
   await humanIdlePause('deliberate');
   // Diag: enumerate what's actually visible on the wallet page.
   try {

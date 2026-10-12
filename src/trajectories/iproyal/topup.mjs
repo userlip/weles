@@ -41,9 +41,11 @@ try {
   // (dashboard.iproyal.com/balance answers 404 Page Not Found).
   // The real entry point is the "+ Add funds" button in the topbar of the
   // home dashboard, next to the $0.00 balance display.
-  await s.page
-    .goto('https://dashboard.iproyal.com/', { waitUntil: 'domcontentloaded' })
-    .catch(() => {});
+  // A failed navigation stops the run: the pay controls are looked for on
+  // whatever page is open.
+  await s.page.goto('https://dashboard.iproyal.com/', {
+    waitUntil: 'domcontentloaded',
+  });
   await humanIdlePause('deliberate');
   const addFundsBtn = s.page
     .locator('button:has-text("Add funds"), a:has-text("Add funds")')

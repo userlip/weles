@@ -93,11 +93,9 @@ try {
   );
   console.log(`[trajectory] post-login url=${s.page.url()}`);
 
-  await s.page
-    .goto('https://dashboard.oxylabs.io/en/overview/ISP', {
-      waitUntil: 'domcontentloaded',
-    })
-    .catch(() => {});
+  await s.page.goto('https://dashboard.oxylabs.io/en/overview/ISP', {
+    waitUntil: 'domcontentloaded',
+  });
   await humanIdlePause('long');
   await shot(s, 'overview_isp');
 

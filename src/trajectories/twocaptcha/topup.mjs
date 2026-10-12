@@ -43,9 +43,11 @@ try {
   await pageSettled(s.page);
 
   // 2Captcha funds-add page.
-  await s.page
-    .goto('https://2captcha.com/pay', { waitUntil: 'domcontentloaded' })
-    .catch(() => {});
+  // A failed navigation stops the run: the pay button is looked for on
+  // whatever page is open.
+  await s.page.goto('https://2captcha.com/pay', {
+    waitUntil: 'domcontentloaded',
+  });
   await pageSettled(s.page);
 
   const amtIn = s.page

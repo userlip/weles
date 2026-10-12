@@ -30,9 +30,11 @@ try {
   await humanIdlePause('long');
 
   // NopeCHA funds via Manage Billing or Subscribe page.
-  await s.page
-    .goto('https://nopecha.com/subscribe', { waitUntil: 'domcontentloaded' })
-    .catch(() => {});
+  // A failed navigation stops the run: the pay button is looked for on
+  // whatever page is open.
+  await s.page.goto('https://nopecha.com/subscribe', {
+    waitUntil: 'domcontentloaded',
+  });
   await humanIdlePause('long');
 
   const amtIn = s.page

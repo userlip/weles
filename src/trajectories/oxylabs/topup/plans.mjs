@@ -22,11 +22,10 @@ export async function detectCurrentPlan(s, plan) {
   // tier subscriptions are recurring monthly charges that the user must
   // commit to explicitly. Fixed-tier upgrade lives in this file as a
   // separate branch but is gated to never run from auto-cron context.
-  await s
-    .goto('https://dashboard.oxylabs.io/en/overview/MP', {
-      waitUntil: 'domcontentloaded',
-    })
-    .catch(() => {});
+  // The plan is read from this page; one that did not open is no plan.
+  await s.goto('https://dashboard.oxylabs.io/en/overview/MP', {
+    waitUntil: 'domcontentloaded',
+  });
   await humanIdlePause('long');
   const planText = await s.page.evaluate(() => document.body.innerText);
   const isPayAsYouGo =
