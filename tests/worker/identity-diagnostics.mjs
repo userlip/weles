@@ -23,10 +23,52 @@ function required(name) {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const binary = realpathSync(required('WELES_BIN'));
+// The identity states a qualification may expect, each with what the
+// answering service must then show.
+const EXPECTATIONS = {
+  refused({ worker, response, version, text }) {
+    assert.equal(worker.ready, false);
+    assert.equal(worker.prerequisites.serviceIdentity, false);
+    assert.ok(worker.serviceIdentityFailure);
+    assert.equal(typeof worker.serviceIdentityFailure.operation, 'string');
+    assert.ok(
+      worker.serviceIdentityFailure.operation.trim(),
+      'The identity failure does not name the operation that failed',
+    );
+    assert.equal(typeof worker.serviceIdentityFailure.message, 'string');
+    assert.ok(
+      worker.serviceIdentityFailure.message.trim(),
+      'The failed identity operation did not retain its cause',
+    );
+    assert.equal(response.ok, false);
+    assert.equal(version.ready, false);
+    assert.equal(version.error, 'deployed-service-identity-mismatch');
+    assert.equal(
+      Object.hasOwn(version, 'serviceIdentityFailure'),
+      false,
+      'Anonymous version disclosed the private diagnostic',
+    );
+    assert.equal(
+      text.includes(worker.serviceIdentityFailure.message),
+      false,
+      'Anonymous version disclosed the underlying identity error',
+    );
+  },
+  ready({ worker, response, version }) {
+    assert.equal(response.ok, true);
+    assert.equal(version.ready, true);
+    assert.equal(worker.prerequisites.serviceIdentity, true);
+    assert.equal(
+      worker.serviceIdentityFailure,
+      null,
+      'Successful identity admission retained an earlier failure',
+    );
+  },
+};
 const expected = required('WELES_TEST_IDENTITY_STATE');
 assert.ok(
-  expected === 'ready' || expected === 'refused',
-  'WELES_TEST_IDENTITY_STATE must be ready or refused',
+  Object.hasOwn(EXPECTATIONS, expected),
+  `WELES_TEST_IDENTITY_STATE must be one of ${Object.keys(EXPECTATIONS).join(', ')}; it is ${expected}`,
 );
 const evidence = join(root, 'build', 'real-tests', 'worker-identity');
 mkdirSync(evidence, { recursive: true });
@@ -107,44 +149,7 @@ try {
     worker && Object.hasOwn(worker, 'serviceIdentityFailure'),
     'The service does not expose deployment identity diagnostics',
   );
-  if (expected === 'refused') {
-    assert.equal(worker.ready, false);
-    assert.equal(worker.prerequisites.serviceIdentity, false);
-    assert.ok(worker.serviceIdentityFailure);
-    assert.ok(
-      worker.serviceIdentityFailure.operation ===
-        'read-deployed-service-identity' ||
-        worker.serviceIdentityFailure.operation ===
-          'validate-deployed-service-identity',
-    );
-    assert.equal(typeof worker.serviceIdentityFailure.message, 'string');
-    assert.ok(
-      worker.serviceIdentityFailure.message.trim(),
-      'The failed identity operation did not retain its cause',
-    );
-    assert.equal(response.ok, false);
-    assert.equal(version.ready, false);
-    assert.equal(version.error, 'deployed-service-identity-mismatch');
-    assert.equal(
-      Object.hasOwn(version, 'serviceIdentityFailure'),
-      false,
-      'Anonymous version disclosed the private diagnostic',
-    );
-    assert.equal(
-      text.includes(worker.serviceIdentityFailure.message),
-      false,
-      'Anonymous version disclosed the underlying identity error',
-    );
-  } else {
-    assert.equal(response.ok, true);
-    assert.equal(version.ready, true);
-    assert.equal(worker.prerequisites.serviceIdentity, true);
-    assert.equal(
-      worker.serviceIdentityFailure,
-      null,
-      'Successful identity admission retained an earlier failure',
-    );
-  }
+  EXPECTATIONS[expected]({ worker, response, version, text });
   report.verdict = 'passed';
 } catch (error) {
   report.error = String(error.stack || error);
