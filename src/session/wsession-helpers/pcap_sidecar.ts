@@ -235,9 +235,20 @@ export function attachWorkerInventory(ws: any): void {
 export async function stopPcap(ws: any): Promise<void> {
   const child: ChildProcess | undefined = ws?._instPcapChild;
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  // A tcpdump that did not take the signal keeps capturing past the session;
+  // kill() reports an undelivered signal by returning false, and the failure
+  // goes on the pcap status the dump writes.
+  let stopError: string | null = null;
   try {
-    child.kill('SIGINT');
-  } catch {}
+    if (!child.kill('SIGINT'))
+      stopError = `SIGINT not delivered to tcpdump pid ${child.pid}`;
+  } catch (e: any) {
+    stopError = `SIGINT to tcpdump pid ${child.pid} failed: ${String(e?.message ?? e)}`;
+  }
+  if (stopError) {
+    if (ws._instPcap) ws._instPcap.stop_error = stopError;
+    console.error(`[pcap] ${stopError}`);
+  }
   // Give tcpdump a tick to flush the pcap header + last packets to disk.
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
