@@ -190,13 +190,17 @@ try {
   const onSuccess =
     !finalUrl.includes('/password_reset') ||
     /changed|success|signin/i.test(finalUrl);
-  const errText = await s.page
-    .evaluate(
+  // Still on the reset form means GitHub did not take the password, whether
+  // or not it showed an error: storing it would replace the account's working
+  // password in Skarbiec with one GitHub never set.
+  if (!onSuccess) {
+    const errText = await s.page.evaluate(
       '(()=>document.querySelector(\'.flash-error,[role="alert"]\')?.innerText?.trim())()',
-    )
-    .catch(() => null);
-  if (!onSuccess && errText)
-    throw new Error(`password change rejected: ${errText}`);
+    );
+    throw new Error(
+      `password change not confirmed: still on ${finalUrl}${errText ? `; GitHub said: ${errText}` : ''}`,
+    );
+  }
   console.log(`[reset] After change: ${finalUrl}`);
 
   if (!acct.id) throw new Error('GitHub account has no Skarbiec item id');
