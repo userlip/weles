@@ -1,0 +1,252 @@
+{
+  "why": "The Google Analytics actions of the analytics service: where each opens, how risky it is, what it is for, and every input it reads, required or optional. The trajectory reads this to refuse a run missing a required input, and the worker reads it to hand a run exactly the inputs its action declares, so a run's params can never set any other environment variable of the child.",
+  "platform": "googleanalytics",
+  "bases": {
+    "GA_BASE": "https://analytics.google.com/analytics/web/"
+  },
+  "actions": {
+    "googleanalytics_register": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "ACCOUNT_NAME": "required",
+        "PROPERTY_NAME": "required",
+        "SITE_URL": "required",
+        "STREAM_NAME": "required",
+        "TIMEZONE": "optional",
+        "CURRENCY": "optional",
+        "INDUSTRY_CATEGORY": "optional",
+        "BUSINESS_SIZE": "optional",
+        "BUSINESS_OBJECTIVE": "optional"
+      },
+      "objective": "Create a GA4 account, property, and web stream from scratch."
+    },
+    "googleanalytics_register_needher": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "ACCOUNT_NAME": "optional",
+        "PROPERTY_NAME": "optional",
+        "SITE_URL": "optional",
+        "STREAM_NAME": "optional",
+        "TIMEZONE": "optional",
+        "CURRENCY": "optional",
+        "INDUSTRY_CATEGORY": "optional",
+        "BUSINESS_SIZE": "optional",
+        "BUSINESS_OBJECTIVE": "optional"
+      },
+      "objective": "Create the NeedHer GA4 account, property, and web stream from scratch."
+    },
+    "googleanalytics_login": {
+      "risk": "verify",
+      "url": "{GA_BASE}",
+      "inputs": {},
+      "objective": "Verify the Google Analytics browser session is authenticated."
+    },
+    "googleanalytics_find_property": {
+      "risk": "read",
+      "url": "{GA_BASE}",
+      "inputs": { "DOMAIN_OR_NAME": "required" },
+      "objective": "Find a GA4 property."
+    },
+    "googleanalytics_create_account": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": { "ACCOUNT_NAME": "required" },
+      "objective": "Create a Google Analytics account container."
+    },
+    "googleanalytics_create_property": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_NAME": "required",
+        "TIMEZONE": "required",
+        "CURRENCY": "required"
+      },
+      "objective": "Create a GA4 property."
+    },
+    "googleanalytics_create_web_stream": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "SITE_URL": "required",
+        "STREAM_NAME": "required"
+      },
+      "objective": "Create a GA4 web data stream."
+    },
+    "googleanalytics_get_measurement_id": {
+      "risk": "read",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "STREAM_ID": "optional",
+        "STREAM_NAME": "optional"
+      },
+      "objective": "Read the GA4 measurement id."
+    },
+    "googleanalytics_get_global_site_tag": {
+      "risk": "read",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "STREAM_ID": "optional",
+        "STREAM_NAME": "optional"
+      },
+      "objective": "Read the Google tag snippet."
+    },
+    "googleanalytics_create_measurement_protocol_secret": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "STREAM_ID": "required",
+        "NICKNAME": "required"
+      },
+      "objective": "Create a Measurement Protocol API secret."
+    },
+    "googleanalytics_install_gtag": {
+      "risk": "verify",
+      "url": "{SITE_URL}",
+      "inputs": { "SITE_URL": "required", "MEASUREMENT_ID": "required" },
+      "objective": "Verify a target app serves the GA4 tag."
+    },
+    "googleanalytics_verify_realtime": {
+      "risk": "verify",
+      "url": "{GA_BASE}",
+      "inputs": { "SITE_URL": "required", "MEASUREMENT_ID": "required" },
+      "objective": "Verify GA4 realtime tracking."
+    },
+    "googleanalytics_view_debugview": {
+      "risk": "read",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "DEBUG_DEVICE_OR_EVENT": "required"
+      },
+      "objective": "Open GA4 DebugView."
+    },
+    "googleanalytics_view_realtime": {
+      "risk": "read",
+      "url": "{GA_BASE}",
+      "inputs": { "PROPERTY_ID": "required" },
+      "objective": "Open GA4 realtime analytics."
+    },
+    "googleanalytics_run_data_api_report": {
+      "risk": "read",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "DIMENSIONS": "required",
+        "METRICS": "required",
+        "DATE_RANGE": "required"
+      },
+      "objective": "Run or stage a GA4 report by dimensions and metrics."
+    },
+    "googleanalytics_view_acquisition": {
+      "risk": "read",
+      "url": "{GA_BASE}",
+      "inputs": { "PROPERTY_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read GA4 acquisition reports."
+    },
+    "googleanalytics_view_engagement": {
+      "risk": "read",
+      "url": "{GA_BASE}",
+      "inputs": { "PROPERTY_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read GA4 engagement reports."
+    },
+    "googleanalytics_view_pages": {
+      "risk": "read",
+      "url": "{GA_BASE}",
+      "inputs": { "PROPERTY_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read GA4 pages and screens."
+    },
+    "googleanalytics_create_key_event": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": { "PROPERTY_ID": "required", "EVENT_NAME": "required" },
+      "objective": "Create or mark a GA4 key event."
+    },
+    "googleanalytics_view_key_events": {
+      "risk": "read",
+      "url": "{GA_BASE}",
+      "inputs": { "PROPERTY_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read GA4 key events."
+    },
+    "googleanalytics_create_audience": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "AUDIENCE_DEFINITION": "required"
+      },
+      "objective": "Create a GA4 audience."
+    },
+    "googleanalytics_create_custom_dimension": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "DIMENSION_NAME": "required",
+        "SCOPE": "required",
+        "PARAMETER_NAME": "required"
+      },
+      "objective": "Create a GA4 custom dimension."
+    },
+    "googleanalytics_create_custom_metric": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "METRIC_NAME": "required",
+        "PARAMETER_NAME": "required",
+        "UNIT": "required"
+      },
+      "objective": "Create a GA4 custom metric."
+    },
+    "googleanalytics_link_search_console": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "SEARCH_CONSOLE_PROPERTY": "required"
+      },
+      "objective": "Link Search Console to GA4."
+    },
+    "googleanalytics_link_google_ads": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "GOOGLE_ADS_CUSTOMER_ID": "required"
+      },
+      "objective": "Link Google Ads to GA4."
+    },
+    "googleanalytics_update_data_retention": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": { "PROPERTY_ID": "required", "RETENTION_DURATION": "required" },
+      "objective": "Read or update GA4 retention settings."
+    },
+    "googleanalytics_add_user": {
+      "risk": "admin",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "USER_EMAIL": "required",
+        "ROLE": "required"
+      },
+      "objective": "Grant a user GA access."
+    },
+    "googleanalytics_export_report": {
+      "risk": "read",
+      "url": "{GA_BASE}",
+      "inputs": {
+        "PROPERTY_ID": "required",
+        "REPORT_NAME": "required",
+        "DATE_RANGE": "required"
+      },
+      "objective": "Export or capture a GA4 report."
+    }
+  }
+}

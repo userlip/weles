@@ -1,0 +1,192 @@
+{
+  "why": "The Umami actions of the analytics service: where each opens, how risky it is, what it is for, and every input it reads, required or optional. The trajectory reads this to refuse a run missing a required input, and the worker reads it to hand a run exactly the inputs its action declares, so a run's params can never set any other environment variable of the child.",
+  "platform": "umami",
+  "bases": {
+    "UMAMI_BASE": "https://cloud.umami.is",
+    "UMAMI_APP_BASE": "https://cloud.umami.is/analytics/us"
+  },
+  "actions": {
+    "umami_register": {
+      "risk": "admin",
+      "url": "{UMAMI_BASE}/signup",
+      "inputs": {
+        "EMAIL": "required",
+        "PASSWORD": "required",
+        "DISPLAY_NAME": "optional"
+      },
+      "objective": "Register a new Umami Cloud account."
+    },
+    "umami_login": {
+      "risk": "verify",
+      "url": "{UMAMI_BASE}",
+      "inputs": {},
+      "objective": "Verify the Umami browser session is authenticated."
+    },
+    "umami_create_website": {
+      "risk": "write",
+      "url": "{UMAMI_APP_BASE}/websites",
+      "inputs": { "DOMAIN": "required", "DISPLAY_NAME": "required" },
+      "objective": "Create an Umami website entry."
+    },
+    "umami_find_website": {
+      "risk": "read",
+      "url": "{UMAMI_APP_BASE}/websites",
+      "inputs": { "DOMAIN_OR_NAME": "required" },
+      "objective": "Find an Umami website row by domain or name."
+    },
+    "umami_get_website_id": {
+      "risk": "read",
+      "url": "{UMAMI_APP_BASE}/websites",
+      "inputs": { "DOMAIN_OR_NAME": "required" },
+      "objective": "Read the Umami website id."
+    },
+    "umami_get_tracking_snippet": {
+      "risk": "read",
+      "url": "{UMAMI_APP_BASE}/websites/{WEBSITE_ID}/settings",
+      "inputs": { "WEBSITE_ID": "required" },
+      "objective": "Read the Umami tracking snippet."
+    },
+    "umami_update_website_settings": {
+      "risk": "write",
+      "url": "{UMAMI_APP_BASE}/websites",
+      "inputs": { "WEBSITE_ID": "required", "SETTINGS_PATCH": "required" },
+      "objective": "Update Umami website settings."
+    },
+    "umami_verify_tracking_script": {
+      "risk": "verify",
+      "url": "{SITE_URL}",
+      "inputs": { "SITE_URL": "required", "WEBSITE_ID": "required" },
+      "objective": "Verify the target site serves the expected Umami script."
+    },
+    "umami_verify_realtime_event": {
+      "risk": "verify",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "SITE_URL": "required", "WEBSITE_ID": "required" },
+      "objective": "Verify a visit can appear in Umami realtime analytics."
+    },
+    "umami_view_realtime": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required" },
+      "objective": "Open Umami realtime analytics."
+    },
+    "umami_view_summary": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read Umami summary metrics."
+    },
+    "umami_view_pages": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read Umami page performance."
+    },
+    "umami_view_referrers": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read Umami referrers."
+    },
+    "umami_view_events": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read Umami events."
+    },
+    "umami_track_custom_event": {
+      "risk": "verify",
+      "url": "{SITE_URL}",
+      "inputs": {
+        "SITE_URL": "required",
+        "EVENT_NAME": "required",
+        "SELECTOR_OR_CODE_PATH": "optional"
+      },
+      "objective": "Trigger or verify a custom Umami event on the target site."
+    },
+    "umami_view_sessions": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read Umami sessions."
+    },
+    "umami_create_report": {
+      "risk": "write",
+      "url": "{UMAMI_BASE}",
+      "inputs": {
+        "WEBSITE_ID": "required",
+        "REPORT_TYPE": "required",
+        "DATE_RANGE": "required"
+      },
+      "objective": "Create an Umami report."
+    },
+    "umami_view_funnels": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": {
+        "WEBSITE_ID": "required",
+        "FUNNEL_NAME": "required",
+        "DATE_RANGE": "required"
+      },
+      "objective": "Read Umami funnel performance."
+    },
+    "umami_view_goals": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read Umami goals."
+    },
+    "umami_view_user_journeys": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read Umami user journeys."
+    },
+    "umami_view_retention": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read Umami retention."
+    },
+    "umami_view_cohorts": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read Umami cohorts."
+    },
+    "umami_view_utm_campaigns": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Read Umami UTM campaign performance."
+    },
+    "umami_api_query": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "ENDPOINT": "required", "QUERY": "required" },
+      "objective": "Open Umami and capture browser-session context for an API query."
+    },
+    "umami_create_share_url": {
+      "risk": "admin",
+      "url": "{UMAMI_APP_BASE}/websites",
+      "inputs": { "WEBSITE_ID": "required" },
+      "objective": "Create or copy an Umami share URL."
+    },
+    "umami_manage_user_access": {
+      "risk": "admin",
+      "url": "{UMAMI_BASE}/settings",
+      "inputs": {
+        "WEBSITE_ID": "required",
+        "USER_EMAIL": "required",
+        "ROLE": "required"
+      },
+      "objective": "Manage Umami user access."
+    },
+    "umami_export_report": {
+      "risk": "read",
+      "url": "{UMAMI_BASE}",
+      "inputs": { "WEBSITE_ID": "required", "DATE_RANGE": "required" },
+      "objective": "Export or capture an Umami report."
+    }
+  }
+}

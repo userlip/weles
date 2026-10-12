@@ -87,7 +87,7 @@ async function performConfirmedWrite(s, cfg) {
 
 async function verifyTargetSite(s, cfg) {
   const action = actionName();
-  await s.goto(input('SITE_URL', 'https://www.needher.ai'));
+  await s.goto(input('SITE_URL'));
   await pageSettled(s.page);
   if (
     action === 'umami_track_custom_event' &&

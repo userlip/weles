@@ -12,6 +12,40 @@
 // Apple requirements in ./apple-actions.ts, which move when Apple's sign-in and
 // evidence rules move.
 
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { welesRepositoryRoot } from '../declared/engagements.js';
+
+type AnalyticsCatalog = {
+  actions: Record<string, { inputs: Record<string, string> }>;
+};
+
+/**
+ * The inputs `action` declares in the analytics service's catalog
+ * (analytics-service/catalog/<platform>.json beside the trajectory), the same
+ * declarations the trajectory refuses a run by. An action no catalog declares
+ * is refused here, before anything is spawned.
+ */
+function declaredAnalyticsInputs(trajPath: string, action: string): string[] {
+  const dir = path.resolve(
+    welesRepositoryRoot(),
+    path.dirname(trajPath),
+    'analytics-service',
+    'catalog',
+  );
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.json')) continue;
+    const catalog = JSON.parse(
+      readFileSync(path.join(dir, file), 'utf8'),
+    ) as AnalyticsCatalog;
+    if (Object.hasOwn(catalog.actions, action))
+      return Object.keys(catalog.actions[action].inputs);
+  }
+  throw new Error(
+    `analytics action ${action} is declared in no catalog under ${dir}`,
+  );
+}
+
 export function applyActionNameDispatch(
   params: Record<string, unknown>,
   action: string,
@@ -25,56 +59,13 @@ export function applyActionNameDispatch(
       env.VERB = action.slice(underscore + 1);
       env.SERVICE_ACTION = action;
     }
-    const passthrough: Array<[string, string]> = [
-      ['domain', 'DOMAIN'],
-      ['email', 'EMAIL'],
-      ['password', 'PASSWORD'],
-      ['display_name', 'DISPLAY_NAME'],
-      ['domain_or_name', 'DOMAIN_OR_NAME'],
-      ['website_id', 'WEBSITE_ID'],
-      ['settings_patch', 'SETTINGS_PATCH'],
-      ['site_url', 'SITE_URL'],
-      ['event_name', 'EVENT_NAME'],
-      ['selector_or_code_path', 'SELECTOR_OR_CODE_PATH'],
-      ['api_token_or_session', 'API_TOKEN_OR_SESSION'],
-      ['endpoint', 'ENDPOINT'],
-      ['query', 'QUERY'],
-      ['report_type', 'REPORT_TYPE'],
-      ['date_range', 'DATE_RANGE'],
-      ['funnel_name', 'FUNNEL_NAME'],
-      ['user_email', 'USER_EMAIL'],
-      ['role', 'ROLE'],
-      ['ga_account_id', 'GA_ACCOUNT_ID'],
-      ['account_name', 'ACCOUNT_NAME'],
-      ['property_id', 'PROPERTY_ID'],
-      ['property_name', 'PROPERTY_NAME'],
-      ['timezone', 'TIMEZONE'],
-      ['currency', 'CURRENCY'],
-      ['stream_id', 'STREAM_ID'],
-      ['stream_name', 'STREAM_NAME'],
-      ['measurement_id', 'MEASUREMENT_ID'],
-      ['nickname', 'NICKNAME'],
-      ['dimensions', 'DIMENSIONS'],
-      ['metrics', 'METRICS'],
-      ['debug_device_or_event', 'DEBUG_DEVICE_OR_EVENT'],
-      ['audience_definition', 'AUDIENCE_DEFINITION'],
-      ['dimension_name', 'DIMENSION_NAME'],
-      ['scope', 'SCOPE'],
-      ['parameter_name', 'PARAMETER_NAME'],
-      ['metric_name', 'METRIC_NAME'],
-      ['unit', 'UNIT'],
-      ['search_console_property', 'SEARCH_CONSOLE_PROPERTY'],
-      ['google_ads_customer_id', 'GOOGLE_ADS_CUSTOMER_ID'],
-      ['retention_duration', 'RETENTION_DURATION'],
-      ['report_name', 'REPORT_NAME'],
-    ];
-    for (const [key, envKey] of passthrough) {
-      const value = params[key];
-      if (typeof value === 'string') env[envKey] = value;
-      else if (typeof value === 'number' || typeof value === 'boolean')
-        env[envKey] = String(value);
-      else if (value && typeof value === 'object')
-        env[envKey] = JSON.stringify(value);
+    // Each declared input goes over under its own name, from the param of the
+    // same name in lower case; nothing else in params reaches the child's
+    // environment.
+    for (const name of declaredAnalyticsInputs(trajPath, action)) {
+      const value = params[name.toLowerCase()];
+      if (value === undefined || value === null) continue;
+      env[name] = typeof value === 'string' ? value : JSON.stringify(value);
     }
     if (
       params.confirm === true ||
