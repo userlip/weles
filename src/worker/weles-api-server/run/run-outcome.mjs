@@ -97,11 +97,12 @@ export function terminalRunResultFile(runId, signal) {
         if (!file)
           throw new Error(`run ${runId}: persisted result disappeared`);
         const result = JSON.parse(readFileSync(file.path, 'utf8'));
-        if (result.status === 'running' && result.ok === null) return;
-        if (
-          (result.status === 'finished' || result.status === 'failed') &&
-          typeof result.ok === 'boolean'
-        ) {
+        // A running record holds ok=null; an ended one holds its verdict in
+        // ok, whatever word its status uses for the ending.
+        const running = result.status === 'running';
+        const verdict = typeof result.ok === 'boolean';
+        if (running && result.ok === null) return;
+        if (verdict && !running) {
           finish(null, file);
           return;
         }
