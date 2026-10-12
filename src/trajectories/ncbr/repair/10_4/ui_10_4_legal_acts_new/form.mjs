@@ -5,6 +5,7 @@ import {
   humanIdlePause,
 } from '../../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../../dist/human/keyboard.js';
+import { pageShows } from '../../../../_shared/page/judged/seen.mjs';
 import { rowNeedles, target } from './source.mjs';
 
 export function legalActForm({ page }) {
@@ -121,10 +122,13 @@ export function legalActForm({ page }) {
       .filter({ hasText: '' })
       .first();
     if ((await input.count()) === 0) return { skipped: 'no combobox' };
-    const name = await input.getAttribute('name');
-    const value = await input.inputValue().catch(() => '');
-    if (!/akt|prawn|rodzaj|typ|przepis/i.test(name || value))
-      return { skipped: `combobox not obviously act field: ${name || ''}` };
+    if (
+      !(await pageShows(
+        page,
+        'Does the form ask for the type of the legal act in a dropdown?',
+      ))
+    )
+      return { skipped: 'the form asks for no legal-act type' };
     await humanFill(page, input, 'Pozostałe inne');
     await humanIdlePause('deliberate');
     const option = page

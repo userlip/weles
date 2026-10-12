@@ -49,12 +49,11 @@ async function readback() {
   await page.goto(PROJECT_URL, { waitUntil: 'domcontentloaded' }); // allow-raw-playwright: read status only
   await humanIdlePause('long');
   out.status = await page.evaluate(() => {
-    const body = document.body?.innerText || '';
     return {
-      statusLines: body
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => /W przygotowaniu|Złożony|Konkurs:/i.test(l)),
+      // The application's status and call are shown as chips and headings.
+      statusLines: Array.from(
+        document.querySelectorAll('.MuiChip-label, h1, h2, h3'),
+      ).map((el) => el.innerText.trim()),
       submitButtons: Array.from(document.querySelectorAll('button'))
         .filter((b) => b.innerText.trim() === 'Złóż wniosek')
         .map((b) => ({ disabled: b.disabled })),

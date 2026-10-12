@@ -207,8 +207,8 @@ async function validateOnly() {
     return {
       url: location.href,
       dialogs: Array.from(document.querySelectorAll('[role="dialog"], .MuiDialog-root, .MuiAlert-root, .MuiSnackbar-root')).map((e) => e.textContent.trim().replace(/\\s+/g, ' ')).filter(Boolean),
-      errorLikeLines: body.split('\\n').map((l) => l.trim()).filter((l) => /błąd|blad|wymagan|uzupeł|niepopraw|nie może|walid|popraw/i.test(l)),
-      submitButtons: Array.from(document.querySelectorAll('button')).map((b) => ({ text: b.innerText.trim(), disabled: b.disabled })).filter((b) => /Złóż|Sprawdź|Potwierdzam/i.test(b.text)),
+      fieldErrors: Array.from(document.querySelectorAll('.Mui-error, [aria-invalid="true"]')).map((e) => ({ name: e.getAttribute('name'), text: e.textContent.trim().replace(/\\s+/g, ' ') })),
+      buttons: Array.from(document.querySelectorAll('button')).map((b) => ({ text: b.innerText.trim(), disabled: b.disabled })).filter((b) => b.text),
       body,
     };
   })()`);

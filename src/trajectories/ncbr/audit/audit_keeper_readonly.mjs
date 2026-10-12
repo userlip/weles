@@ -75,9 +75,7 @@ try {
               value: f.value,
               suffix: f.suffix,
             })),
-            buttons: editState.buttons.filter((b) =>
-              /Zapisz|Anuluj/i.test(b.text),
-            ),
+            buttons: editState.buttons,
             shot: editState.screenshot.path,
           },
           null,
@@ -107,9 +105,7 @@ try {
             len: f.len,
             value: f.value,
           })),
-          buttons: state.buttons.filter((b) =>
-            /Złóż|Sprawdź|Zapisz/i.test(b.text),
-          ),
+          buttons: state.buttons,
           shot: state.screenshot.path,
         },
         null,
@@ -139,7 +135,7 @@ try {
         buttons,
         project: await fetchText('/api/beneficiary/project/${PROJECT_ID}'),
         projectsPlural: await fetchText('/api/beneficiary/projects/${PROJECT_ID}'),
-        resources: performance.getEntriesByType('resource').map((e) => e.name).filter((name) => /project|section|version|APPLICATION_DATA/i.test(name)).slice(-120),
+        resources: performance.getEntriesByType('resource').map((e) => e.name).filter((name) => name.includes('/api/')).slice(-120),
       };
     })()`);
     const fp = join(OUT_DIR, 'meta.json');
@@ -185,10 +181,8 @@ try {
         },
         validation: {
           dialogs: out.validation.dialogs,
-          errorLikeLines: out.validation.errorLikeLines,
-          buttons: out.validation.buttons.filter((b) =>
-            /Złóż|Sprawdź|Potwierdzam/i.test(b.text),
-          ),
+          fieldErrors: out.validation.fieldErrors,
+          buttons: out.validation.buttons,
           shot: out.validation.screenshot.path,
         },
       },

@@ -78,25 +78,16 @@ function cleanText(v) {
 function classifyField(f) {
   const value = cleanText(f.value);
   if (value.length < 80) return null;
-  const name = `${f.name} ${f.label}`.toLowerCase();
-  if (
-    /nip|regon|krs|numer|kwota|koszt|wartosc|wartość|rok|data|email|telefon|kod|adres|ulica|gmina|powiat|wojew|miejscow|nazwa_skrocona/.test(
-      name,
-    )
-  )
-    return null;
-  if (/radio|checkbox|combobox/.test(f.role || '')) return null;
+  // Prose lives in textareas; identifiers, amounts, dates and addresses are
+  // single-line inputs and never end a sentence.
+  if (f.tag !== 'TEXTAREA') return null;
   const max = Number(f.max) || null;
   const near = Boolean(
     max && (value.length >= max - 25 || value.length / max >= 0.97),
   );
   const noSentenceEnd = !/[.!?…:;)"”\]]$/.test(value);
-  const dangling =
-    /\b(?:i|oraz|z|ze|w|we|na|do|dla|przez|które|który|która|aby|lub|or|and|AI)$/i.test(
-      value,
-    );
   const artifact = /(\*\*|^#{1,6}\s|\(limit\s*\d|<!--|\|---)/im.test(value);
-  if (!near && !noSentenceEnd && !dangling && !artifact) return null;
+  if (!near && !noSentenceEnd && !artifact) return null;
   return {
     ...f,
     value,
@@ -104,7 +95,6 @@ function classifyField(f) {
     max,
     near,
     noSentenceEnd,
-    dangling,
     artifact,
   };
 }

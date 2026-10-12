@@ -317,7 +317,6 @@ if (process.env.CHECK_ONLY) {
   await humanIdlePause('long');
   await humanIdlePause('long');
   const validation = await page.evaluate(() => {
-    const body = document.body.innerText || '';
     return {
       dialogs: Array.from(
         document.querySelectorAll(
@@ -333,12 +332,6 @@ if (process.env.CHECK_ONLY) {
       )
         .map((e) => (e.textContent || e.getAttribute('name') || '').trim())
         .filter(Boolean),
-      lines: body
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) =>
-          /błąd|blad|wymagan|uzupeł|niepopraw|nie może|walid|popraw/i.test(l),
-        ),
       buttons: Array.from(document.querySelectorAll('button'))
         .map((b) => ({ text: b.innerText.trim(), disabled: b.disabled }))
         .filter((b) => b.text),

@@ -92,9 +92,11 @@ function idle(kind = 'short') {
 }
 
 function loginIfNeeded() {
-  const url = action({ action: 'url' }, true);
-  const current = url.ok === false ? '' : String(url.url || url.result || '');
-  if (!/login|logowanie|auth/i.test(current)) return false;
+  // The login page is the one carrying LSI's mail field.
+  const onLogin = read(
+    `Boolean(document.querySelector('input#mail, input[name="mail"]'))`,
+  );
+  if (!onLogin) return false;
   const email = process.env.NCBR_EMAIL;
   const password = process.env.NCBR_PASSWORD;
   if (!email || !password)

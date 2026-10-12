@@ -150,17 +150,13 @@ await page.goto(PROJECT_URL, { waitUntil: 'domcontentloaded' }); // allow-raw-pl
 await humanIdlePause('long');
 
 const status = await page.evaluate(() => {
-  const body = document.body?.innerText || '';
-  const lines = body
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
   return {
     url: location.href,
     title: document.title,
-    statusLines: lines.filter((l) =>
-      /W przygotowaniu|Złożony|Zlozony|Wycofany|Konkurs:|nabór|nabor/i.test(l),
-    ),
+    // The application's status and call are shown as chips and headings.
+    statusLines: Array.from(
+      document.querySelectorAll('.MuiChip-label, h1, h2, h3'),
+    ).map((el) => el.innerText.trim()),
     submitButtons: Array.from(document.querySelectorAll('button'))
       .filter((b) => b.innerText.trim() === 'Złóż wniosek')
       .map((b) => ({ disabled: b.disabled })),

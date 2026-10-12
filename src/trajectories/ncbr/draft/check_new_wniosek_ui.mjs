@@ -22,7 +22,7 @@ if (!page) {
 const responses = [];
 page.on('response', async (res) => {
   const url = res.url();
-  if (!/valid|check|ocen|submit|send|wniosek|project/i.test(url)) return;
+  if (!new URL(url).pathname.includes('/api/')) return;
   let text = null;
   let readError = null;
   try {
@@ -108,12 +108,6 @@ const out = await page.evaluate((capturedResponses) => {
   )
     .map((e) => (e.textContent || e.getAttribute('name') || '').trim())
     .filter(Boolean);
-  const lines = body
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) =>
-      /błąd|blad|wymagan|uzupeł|niepopraw|nie może|walid|popraw/i.test(l),
-    );
   return {
     url: location.href,
     dialogs,
@@ -121,7 +115,6 @@ const out = await page.evaluate((capturedResponses) => {
       document.querySelectorAll('[role="dialog"], .MuiDialog-root'),
     ).map((e) => e.outerHTML),
     errors,
-    lines: lines,
     buttons: Array.from(document.querySelectorAll('button'))
       .map((b) => ({
         text: b.innerText.trim() || b.getAttribute('aria-label') || b.title,

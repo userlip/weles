@@ -7,6 +7,7 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
+import { clickOffered } from '../../_shared/page/judged/seen.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const PROJECT_URL = (await import('#ncbr-settings')).projectUrl();
@@ -21,7 +22,7 @@ if (!page) {
 const responses = [];
 page.on('response', async (res) => {
   const url = res.url();
-  if (!/submit|send|sign|zloz|wniosek|project|validate/i.test(url)) return;
+  if (!new URL(url).pathname.includes('/api/')) return;
   let text = '';
   try {
     text = await res.text();
@@ -130,12 +131,11 @@ if (!submittedClick) {
 await humanIdlePause('long');
 await humanIdlePause('long');
 
-// If LSI asks for a final confirmation, accept the affirmative action.
-const confirmTexts = ['Potwierdzam', 'Tak', 'Złóż wniosek', 'Złóż'];
-const clickedConfirm = [];
-for (const text of confirmTexts) {
-  if (await clickVisibleButton(text)) clickedConfirm.push(text);
-}
+// If LSI asks for a final confirmation, its affirmative action is taken.
+const clickedConfirm = await clickOffered(
+  page,
+  'the button in the dialog that confirms submitting the application',
+);
 
 await humanIdlePause('long');
 await humanIdlePause('long');
