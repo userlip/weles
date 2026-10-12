@@ -52,11 +52,7 @@ try {
   try {
     await assertAuthed('reddit', s, { label: 'reddit_join_sub' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
   // Real structure on old.reddit /r/<sub>/:

@@ -45,11 +45,7 @@ try {
   try {
     await assertAuthed('instagram', s, { label: 'instagram_story_view' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
   // Story tray entries are <li role="menuitem" tabindex="0"> with anchored

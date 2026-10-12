@@ -54,11 +54,7 @@ try {
   try {
     await assertAuthed('instagram', s, { label: 'instagram_save' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
   if (!/\/p\/|\/reel\//.test(s.page.url())) {
@@ -86,7 +82,11 @@ try {
     .filter({ visible: true })
     .first();
   if (!(await saveSvg.count())) {
-    ban = await banSignalOf(detectInstagramBanSignals, s, 'after finding it saved');
+    ban = await banSignalOf(
+      detectInstagramBanSignals,
+      s,
+      'after finding it saved',
+    );
     console.log(`[ban-signal] ${ban?.signal}  PASS: already saved`);
   } else {
     const saveBtn = saveSvg

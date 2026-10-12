@@ -65,11 +65,7 @@ try {
         { platform: 'linkedin' },
       );
   } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) {
-      console.log(`FAIL: ${jarErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
     throw jarErr;
   }
   await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
