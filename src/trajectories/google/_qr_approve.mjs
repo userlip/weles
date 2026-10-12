@@ -94,6 +94,7 @@ async function adb(...args) {
 }
 
 async function extractQrTargetUrl(page) {
+  let linkLookup = '';
   const fromLink = await page
     .evaluate(`(() => {
     var links = Array.from(document.querySelectorAll('a[href]'));
@@ -102,7 +103,12 @@ async function extractQrTargetUrl(page) {
     });
     return hit ? hit.href : null;
   })()`)
-    .catch(() => null);
+    .catch((error) => {
+      // The image path below still reads the QR; a failed lookup is kept so
+      // a refusal says both ways were tried.
+      linkLookup = `; the QR link lookup failed: ${error.message}`;
+      return null;
+    });
   if (fromLink) return fromLink;
 
   const qr = await page.$(
@@ -112,12 +118,12 @@ async function extractQrTargetUrl(page) {
     const shot = await page.screenshot({ type: 'png', fullPage: false });
     const decoded = await decodeQr(shot);
     if (decoded) return decoded;
-    throw new Error('qr_not_found_in_dom');
+    throw new Error(`qr_not_found_in_dom${linkLookup}`);
   }
 
   const shot = await qr.screenshot({ type: 'png' });
   const decoded = await decodeQr(shot);
-  if (!decoded) throw new Error('qr_decode_failed');
+  if (!decoded) throw new Error(`qr_decode_failed${linkLookup}`);
   return decoded;
 }
 
