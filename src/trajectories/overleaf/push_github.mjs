@@ -24,6 +24,7 @@ import {
 import { humanFill } from '../../../dist/human/keyboard.js';
 import { writeFileSync } from 'node:fs';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import { statedText } from '../_shared/inputs/stated.mjs';
 
 let PROJECT = process.argv[2];
 if (!PROJECT) PROJECT = process.env.OVERLEAF_PROJECT;
@@ -37,6 +38,12 @@ if (!PROJECT || !REPO_SLUG) {
 }
 const IS_ID = /^[0-9a-fA-F]{24}$/.test(PROJECT);
 const REPO_LC = REPO_SLUG.toLowerCase();
+// The message lands in the linked repository's history; it is the caller's
+// words, read before any browser starts, never a sentence written here.
+const COMMIT_MESSAGE = statedText(
+  ['OVERLEAF_COMMIT_MESSAGE'],
+  'the commit message the GitHub repository records for this sync',
+);
 
 const SHOT_DIR = runRecordingsDir('overleaf_push_github');
 let shotN = 0;
@@ -215,11 +222,7 @@ try {
         .filter({ visible: true })
         .first();
       await msgBox.waitFor({ state: 'visible' });
-      await humanFill(
-        s.page,
-        msgBox,
-        process.env.OVERLEAF_COMMIT_MESSAGE || 'Sync Overleaf edits to GitHub',
-      );
+      await humanFill(s.page, msgBox, COMMIT_MESSAGE);
       await shot(s, `commit_dialog_${tag8}`);
       const syncBtn = s.page
         .getByRole('button', { name: /^\s*sync\s*$/i })
