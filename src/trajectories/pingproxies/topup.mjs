@@ -5,12 +5,23 @@ import {
   googleSso,
   getGoogleSsoCreds,
 } from '../_shared/services/google_sso.mjs';
-import { topupOpts } from '../_shared/services/topup_common.mjs';
+import {
+  loadTopupCardEnv,
+  topupOpts,
+} from '../_shared/services/topup_common.mjs';
 import { humanIdlePause } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
-import { humanType } from '../../../dist/human/keyboard.js';
+import { confirmedFill } from '../_shared/page/confirmed-fill.mjs';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 
 const { usd } = topupOpts();
+// The charge goes on the purchase card the caller supplied, picked among the
+// saved cards by the last four digits a saved card shows; nothing else is
+// ever charged.
+loadTopupCardEnv();
+const cardLast4 = process.env.TOPUP_CARD_NUMBER?.replace(/\D/g, '').match(
+  /(\d\d\d\d)$/,
+)?.[1];
 const login = await getGoogleSsoCreds();
 if (!login) {
   console.log('FAIL: no Google SSO creds');
@@ -22,6 +33,10 @@ const s = await WSession.start({
   browser: 'chromium',
 });
 try {
+  if (!cardLast4)
+    throw new Error(
+      'TOPUP_CARD_NUMBER is not set (from TOPUP_CARD_JSON or a topup_card.env): the saved card this top-up charges is picked by its last four digits; nothing was charged',
+    );
   await s.goto('https://dashboard.byteful.com/login');
   await humanIdlePause('deliberate');
   await s.page
@@ -32,17 +47,13 @@ try {
     .first()
     .click();
   const ok = await googleSso(s, login, { originHost: 'byteful.com' });
-  if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
-    process.exit(1);
-  }
+  if (!ok) throw new Error('Google SSO did not complete');
 
   await humanIdlePause('long');
   // The home dashboard Add-balance modal exposes "Show More Payment
-  // Options" that may reveal the saved card on file (****2430 visible
-  // on /billing/payment-methods). The wallet variant of the modal
-  // (entered from /billing/wallet) does NOT show that — only New Card +
-  // Crypto. Going via home to reach the saved-card option.
+  // Options" that may reveal the saved cards on file. The wallet variant of
+  // the modal (entered from /billing/wallet) does NOT show them — only New
+  // Card + Crypto. Going via home to reach the saved-card option.
   await s.page
     .goto('https://dashboard.byteful.com/', { waitUntil: 'domcontentloaded' })
     .catch(() => {});
@@ -75,10 +86,8 @@ try {
     `[trajectory] found ${cnt} "Add balance" buttons; clicking the top-right one (last())`,
   );
   const addBalanceBtn = addBalanceBtns.last();
-  if (!(await addBalanceBtn.isVisible().catch(() => false))) {
-    console.log('FAIL: "Add balance" button not visible');
-    process.exit(1);
-  }
+  if (!(await addBalanceBtn.isVisible()))
+    throw new Error('"Add balance" button not visible');
   await addBalanceBtn.evaluate((el) => el.click());
   console.log('[trajectory] clicked "Add balance" via JS evaluate (top-right)');
   await humanIdlePause('deliberate');
@@ -135,27 +144,20 @@ try {
     console.log('[diag] err:', e.message);
   }
 
+  // The modal opens with its own default amount; a charge is only ever made
+  // for the amount asked for, so the field must be there and must read back
+  // exactly that amount before anything is confirmed.
   const amtIn = s.page
     .locator(
       'input[type="number"], input[name*="amount" i], input[inputmode="numeric"]',
     )
     .filter({ visible: true })
     .first();
-  if (await amtIn.isVisible().catch(() => false)) {
-    // The pingproxies modal has a default amount value of 100 (cited from
-    // modal HTML dump). v14s keyboard.type without proper clearing
-    // appended to "100" producing "1010"/"10010" — invalid amount that
-    // silently aborted the form. Use selectAll-then-type which Playwright
-    // dispatches as a real key sequence React picks up.
-    await amtIn.click();
-    await amtIn.selectText().catch(() => {});
-    await s.page.keyboard.press('Backspace');
-    await humanType(s.page, String(usd));
-    const actualValue = await amtIn.inputValue().catch(() => '');
-    console.log(
-      `[trajectory] amount input value after clear+type: "${actualValue}" (target: $${usd})`,
+  if (!(await amtIn.isVisible()))
+    throw new Error(
+      `the Add balance modal shows no amount field; $${usd} could not be entered and nothing was charged`,
     );
-  }
+  await confirmedFill(s.page, amtIn, String(usd), 'the top-up amount field');
 
   // Dump the full modal HTML so I can read actual selectors offline
   // instead of guessing. Writes to a known location for inspection.
@@ -199,19 +201,17 @@ try {
   }
   const savedCard = s.page
     .locator(
-      'label:has-text("2430"), [class*="radio"]:has-text("2430"), div:has-text("Mastercard"):has-text("2430")',
+      `label:has-text("${cardLast4}"), [class*="radio"]:has-text("${cardLast4}")`,
     )
     .filter({ visible: true })
     .first();
-  if (await savedCard.isVisible().catch(() => false)) {
-    await savedCard.evaluate((el) => el.click());
-    console.log('[trajectory] selected saved card ****2430');
-    await humanIdlePause('short');
-  } else {
-    console.log(
-      '[trajectory] saved card ****2430 not visible — proceeding with default selection',
+  if (!(await savedCard.isVisible()))
+    throw new Error(
+      `no saved card ending ${cardLast4} is offered in the Add balance modal; the default selection is not charged`,
     );
-  }
+  await savedCard.evaluate((el) => el.click());
+  console.log(`[trajectory] selected saved card ending ${cardLast4}`);
+  await humanIdlePause('short');
 
   // CONFIRM: click the deposit-confirm button + watch for Stripe charge POST.
   let stripeChargeFired = false;
@@ -291,10 +291,8 @@ try {
     .locator('button:has-text("Add store credit")')
     .filter({ visible: true })
     .first();
-  if (!(await confirmBtn.isVisible().catch(() => false))) {
-    console.log('FAIL: "Add store credit" button not visible inside modal');
-    process.exit(1);
-  }
+  if (!(await confirmBtn.isVisible()))
+    throw new Error('"Add store credit" button not visible inside modal');
   // Real mouse click via box + page.mouse — bypasses React synthetic event
   // dispatch issues that swallowed the v6 force:true click without firing
   // any backend request (cited from network capture: zero charge POSTs
@@ -310,17 +308,16 @@ try {
   await s.page.keyboard.press('Enter');
   console.log('[trajectory] focused + pressed Enter on Add store credit');
   await pageSettled(s.page);
-  if (stripeChargeFired)
-    console.log(
-      `PASS-CHARGED: Stripe payment_intents/confirm POST fired, url=${s.page.url()}`,
+  if (!stripeChargeFired)
+    throw new Error(
+      `deposit-confirm clicked but no Stripe charge POST observed by the time the page settled, url=${s.page.url()}`,
     );
-  else
-    console.log(
-      `FAIL: deposit-confirm clicked but no Stripe charge POST observed by the time the page settled, url=${s.page.url()}`,
-    );
+  console.log(
+    `PASS-CHARGED: Stripe payment_intents/confirm POST fired, url=${s.page.url()}`,
+  );
 } catch (e) {
   console.log('FAIL:', e.message);
-  process.exit(1);
+  process.exitCode = exitStatusFor(e);
 } finally {
   await s.close();
 }
