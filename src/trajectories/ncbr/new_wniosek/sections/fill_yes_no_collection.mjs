@@ -1,173 +1,157 @@
-// Generic Tak/Nie collection filler for 4.3, 5.3 and 5.4 in the replacement draft. Never submits.
+// Sets the radio answers of one collection row in any section of the draft
+// (4.3, 5.3, 5.4 and any other Tak/Nie collection). Never submits.
+//
+// NCBR_COLLECTION_SECTION names the section key (as NCBR_SECTION_<key>
+// declares its page). NCBR_COLLECTION_ANSWERS is a JSON object mapping each
+// radio group's name to the value to choose; DIAG=1 lists the row's radio
+// groups and their values instead. NCBR_COLLECTION_APPLICANT, when the row asks
+// for one, is the applicant option to choose. The first row is edited, or a row
+// is added when the section has none. Nothing is assumed: no default answer,
+// no radio picked by its position, no applicant name and no banner found by its
+// wording — radios are chosen by name and value, read back, and the row is saved
+// from the keyboard.
 
 import { chromium } from 'playwright';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../../dist/human/mouse.js';
+import { humanIdlePause } from '../../../../../dist/human/mouse.js';
 
-const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
-const PROJ = (await import('#ncbr-settings')).sectionBase();
-const REG = {
-  4.3: { id: (await import('#ncbr-settings')).sectionId('4_3'), answer: 'Nie' },
-  5.3: {
-    id: (await import('#ncbr-settings')).sectionId('5_3'),
-    answer: 'Tak',
-    locationPremium: true,
-  },
-  5.4: { id: (await import('#ncbr-settings')).sectionId('5_4'), answer: 'Nie' },
-};
+const INDENT = '  ';
+const settings = await import('#ncbr-settings');
 
-const SECTION = process.env.SECTION;
-const cfg = REG[SECTION];
-if (!cfg)
-  throw new Error(`SECTION must be one of ${Object.keys(REG).join(', ')}`);
-const ANSWER = process.env.ANSWER || cfg.answer;
-
-const browser = await chromium.connectOverCDP(endpoint);
-const page = browser.contexts()[0]?.pages()[0];
-if (!page) {
-  console.log(JSON.stringify({ error: 'NO_PAGE' }));
-  process.exit(1);
+function stated(name, meaning) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required: ${meaning}`);
+  return value;
 }
 
-await page.goto(PROJ + cfg.id, { waitUntil: 'domcontentloaded' });
-await humanIdlePause('long');
-await page.evaluate(() => {
-  const b = Array.from(document.querySelectorAll('div')).find((d) =>
-    (d.innerText || '').includes('pliki cookies'),
-  );
-  if (b) b.style.pointerEvents = 'none';
-}); // allow-raw-playwright: neutralise cookie banner
-
-async function dataRowCount() {
-  return page.evaluate(
-    () =>
-      Array.from(document.querySelectorAll('table tbody tr')).filter((r) =>
-        r.querySelector('button[aria-label="overflow-options"]'),
-      ).length,
-  );
-}
-
-async function openForm() {
-  if ((await dataRowCount()) > 0) {
-    const menu = page
-      .locator('table tbody tr button[aria-label="overflow-options"]')
-      .first();
-    await humanClickLocator(page, menu);
-    await humanIdlePause('deliberate');
-    await page
-      .getByRole('menuitem', { name: 'Edytuj', exact: true })
-      .first()
-      .dispatchEvent('click'); // allow-raw-playwright: edit existing row
-  } else {
-    const button = page
-      .getByRole('button', { name: 'Dodaj', exact: true })
-      .filter({ visible: true })
-      .first();
-    if ((await button.count()) === 0) throw new Error('Dodaj not found');
-    await humanClickLocator(page, button);
-  }
-  await humanIdlePause('long');
-}
-
-async function setApplicant() {
-  const applicant = page
-    .locator('input[name*="nazwa_skrocona_wnioskodawcy"]')
-    .locator('xpath=ancestor::*[contains(@class, "MuiInputBase-root")][1]')
-    .locator('.MuiSelect-select, [role="combobox"]')
-    .first();
-  if ((await applicant.count()) > 0) await humanClickLocator(page, applicant);
-  await humanIdlePause('deliberate');
-  const opt = page
-    .getByRole('option', { name: 'Wisent Polska', exact: true })
-    .first();
-  if ((await opt.count()) > 0) await opt.dispatchEvent('click'); // allow-raw-playwright: select applicant
-  await humanIdlePause('short');
-}
-
-async function saveEnabled() {
-  await humanIdlePause('deliberate');
-  await humanIdlePause('deliberate');
-  const saves = page
-    .getByRole('button', { name: 'Zapisz', exact: true })
-    .filter({ visible: true });
-  if ((await saves.count()) === 0) throw new Error('no enabled Zapisz');
-  await humanClickLocator(page, saves.last());
-  await humanIdlePause('long');
-}
-
-await openForm();
-try {
-  await setApplicant();
-} catch (e) {
-  /* single applicant may be auto-selected */
-}
-
-if (process.env.DIAG) {
-  const out = await page.evaluate(() => ({
-    fields: Array.from(document.querySelectorAll('input, textarea'))
-      .map((el, i) => {
-        const label = el.id
-          ? document
-              .querySelector(`label[for="${CSS.escape(el.id)}"]`)
-              ?.textContent?.trim()
-          : null;
-        const wrap = el.closest(
-          'label, .MuiFormControlLabel-root, .MuiFormGroup-root, .MuiFormControl-root',
-        );
-        return {
-          i,
-          tag: el.tagName,
-          type: el.type || null,
-          name: el.name || null,
-          value: el.value || null,
-          checked: el.checked || false,
-          role: el.getAttribute('role'),
-          label,
-          nearby: wrap ? wrap.textContent.trim().replace(/\s+/g, ' ') : null,
-        };
-      })
-      .filter((f) => f.name || f.label || f.nearby),
-    buttons: Array.from(document.querySelectorAll('button'))
-      .map((b) => ({ text: b.innerText.trim(), disabled: b.disabled }))
-      .filter((b) => b.text),
-    body: document.body.innerText,
-  }));
-  console.log(JSON.stringify({ section: SECTION, out }, null, 2));
-  process.exit(0);
-}
-
-if (SECTION === '5.3' && ANSWER === 'Tak') {
-  const radios = page.locator('input[type="radio"]');
-  if ((await radios.count()) < 6)
-    throw new Error('5.3 expected three Tak/Nie radio groups');
-  await radios.nth(0).dispatchEvent('click'); // allow-raw-playwright: applicant applies for location premium = Tak
-  await humanIdlePause('short');
-  await radios.nth(2).dispatchEvent('click'); // allow-raw-playwright: B+R in Lubelskie/eligible group a = Tak
-  await humanIdlePause('short');
-  await radios.nth(5).dispatchEvent('click'); // allow-raw-playwright: B+R in group b = Nie
-} else {
-  const radio = page.locator(`input[type="radio"][value="${ANSWER}"]`).first();
-  if ((await radio.count()) === 0)
-    throw new Error(`radio not found for ${ANSWER}`);
-  await radio.dispatchEvent('click'); // allow-raw-playwright: set Tak/Nie answer
-}
-await humanIdlePause('short');
-await saveEnabled();
-
-await page.goto(PROJ + cfg.id, { waitUntil: 'domcontentloaded' });
-await humanIdlePause('long');
-const readback = await page.evaluate(() => ({
-  rows: Array.from(document.querySelectorAll('table tbody tr')).filter((r) =>
-    r.querySelector('button[aria-label="overflow-options"]'),
-  ).length,
-  table: (document.querySelector('table')?.innerText || '').replace(
-    /\s+/g,
-    ' ',
-  ),
-}));
-console.log(
-  JSON.stringify({ section: SECTION, answer: ANSWER, readback }, null, 2),
+const section = stated(
+  'NCBR_COLLECTION_SECTION',
+  'the section key whose collection row is answered, as NCBR_SECTION_<key> names its page',
 );
-process.exit(0);
+const diagnose = Boolean(process.env.DIAG);
+const answers = diagnose
+  ? {}
+  : JSON.parse(
+      stated(
+        'NCBR_COLLECTION_ANSWERS',
+        'a JSON object mapping each radio group name to the value to choose (DIAG=1 lists them)',
+      ),
+    );
+const applicant = process.env.NCBR_COLLECTION_APPLICANT;
+
+const endpoint = settings.cdpEndpoint();
+const browser = await chromium.connectOverCDP(endpoint);
+const [context] = browser.contexts();
+const [page] = context ? context.pages() : [];
+if (!page) throw new Error(`no page is open over ${endpoint}`);
+
+await page.goto(settings.sectionBase() + settings.sectionId(section), {
+  waitUntil: 'domcontentloaded',
+});
+await humanIdlePause('long');
+
+const rowMenus = page.locator(
+  'table tbody tr button[aria-label="overflow-options"]',
+);
+if (await rowMenus.count()) {
+  await rowMenus.first().dispatchEvent('click'); // allow-raw-playwright: open the row menu
+  await humanIdlePause('deliberate');
+  await page
+    .getByRole('menuitem', { name: 'Edytuj', exact: true })
+    .first()
+    .dispatchEvent('click'); // allow-raw-playwright: edit the row
+} else {
+  const add = page
+    .getByRole('button', { name: 'Dodaj', exact: true })
+    .filter({ visible: true })
+    .first();
+  if (!(await add.count()))
+    throw new Error(`section ${section} has no row and no Dodaj control`);
+  await add.dispatchEvent('click'); // allow-raw-playwright: add a row
+}
+await humanIdlePause('long');
+
+const applicantSelect = page
+  .locator('input[name*="nazwa_skrocona_wnioskodawcy"]')
+  .locator('xpath=ancestor::*[contains(@class, "MuiInputBase-root")][1]')
+  .locator('.MuiSelect-select, [role="combobox"]')
+  .first();
+if (await applicantSelect.count()) {
+  if (!applicant)
+    throw new Error(
+      'NCBR_COLLECTION_APPLICANT is required: this row asks which applicant it is for',
+    );
+  await applicantSelect.dispatchEvent('mousedown'); // allow-raw-playwright: open the applicant list
+  await humanIdlePause('deliberate');
+  const option = page
+    .getByRole('option', { name: applicant, exact: true })
+    .first();
+  if (!(await option.count()))
+    throw new Error(
+      `the applicant list offers no ${JSON.stringify(applicant)}`,
+    );
+  await option.dispatchEvent('click'); // allow-raw-playwright: choose the stated applicant
+  await humanIdlePause('short');
+}
+
+/** Every radio group in the open row: its name, values and chosen value. */
+async function radioGroups() {
+  return page.locator('input[type="radio"]').evaluateAll((radios) => {
+    const groups = {};
+    for (const radio of radios) {
+      if (!Object.hasOwn(groups, radio.name))
+        groups[radio.name] = { values: [], chosen: null };
+      groups[radio.name].values.push(radio.value);
+      if (radio.checked) groups[radio.name].chosen = radio.value;
+    }
+    return groups;
+  });
+}
+
+const before = await radioGroups();
+if (diagnose) {
+  console.log(JSON.stringify({ section, groups: before }, null, INDENT));
+  process.exit();
+}
+
+for (const [name, value] of Object.entries(answers)) {
+  if (!before[name]?.values.includes(value))
+    throw new Error(
+      `the row has no radio group ${JSON.stringify(name)} offering ${JSON.stringify(value)}; DIAG=1 lists what it offers`,
+    );
+  await page
+    .locator(
+      `input[type="radio"][name=${JSON.stringify(name)}][value=${JSON.stringify(value)}]`,
+    )
+    .first()
+    .dispatchEvent('click'); // allow-raw-playwright: choose the stated answer
+  await humanIdlePause('short');
+}
+
+const chosen = await radioGroups();
+const unset = Object.entries(answers).filter(
+  ([name, value]) => chosen[name]?.chosen !== value,
+);
+if (unset.length)
+  throw new Error(
+    `the row did not take ${unset.map(([name, value]) => `${name}=${value}`).join(', ')}; nothing was saved`,
+  );
+
+const save = page
+  .getByRole('button', { name: 'Zapisz', exact: true })
+  .filter({ visible: true })
+  .last();
+if (!(await save.isEnabled()))
+  throw new Error(`the ${section} row Save button is disabled`);
+await save.press('Enter'); // activate only this Save button from the keyboard
+await page
+  .getByRole('button', { name: 'close side drawer', exact: true })
+  .waitFor({ state: 'hidden' });
+
+console.log(
+  JSON.stringify(
+    { section, applicant, answers, before, chosen, saved: true },
+    null,
+    INDENT,
+  ),
+);
+process.exit();
