@@ -29,42 +29,33 @@ export async function tiktokSubmitComment(s, text) {
   // rail always mounts, so the comment icon and input are reliably present.
   const onVideoPage = /\/video\/\d+/.test(currentUrl);
   if (!onVideoPage) {
-    const isProfile = /\/@[^/?#]+$/.test(currentUrl.split('?')[0]);
+    const profile = /\/@(?<handle>[^/?#]+)$/.exec(new URL(currentUrl).pathname);
     let gridLoaded = false;
-    let profileHandles = ['tiktok', 'spotify', 'nba'];
-    if (!isProfile) {
-      // /foryou itself doesn't expose direct /video/N anchors, but the
-      // sidebar of each video lists the AUTHOR's profile anchor (/@user).
-      // Scrape those author handles from the current /foryou page and use
-      // them as candidate profiles — TikTok's video-listing API is more
-      // reliable for the small-creator profiles it just recommended us
-      // than for the canonical high-volume handles (@tiktok / @nba).
-      let authorHandles = [];
-      try {
-        if (!/\/foryou/.test(currentUrl))
-          await s.goto('https://www.tiktok.com/foryou');
-        await humanIdlePause('long');
-        authorHandles = await s.page.evaluate(() =>
-          [
-            ...new Set(
-              Array.from(document.querySelectorAll('a[href*="/@"]'))
-                .map((a) => {
-                  const m = (a.getAttribute('href') || '').match(
-                    /\/@([^/?#]+)/,
-                  );
-                  return m ? m[1] : null;
-                })
-                .filter(Boolean),
-            ),
-          ].slice(0, 5),
+    // The profiles tried are the one the session is on, else the authors
+    // TikTok's own /foryou feed recommends to this account (each video in it
+    // links its author's /@handle): accounts TikTok chose for it, not a list
+    // of famous handles written here.
+    let profileHandles = profile ? [profile.groups.handle] : [];
+    if (!profile) {
+      if (!/\/foryou/.test(currentUrl))
+        await s.goto('https://www.tiktok.com/foryou');
+      await humanIdlePause('long');
+      profileHandles = await s.page.evaluate(() => [
+        ...new Set(
+          Array.from(document.querySelectorAll('a[href*="/@"]'), (a) =>
+            /\/@([^/?#]+)/.exec(String(a.getAttribute('href'))),
+          )
+            .filter((found) => found !== null)
+            .map(([, handle]) => handle),
+        ),
+      ]);
+      console.log(
+        `[tiktok-submit] /foryou recommended authors: ${JSON.stringify(profileHandles)}`,
+      );
+      if (!profileHandles.length)
+        throw new Error(
+          `TIKTOK_NO_VIDEO_SOURCE: the /foryou feed at ${s.page.url()} links no author profile to find a video on`,
         );
-        console.log(
-          `[tiktok-submit] /foryou recommended authors: ${JSON.stringify(authorHandles)}`,
-        );
-      } catch {
-        /* fall through */
-      }
-      profileHandles = [...authorHandles, 'tiktok', 'spotify', 'nba'];
     }
     // Repost responses can supply video identifiers when the profile's post
     // grid has no usable entries.
