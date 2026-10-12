@@ -162,42 +162,29 @@ export function chromiumNetlogConfig(): {
   mode: string;
   includeCaptureMode: boolean;
 } {
-  const requested = String(process.env.WELES_CHROMIUM_NETLOG ?? '')
-    .trim()
-    .toLowerCase();
-  const fullDiagnostics = process.env.WELES_FULL_DIAGNOSTICS === '1';
-  const disabled =
-    requested === '0' || requested === 'false' || requested === 'off';
+  // WELES_CHROMIUM_NETLOG is a switch ('1' on, '0' off) like the other WELES_*
+  // flags; unset, full diagnostics decide. The capture detail is its own
+  // setting: WELES_CHROMIUM_NETLOG_MODE=everything, otherwise the safe mode.
+  const requested = process.env.WELES_CHROMIUM_NETLOG;
   const enabled =
-    !disabled &&
-    (fullDiagnostics ||
-      requested === '1' ||
-      requested === 'safe' ||
-      requested === 'default' ||
-      requested === 'everything');
-  const mode = (
-    process.env.WELES_CHROMIUM_NETLOG_MODE ??
-    (requested === 'everything' ? 'everything' : 'safe')
-  )
-    .trim()
-    .toLowerCase();
+    requested === '1' ||
+    (requested !== '0' && process.env.WELES_FULL_DIAGNOSTICS === '1');
+  const includeCaptureMode =
+    process.env.WELES_CHROMIUM_NETLOG_MODE === 'everything';
   return {
     enabled,
-    mode,
-    includeCaptureMode: mode === 'everything',
+    mode: includeCaptureMode ? 'everything' : 'safe',
+    includeCaptureMode,
   };
 }
 
+// Top-level settings (locale, user agent, viewport) stay readable; every
+// string nested in a sub-object (proxy, credentials, headers, storage state)
+// is hidden, so no secret survives under a key nobody listed.
 export function redactContextOpts(opts: unknown): unknown {
   return JSON.parse(
-    JSON.stringify(opts, (k, v) => {
-      if (
-        /username|password|authorization|cookie|token|apikey|api_key|secret/i.test(
-          k,
-        )
-      )
-        return '<redacted>';
-      return v;
+    JSON.stringify(opts, function (this: unknown, _key: string, v: unknown) {
+      return typeof v === 'string' && this !== opts ? '<redacted>' : v;
     }),
   );
 }

@@ -28,18 +28,17 @@ function nextLoad(page: any): Promise<void> {
 // Pages without a recognized challenge marker do not need that model call.
 async function looksLikeCloudflareDom(page: any): Promise<boolean> {
   try {
-    const r = await page.evaluate(() => {
-      const t = (document.title || '').toLowerCase();
-      const b = (document.body?.innerText || '').toLowerCase();
-      const hasCfMarker =
-        /cloudflare|just a moment|attention required|checking your browser|verifying you are human|enable javascript and cookies/.test(
-          t + ' ' + b,
-        );
-      const hasCfFrame = !!document.querySelector(
-        'iframe[src*="challenges.cloudflare.com"], iframe[src*="cdn-cgi/challenge-platform"]',
-      );
-      return hasCfMarker || hasCfFrame;
-    });
+    // A challenge page carries Cloudflare's challenge options object and its
+    // challenge-platform script or frame, whatever its wording.
+    const r = await page.evaluate(
+      () =>
+        '_cf_chl_opt' in window ||
+        Boolean(
+          document.querySelector(
+            'script[src*="/cdn-cgi/challenge-platform/"], iframe[src*="challenges.cloudflare.com"], iframe[src*="cdn-cgi/challenge-platform"]',
+          ),
+        ),
+    );
     return !!r;
   } catch {
     return false;

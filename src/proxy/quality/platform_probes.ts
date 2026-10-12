@@ -97,9 +97,8 @@ export async function probeLinkedinSignup(
     login_form: boolean;
     signup_form: boolean;
     challenge_dialog_template: boolean;
-    security_verification_template: boolean;
+    invisible_recaptcha_enterprise_anchor: boolean;
     hard_challenge: boolean;
-    challenge_terms: boolean;
   };
   response_body?: {
     encoding: 'utf8';
@@ -176,11 +175,20 @@ export async function probeLinkedinSignup(
       /(?:google\.com\/)?recaptcha\/enterprise\/anchor[\s\S]{0,500}(?:[?&]|%26)size(?:=|%3D)invisible/i.test(
         body,
       );
+    // A hard challenge is a captcha provider's script or frame on the page, or
+    // LinkedIn's own checkpoint challenge frame.
     const hardCaptcha =
-      /checkpoint\/challenge|challengeIframe|px-cloud|arkoselabs|funcaptcha|hcaptcha/i.test(
-        body,
-      ) ||
-      (/g-recaptcha|google\.com\/recaptcha|recaptcha/i.test(body) &&
+      [
+        'checkpoint/challenge',
+        'challengeIframe',
+        'px-cloud.net',
+        'arkoselabs.com',
+        'funcaptcha.com',
+        'hcaptcha.com',
+      ].some((marker) => body.includes(marker)) ||
+      (['google.com/recaptcha', 'recaptcha.net'].some((marker) =>
+        body.includes(marker),
+      ) &&
         !invisibleRecaptchaEnterpriseAnchor);
     const bodyMarkers = {
       login_form: /name="session_key"|id="username"|input type="email"/.test(
@@ -188,13 +196,9 @@ export async function probeLinkedinSignup(
       ),
       signup_form:
         /name="email-address"|id="email-address"|join-form-submit/.test(body),
-      challenge_dialog_template: /challenge-dialog/i.test(body),
-      security_verification_template: /Security verification/i.test(body),
+      challenge_dialog_template: body.includes('challenge-dialog'),
       invisible_recaptcha_enterprise_anchor: invisibleRecaptchaEnterpriseAnchor,
       hard_challenge: hardCaptcha,
-      challenge_terms: /checkpoint|challenge|captcha|recaptcha|security/i.test(
-        body,
-      ),
     };
     const transport = {
       curl_version: curlVersion,
