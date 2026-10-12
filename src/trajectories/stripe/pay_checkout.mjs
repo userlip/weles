@@ -25,8 +25,18 @@ import {
   TOPUP_ENV_FILES,
 } from '../_shared/services/topup_common.mjs';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
+import {
+  pageSettled,
+  responseAfterAction,
+  urlMatching,
+} from '../_shared/page/settled.mjs';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 import { humanType } from '../../../dist/human/keyboard.js';
+
+// Checkout submits the card to its own payment page's confirm endpoint, and
+// Stripe answers there: an `error` object (code, decline_code, message) for
+// a refused card, or the payment intent with its status.
+const CONFIRM = /^\/v1\/payment_pages\/[^/]+\/confirm$/;
 
 // One loader, so this works on a host that keeps the card under ~/.weles and
 // on a host that keeps it under ~/.stado.
@@ -65,16 +75,14 @@ try {
   await s.goto(url);
   await pageSettled(s.page);
 
-  // An expired or already-paid session renders no form at all, and saying so
-  // is more useful than timing out on a missing input.
-  const expired = await s.page
-    .locator('text=/expired|no longer available|already been paid/i')
-    .first()
-    .isVisible()
-    .catch(() => false);
-  if (expired) {
+  // An expired or already-paid session renders no payment form at all;
+  // saying so, with what the page shows, is more useful than a missing input.
+  if (!(await s.page.locator('form').first().isVisible())) {
     await s.screenshot('session_unusable');
-    throw new Error('the checkout session is expired or already paid');
+    const shown = await s.page.locator('body').innerText();
+    throw new Error(
+      `the checkout page offers no payment form: ${shown.replace(/\s+/g, ' ')}`,
+    );
   }
 
   // Stripe Link intercepts with an email OTP that only the account owner can
@@ -269,56 +277,47 @@ try {
     .locator('button[type="submit"]')
     .filter({ visible: true })
     .last();
-  await humanClickLocator(s.page, payBtn);
+  const response = await responseAfterAction(
+    s.page,
+    (request) => {
+      const at = new URL(request.url());
+      return (
+        request.method() === 'POST' &&
+        at.hostname === 'api.stripe.com' &&
+        CONFIRM.test(at.pathname)
+      );
+    },
+    () => humanClickLocator(s.page, payBtn),
+  );
   console.log('[stripe-checkout] submitted');
-
-  // Three things can happen: the page redirects to the success URL, the issuer
-  // demands 3-D Secure, or Stripe renders an inline decline. Whichever the page
-  // shows first is the outcome.
-  const declinedText = s.page
-    .locator('text=/declined|Your card was|could not be processed|incorrect/i')
-    .first();
-  const threeDs = s.page
-    .locator(
-      'iframe[src*="3d_secure"], iframe[src*="hooks.stripe.com/3d_secure"], iframe[name*="3ds" i]',
-    )
-    .first();
-  const outcome = await Promise.any([
-    urlMatching(s.page, (u) => !/checkout\.stripe\.com/.test(u)).then(
-      () => 'redirected',
-    ),
-    declinedText.waitFor({ state: 'visible' }).then(() => 'declined'),
-    threeDs.waitFor({ state: 'visible' }).then(() => '3ds'),
-  ]);
-
-  if (outcome === '3ds') {
-    // A live 3-D Secure challenge belongs to the cardholder's bank and phone.
-    // Say so, with the screenshot, instead of pretending to wait forever.
-    await s.screenshot('3ds_challenge');
-    throw new Error(
-      'the issuer demanded 3-D Secure, which only the cardholder can pass',
-    );
-  }
-  if (outcome === 'declined') {
+  const answer = await response.json();
+  if (!response.ok()) {
     await s.screenshot('declined');
-    const text = await s.page
-      .locator(
-        'text=/declined|Your card was|could not be processed|incorrect/i',
-      )
-      .first()
-      .innerText()
-      .catch(() => '');
-    throw new Error(`card refused on the page: ${text.replace(/\s+/g, ' ')}`);
-  }
-  await s.screenshot('post_submit');
-  if (outcome !== 'redirected')
+    const refusal = answer.error;
     throw new Error(
-      `still on the checkout page after submitting; url=${s.page.url()}`,
+      `stripe refused the card (HTTP ${response.status()}): ${refusal?.code} ${refusal?.decline_code}: ${refusal?.message}`,
     );
-  console.log(`PASS-CHARGED: final url=${s.page.url()}`);
+  }
+  const intent = answer.payment_intent;
+  if (intent?.status !== 'succeeded') {
+    // A 3-D Secure challenge (requires_action) belongs to the cardholder's
+    // bank and phone; any other status is said as Stripe states it.
+    await s.screenshot('not_succeeded');
+    throw new Error(
+      `stripe answered the payment as ${intent?.status} (next action ${intent?.next_action?.type}); nothing was charged by this run`,
+    );
+  }
+  await urlMatching(
+    s.page,
+    (u) => new URL(u).hostname !== new URL(url).hostname,
+  );
+  await s.screenshot('post_submit');
+  console.log(
+    `PASS-CHARGED: payment intent ${intent.id} succeeded; final url=${s.page.url()}`,
+  );
 } catch (e) {
   console.log('FAIL:', e.message);
-  process.exitCode = 1;
+  process.exitCode = exitStatusFor(e);
 } finally {
   await s.close();
 }
