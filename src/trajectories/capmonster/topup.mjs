@@ -24,13 +24,8 @@ const s = await WSession.start({
 try {
   await s.goto('https://dash.capmonster.cloud/?culture=en');
   await humanIdlePause('deliberate');
-  await s.page
-    .locator(
-      'a:has-text("Login with Google"), a:has-text("Continue with Google")',
-    )
-    .filter({ visible: true })
-    .first()
-    .click();
+  // Keycloak renders each identity provider's link as #social-<alias>.
+  await s.page.locator('a#social-google').first().click();
   const ok = await googleSso(s, login, { originHost: 'capmonster.cloud' });
   if (!ok) throw new Error('Google SSO did not complete');
 

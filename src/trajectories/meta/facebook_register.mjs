@@ -27,14 +27,12 @@ async function signup(s) {
   await s.goto(URL);
   await humanIdlePause('deliberate');
 
-  // Some locales prompt a cookie consent banner before the form is interactable.
+  // Some locales prompt a cookie consent banner Meta marks with its test id.
   const cookieBtn = s.page
-    .locator(
-      'button:has-text("Allow all cookies"), button:has-text("Accept all"), button[data-testid="cookie-policy-manage-dialog-accept-button"]',
-    )
+    .locator('button[data-testid="cookie-policy-manage-dialog-accept-button"]')
     .filter({ visible: true })
     .first();
-  if (await cookieBtn.isVisible().catch(() => false)) {
+  if (await cookieBtn.isVisible()) {
     await humanClickLocator(s.page, cookieBtn);
     await humanIdlePause('deliberate');
   }
@@ -118,11 +116,9 @@ async function signup(s) {
   await humanClickLocator(s.page, pwIn);
   await humanType(s.page, id.password);
 
-  // 6. Submit.
+  // 6. Submit through Facebook's named sign-up button.
   const submit = s.page
-    .locator(
-      'button[name="websubmit"], button:has-text("Sign Up"), button:has-text("Sign up")',
-    )
+    .locator('button[name="websubmit"], button[type="submit"]')
     .filter({ visible: true })
     .first();
   await humanClickLocator(s.page, submit);
@@ -150,16 +146,10 @@ async function signup(s) {
       .first();
     await humanClickLocator(s.page, phoneIn);
     await humanType(s.page, digits);
-    await humanClickLocator(
-      s.page,
-      s.page
-        .locator('button:has-text("Continue"), button[type="submit"]')
-        .filter({ visible: true })
-        .first(),
-    );
+    await phoneIn.press('Enter');
     await humanIdlePause('deliberate');
     const smsCode = await s.pollSmsCode();
-    if (!smsCode || /^no code|^error/i.test(smsCode))
+    if (!/^\d+$/.test(smsCode))
       throw new Error(`fb_sms_otp_failed: ${smsCode}`);
     const smsIn = s.page
       .locator(
@@ -170,20 +160,12 @@ async function signup(s) {
     if (await smsIn.count()) {
       await humanClickLocator(s.page, smsIn);
       await humanType(s.page, smsCode);
-      await humanClickLocator(
-        s.page,
-        s.page
-          .locator(
-            'button:has-text("Continue"), button:has-text("Confirm"), button[type="submit"]',
-          )
-          .filter({ visible: true })
-          .first(),
-      );
+      await smsIn.press('Enter');
       await humanIdlePause('long');
     }
   } else {
     const emailCode = await s.checkEmail(id.email, 'facebook');
-    if (!emailCode || /^no (code|email)|^error/i.test(emailCode))
+    if (!/^\d+$/.test(emailCode))
       throw new Error(`fb_email_otp_failed: ${emailCode}`);
     const codeIn = s.page
       .locator(
@@ -194,15 +176,7 @@ async function signup(s) {
     if (await codeIn.count()) {
       await humanClickLocator(s.page, codeIn);
       await humanType(s.page, emailCode);
-      await humanClickLocator(
-        s.page,
-        s.page
-          .locator(
-            'button:has-text("Continue"), button:has-text("Confirm"), button[type="submit"]',
-          )
-          .filter({ visible: true })
-          .first(),
-      );
+      await codeIn.press('Enter');
       await humanIdlePause('long');
     }
   }

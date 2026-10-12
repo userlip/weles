@@ -5,6 +5,7 @@ import { WSession } from '../../../dist/session/wsession.js';
 import { googleSso } from '../_shared/services/google_sso.mjs';
 import { topupOpts } from '../_shared/services/topup_common.mjs';
 import { humanIdlePause } from '../../../dist/human/mouse.js';
+import { clickDescribed, clickOffered } from '../_shared/page/judged/seen.mjs';
 
 const { usd } = topupOpts();
 const login = await getScopedGoogleLogin('brightdataDashboard');
@@ -35,18 +36,14 @@ try {
   });
   await humanIdlePause('long');
 
-  // Dismiss any first-login survey popups that intercept clicks.
-  for (const sel of [
-    'button:has-text("Skip")',
-    'button:has-text("X")',
-    '[aria-label="Close"]',
-  ]) {
-    const btn = s.page.locator(sel).first();
-    if (await btn.isVisible().catch(() => false)) {
-      await btn.click({ force: true }).catch(() => {});
-      await humanIdlePause('short');
-    }
-  }
+  // First-login survey popups intercept clicks; each shown is dismissed.
+  while (
+    await clickOffered(
+      s.page,
+      'the button that closes or skips a survey or onboarding popup',
+    )
+  )
+    await humanIdlePause('short');
 
   const amtIn = s.page
     .locator('input[type="number"]')
@@ -57,16 +54,11 @@ try {
   await amtIn.fill(String(usd));
   console.log(`[trajectory] amount filled: $${usd}`);
 
-  // Submit. The Pay button text mirrors the amount.
-  const payBtn = s.page
-    .locator(`button:has-text("Pay $${usd}"), button:has-text("Pay")`)
-    .filter({ visible: true })
-    .first();
-  await payBtn.waitFor({ state: 'visible' });
+  // Submit through the pay button, which carries the amount.
   console.log(
     `[trajectory] clicking Pay $${usd} (will charge saved payment method)`,
   );
-  await payBtn.click();
+  await clickDescribed(s.page, `the button that pays $${usd}`);
   await humanIdlePause('long');
   console.log(`[trajectory] post-charge url=${s.page.url()}`);
   console.log(

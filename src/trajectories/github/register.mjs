@@ -5,6 +5,7 @@ import { solveRotationViaCoords } from './captcha/coords_solver.mjs';
 import { requireStadoModelRouterConfig } from './captcha/stado_model_router.mjs';
 import { humanClick, humanClickLocator } from '../../../dist/human/mouse.js';
 import { humanType } from '../../../dist/human/keyboard.js';
+import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 import { autoBindCharacter } from '../lib/character-bind.mjs';
 import { messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
 
@@ -188,19 +189,13 @@ try {
         clicked.via = 'humanClickLocator';
       }
     } else {
-      // Locator-based text match: 'button:has-text("Create account")' filtered
-      // to exclude OAuth variants. Avoids the evaluate-based btn.click() that
-      // produces isTrusted=false events (octocaptcha / arkose flag those).
-      const altLocator = s.page
-        .locator(
-          'button:has-text("Create account"):not(:has-text("Google")):not(:has-text("Apple"))',
-        )
-        .first();
-      if (await altLocator.isVisible().catch(() => false)) {
-        await altLocator.scrollIntoViewIfNeeded().catch(() => {});
-        await humanClickLocator(s.page, altLocator).catch(() => {});
-        clicked = { via: 'locator-text', text: 'Create account' };
-      }
+      // The vision model finds the form's own create control (a trusted
+      // human click, never an evaluate-based one octocaptcha flags).
+      await clickDescribed(
+        s.page,
+        'the button that creates the account from the filled form (not a sign-up through another provider)',
+      );
+      clicked = { via: 'described', text: 'create account' };
     }
   } catch (e) {
     console.log(`[register] Create click error: ${e.message}`);

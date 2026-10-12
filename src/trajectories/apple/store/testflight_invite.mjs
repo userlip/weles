@@ -1,4 +1,5 @@
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
 // TestFlight: invite a tester by email to a given app/group.
 // Args: APP_ID (numeric), TESTER_EMAIL, GROUP_NAME (optional, defaults to first group).
 
@@ -72,10 +73,10 @@ try {
     .locator('input[type="email"], input[placeholder*="email" i]')
     .fill(TESTER_EMAIL);
   await pageSettled(s.page);
-  await s.page
-    .locator('button:has-text("Add"), button:has-text("Invite")')
-    .last()
-    .click();
+  await clickDescribed(
+    s.page,
+    'the button that adds or invites the tester with the entered email',
+  );
   await pageSettled(s.page);
   // The invite counts once App Store Connect lists the address in the group;
   // a click that landed nowhere leaves it absent, and the run fails there.

@@ -1,16 +1,12 @@
 // JuicySMS top-up: an owned checkout and a provider receipt, never a URL-only PASS.
 import { WSession } from '../../../dist/session/wsession.js';
-import {
-  googleSso,
-  getGoogleSsoCreds,
-} from '../_shared/services/google_sso.mjs';
+import { getGoogleSsoCreds } from '../_shared/services/google_sso.mjs';
 import { topupOpts } from '../_shared/services/topup_common.mjs';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { humanFill } from '../../../dist/human/keyboard.js';
 import {
   pageCondition,
   pageSettled,
-  popupOrNavigation,
   responseAfterAction,
   urlMatching,
 } from '../_shared/page/settled.mjs';
@@ -18,7 +14,7 @@ import {
   openOperatorRequest,
   closeOperatorRequest,
 } from '../../operator/request.mjs';
-import { openJuicyPage, readJuicyPage } from './page.mjs';
+import { openJuicyPage, readJuicyPage, signInWithGoogle } from './page.mjs';
 import { openStripeCheckout } from './checkout.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -150,26 +146,8 @@ function checkoutState(observeVerification) {
 }
 
 try {
-  await openJuicyPage(s, 'https://juicysms.com/login');
-  const googleButton = s.page
-    .locator(
-      'a:has-text("LOGIN WITH GOOGLE"), button:has-text("LOGIN WITH GOOGLE"), a:has-text("Login with Google"), button:has-text("Login with Google")',
-    )
-    .and(s.page.locator(':not(:disabled):not([aria-disabled="true"])'))
-    .filter({ visible: true })
-    .first();
-  await googleButton.waitFor({ state: 'visible' });
-  const popup = await popupOrNavigation(s.page, /accounts\.google\.com/, () =>
-    humanClickLocator(s.page, googleButton),
-  );
-  if (
-    !(await googleSso(s, login, {
-      originHost: 'juicysms.com',
-      page: popup ?? undefined,
-    }))
-  ) {
+  if (!(await signInWithGoogle(s, login)))
     throw failure('JUICYSMS_SIGN_IN_INCOMPLETE', 'Google SSO did not complete');
-  }
   await urlMatching(s.page, /^https:\/\/(www\.)?juicysms\.com\/(?!login)/);
   const funds = await readJuicyPage(
     await openJuicyPage(s, 'https://juicysms.com/addfunds'),

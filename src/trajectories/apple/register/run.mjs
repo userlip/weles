@@ -179,9 +179,7 @@ async function fillCodeBoxes(boxes, code, refusal) {
 
     // 7. Submit
     const submit = frame
-      .locator(
-        'button[type="submit"], button:has-text("Continue"), button:has-text("Create"), button:has-text("Next")',
-      )
+      .locator('button[type="submit"]')
       .filter({ visible: true })
       .first();
     await humanClickLocator(s.page, submit);
@@ -189,7 +187,7 @@ async function fillCodeBoxes(boxes, code, refusal) {
 
     // 8. Email OTP
     const emailCode = await s.checkEmail(id.email, 'apple');
-    if (!emailCode || /^no (code|email)|^error/i.test(emailCode))
+    if (!/^\d+$/.test(emailCode))
       throw new Error(`apple_email_otp_failed: ${emailCode}`);
     const emailCodeBoxes = await frame
       .locator(

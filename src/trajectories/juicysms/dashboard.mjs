@@ -3,22 +3,13 @@
 // not password-secured). After SSO, capture the selected account pages
 // and follow the order history's offered pagination links.
 import { WSession } from '../../../dist/session/wsession.js';
-import {
-  googleSso,
-  getGoogleSsoCreds,
-} from '../_shared/services/google_sso.mjs';
-import { humanClickLocator } from '../../../dist/human/mouse.js';
-import {
-  pageSettled,
-  popupOrNavigation,
-  urlMatching,
-} from '../_shared/page/settled.mjs';
-import { openJuicyPage } from './page.mjs';
+import { getGoogleSsoCreds } from '../_shared/services/google_sso.mjs';
+import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
+import { openJuicyPage, signInWithGoogle } from './page.mjs';
 import { runOutputPath } from '#run-output';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const LOGIN_URL = 'https://juicysms.com/login';
 // The OAuth round trip lands back on a juicysms.com route other than /login.
 const LANDED = /^https:\/\/(www\.)?juicysms\.com\/(?!login)/;
 const OUT_DIR = runOutputPath('juicysms_dashboard');
@@ -35,24 +26,8 @@ const s = await WSession.start({
   browser: 'chromium',
 });
 try {
-  await openJuicyPage(s, LOGIN_URL);
-  const googleButton = s.page
-    .locator(
-      'a:has-text("LOGIN WITH GOOGLE"), button:has-text("LOGIN WITH GOOGLE"), a:has-text("Login with Google"), button:has-text("Login with Google")',
-    )
-    .and(s.page.locator(':not(:disabled):not([aria-disabled="true"])'))
-    .filter({ visible: true })
-    .first();
-  await googleButton.waitFor({ state: 'visible' });
-  const popup = await popupOrNavigation(s.page, /accounts\.google\.com/, () =>
-    humanClickLocator(s.page, googleButton),
-  );
-
-  const ok = await googleSso(s, login, {
-    originHost: 'juicysms.com',
-    page: popup ?? undefined,
-  });
-  if (!ok) throw new Error('google_sso_did_not_complete');
+  if (!(await signInWithGoogle(s, login)))
+    throw new Error('google_sso_did_not_complete');
 
   // Wait until URL settles on juicysms.com (the OAuth roundtrip lands us
   // back on a juicysms route eventually). Earlier check `!/login` exited

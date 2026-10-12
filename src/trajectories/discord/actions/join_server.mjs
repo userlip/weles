@@ -10,6 +10,10 @@ import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import {
+  clickDescribed,
+  clickOffered,
+} from '../../_shared/page/judged/seen.mjs';
 
 const INVITE_URL = process.env.INVITE_URL;
 if (!INVITE_URL) {
@@ -69,29 +73,17 @@ try {
   await s.goto(INVITE_URL);
   observedPage = true;
   checkReachable(s, 'discord');
-  // Accept Invite — Discord uses <button> with text "Accept Invite" /
-  // "Join {Server}". Its visible control, not an idle gap, gates the click.
-  const acceptBtn = s.page
-    .locator(
-      'button:has-text("Accept Invite"), button:has-text("Join Server"), button:has(div:has-text("Accept Invite")), button:has(div:has-text("Join "))',
-    )
-    .filter({ visible: true })
-    .first();
-  await acceptBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, acceptBtn);
+  // The invite's accept control, found by the vision model.
+  await clickDescribed(s.page, 'the button that accepts the invite and joins');
   // The click either lands in the joined channel (/channels/{guildId}/{channelId})
   // or shows a rules/gate screen first; read the settled page to see which.
-  await pageSettled(s.page);
-  const ruleSubmit = s.page
-    .locator(
-      'button:has-text("Submit"), button:has-text("Continue"), button:has-text("Complete")',
+  if (
+    await clickOffered(
+      s.page,
+      'the button that submits or completes the server rules screen',
     )
-    .filter({ visible: true })
-    .first();
-  if (await ruleSubmit.isVisible()) {
-    await humanClickLocator(s.page, ruleSubmit);
+  )
     await pageSettled(s.page);
-  }
   if (!/\/channels\/\d+/.test(s.page.url()))
     throw new Error(
       `did not land in joined channel — final url=${s.page.url()}`,

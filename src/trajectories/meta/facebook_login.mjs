@@ -15,6 +15,8 @@ import {
   humanIdlePause,
 } from '../../../dist/human/mouse.js';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
+import { clickOffered } from '../_shared/page/judged/seen.mjs';
+import { isLoginUrl } from './ads/session/login_wall.mjs';
 
 const URL = 'https://www.facebook.com/login';
 
@@ -42,14 +44,12 @@ try {
   await s.goto(URL);
   await humanIdlePause('deliberate');
 
-  // Cookie banner — hits a fixed-position blocking overlay on every visit.
+  // Cookie banner — a fixed-position overlay Meta marks with its own test id.
   const cookieBtn = s.page
-    .locator(
-      'button:has-text("Allow all cookies"), button:has-text("Accept all"), button[data-testid="cookie-policy-manage-dialog-accept-button"]',
-    )
+    .locator('button[data-testid="cookie-policy-manage-dialog-accept-button"]')
     .filter({ visible: true })
     .first();
-  if (await cookieBtn.isVisible().catch(() => false)) {
+  if (await cookieBtn.isVisible()) {
     await humanClickLocator(s.page, cookieBtn);
     await humanIdlePause('deliberate');
   }
@@ -72,31 +72,22 @@ try {
   await humanClickLocator(s.page, pwIn);
   await humanType(s.page, password);
 
-  // 3. Submit.
-  const submit = s.page
-    .locator(
-      'button[name="login"], button[type="submit"]:has-text("Log in"), input#loginbutton',
-    )
-    .filter({ visible: true })
-    .first();
-  await humanClickLocator(s.page, submit);
+  // 3. Submit from the password field.
+  await pwIn.press('Enter');
   await humanIdlePause('long');
 
   // 4. "Save your login info?" / new-device prompt — accept and continue.
-  const saveLogin = s.page
-    .locator(
-      'button:has-text("Save"), button:has-text("Continue"), div[role="button"]:has-text("Save")',
+  if (
+    await clickOffered(
+      s.page,
+      'the button that saves the login info or continues',
     )
-    .filter({ visible: true })
-    .first();
-  if (await saveLogin.isVisible().catch(() => false)) {
-    await humanClickLocator(s.page, saveLogin);
+  )
     await humanIdlePause('deliberate');
-  }
 
-  // 5. Confirm we landed on home (or a checkpoint URL — that's a fail signal).
-  const finalUrl = s.page.url?.() ?? '';
-  if (/\/checkpoint\/|\/login\/web|\/recover\//.test(finalUrl)) {
+  // 5. Confirm we landed on home (a checkpoint or login route is a fail signal).
+  const finalUrl = s.page.url();
+  if (isLoginUrl(finalUrl)) {
     throw new Error(`facebook_checkpoint: ${finalUrl}`);
   }
   if (!/facebook\.com\/(\?|$|home)/.test(finalUrl)) {

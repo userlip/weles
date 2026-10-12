@@ -165,13 +165,15 @@ function deleteRow(rowNumberOneBased) {
     selector: `:nth-match(table tbody tr, ${rowNumberOneBased}) button[aria-label="overflow-options"]`,
   });
   idle('short');
-  action({ action: 'click', selector: 'text="Usuń"' });
+  action({
+    action: 'click_described',
+    description: 'the delete item of the open row menu',
+  });
   idle('deliberate');
   const confirm = action(
     {
-      action: 'click',
-      selector:
-        'button:has-text("Usuń"), button:has-text("Tak"), button:has-text("Potwierdź")',
+      action: 'click_described',
+      description: 'the button in the dialog that confirms deleting the row',
     },
     true,
   );

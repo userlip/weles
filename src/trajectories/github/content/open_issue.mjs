@@ -105,10 +105,10 @@ try {
   await pageSettled(s.page);
 
   // Submit. New issue form has data-testid="create-issue-button"; classic UI
-  // uses <button type="submit"> with text "Submit new issue".
+  // uses the form's primary submit button.
   const submitBtn = s.page
     .locator(
-      '[data-testid="create-issue-button"]:not([disabled]), button[type="submit"]:has-text("Submit new issue"), button[type="submit"]:has-text("Create"), button.btn-primary[type="submit"]:not([disabled])',
+      '[data-testid="create-issue-button"]:not([disabled]), button.btn-primary[type="submit"]:not([disabled])',
     )
     .filter({ visible: true })
     .first();

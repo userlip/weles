@@ -31,12 +31,8 @@ try {
   await s.goto(LOGIN_URL);
   await pageSettled(s.page);
 
-  const google = s.page
-    .locator(
-      'a:has-text("Login with Google"), a:has-text("Continue with Google"), a:has-text("Sign in with Google")',
-    )
-    .filter({ visible: true })
-    .first();
+  // Keycloak renders each identity provider's link as #social-<alias>.
+  const google = s.page.locator('a#social-google').first();
   if (!(await google.isEnabled()))
     throw new Error(`CAPMONSTER_GOOGLE_CONTROL_DISABLED: ${s.page.url()}`);
   await humanClickLocator(s.page, google);

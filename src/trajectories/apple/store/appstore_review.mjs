@@ -1,4 +1,5 @@
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
 // App Store review (web): rate and leave a review on an app via apps.apple.com.
 // Requires signed-in Apple ID — rerun apple/login.mjs (or seed cookies via
 // cross_login) if the trajectory lands on idmsa.apple.com.
@@ -127,14 +128,9 @@ try {
   );
   await humanIdlePause('deliberate');
 
-  // Submit. Apple labels the button "Send" in the public web review modal.
-  await humanClickLocator(
-    s.page,
-    s.page
-      .locator('button:has-text("Send"), button:has-text("Submit")')
-      .first(),
-  );
-  await pageSettled(s.page);
+  // Submit through the review modal's send control.
+  const sendControl = 'the button that sends the review';
+  await clickDescribed(s.page, sendControl);
 
   // Verify: Apple does not redirect on submit; the modal collapses back to
   // the listing. If we ended up at idmsa, cookies were invalidated mid-submit.
@@ -145,10 +141,13 @@ try {
   }
   // The modal collapses only once Apple accepted the review; one that stays
   // open holds Apple's refusal, and the run fails there rather than report it.
-  await s.page
-    .locator('button:has-text("Send"), button:has-text("Submit")')
-    .first()
-    .waitFor({ state: 'hidden' });
+  if (
+    await pageShows(
+      s.page,
+      'Is the review form still open with its send button?',
+    )
+  )
+    throw new Error(`Apple kept the review form open on ${s.page.url()}`);
 
   console.log(`PASS: review submitted for app ${APP_ID} (${RATING}★)`);
 } catch (e) {

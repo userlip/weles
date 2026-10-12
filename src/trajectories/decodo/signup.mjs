@@ -41,7 +41,11 @@ import {
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { clickOffered, pageShows } from '../_shared/page/judged/seen.mjs';
+import {
+  clickDescribed,
+  clickOffered,
+  pageShows,
+} from '../_shared/page/judged/seen.mjs';
 import { pageSettled, popupOrNavigation } from '../_shared/page/settled.mjs';
 import { humanType } from '../../../dist/human/keyboard.js';
 
@@ -110,24 +114,7 @@ try {
       await gi.waitFor({ state: 'visible' });
       await humanClickLocator(s.page, gi);
     } else {
-      const gBtn = s.page
-        .locator(
-          'button:has-text("Sign in with Google"), a:has-text("Sign in with Google"), button:has-text("with Google")',
-        )
-        .filter({ visible: true })
-        .first();
-      if (!(await gBtn.isVisible())) {
-        await shot(s, '00b_no_google_btn');
-        throw Object.assign(
-          new Error('No Google sign-in control on Decodo login'),
-          {
-            code: 'DECODO_GOOGLE_CONTROL_UNAVAILABLE',
-            pageUrl: s.page.url(),
-          },
-        );
-      }
-      await gBtn.scrollIntoViewIfNeeded();
-      await humanClickLocator(s.page, gBtn);
+      await clickDescribed(s.page, 'the button or link to sign in with Google');
     }
   });
 

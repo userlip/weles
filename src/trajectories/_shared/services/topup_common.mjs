@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { pageSettled } from '../page/settled.mjs';
+import { clickOffered } from '../page/judged/seen.mjs';
 import { humanType } from '../../../../dist/human/keyboard.js';
 
 // The amount charged is the caller's: no amount is assumed.
@@ -29,33 +30,15 @@ export function topupOpts() {
   return { usd };
 }
 
-// Generic pay button finder - tries common selectors for checkout buttons.
+// The provider's pay button, found by the vision model in whatever words the
+// checkout uses; false when the page offers none.
 export async function findAndClickPayButton(page) {
-  const selectors = [
-    'button:has-text("Pay")',
-    'button:has-text("Checkout")',
-    'button:has-text("Purchase")',
-    'button:has-text("Buy")',
-    'button:has-text("Add Funds")',
-    'button:has-text("Proceed")',
-    'button:has-text("Submit")',
-    'button:has-text("Confirm")',
-    'button:has-text("Top up")',
-    'button:has-text("Recharge")',
-    'a:has-text("Pay")',
-    'a:has-text("Checkout")',
-    'input[type="submit"][value*="Pay" i]',
-    'input[type="submit"][value*="Buy" i]',
-  ];
-  for (const sel of selectors) {
-    const btn = page.locator(sel).filter({ visible: true }).first();
-    if (await btn.isVisible().catch(() => false)) {
-      console.log(`[topup] clicking pay button: ${sel}`);
-      await btn.click();
-      return true;
-    }
-  }
-  return false;
+  const clicked = await clickOffered(
+    page,
+    'the button that pays or checks out the top-up amount',
+  );
+  if (clicked) console.log('[topup] clicked the pay button');
+  return clicked;
 }
 
 // Stripe Elements card-form filler. Each input lives in a cross-origin iframe;

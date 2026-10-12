@@ -1,4 +1,10 @@
-import { pageSettled, responseAfterAction } from '../_shared/page/settled.mjs';
+import {
+  pageSettled,
+  popupOrNavigation,
+  responseAfterAction,
+} from '../_shared/page/settled.mjs';
+import { clickDescribed } from '../_shared/page/judged/seen.mjs';
+import { googleSso } from '../_shared/services/google_sso.mjs';
 
 async function completedResponse(first, operation) {
   let request = first.request();
@@ -65,6 +71,21 @@ export async function openJuicyPage(session, address) {
     );
   }
   return response;
+}
+
+// Sign in through JuicySMS's Google control, found by the vision model, and
+// the shared Google SSO; true when the round trip completed.
+export async function signInWithGoogle(session, login) {
+  await openJuicyPage(session, 'https://juicysms.com/login');
+  const popup = await popupOrNavigation(
+    session.page,
+    /accounts\.google\.com/,
+    () =>
+      clickDescribed(session.page, 'the button or link to log in with Google'),
+  );
+  const options = { originHost: 'juicysms.com' };
+  if (popup) options.page = popup;
+  return googleSso(session, login, options);
 }
 
 // Inertia returns JSON to its client and an encoded data-page attribute on a

@@ -2,15 +2,12 @@
 // "LOGIN WITH GOOGLE" button (and Cloudflare Turnstile).
 import { WSession } from '../../../dist/session/wsession.js';
 import {
-  googleSso,
   patchServiceBalance,
   getGoogleSsoCreds,
 } from '../_shared/services/google_sso.mjs';
-import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { popupOrNavigation, urlMatching } from '../_shared/page/settled.mjs';
-import { openJuicyPage, readJuicyPage } from './page.mjs';
+import { urlMatching } from '../_shared/page/settled.mjs';
+import { openJuicyPage, readJuicyPage, signInWithGoogle } from './page.mjs';
 
-const LOGIN_URL = 'https://juicysms.com/login';
 // The OAuth round trip lands back on a juicysms.com route other than /login.
 const LANDED = /^https:\/\/(www\.)?juicysms\.com\/(?!login)/;
 const DISPLAY_NAME = 'JuicySMS';
@@ -27,24 +24,8 @@ const s = await WSession.start({
   browser: 'chromium',
 });
 try {
-  await openJuicyPage(s, LOGIN_URL);
-  const googleButton = s.page
-    .locator(
-      'a:has-text("LOGIN WITH GOOGLE"), button:has-text("LOGIN WITH GOOGLE"), a:has-text("Login with Google"), button:has-text("Login with Google")',
-    )
-    .and(s.page.locator(':not(:disabled):not([aria-disabled="true"])'))
-    .filter({ visible: true })
-    .first();
-  await googleButton.waitFor({ state: 'visible' });
-  const popup = await popupOrNavigation(s.page, /accounts\.google\.com/, () =>
-    humanClickLocator(s.page, googleButton),
-  );
-
-  const ok = await googleSso(s, login, {
-    originHost: 'juicysms.com',
-    page: popup ?? undefined,
-  });
-  if (!ok) throw new Error('Google SSO did not complete');
+  if (!(await signInWithGoogle(s, login)))
+    throw new Error('Google SSO did not complete');
 
   await urlMatching(s.page, LANDED);
   const response = await openJuicyPage(s, 'https://juicysms.com/myaccount');
