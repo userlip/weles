@@ -57,11 +57,7 @@ try {
         { platform: 'instagram' },
       );
   } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) {
-      console.log(`FAIL: ${jarErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exitCode = 1;
-    }
+    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
     throw jarErr;
   }
   await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
@@ -70,19 +66,14 @@ try {
   await humanIdlePause('long');
   const url = s.page.url();
   if (/\/accounts\/login/.test(url)) {
-    console.log(`FAIL: cookies stale, redirected to login (${url})`);
     await markCookiesStale(acct.id);
-    process.exitCode = 1;
+    throw new Error(`cookies stale, redirected to login (${url})`);
   }
   // Positive auth probe — see _shared/auth/auth-probe.mjs.
   try {
     await assertAuthed('instagram', s, { label: 'instagram_like' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exitCode = 1;
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
 
@@ -111,21 +102,19 @@ try {
   const alreadyLiked = await unlikeBtn.count().catch(() => 0);
   if (alreadyLiked > 0) {
     console.log('PASS: already liked first post');
-    process.exit(0);
+  } else {
+    await likeBtn.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, likeBtn);
+    await humanIdlePause('deliberate');
+    const after = await s.page
+      .locator('svg[aria-label="Unlike"]')
+      .filter({ visible: true })
+      .count()
+      .catch(() => 0);
+    if (after === 0)
+      throw new Error('clicked Like but no transition to Unlike state');
+    console.log('PASS: liked first post on explore');
   }
-  await likeBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, likeBtn);
-  await humanIdlePause('deliberate');
-  const after = await s.page
-    .locator('svg[aria-label="Unlike"]')
-    .filter({ visible: true })
-    .count()
-    .catch(() => 0);
-  if (after === 0) {
-    console.log('FAIL: clicked Like but no transition to Unlike state');
-    process.exitCode = 1;
-  }
-  console.log('PASS: liked first post on explore');
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;

@@ -99,12 +99,10 @@ try {
   // anywhere other than /login or /session/*, something redirected and the
   // form isn't present; bail with a specific error.
   const urlAfterGoto = s.page.url?.() ?? '';
-  if (!urlAfterGoto.includes('/login') && !urlAfterGoto.includes('/session')) {
-    console.error(
-      `FAIL: goto(${URL}) landed at ${urlAfterGoto} — login form not present`,
+  if (!urlAfterGoto.includes('/login') && !urlAfterGoto.includes('/session'))
+    throw new Error(
+      `goto(${URL}) landed at ${urlAfterGoto} — login form not present`,
     );
-    process.exitCode = 1;
-  }
 
   await s.fill('Username or email', '$SVC_EMAIL');
   await pageSettled(s.page);
@@ -146,10 +144,8 @@ try {
     }
   }
   console.log(`[login] Submit: ${JSON.stringify(submitted)}`);
-  if (!submitted.clicked) {
-    console.error('FAIL: no Sign-in submit control found on login page');
-    process.exitCode = 1;
-  }
+  if (!submitted.clicked)
+    throw new Error('no Sign-in submit control found on login page');
 
   // Wait until the page leaves the login form, or GitHub shows its error
   // banner on it; the banner's text is the failure.

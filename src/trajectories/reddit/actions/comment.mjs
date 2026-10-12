@@ -162,10 +162,8 @@ try {
   await s.page.goto(resolvedOldUrl, { waitUntil: 'domcontentloaded' });
   await humanIdlePause('deliberate');
   const url = s.page.url();
-  if (/\/login/.test(url)) {
-    console.log(`FAIL: cookies stale, redirected to login (${url})`);
-    process.exitCode = 1;
-  }
+  if (/\/login/.test(url))
+    throw new Error(`cookies stale, redirected to login (${url})`);
 
   await writeComment();
   // The optimistic in-page check (body text appearing in page innerText) was
@@ -176,7 +174,11 @@ try {
   // JSON and confirm the comment is in the public tree.
   const found = await readLocalPost();
   const postedCommentId = found && found !== 'POSTED_NO_ID' ? found : false;
-  banSignal = await banSignalOf(detectRedditBanSignals, s, 'after submitting the comment');
+  banSignal = await banSignalOf(
+    detectRedditBanSignals,
+    s,
+    'after submitting the comment',
+  );
   if (!found)
     throw new Error(
       `submit did not confirm — body did not appear in page text`,
@@ -205,7 +207,11 @@ try {
 } catch (e) {
   if (e.banSignal) banSignal = e.banSignal;
   if (!banSignal)
-    banSignal = await banSignalOf(detectRedditBanSignals, s, 'after the failure');
+    banSignal = await banSignalOf(
+      detectRedditBanSignals,
+      s,
+      'after the failure',
+    );
   if (banSignal) console.log(`[ban-signal] ${banSignal.signal}`);
   console.log('FAIL:', e.message);
   process.exitCode = 1;

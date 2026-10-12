@@ -55,11 +55,7 @@ try {
       .filter((c) => c?.name && c?.value && (c.domain || c.url))
       .map((c) => ({ ...c, path: c.path || '/' }));
   } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) {
-      console.log(`FAIL: ${jarErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exitCode = 1;
-    }
+    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
     throw jarErr;
   }
   await s.ctx.addCookies(prepared);
@@ -83,19 +79,14 @@ try {
   ]);
   const url = s.page.url();
   if (/\/i\/flow\/login/.test(url)) {
-    console.log(`FAIL: cookies stale, redirected to login (${url})`);
     await markCookiesStale(acct.id);
-    process.exitCode = 1;
+    throw new Error(`cookies stale, redirected to login (${url})`);
   }
   // Positive auth probe — see _shared/auth/auth-probe.mjs.
   try {
     await assertAuthed('twitter', s, { label: 'twitter_follow' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exitCode = 1;
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
 
@@ -108,46 +99,42 @@ try {
     .first();
   if (await unfollowBtn.isVisible().catch(() => false)) {
     console.log(`PASS: already following @${TARGET_HANDLE}`);
-    process.exit(0);
-  }
-  // Follow button: testid ends with "-follow", aria-label "Follow @handle".
-  // Scope to the target via aria-label to avoid the sidebar suggestion buttons.
-  let followBtn = s.page
-    .locator(`[data-testid$="-follow"][aria-label*="${TARGET_HANDLE}"]`)
-    .first();
-  if (!(await followBtn.isVisible().catch(() => false))) {
-    followBtn = s.page
-      .getByRole('button', {
-        name: new RegExp(`^Follow @?${TARGET_HANDLE}$`, 'i'),
-      })
+  } else {
+    // Follow button: testid ends with "-follow", aria-label "Follow @handle".
+    // Scope to the target via aria-label to avoid the sidebar suggestion buttons.
+    let followBtn = s.page
+      .locator(`[data-testid$="-follow"][aria-label*="${TARGET_HANDLE}"]`)
       .first();
+    if (!(await followBtn.isVisible().catch(() => false))) {
+      followBtn = s.page
+        .getByRole('button', {
+          name: new RegExp(`^Follow @?${TARGET_HANDLE}$`, 'i'),
+        })
+        .first();
+    }
+    if (!(await followBtn.isVisible().catch(() => false))) {
+      const tids = await s.page.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-testid]'))
+          .map((e) => e.getAttribute('data-testid'))
+          .filter((t) => /follow|user/i.test(t)),
+      );
+      throw new Error(
+        `no Follow button visible at ${url}. visible testids: ${JSON.stringify(tids)}`,
+      );
+    }
+    await humanClickLocator(s.page, followBtn);
+    await humanIdlePause('deliberate');
+    // Verify Follow → Following transition (scoped to target handle).
+    const followingBtn = s.page
+      .locator(`[data-testid$="-unfollow"][aria-label*="${TARGET_HANDLE}"]`)
+      .filter({ visible: true })
+      .first();
+    if (!(await followingBtn.isVisible().catch(() => false)))
+      throw new Error(
+        'clicked Follow but no Following state — likely shadowbanned or rate-limited',
+      );
+    console.log(`PASS: followed @${TARGET_HANDLE}`);
   }
-  if (!(await followBtn.isVisible().catch(() => false))) {
-    const tids = await s.page.evaluate(() =>
-      Array.from(document.querySelectorAll('[data-testid]'))
-        .map((e) => e.getAttribute('data-testid'))
-        .filter((t) => /follow|user/i.test(t ?? '')),
-    );
-    console.log(
-      `FAIL: no Follow button visible at ${url}. visible testids: ${JSON.stringify(tids)}`,
-    );
-    process.exitCode = 1;
-  }
-  await humanClickLocator(s.page, followBtn);
-  await humanIdlePause('deliberate');
-  // Verify Follow → Following transition (scoped to target handle).
-  const followingBtn = s.page
-    .locator(`[data-testid$="-unfollow"][aria-label*="${TARGET_HANDLE}"]`)
-    .filter({ visible: true })
-    .first();
-  const ok = await followingBtn.isVisible().catch(() => false);
-  if (!ok) {
-    console.log(
-      `FAIL: clicked Follow but no Following state — likely shadowbanned or rate-limited`,
-    );
-    process.exitCode = 1;
-  }
-  console.log(`PASS: followed @${TARGET_HANDLE}`);
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;

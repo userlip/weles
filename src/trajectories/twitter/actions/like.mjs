@@ -54,11 +54,7 @@ try {
       .filter((c) => c?.name && c?.value && (c.domain || c.url))
       .map((c) => ({ ...c, path: c.path || '/' }));
   } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) {
-      console.log(`FAIL: ${jarErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exitCode = 1;
-    }
+    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
     throw jarErr;
   }
   await s.ctx.addCookies(prepared);
@@ -67,9 +63,8 @@ try {
   await humanIdlePause('deliberate');
   const url = s.page.url();
   if (/\/i\/flow\/login/.test(url)) {
-    console.log(`FAIL: cookies stale, redirected to login (${url})`);
     await markCookiesStale(acct.id);
-    process.exitCode = 1;
+    throw new Error(`cookies stale, redirected to login (${url})`);
   }
 
   // Positive auth probe — auth_token in jar ≠ session is real. Twitter
@@ -79,11 +74,7 @@ try {
   try {
     await assertAuthed('twitter', s, { label: 'twitter_like' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exitCode = 1;
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
 
@@ -111,12 +102,10 @@ try {
   // Verify like → unlike transition (the same button now exposes data-testid="unlike")
   const unlikeBtn = s.page.locator('[data-testid="unlike"]').first();
   const ok = await unlikeBtn.isVisible().catch(() => false);
-  if (!ok) {
-    console.log(
-      'FAIL: clicked like but no unlike state — likely shadowbanned or rate-limited',
+  if (!ok)
+    throw new Error(
+      'clicked like but no unlike state — likely shadowbanned or rate-limited',
     );
-    process.exitCode = 1;
-  }
   console.log('PASS: liked tweet');
 } catch (e) {
   console.log('FAIL:', e.message);
