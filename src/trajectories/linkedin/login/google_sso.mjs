@@ -89,7 +89,13 @@ export async function loginWithGoogleSso(s, acct) {
       join(dir, 'google_sso_frame.html'),
       await best.frame.content(),
     );
-  } catch {}
+  } catch (e) {
+    // The sign-in goes on; the evidence of the frame clicked is missing, and
+    // the log says so instead of a reader finding no file.
+    console.log(
+      `[linkedin_login] google_sso_frame.html not written: ${e.message}`,
+    );
+  }
 
   // The Google surface is the popup or new tab the click opens; the sign-in
   // is over when LinkedIn sets li_at or shows a signed-in page.
