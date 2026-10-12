@@ -9,6 +9,7 @@ import {
   choosePasswordSignIn,
   completeEmailIdentityChallenge,
   fill,
+  hasIdentityChallenge,
   pageConfig,
   press,
   visible,
