@@ -4,9 +4,10 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 // Env:
 //   GOOGLE_ADS_CUSTOMER_ID required unless ADS_URL is set
 //   ADS_URL                optional direct Google Ads campaign creation URL
-//   CAMPAIGN_NAME          optional, defaults to timestamped name
-//   CAMPAIGN_TYPE          optional label, e.g. Search, Display, Performance Max
-//   CAMPAIGN_OBJECTIVE     optional objective label, e.g. Website traffic
+//   CAMPAIGN_NAME          required name the campaign is listed under
+//   CAMPAIGN_TYPE          required label, e.g. Search, Display, Performance Max, App
+//   CAMPAIGN_OBJECTIVE     required objective label, e.g. Website traffic
+//   APP_CAMPAIGN_SUBTYPE   required for app campaigns, e.g. App installs
 //   DAILY_BUDGET_USD       optional daily budget
 //   FINAL_URL              optional landing page URL
 //   APP_ID                 optional mobile app id for app install campaigns
@@ -35,15 +36,16 @@ import {
 import { closeGoogleAdsSession } from './_close_session.mjs';
 import {
   ADS_URL,
+  APP_CAMPAIGN_SUBTYPE,
   APP_ID,
   APP_NAME,
   APP_PLATFORM,
   CAMPAIGN_NAME,
   CAMPAIGN_OBJECTIVE,
+  CAMPAIGN_TYPE,
   CUSTOMER_ID,
   DAILY_BUDGET_USD,
   DESCRIPTION,
-  EFFECTIVE_CAMPAIGN_TYPE,
   FINAL_URL,
   HEADLINE,
   IS_APP_INSTALL,
@@ -134,18 +136,14 @@ try {
     s,
     /Select a campaign type|Drive website traffic from Google Search|Performance Max|App installs|App engagement|App promotion/i,
   );
-  if (EFFECTIVE_CAMPAIGN_TYPE && !/app$/i.test(EFFECTIVE_CAMPAIGN_TYPE)) {
-    await clickText(
-      s,
-      EFFECTIVE_CAMPAIGN_TYPE,
-      `campaign type ${EFFECTIVE_CAMPAIGN_TYPE}`,
-    );
+  if (!/app$/i.test(CAMPAIGN_TYPE)) {
+    await clickText(s, CAMPAIGN_TYPE, `campaign type ${CAMPAIGN_TYPE}`);
   }
   if (IS_APP_INSTALL) {
     await clickText(
       s,
-      process.env.APP_CAMPAIGN_SUBTYPE || 'App installs',
-      `app campaign subtype ${process.env.APP_CAMPAIGN_SUBTYPE || 'App installs'}`,
+      APP_CAMPAIGN_SUBTYPE,
+      `app campaign subtype ${APP_CAMPAIGN_SUBTYPE}`,
     );
     if (APP_PLATFORM)
       await clickText(s, APP_PLATFORM, `app platform ${APP_PLATFORM}`);

@@ -2,26 +2,39 @@
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
 export const ADS_URL = process.env.ADS_URL;
 export const CUSTOMER_ID = process.env.GOOGLE_ADS_CUSTOMER_ID;
-export const CAMPAIGN_NAME =
-  process.env.CAMPAIGN_NAME ||
-  `Wisent ${new Date().toISOString().slice(0, 19)}`;
-export const CAMPAIGN_TYPE = process.env.CAMPAIGN_TYPE || 'Search';
+// What the campaign is called, what it is for and which type it is are the
+// advertiser's choices: a campaign spends money under them, so none of them
+// is picked here.
+export const CAMPAIGN_NAME = statedText(
+  ['CAMPAIGN_NAME'],
+  'the name the Google Ads account lists the campaign under',
+);
+export const CAMPAIGN_OBJECTIVE = statedText(
+  ['CAMPAIGN_OBJECTIVE'],
+  'the campaign objective label chosen in Google Ads, e.g. Website traffic',
+);
+export const CAMPAIGN_TYPE = statedText(
+  ['CAMPAIGN_TYPE'],
+  'the campaign type label chosen in Google Ads, e.g. Search or App',
+);
 export const APP_ID = process.env.APP_ID;
 export const PACKAGE_NAME = process.env.PACKAGE_NAME;
 export const APP_NAME = process.env.APP_NAME;
 export const APP_PLATFORM = process.env.APP_PLATFORM || process.env.PLATFORM;
 export const IS_APP_INSTALL =
-  /app/i.test(process.env.CAMPAIGN_OBJECTIVE || '') ||
-  /app/i.test(process.env.CAMPAIGN_TYPE || '') ||
+  /app/i.test(CAMPAIGN_OBJECTIVE) ||
+  /app/i.test(CAMPAIGN_TYPE) ||
   !!(APP_ID || PACKAGE_NAME || APP_NAME);
-export const CAMPAIGN_OBJECTIVE =
-  process.env.CAMPAIGN_OBJECTIVE ||
-  (IS_APP_INSTALL ? 'App promotion' : 'Website traffic');
-export const EFFECTIVE_CAMPAIGN_TYPE =
-  process.env.CAMPAIGN_TYPE || (IS_APP_INSTALL ? 'App' : 'Search');
+export const APP_CAMPAIGN_SUBTYPE = IS_APP_INSTALL
+  ? statedText(
+      ['APP_CAMPAIGN_SUBTYPE'],
+      'the app campaign subtype chosen in Google Ads, e.g. App installs',
+    )
+  : undefined;
 export const DAILY_BUDGET_USD = process.env.DAILY_BUDGET_USD;
 export const FINAL_URL = process.env.FINAL_URL || process.env.DESTINATION_URL;
 export const HEADLINE = process.env.HEADLINE;
