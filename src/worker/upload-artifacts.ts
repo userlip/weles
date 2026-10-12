@@ -135,6 +135,16 @@ function privateStadoUri(namespace: string, key: string): string {
   return `stado://${namespace}/${key}`;
 }
 
+/**
+ * The states of Stado's storage-put receipt (stado.storage-put-receipt.v1),
+ * each with the `created` it carries: a stored object was created by this
+ * put, a replayed one was already there with the same bytes.
+ */
+const CREATED_BY_RECEIPT_STATE: Readonly<Record<string, boolean>> = {
+  stored: true,
+  replayed: false,
+};
+
 // namespace is explicit at every call site: the recordings uploader writes into
 // `weles`, the capture actions into `weles-captures`, and nothing may invent a
 // third namespace without adding it to OBJECT_NAMESPACES above.
@@ -184,13 +194,13 @@ export async function putPrivateStadoObject(
   if (
     keys !== 'bytes,content_type,created,schema,sha256,state,uri' ||
     payload.schema !== 'stado.storage-put-receipt.v1' ||
-    (payload.state !== 'stored' && payload.state !== 'replayed') ||
+    typeof payload.state !== 'string' ||
+    !Object.hasOwn(CREATED_BY_RECEIPT_STATE, payload.state) ||
     payload.uri !== uri ||
     payload.sha256 !== expectedSha256 ||
     payload.bytes !== bytes.byteLength ||
     payload.content_type !== contentType ||
-    typeof payload.created !== 'boolean' ||
-    payload.created !== (payload.state === 'stored')
+    payload.created !== CREATED_BY_RECEIPT_STATE[payload.state]
   ) {
     throw new Error(
       'Stado object upload returned an invalid exact storage receipt',
