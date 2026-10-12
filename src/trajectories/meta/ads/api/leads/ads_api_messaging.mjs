@@ -1,4 +1,9 @@
 // Meta Marketing API: Messenger/WhatsApp destination ad stack create wrapper.
+//
+// Every choice this stack spends money under is the advertiser's: the
+// destination, the names, the objective, how it bills and optimises, who it
+// targets and which special ad categories it declares. Each is read by name
+// and a missing one refuses the run before anything is created.
 
 import {
   compactObject,
@@ -9,18 +14,20 @@ import {
   adAccountId,
   microsFromUsd,
 } from '../marketing_api.mjs';
+import { statedText } from '../../../../_shared/inputs/stated.mjs';
 
-const destination = (
-  process.env.CAMPAIGN_DESTINATION ||
-  process.env.DESTINATION_TYPE ||
-  'messenger'
-).toLowerCase();
-const campaignName =
-  process.env.CAMPAIGN_NAME ||
-  `Wisent Messaging ${new Date().toISOString().slice(0, 19)}`;
-const campaignId = process.env.CAMPAIGN_ID;
-const adsetId = process.env.AD_SET_ID || process.env.ADSET_ID;
-const creativeId = process.env.CREATIVE_ID;
+// What each messaging destination sets on the ad: the call to action and,
+// for Messenger, the app the conversation opens in.
+const DESTINATIONS = {
+  messenger: { ctaType: 'MESSAGE_PAGE', appDestination: 'MESSENGER' },
+  whatsapp: { ctaType: 'WHATSAPP_MESSAGE', appDestination: undefined },
+};
+
+/** A stated JSON value: refused by name when unset, parsed when set. */
+function statedJson(name, what) {
+  statedText([name], what);
+  return parseJsonEnv(name);
+}
 
 function promotedObject() {
   return compactObject({
@@ -33,9 +40,7 @@ function promotedObject() {
   });
 }
 
-function creativePayload() {
-  const ctaType =
-    destination === 'whatsapp' ? 'WHATSAPP_MESSAGE' : 'MESSAGE_PAGE';
+function creativePayload(destination) {
   // The ad's destination is the advertiser's; a built-in one would publish
   // a paid ad pointing somewhere nobody chose.
   const link = process.env.DESTINATION_URL || process.env.FINAL_URL;
@@ -44,7 +49,10 @@ function creativePayload() {
       'DESTINATION_URL (or FINAL_URL) is required: the page the ad sends people to; none is assumed',
     );
   return compactObject({
-    name: process.env.CREATIVE_NAME || `${campaignName} creative`,
+    name: statedText(
+      ['CREATIVE_NAME'],
+      'the name the ad account lists the creative under',
+    ),
     object_story_spec: parseJsonEnv('OBJECT_STORY_SPEC_JSON', {
       page_id:
         process.env.PAGE_ID ||
@@ -55,10 +63,9 @@ function creativePayload() {
         message: process.env.PRIMARY_TEXT,
         name: process.env.HEADLINE,
         call_to_action: {
-          type: process.env.CALL_TO_ACTION_TYPE || ctaType,
+          type: process.env.CALL_TO_ACTION_TYPE || destination.ctaType,
           value: compactObject({
-            app_destination:
-              destination === 'messenger' ? 'MESSENGER' : undefined,
+            app_destination: destination.appDestination,
             whatsapp_number: process.env.WHATSAPP_NUMBER,
           }),
         },
@@ -69,38 +76,72 @@ function creativePayload() {
 }
 
 try {
-  if (!['messenger', 'whatsapp'].includes(destination))
-    throw new Error('CAMPAIGN_DESTINATION must be messenger or whatsapp');
+  const destinationName = statedText(
+    ['CAMPAIGN_DESTINATION', 'DESTINATION_TYPE'],
+    `where the ad opens a conversation, one of ${Object.keys(DESTINATIONS).join(', ')}`,
+  ).toLowerCase();
+  if (!Object.hasOwn(DESTINATIONS, destinationName))
+    throw new Error(
+      `CAMPAIGN_DESTINATION is "${destinationName}", not one of ${Object.keys(DESTINATIONS).join(', ')}; nothing was created`,
+    );
+  const destination = DESTINATIONS[destinationName];
   if (!submitEnabled())
     throw new Error('SUBMIT=1 required to create Meta messaging stack');
+  // Every stated input is read before the first object is created, so a
+  // missing one never leaves a campaign behind without its ad set or ad.
+  const campaignBody = {
+    name: statedText(
+      ['CAMPAIGN_NAME'],
+      'the name the ad account lists the campaign under',
+    ),
+    objective: statedText(
+      ['CAMPAIGN_OBJECTIVE'],
+      'the Meta campaign objective, e.g. OUTCOME_ENGAGEMENT',
+    ),
+    status: 'PAUSED',
+    special_ad_categories: statedJson(
+      'SPECIAL_AD_CATEGORIES',
+      'the special ad categories the advertiser declares to Meta, as a JSON array',
+    ),
+  };
+  const adsetBody = {
+    name: statedText(
+      ['AD_SET_NAME'],
+      'the name the ad account lists the ad set under',
+    ),
+    billing_event: statedText(
+      ['BILLING_EVENT'],
+      'what Meta charges the ad set for, e.g. IMPRESSIONS',
+    ),
+    optimization_goal: statedText(
+      ['OPTIMIZATION_GOAL'],
+      'what Meta optimises the ad set for, e.g. CONVERSATIONS',
+    ),
+    destination_type: destinationName.toUpperCase(),
+    daily_budget: microsFromUsd(process.env.DAILY_BUDGET_USD),
+    targeting: statedJson(
+      'TARGETING_JSON',
+      'who the ad set reaches, as Meta targeting JSON',
+    ),
+    promoted_object: promotedObject(),
+    status: 'PAUSED',
+  };
+  const creativeBody = creativePayload(destination);
+  const adName = statedText(
+    ['AD_NAME'],
+    'the name the ad account lists the ad under',
+  );
   const campaign = await graphRequest(
     'POST',
     `/${adAccountId()}/campaigns`,
-    {
-      name: campaignName,
-      objective: process.env.CAMPAIGN_OBJECTIVE || 'OUTCOME_ENGAGEMENT',
-      status: 'PAUSED',
-      special_ad_categories: parseJsonEnv('SPECIAL_AD_CATEGORIES', ['NONE']),
-    },
+    campaignBody,
     { submit: true, label: 'meta-ads-api-messaging-campaign' },
   );
   const adset = await graphRequest(
     'POST',
     `/${adAccountId()}/adsets`,
     withValidateOnly(
-      {
-        name: process.env.AD_SET_NAME || `${campaignName} ad set`,
-        campaign_id: campaign.id,
-        billing_event: process.env.BILLING_EVENT || 'IMPRESSIONS',
-        optimization_goal: process.env.OPTIMIZATION_GOAL || 'CONVERSATIONS',
-        destination_type: destination.toUpperCase(),
-        daily_budget: microsFromUsd(process.env.DAILY_BUDGET_USD),
-        targeting: parseJsonEnv('TARGETING_JSON', {
-          geo_locations: { countries: ['US'] },
-        }),
-        promoted_object: promotedObject(),
-        status: 'PAUSED',
-      },
+      { ...adsetBody, campaign_id: campaign.id },
       { submit: true },
     ),
     { submit: true, label: 'meta-ads-api-messaging-adset' },
@@ -108,14 +149,14 @@ try {
   const creative = await graphRequest(
     'POST',
     `/${adAccountId()}/adcreatives`,
-    creativePayload(),
+    creativeBody,
     { submit: true, label: 'meta-ads-api-messaging-creative' },
   );
   const ad = await graphRequest(
     'POST',
     `/${adAccountId()}/ads`,
     {
-      name: process.env.AD_NAME || `${campaignName} ad`,
+      name: adName,
       adset_id: adset.id,
       creative: { creative_id: creative.id },
       status: 'PAUSED',

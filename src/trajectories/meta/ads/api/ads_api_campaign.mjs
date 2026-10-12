@@ -42,10 +42,14 @@ const campaignName = () =>
     'the name the ad account lists the campaign under',
   );
 const status = (process.env.STATUS || 'PAUSED').toUpperCase();
-const specialAdCategories = parseJsonEnv(
-  'SPECIAL_AD_CATEGORIES',
-  splitList(process.env.SPECIAL_AD_CATEGORIES || 'NONE'),
-);
+
+/** A stated choice the advertiser makes to Meta; refused by name when unset. */
+const stated = (name, what) => statedText([name], what);
+/** A stated JSON choice: refused by name when unset, parsed when set. */
+const statedJson = (name, what) => {
+  stated(name, what);
+  return parseJsonEnv(name);
+};
 
 const campaignCreate = () =>
   compactObject({
@@ -55,7 +59,12 @@ const campaignCreate = () =>
       'the Meta campaign objective, e.g. OUTCOME_TRAFFIC',
     ),
     status,
-    special_ad_categories: specialAdCategories,
+    // A declaration to Meta about housing, credit, employment or politics:
+    // only the advertiser can make it.
+    special_ad_categories: statedJson(
+      'SPECIAL_AD_CATEGORIES',
+      'the special ad categories the advertiser declares to Meta, as a JSON array',
+    ),
     buying_type: process.env.BUYING_TYPE,
     bid_strategy:
       process.env.CAMPAIGN_BID_STRATEGY ||
@@ -159,9 +168,18 @@ const adSetCreate = (campaignId = CAMPAIGN_ID) =>
       process.env.AD_SET_LIFETIME_BUDGET_USD || process.env.LIFETIME_BUDGET_USD,
     ),
     bid_amount: microsFromUsd(process.env.BID_AMOUNT_USD),
-    bid_strategy: process.env.BID_STRATEGY || 'LOWEST_COST_WITHOUT_CAP',
-    billing_event: process.env.BILLING_EVENT || 'IMPRESSIONS',
-    optimization_goal: process.env.OPTIMIZATION_GOAL || 'LINK_CLICKS',
+    bid_strategy: stated(
+      'BID_STRATEGY',
+      'how Meta bids for the ad set, e.g. LOWEST_COST_WITHOUT_CAP',
+    ),
+    billing_event: stated(
+      'BILLING_EVENT',
+      'what Meta charges the ad set for, e.g. IMPRESSIONS',
+    ),
+    optimization_goal: stated(
+      'OPTIMIZATION_GOAL',
+      'what Meta optimises the ad set for, e.g. LINK_CLICKS',
+    ),
     destination_type:
       process.env.CAMPAIGN_DESTINATION || process.env.DESTINATION_TYPE,
     targeting: targeting(),
@@ -334,29 +352,39 @@ const ACTIONS = {
 async function createStack() {
   if (!SUBMIT)
     throw new Error('SUBMIT=1 required for Meta Ads API stack create');
+  // Every body is built, and so every stated input read, before the first
+  // object is created: a missing one never leaves a campaign without its ad.
+  const campaignBody = campaignCreate();
+  const adsetBody = adSetCreate();
+  const creativeBody = creativeCreate();
+  const adBody = adCreate();
   const campaign = await graphRequest(
     'POST',
     `/${adAccountId()}/campaigns`,
-    campaignCreate(),
+    campaignBody,
     { label: 'meta-ads-api-campaign', submit: true },
   );
   const campaignId = campaign.id;
   const adset = await graphRequest(
     'POST',
     `/${adAccountId()}/adsets`,
-    adSetCreate(campaignId),
+    { ...adsetBody, campaign_id: campaignId },
     { label: 'meta-ads-api-adset', submit: true },
   );
   const creative = await graphRequest(
     'POST',
     `/${adAccountId()}/adcreatives`,
-    creativeCreate(),
+    creativeBody,
     { label: 'meta-ads-api-creative', submit: true },
   );
   const ad = await graphRequest(
     'POST',
     `/${adAccountId()}/ads`,
-    adCreate(adset.id, creative.id),
+    {
+      ...adBody,
+      adset_id: adset.id,
+      creative: { creative_id: creative.id },
+    },
     { label: 'meta-ads-api-ad', submit: true },
   );
   console.log(
