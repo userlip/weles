@@ -63,7 +63,9 @@ try {
 
   // Programmatic CodeMirror append: click the editor, send End+Enter via
   // keyboard, type the line. Direct DOM manipulation on CodeMirror would
-  // bypass GitHub's diff-tracking, so we stay with keyboard events.
+  // bypass GitHub's diff-tracking, so we stay with keyboard events. An append
+  // that fails stops here with its cause: swallowed, it surfaced later only as
+  // commit_not_applied, with nothing saying the file was never changed.
   await humanClickLocator(
     s.page,
     s.page
@@ -71,10 +73,10 @@ try {
         '.CodeMirror, [data-codemirror], textarea[name="value"], div[contenteditable="true"]',
       )
       .first(),
-  ).catch(() => {});
-  await s.page.keyboard.press('End').catch(() => {});
-  await s.page.keyboard.press('Enter').catch(() => {});
-  await humanType(s.page, FILE_APPEND.trim()).catch(() => {});
+  );
+  await s.page.keyboard.press('End');
+  await s.page.keyboard.press('Enter');
+  await humanType(s.page, FILE_APPEND.trim());
   await pageSettled(s.page);
 
   // Open the Commit-changes modal: toolbar button text is "Commit changes...".
