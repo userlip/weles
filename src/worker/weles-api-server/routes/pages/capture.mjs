@@ -50,7 +50,13 @@ async function withLoadedPage({ openBrowser, publicAddresses }, request, work) {
       refused_requests: refused,
     };
   } finally {
-    await context.close().catch(() => undefined);
+    // A context that does not close keeps its browser running in the API
+    // server after the request, so that is said with the page and cause.
+    await context.close().catch((error) => {
+      console.error(
+        `[pages] the browser context for ${target.href} did not close: ${error}`,
+      );
+    });
   }
 }
 
