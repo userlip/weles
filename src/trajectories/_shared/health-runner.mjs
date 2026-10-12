@@ -180,11 +180,17 @@ export async function runHealthProbe(cfg) {
   const candidateUrls = [loggedIn.url, loggedIn.signal?.details?.final_url]
     .filter(Boolean)
     .join(' ');
+  const LOGIN_WALLS = [
+    '/login',
+    '/signin',
+    '/sessions/new',
+    '/uas/login',
+    '/checkpoint',
+    '/accounts/login',
+    '/authwall',
+  ];
   const cookiesStale =
-    !extracted.ok &&
-    candidateUrls.match(
-      /\/(login|signin|sessions\/new|uas\/login|checkpoint|accounts\/login|authwall)\b/,
-    );
+    !extracted.ok && LOGIN_WALLS.some((wall) => candidateUrls.includes(wall));
 
   let signal;
   // A probe whose own auth setup failed observed nothing about the account.

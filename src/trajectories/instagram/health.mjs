@@ -15,17 +15,16 @@ await runHealthProbe({
     const finalUrl = resp?.url ?? '';
     const authed =
       !/\/accounts\/login/.test(finalUrl) && /instagram\.com/.test(finalUrl);
-    const html = typeof body === 'string' ? body : '';
+
     return {
       ok: authed && resp?.status === 200,
       karma: null,
-      is_suspended:
-        /your account has been disabled|account has been suspended/i.test(html),
+      is_suspended: resp?.signal?.signal === 'suspended',
     };
   },
   extractLoggedOut: (resp) =>
     resp.status === 200 &&
-    !/sorry, this page isn'?t available|page not found/i.test(
+    /property="og:type"\s+content="profile"/.test(
       typeof resp.body === 'string' ? resp.body : '',
     ),
 });
