@@ -1,4 +1,9 @@
 import { pageSettled } from '../../page/settled.mjs';
+import {
+  clickDescribed,
+  fillOffered,
+  pageShows,
+} from '../../page/judged/seen.mjs';
 import { GA_BASE, defaultInput, siteHost } from '../action-catalog.mjs';
 import {
   safeGoto,
@@ -7,16 +12,13 @@ import {
   clickDomElement,
   clickAnyLocator,
   clickLocator,
-  clickFirst,
   fillDomInput,
-  fillWithinOrNth,
-  visibleFormScope,
 } from '../page-interaction.mjs';
 import {
   dismissGoogleAnalyticsOverlays,
   clickGaNext,
   waitForGaStep,
-  waitForGaStepOrText,
+  waitForGaStepOrShown,
   selectVisibleChoice,
   setOptionalDropdown,
   setGoogleAnalyticsIndustry,
@@ -60,61 +62,18 @@ async function openGoogleAnalyticsCreateAccount(s) {
     s.page.locator('button[data-guidedhelpid="create-entity-trigger"]'),
     s.page.locator('.create-entity-menu-trigger'),
   ];
-  if (
-    !(await clickDomElement(
-      s.page,
-      [
-        'button[data-guidedhelpid="create-entity-trigger"]',
-        '.create-entity-menu-trigger',
-      ],
-      /^Create\b/i,
-    )) &&
-    !(await clickAnyLocator(s.page, createButton).catch(() => false))
-  ) {
+  if (!(await clickAnyLocator(s.page, createButton).catch(() => false))) {
     await safeGoto(s, adminUrl);
     await pageSettled(s.page);
     await dismissGoogleAnalyticsOverlays(s.page);
-    if (
-      !(await clickDomElement(
-        s.page,
-        [
-          'button[data-guidedhelpid="create-entity-trigger"]',
-          '.create-entity-menu-trigger',
-        ],
-        /^Create\b/i,
-      ))
-    ) {
-      await clickAnyLocator(s.page, createButton, 'GA Admin Create button');
-    }
+    await clickAnyLocator(s.page, createButton, 'GA Admin Create button');
   }
   await pageSettled(s.page);
-  if (
-    !(await clickDomElement(
-      s.page,
-      [
-        '.cdk-overlay-container [role="menuitem"]',
-        '.cdk-overlay-container button',
-        '.mat-mdc-menu-panel [role="menuitem"]',
-        '.mat-mdc-menu-panel button',
-        '[role="menuitem"]',
-      ],
-      /^(Create account|Account)$/i,
-    ))
-  ) {
-    await clickAnyLocator(
-      s.page,
-      [
-        s.page.getByRole('menuitem', { name: /^Account$/i }),
-        s.page.getByRole('menuitem', { name: /Create account/i }),
-      ],
-      'GA Create Account menu item',
-    );
-  }
+  await clickDescribed(s.page, 'the menu item that creates a new account');
   await waitRendered(s.page, 40);
 }
 
 async function fillGoogleAnalyticsAccountStep(s, values) {
-  const scope = await visibleFormScope(s.page);
   const filled = await fillDomInput(
     s.page,
     [
@@ -125,22 +84,14 @@ async function fillGoogleAnalyticsAccountStep(s, values) {
   );
   if (
     !filled &&
-    !(await fillWithinOrNth(
-      scope,
-      s.page,
-      values.accountName,
-      [/account name/i, /^name$/i],
-      0,
-    ))
+    !(await fillOffered(s.page, 'the account name field', values.accountName))
   ) {
     throw new Error('GA account-name field was not fillable');
   }
   if (
-    !(await clickDomElement(
-      s.page,
-      ['button[debug-id="account-next-step-button"]'],
-      /^Next$/i,
-    ))
+    !(await clickDomElement(s.page, [
+      'button[debug-id="account-next-step-button"]',
+    ]))
   ) {
     await clickGaNext(
       s.page,
@@ -157,7 +108,6 @@ async function fillGoogleAnalyticsAccountStep(s, values) {
 }
 
 async function fillGoogleAnalyticsPropertyStep(s, values) {
-  const scope = await visibleFormScope(s.page);
   const filled = await fillDomInput(
     s.page,
     [
@@ -169,30 +119,20 @@ async function fillGoogleAnalyticsPropertyStep(s, values) {
   );
   if (
     !filled &&
-    !(await fillWithinOrNth(
-      scope,
-      s.page,
-      values.propertyName,
-      [/property name/i, /^name$/i],
-      0,
-    ))
+    !(await fillOffered(s.page, 'the property name field', values.propertyName))
   ) {
     throw new Error('GA property-name field was not fillable');
   }
   await setOptionalDropdown(
     s.page,
-    [/reporting time zone/i, /time zone/i],
+    'the reporting time zone dropdown',
     values.timezone,
-  ).catch(() => false);
-  await setOptionalDropdown(s.page, [/currency/i], values.currency).catch(
-    () => false,
   );
+  await setOptionalDropdown(s.page, 'the currency dropdown', values.currency);
   if (
-    !(await clickDomElement(
-      s.page,
-      ['button[debug-id="property-next-step-button"]'],
-      /^Next$/i,
-    ))
+    !(await clickDomElement(s.page, [
+      'button[debug-id="property-next-step-button"]',
+    ]))
   ) {
     await clickGaNext(
       s.page,
@@ -210,11 +150,8 @@ async function fillGoogleAnalyticsPropertyStep(s, values) {
 
 async function fillGoogleAnalyticsBusinessStep(s) {
   await setGoogleAnalyticsIndustry(s.page).catch(() => false);
-  if (!(await setGoogleAnalyticsBusinessSize(s.page).catch(() => false))) {
-    await selectVisibleChoice(s.page, [/small/i, /1 to 10/i, /medium/i]).catch(
-      () => false,
-    );
-  }
+  if (!(await setGoogleAnalyticsBusinessSize(s.page)))
+    await selectVisibleChoice(s.page, 'the smallest business size option');
   await clickGaNext(
     s.page,
     'GA business details next button',
@@ -223,71 +160,46 @@ async function fillGoogleAnalyticsBusinessStep(s) {
 }
 
 async function fillGoogleAnalyticsObjectivesStep(s) {
-  if (!(await setGoogleAnalyticsObjective(s.page).catch(() => false))) {
-    await selectVisibleChoice(s.page, [
-      /understand web/i,
-      /other business objectives/i,
-      /examine user behavior/i,
-      /traffic/i,
-    ]).catch(() => false);
-  }
+  if (!(await setGoogleAnalyticsObjective(s.page)))
+    await selectVisibleChoice(
+      s.page,
+      'the business objective about understanding web traffic',
+    );
   await clickGoogleAnalyticsCreateButton(s.page);
-  await waitForGaStepOrText(
+  await waitForGaStepOrShown(
     s.page,
     /Data collection/i,
-    /terms|service agreement|data collection|platform|web stream|website url/i,
+    'Does the page show the terms of service agreement or the data collection / web stream setup?',
     'GA business objectives create button',
   );
 }
 
 async function acceptGoogleAnalyticsTermsIfPresent(s) {
-  const text = await bodyText(s.page);
-  if (!/terms|service agreement|data processing|privacy/i.test(text)) return;
+  if (
+    !(await pageShows(
+      s.page,
+      'Does the page show a terms of service or data processing agreement to accept?',
+    ))
+  )
+    return;
 
-  const dialog = s.page
-    .getByRole('dialog')
-    .filter({
-      hasText: /Terms of Service Agreement|Data Processing Terms|I Accept/i,
-    })
-    .filter({ visible: true })
-    .first();
-  if (await dialog.isVisible().catch(() => false)) {
-    const requiredBox = dialog.locator('input[type="checkbox"]').first();
-    if (await requiredBox.count()) {
-      await requiredBox.check({ force: true });
-      await pageSettled(s.page);
-    }
-    const acceptButton = dialog
-      .locator('button[debug-id="accept-button"], button')
-      .filter({ hasText: /^I Accept$/i });
-    if (await clickAnyLocator(s.page, [acceptButton]).catch(() => false)) {
-      await waitForGaStepOrText(
-        s.page,
-        /Data collection/i,
-        /data collection|platform|web stream|website url/i,
-        'GA terms accept button',
-      );
-      return;
-    }
-    throw new Error('GA Terms accept button was not enabled');
-  }
-
+  // The required agreement boxes are checked, then the acceptance control.
   const boxes = s.page
     .locator('mat-checkbox, input[type="checkbox"], [role="checkbox"]')
     .filter({ visible: true });
-  const count = await boxes.count();
-  for (let i = 0; i < Math.min(count, 6); i++) {
-    const box = boxes.nth(i);
-    const checked = await box.getAttribute('aria-checked');
-    if (checked !== 'true') await clickLocator(s.page, box);
+  for (const box of await boxes.all()) {
+    if ((await box.getAttribute('aria-checked')) !== 'true')
+      await clickLocator(s.page, box);
   }
-  await clickFirst(s.page, [
-    /^I accept$/i,
-    /^Accept$/i,
-    /^Agree$/i,
-    /^Create$/i,
-  ]).catch(() => false);
-  await waitRendered(s.page, 40);
+  const accept = s.page.locator('button[debug-id="accept-button"]').first();
+  if (await accept.isVisible()) await clickLocator(s.page, accept);
+  else await clickDescribed(s.page, 'the button that accepts the agreement');
+  await waitForGaStepOrShown(
+    s.page,
+    /Data collection/i,
+    'Does the page show the data collection or web stream setup?',
+    'GA terms accept button',
+  );
 }
 
 async function googleAnalyticsRegisterSite(s) {

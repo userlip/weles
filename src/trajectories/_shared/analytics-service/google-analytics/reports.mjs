@@ -1,10 +1,6 @@
-import { pageSettled } from '../../page/settled.mjs';
+import { clickOffered } from '../../page/judged/seen.mjs';
 import { GA_BASE, input, actionName, actionUrl } from '../action-catalog.mjs';
-import {
-  waitRendered,
-  clickFirst,
-  clickCardLike,
-} from '../page-interaction.mjs';
+import { waitRendered } from '../page-interaction.mjs';
 import { openDataStreamDetail } from './web-stream.mjs';
 
 function propertyRoute(section = 'reports') {
@@ -44,69 +40,42 @@ function resolvedUrl(cfg) {
   return actionUrl(cfg);
 }
 
+// The navigation steps that lead to each action's section, described to the
+// vision model so they are found in whatever language GA renders them.
+const REPORTS = 'the Reports section of the navigation';
+const ADMIN = 'the Admin section of the navigation';
+const PAGES = [
+  REPORTS,
+  'the Engagement reports',
+  'the Pages and screens report',
+];
+const SECTION_STEPS = {
+  googleanalytics_view_realtime: ['the realtime report'],
+  googleanalytics_verify_realtime: ['the realtime report'],
+  googleanalytics_view_acquisition: [REPORTS, 'the Acquisition reports'],
+  googleanalytics_view_engagement: [REPORTS, 'the Engagement reports'],
+  googleanalytics_view_pages: PAGES,
+  googleanalytics_export_report: PAGES,
+  googleanalytics_view_key_events: [ADMIN, 'the Events settings'],
+  googleanalytics_view_debugview: [ADMIN, 'the DebugView page'],
+  googleanalytics_get_global_site_tag: [ADMIN, 'the Data streams settings'],
+};
+
 async function openExpectedDashboardSection(s) {
   const action = actionName();
-  if (
-    action === 'googleanalytics_view_realtime' ||
-    action === 'googleanalytics_verify_realtime'
-  ) {
-    await clickFirst(s.page, [
-      /^View real time$/i,
-      /^Realtime$/i,
-      /^Real-time$/i,
-    ]);
-    await pageSettled(s.page);
-    return;
-  }
-  const paths = {
-    googleanalytics_view_acquisition: [/^Reports$/i, /^Acquisition$/i],
-    googleanalytics_view_engagement: [/^Reports$/i, /^Engagement$/i],
-    googleanalytics_view_pages: [
-      /^Reports$/i,
-      /^Engagement$/i,
-      /^Pages and screens$/i,
-    ],
-    googleanalytics_export_report: [
-      /^Reports$/i,
-      /^Engagement$/i,
-      /^Pages and screens$/i,
-    ],
-    googleanalytics_view_key_events: [/^Admin$/i, /^Events$/i],
-    googleanalytics_view_debugview: [/^Admin$/i, /^DebugView$/i],
-    googleanalytics_get_global_site_tag: [/^Admin$/i, /^Data streams$/i],
-  };
-  const path = paths[action];
-  if (!path) return;
-  for (const label of path) {
-    const clicked = await clickFirst(s.page, [label]);
-    if (!clicked) await clickCardLike(s.page, label);
+  const steps = SECTION_STEPS[action];
+  if (!steps) return;
+  for (const step of steps) {
+    await clickOffered(s.page, step);
     await waitRendered(s.page, 30);
-    if (
-      action === 'googleanalytics_view_key_events' &&
-      /Events/i.test(String(label)) &&
-      /\/admin$/.test(s.page.url())
-    ) {
-      await clickCardLike(s.page, label);
-      await waitRendered(s.page, 30);
-    }
-    if (
-      action === 'googleanalytics_get_global_site_tag' &&
-      /Data streams/i.test(String(label)) &&
-      /\/admin$/.test(s.page.url())
-    ) {
-      await clickCardLike(s.page, label);
-      await waitRendered(s.page, 30);
-    }
-    await pageSettled(s.page);
   }
   if (action === 'googleanalytics_get_global_site_tag') {
     await openDataStreamDetail(s);
     await waitRendered(s.page, 30);
-    await clickFirst(s.page, [
-      /View tag instructions/i,
-      /Tag instructions/i,
-      /^Google tag$/i,
-    ]);
+    await clickOffered(
+      s.page,
+      'the button that shows the tag installation instructions',
+    );
     await waitRendered(s.page, 30);
   }
 }

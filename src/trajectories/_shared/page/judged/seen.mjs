@@ -88,3 +88,14 @@ export async function fillDescribed(page, description, value) {
     );
   }
 }
+
+/**
+ * Fills the field `description` names with `value` when the settled page
+ * shows one, and says whether it did; a page without it is an answer.
+ */
+export async function fillOffered(page, description, value) {
+  if (!(await pageShows(page, `Does the page show ${description}?`)))
+    return false;
+  await fillDescribed(page, description, value);
+  return true;
+}

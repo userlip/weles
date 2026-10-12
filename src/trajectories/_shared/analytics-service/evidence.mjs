@@ -4,12 +4,8 @@ import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../page/settled.mjs';
 import { input, actionName } from './action-catalog.mjs';
-import {
-  escapeRegExp,
-  waitRendered,
-  clickFirst,
-  fillAny,
-} from './page-interaction.mjs';
+import { escapeRegExp, waitRendered } from './page-interaction.mjs';
+import { clickOffered, fillOffered } from '../page/judged/seen.mjs';
 import { umamiRegisterAccount, umamiCreateWebsite } from './umami.mjs';
 import { googleAnalyticsRegisterSite } from './google-analytics/registration.mjs';
 import { extractGaMeasurementId } from './google-analytics/web-stream.mjs';
@@ -52,39 +48,40 @@ async function performConfirmedWrite(s, cfg) {
     return { registration: { domain: input('DOMAIN') } };
   }
   if (cfg.platform === 'umami' && action === 'umami_update_website_settings') {
-    await clickFirst(s.page, [/settings/i, /edit/i]);
+    await clickOffered(s.page, 'the control that opens the website settings');
     const patch = input('SETTINGS_PATCH');
-    if (patch) await fillAny(s.page, patch, [/name/i, /domain/i, /timezone/i]);
-    await clickFirst(s.page, [/save/i, /update/i]);
+    if (patch)
+      await fillOffered(
+        s.page,
+        'the website settings field the new value belongs in',
+        patch,
+      );
+    await clickOffered(s.page, 'the button that saves the settings');
     return {};
   }
   if (
     cfg.platform === 'googleanalytics' &&
-    (action === 'googleanalytics_register' ||
-      action === 'googleanalytics_register_needher')
+    action.startsWith('googleanalytics_register')
   ) {
     return googleAnalyticsRegisterSite(s);
   }
-  if (cfg.platform === 'googleanalytics') {
-    await clickFirst(s.page, [/admin/i, /create/i, /new/i, /add/i]);
-    await fillAny(
-      s.page,
-      input('ACCOUNT_NAME') ||
-        input('PROPERTY_NAME') ||
-        input('STREAM_NAME') ||
-        input('EVENT_NAME') ||
-        input('USER_EMAIL') ||
-        input('DIMENSION_NAME') ||
-        input('METRIC_NAME') ||
-        input('NICKNAME'),
-      [/name/i, /email/i, /event/i, /stream/i, /property/i, /nickname/i],
-    );
-    await fillAny(s.page, input('SITE_URL'), [/url/i, /website/i]);
-    await fillAny(s.page, input('ROLE'), [/role/i]);
-    await clickFirst(s.page, [/save/i, /create/i, /submit/i, /add/i, /next/i]);
-    return {};
+  // Any other write is described to the vision model by its objective: the
+  // control that starts it, the fields its inputs belong in, and the control
+  // that saves it.
+  await clickOffered(
+    s.page,
+    `the control that starts this task: ${cfg.objective}`,
+  );
+  for (const key of cfg.required) {
+    const value = input(key);
+    if (value)
+      await fillOffered(
+        s.page,
+        `the field for ${key.toLowerCase().replace(/_/g, ' ')}`,
+        value,
+      );
   }
-  await clickFirst(s.page, [/create/i, /save/i, /add/i, /update/i]);
+  await clickOffered(s.page, 'the button that saves or creates it');
   return {};
 }
 
@@ -206,12 +203,7 @@ async function captureEvidence(s, cfg, extra = {}) {
 function assertExpectedEvidence(evidence) {
   const action = actionName();
   const text = evidence.bodyText || '';
-  if (
-    (action === 'googleanalytics_view_realtime' ||
-      action === 'googleanalytics_verify_realtime') &&
-    !/realtime|real time/i.test(evidence.url) &&
-    !/realtime overview/i.test(text)
-  ) {
+  if (action.endsWith('_realtime') && !evidence.url.includes('realtime')) {
     throw new Error(`GA realtime view did not open; final_url=${evidence.url}`);
   }
   if (
@@ -220,9 +212,10 @@ function assertExpectedEvidence(evidence) {
   ) {
     throw new Error('GA measurement id was not visible in the captured page');
   }
+  // The global site tag is its loader script, whatever the page calls it.
   if (
     action === 'googleanalytics_get_global_site_tag' &&
-    !/gtag\(|googletagmanager\.com\/gtag\/js|Google tag/i.test(text)
+    !text.includes('googletagmanager.com/gtag/js')
   ) {
     throw new Error(
       'GA global site tag snippet was not visible in the captured page',

@@ -1,11 +1,20 @@
+// The Google Analytics setup wizard's controls. Steps are read from the
+// stepper's own selected label; fields, radios and menu items are found by
+// their debug ids and values; and where the wizard offers only wording, the
+// control is described to the vision model, which reads it in whatever
+// language and copy GA serves.
+
 import { humanFill } from '../../../../../dist/human/keyboard.js';
 import { pageSettled } from '../../page/settled.mjs';
+import {
+  clickDescribed,
+  clickOffered,
+  pageShows,
+} from '../../page/judged/seen.mjs';
 import { defaultInput } from '../action-catalog.mjs';
 import {
   escapeRegExp,
-  bodyText,
   waitRendered,
-  clickFirst,
   clickLocator,
   clickDirectLocator,
   clickAnyLocator,
@@ -57,31 +66,16 @@ async function waitForGaStep(page, pattern, description) {
   );
 }
 
-async function waitForGaStepOrText(
-  page,
-  stepPattern,
-  textPattern,
-  description,
-) {
+// Like waitForGaStep, for a step that may also leave the stepper: the wizard
+// advanced when the stepper shows the step or the page shows what `question`
+// asks about.
+async function waitForGaStepOrShown(page, stepPattern, question, description) {
   await pageSettled(page);
   const step = await selectedGaStep(page);
-  const text = await bodyText(page);
-  if (stepPattern.test(step) || textPattern.test(text)) return;
+  if (stepPattern.test(step) || (await pageShows(page, question))) return;
   throw new Error(
-    `${description} did not advance; selected_step=${JSON.stringify(step)}; body_preview=${text.replace(/\s+/g, ' ')}`,
+    `${description} did not advance; selected_step=${JSON.stringify(step)}; url=${page.url()}`,
   );
-}
-
-function enabledButtonLocator(root, pattern) {
-  return root
-    .getByRole('button', { name: pattern })
-    .or(
-      root
-        .locator('button, material-button, [role="button"], a[role="button"]')
-        .filter({ hasText: pattern }),
-    )
-    .filter({ visible: true })
-    .filter({ hasNot: root.locator('[disabled], [aria-disabled="true"]') });
 }
 
 async function dismissGoogleAnalyticsOverlays(page) {
@@ -94,12 +88,10 @@ async function dismissGoogleAnalyticsOverlays(page) {
   ]) {
     await clickAnyLocator(page, [page.locator(selector)]).catch(() => false);
   }
-  for (const labels of [
-    [/^Close$/i, /Got it/i, /Dismiss/i],
-    [/^Skip$/i, /No thanks/i, /Maybe later/i],
-  ]) {
-    await clickFirst(page, labels).catch(() => false);
-  }
+  await clickOffered(
+    page,
+    'a button that dismisses a promotional dialog or tip without accepting an offer',
+  );
 }
 
 async function clickGaNext(
@@ -108,52 +100,10 @@ async function clickGaNext(
   expectedStepPattern = null,
 ) {
   await dismissGoogleAnalyticsOverlays(page);
-  const pattern =
-    /^(Next|Continue|Save|Create|Create and continue|Submit|I accept|Accept)$/i;
-  const panel = activeStepPanel(page);
-  const locators = [];
-  if (await panel.isVisible().catch(() => false))
-    locators.push(enabledButtonLocator(panel, pattern));
-  locators.push(enabledButtonLocator(page, pattern));
-  if (!(await clickAnyLocator(page, locators).catch(() => false))) {
-    if (
-      !(await clickFirst(page, [
-        /^Next$/i,
-        /^Continue$/i,
-        /^Save$/i,
-        /^Create$/i,
-        /^Create and continue$/i,
-        /^Submit$/i,
-        /^I accept$/i,
-        /^Accept$/i,
-      ]).catch(() => false))
-    ) {
-      const text = await bodyText(page);
-      const buttons = await page
-        .locator('button, material-button, [role="button"], a[role="button"]')
-        .filter({ visible: true })
-        .evaluateAll((nodes) =>
-          nodes
-            .map((node) => ({
-              text: node.textContent?.replace(/\s+/g, ' ').trim() ?? '',
-              disabled:
-                node.hasAttribute('disabled') ||
-                node.getAttribute('aria-disabled') === 'true',
-            }))
-            .filter((item) => item.text),
-        )
-        .then(
-          (list) => list,
-          (listError) => ({
-            listed: false,
-            reason: `visible buttons could not be listed: ${listError.message}`,
-          }),
-        );
-      throw new Error(
-        `${description} was not clickable; visible_buttons=${JSON.stringify(buttons)}; body_preview=${text.replace(/\s+/g, ' ')}`,
-      );
-    }
-  }
+  await clickDescribed(
+    page,
+    'the enabled button that advances the setup wizard to its next step',
+  );
   if (expectedStepPattern) {
     await waitForGaStep(page, expectedStepPattern, description);
     return;
@@ -161,10 +111,10 @@ async function clickGaNext(
   await waitRendered(page, 40);
 }
 
-async function selectVisibleChoice(page, candidates) {
-  for (const candidate of candidates) {
-    if (await clickFirst(page, [candidate]).catch(() => false)) return true;
-  }
+// Chooses the option `description` names; when the page offers none, the
+// first visible choice the wizard shows.
+async function selectVisibleChoice(page, description) {
+  if (await clickOffered(page, description)) return true;
   const controls = page
     .locator(
       'mat-radio-button, mat-checkbox, [role="radio"], [role="checkbox"], label, button',
@@ -178,44 +128,33 @@ async function selectVisibleChoice(page, candidates) {
   return false;
 }
 
-async function setOptionalDropdown(page, labelPatterns, value) {
+// Opens the dropdown `description` names, types `value` into its search and
+// picks the option that carries it.
+async function setOptionalDropdown(page, description, value) {
   if (!value) return false;
-  for (const pattern of labelPatterns) {
-    const control = page
-      .getByLabel(pattern)
-      .or(
-        page
-          .locator('mat-select, [role="combobox"], input')
-          .filter({ hasText: pattern }),
-      )
-      .filter({ visible: true })
-      .first();
-    if (!(await control.isVisible().catch(() => false))) continue;
-    await clickLocator(page, control).catch(() => false);
+  if (!(await clickOffered(page, description))) return false;
+  const search = page
+    .locator('input:not([type="hidden"])')
+    .filter({ visible: true })
+    .last();
+  if (await search.isVisible().catch(() => false)) {
+    await humanFill(page, search, value);
     await pageSettled(page);
-    const search = page
-      .locator('input:not([type="hidden"])')
-      .filter({ visible: true })
-      .last();
-    if (await search.isVisible().catch(() => false)) {
-      await humanFill(page, search, value);
-      await pageSettled(page);
-    }
-    if (
-      await clickDomElement(
-        page,
-        [
-          '.cdk-overlay-container [debug-id="option-item"]',
-          '.cdk-overlay-container [role="option"]',
-          '.cdk-overlay-container mat-option',
-          '.cdk-overlay-container button',
-        ],
-        new RegExp(escapeRegExp(value), 'i'),
-      ).catch(() => false)
-    )
-      return true;
-    await page.keyboard.press('Escape');
   }
+  if (
+    await clickDomElement(
+      page,
+      [
+        '.cdk-overlay-container [debug-id="option-item"]',
+        '.cdk-overlay-container [role="option"]',
+        '.cdk-overlay-container mat-option',
+        '.cdk-overlay-container button',
+      ],
+      new RegExp(escapeRegExp(value), 'i'),
+    ).catch(() => false)
+  )
+    return true;
+  await page.keyboard.press('Escape');
   return false;
 }
 
@@ -249,28 +188,16 @@ async function setGoogleAnalyticsIndustry(page) {
     `^${escapeRegExp(defaultInput('INDUSTRY_CATEGORY', 'Other'))}$`,
     'i',
   );
-  return (
-    (await clickDomElement(
-      page,
-      [
-        '.cdk-overlay-container [debug-id="option-item"]',
-        '.cdk-overlay-container [role="menuitem"]',
-        '.cdk-overlay-container [role="option"]',
-        '.cdk-overlay-container button',
-      ],
-      preferred,
-    ).catch(() => false)) ||
-    (await clickDomElement(
-      page,
-      [
-        '.cdk-overlay-container [debug-id="option-item"]',
-        '.cdk-overlay-container [role="menuitem"]',
-        '.cdk-overlay-container [role="option"]',
-        '.cdk-overlay-container button',
-      ],
-      /Other|Internet|Online|Technology|Community|Consumer/i,
-    ).catch(() => false))
-  );
+  return clickDomElement(
+    page,
+    [
+      '.cdk-overlay-container [debug-id="option-item"]',
+      '.cdk-overlay-container [role="menuitem"]',
+      '.cdk-overlay-container [role="option"]',
+      '.cdk-overlay-container button',
+    ],
+    preferred,
+  ).catch(() => false);
 }
 
 async function setGoogleAnalyticsBusinessSize(page) {
@@ -287,14 +214,7 @@ async function setGoogleAnalyticsBusinessSize(page) {
     await pageSettled(page);
     if (await sizeRadio.isChecked().catch(() => false)) return true;
   }
-  return clickAnyLocator(page, [
-    business.locator('label').filter({ hasText: /Small|1 to 10/i }),
-    business.locator('mat-radio-button').filter({ hasText: /Small|1 to 10/i }),
-    business.locator('label').filter({ hasText: /Medium|11 to 100/i }),
-    business
-      .locator('mat-radio-button')
-      .filter({ hasText: /Medium|11 to 100/i }),
-  ]).catch(() => false);
+  return clickOffered(page, 'the smallest business size option');
 }
 
 async function setGoogleAnalyticsObjective(page) {
@@ -313,24 +233,7 @@ async function setGoogleAnalyticsObjective(page) {
     await pageSettled(page);
     if (await preferred.isChecked().catch(() => false)) return true;
   }
-  const knownObjective = panel
-    .locator(
-      'input[type="checkbox"][name*="Understand web"], input[type="checkbox"][name*="Other business"]',
-    )
-    .first();
-  if (await knownObjective.count()) {
-    await knownObjective.check({ force: true });
-    await pageSettled(page);
-    if (await knownObjective.isChecked().catch(() => false)) return true;
-  }
-  return clickAnyLocator(page, [
-    panel.locator('slat').filter({
-      hasText: /Understand web|Other business objectives|View user engagement/i,
-    }),
-    panel.locator('mat-checkbox').filter({
-      hasText: /Understand web|Other business objectives|View user engagement/i,
-    }),
-  ]).catch(() => false);
+  return clickOffered(page, `the business objective "${objective}"`);
 }
 
 async function clickGoogleAnalyticsCreateButton(page) {
@@ -341,19 +244,19 @@ async function clickGoogleAnalyticsCreateButton(page) {
       panel.locator(
         'button[aria-label="Create an account with a property"], button.create-button',
       ),
-      panel.getByRole('button', { name: /^Create$/i }),
-      panel.locator('button').filter({ hasText: /^Create$/i }),
     ]).catch(() => false)
   )
     return;
-  throw new Error('GA objectives Create button was not enabled');
+  await clickDescribed(
+    page,
+    'the enabled button that creates the account at the end of the business objectives step',
+  );
 }
 
 export {
   selectedGaStep,
   waitForGaStep,
-  waitForGaStepOrText,
-  enabledButtonLocator,
+  waitForGaStepOrShown,
   dismissGoogleAnalyticsOverlays,
   clickGaNext,
   selectVisibleChoice,

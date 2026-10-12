@@ -2,6 +2,11 @@ import { humanFill } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled, responseAfterAction } from '../page/settled.mjs';
 import {
+  clickDescribed,
+  fillOffered,
+  pageShows,
+} from '../page/judged/seen.mjs';
+import {
   UMAMI_BASE,
   UMAMI_APP_BASE,
   input,
@@ -11,89 +16,62 @@ import {
   escapeRegExp,
   safeGoto,
   bodyText,
-  clickRequired,
-  visibleFormScope,
-  fillWithin,
-  fillWithinOrNth,
   clickDomElement,
 } from './page-interaction.mjs';
 
 async function umamiRegisterAccount(s) {
   await safeGoto(s, `${UMAMI_BASE}/signup`);
   await pageSettled(s.page);
-  if (/404|not found/i.test(await bodyText(s.page))) {
+  if (await pageShows(s.page, 'Does the page say it was not found?')) {
     await safeGoto(s, UMAMI_BASE);
-    await clickRequired(
-      s.page,
-      [/sign up/i, /start free/i, /get started/i, /create account/i],
-      'Umami sign-up entry point',
-    );
+    await clickDescribed(s.page, 'the button or link that starts signing up');
   }
 
-  const scope = await visibleFormScope(s.page);
   const email = input('EMAIL');
   const password = input('PASSWORD');
   const displayName = defaultInput(
     'DISPLAY_NAME',
     email.split('@')[0] || 'Weles User',
   );
-  const filledName = await fillWithinOrNth(
-    scope,
-    s.page,
-    displayName,
-    [/name/i, /full name/i],
-    0,
-  );
-  const filledEmail = await fillWithinOrNth(
-    scope,
-    s.page,
-    email,
-    [/email/i],
-    filledName ? 1 : 0,
-  );
-  const filledPassword = await fillWithinOrNth(
-    scope,
-    s.page,
-    password,
-    [/password/i],
-    filledName ? 2 : 1,
-  );
-  if (!filledEmail || !filledPassword)
-    throw new Error('Umami sign-up fields were not fillable');
+  await fillOffered(s.page, 'the name field of the sign-up form', displayName);
+  const emailInput = s.page
+    .locator('input[type="email"], input[name="email"]')
+    .filter({ visible: true })
+    .first();
+  const passwordInput = s.page
+    .locator('input[type="password"]')
+    .filter({ visible: true })
+    .first();
+  if (!(await emailInput.isVisible()) || !(await passwordInput.isVisible()))
+    throw new Error('Umami sign-up form shows no email or password field');
+  await humanFill(s.page, emailInput, email);
+  await humanFill(s.page, passwordInput, password);
 
   if (
-    !(await clickDomElement(
-      s.page,
-      [
-        'button[data-umami-event="signup-button-click"]',
-        'form button[type="submit"]',
-        'form button',
-      ],
-      /^Sign up$/i,
-    ))
+    !(await clickDomElement(s.page, [
+      'button[data-umami-event="signup-button-click"]',
+      'form button[type="submit"]',
+    ]))
   ) {
-    await clickRequired(
-      s.page,
-      [
-        /create account/i,
-        /^sign up$/i,
-        /start free/i,
-        /^continue$/i,
-        /^submit$/i,
-      ],
-      'Umami sign-up submit button',
-    );
-  }
-  // clickDomElement / clickRequired leave the page settled after the submit.
-  const text = await bodyText(s.page);
-  const url = s.page.url();
-  if (/already exists|invalid|incorrect|required|failed|error/i.test(text)) {
-    throw new Error(`Umami sign-up failed: ${text.replace(/\s+/g, ' ')}`);
+    await passwordInput.press('Enter');
+    await pageSettled(s.page);
   }
   if (
-    /verify|verification|check your email|confirm your email/i.test(text) ||
-    (!/signup|register/i.test(url) &&
-      /dashboard|websites|analytics\/us/i.test(text))
+    (await s.page.locator('input[aria-invalid="true"]').count()) ||
+    (await pageShows(
+      s.page,
+      'Does the page say the sign-up failed (an error, an existing account or an invalid field)?',
+    ))
+  ) {
+    throw new Error(
+      `Umami sign-up failed: ${(await bodyText(s.page)).replace(/\s+/g, ' ')}`,
+    );
+  }
+  if (
+    await pageShows(
+      s.page,
+      'Does the page ask to verify the email address, or show the Umami analytics dashboard?',
+    )
   ) {
     return { registration: { email, status: 'submitted_or_verified' } };
   }
@@ -103,48 +81,21 @@ async function umamiRegisterAccount(s) {
 }
 
 async function umamiCreateWebsite(s) {
-  const addButton = s.page
-    .getByRole('button', { name: /^Add website$/i })
-    .or(s.page.locator('button').filter({ hasText: /^Add website$/i }))
-    .filter({ visible: true })
-    .first();
-  if (!(await addButton.isVisible()))
-    throw new Error('Umami Add website button was not visible');
-  await addButton.scrollIntoViewIfNeeded();
-  await humanClickLocator(s.page, addButton);
+  await clickDescribed(s.page, 'the button that adds a website');
   const dialog = s.page.getByRole('dialog').filter({ visible: true }).first();
   await dialog.waitFor({ state: 'visible' });
 
+  // The dialog's two fields are the website's name and its domain, in order.
   const fields = dialog
     .locator('input:not([type="hidden"]), textarea')
     .filter({ visible: true });
-  let filledName = await fillWithin(dialog, s.page, input('DISPLAY_NAME'), [
-    /^name$/i,
-    /website name/i,
-  ]);
-  if (!filledName && (await fields.nth(0).isVisible())) {
-    await humanFill(s.page, fields.nth(0), input('DISPLAY_NAME'));
-    filledName = true;
-  }
-  let filledDomain = await fillWithin(dialog, s.page, input('DOMAIN'), [
-    /^domain$/i,
-    /website domain/i,
-  ]);
-  if (!filledDomain && (await fields.nth(1).isVisible())) {
-    await humanFill(s.page, fields.nth(1), input('DOMAIN'));
-    filledDomain = true;
-  }
-  if (!filledName || !filledDomain)
+  if (!(await fields.nth(1).isVisible()))
     throw new Error('Umami Add website dialog fields were not fillable');
+  await humanFill(s.page, fields.first(), input('DISPLAY_NAME'));
+  await humanFill(s.page, fields.nth(1), input('DOMAIN'));
 
   const saveButton = dialog
     .locator('button[data-test="button-submit"], button[type="submit"]')
-    .or(dialog.getByRole('button', { name: /^(save|create|add|submit)$/i }))
-    .or(
-      dialog
-        .locator('button')
-        .filter({ hasText: /^(save|create|add|submit)$/i }),
-    )
     .filter({ visible: true })
     .last();
   if (!(await saveButton.isVisible()))

@@ -1,12 +1,16 @@
 import { humanFill } from '../../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../../dist/human/mouse.js';
 import { pageSettled } from '../../page/settled.mjs';
+import {
+  clickDescribed,
+  clickOffered,
+  pageShows,
+} from '../../page/judged/seen.mjs';
 import { input, siteHostname } from '../action-catalog.mjs';
 import {
   escapeRegExp,
   bodyText,
   waitRendered,
-  clickFirst,
   clickCardLike,
   clickAnyLocator,
 } from '../page-interaction.mjs';
@@ -30,7 +34,6 @@ async function openDataStreamDetail(s) {
     );
   candidates.push(/\b\d{6,}\b/);
   for (const candidate of candidates) {
-    if (await clickFirst(s.page, [candidate])) return true;
     if (await clickCardLike(s.page, candidate)) return true;
   }
   return false;
@@ -49,19 +52,16 @@ async function fillGoogleAnalyticsWebStreamStep(s, values) {
       .isVisible()
       .catch(() => false))
   ) {
-    const text = await bodyText(s.page);
     if (
-      !/web stream|website url|stream name|choose a platform|data stream|set up a data stream/i.test(
-        text,
-      )
-    ) {
-      await clickFirst(s.page, [
-        /^Web$/i,
-        /Web stream/i,
-        /Data streams/i,
-        /Create stream/i,
-      ]).catch(() => false);
-    }
+      !(await pageShows(
+        s.page,
+        'Does the page show the data stream setup (choosing a platform, or a web stream form)?',
+      ))
+    )
+      await clickOffered(
+        s.page,
+        'the control that opens data streams or creates a new stream',
+      );
   }
 
   const editor = s.page
@@ -69,16 +69,15 @@ async function fillGoogleAnalyticsWebStreamStep(s, values) {
     .filter({ visible: true })
     .first();
   if (!(await editor.isVisible().catch(() => false))) {
-    await clickAnyLocator(
-      s.page,
-      [
-        s.page.locator('button[debug-id="create-web-stream-button"]'),
-        s.page.locator('[data-guidedhelpid="data-stream-choose-web"]'),
-        s.page.getByRole('button', { name: /^Web$/i }),
-        s.page.locator('button').filter({ hasText: /^Web$/i }),
-      ],
-      'GA Web stream platform button',
-    );
+    const platform = [
+      s.page.locator('button[debug-id="create-web-stream-button"]'),
+      s.page.locator('[data-guidedhelpid="data-stream-choose-web"]'),
+    ];
+    if (!(await clickAnyLocator(s.page, platform).catch(() => false)))
+      await clickDescribed(
+        s.page,
+        'the Web platform choice for a new data stream',
+      );
   }
   await pageSettled(s.page);
   if (!(await editor.isVisible().catch(() => false)))
@@ -108,10 +107,9 @@ async function fillGoogleAnalyticsWebStreamStep(s, values) {
 
 async function openGoogleAnalyticsCreatedStreamDetail(s, values) {
   const streamName = new RegExp(escapeRegExp(values.streamName), 'i');
+  // The stream's detail page is the one that shows its measurement id.
   const detailShown = async () =>
-    /Measurement ID|View tag instructions|Tag instructions|Stream details/i.test(
-      await bodyText(s.page),
-    );
+    extractGaMeasurementId(await bodyText(s.page)) !== null;
   await pageSettled(s.page);
   let opened = await detailShown();
   if (!opened) {
@@ -133,15 +131,10 @@ async function openGoogleAnalyticsCreatedStreamDetail(s, values) {
   }
 
   if (opened) {
-    await clickAnyLocator(s.page, [
-      s.page.getByRole('button', {
-        name: /View tag instructions|Tag instructions|Google tag|Installation instructions/i,
-      }),
-      s.page.locator('button, [role="button"], a').filter({
-        hasText:
-          /View tag instructions|Tag instructions|Google tag|Installation instructions/i,
-      }),
-    ]).catch(() => false);
+    await clickOffered(
+      s.page,
+      'the button that shows the tag installation instructions',
+    );
     await waitRendered(s.page, 80);
   }
 }

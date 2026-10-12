@@ -1,4 +1,3 @@
-import { humanFill } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../page/settled.mjs';
 
@@ -28,7 +27,7 @@ async function safeGoto(s, url) {
       if (
         targetUrl.hostname === 'cloud.umami.is' &&
         currentUrl.hostname === targetUrl.hostname &&
-        !/login|signin/i.test(current)
+        !currentUrl.pathname.startsWith('/login')
       )
         return;
     }
@@ -57,23 +56,6 @@ async function waitRendered(page, minLength = 80) {
       `[analytics] page settled with ${text.length} characters of text (${page.url()})`,
     );
   return text;
-}
-
-async function clickFirst(page, names, { settle = true } = {}) {
-  for (const name of names) {
-    const loc = page
-      .getByRole('button', { name })
-      .or(page.getByRole('link', { name }))
-      .or(page.getByText(name))
-      .filter({ visible: true })
-      .first();
-    if (await loc.isVisible()) {
-      await humanClickLocator(page, loc);
-      if (settle) await pageSettled(page);
-      return true;
-    }
-  }
-  return false;
 }
 
 async function clickCardLike(page, name) {
@@ -200,85 +182,9 @@ async function fillDomInput(page, selectors, value) {
   return filled;
 }
 
-async function fillAny(page, value, labelPatterns) {
-  if (!value) return false;
-  for (const pattern of labelPatterns) {
-    const byLabel = page.getByLabel(pattern).filter({ visible: true }).first();
-    if (await byLabel.isVisible().catch(() => false)) {
-      await humanFill(page, byLabel, value);
-      return true;
-    }
-    const byPlaceholder = page
-      .getByPlaceholder(pattern)
-      .filter({ visible: true })
-      .first();
-    if (await byPlaceholder.isVisible().catch(() => false)) {
-      await humanFill(page, byPlaceholder, value);
-      return true;
-    }
-  }
-  const inputBox = page
-    .locator('input:not([type="hidden"]), textarea')
-    .filter({ visible: true })
-    .first();
-  if (await inputBox.isVisible().catch(() => false)) {
-    await humanFill(page, inputBox, value);
-    return true;
-  }
-  return false;
-}
-
-async function fillWithin(scope, page, value, labelPatterns) {
-  if (!value) return false;
-  for (const pattern of labelPatterns) {
-    const byLabel = scope.getByLabel(pattern).filter({ visible: true }).first();
-    if (await byLabel.isVisible().catch(() => false)) {
-      await humanFill(page, byLabel, value);
-      return true;
-    }
-    const byPlaceholder = scope
-      .getByPlaceholder(pattern)
-      .filter({ visible: true })
-      .first();
-    if (await byPlaceholder.isVisible().catch(() => false)) {
-      await humanFill(page, byPlaceholder, value);
-      return true;
-    }
-  }
-  return false;
-}
-
-async function fillWithinOrNth(scope, page, value, labelPatterns, index) {
-  if (await fillWithin(scope, page, value, labelPatterns)) return true;
-  const field = scope
-    .locator('input:not([type="hidden"]), textarea')
-    .filter({ visible: true })
-    .nth(index);
-  if (await field.isVisible().catch(() => false)) {
-    await humanFill(page, field, value);
-    return true;
-  }
-  return false;
-}
-
-async function clickRequired(page, names, description) {
-  if (await clickFirst(page, names)) return;
-  throw new Error(`${description} was not clickable`);
-}
-
 function activeStepPanel(page) {
   return page
     .locator('div[role="tabpanel"]:not([inert]):not([aria-hidden="true"])')
-    .filter({ visible: true })
-    .first();
-}
-
-async function visibleFormScope(page) {
-  const panel = activeStepPanel(page);
-  if (await panel.isVisible().catch(() => false)) return panel;
-  return page
-    .getByRole('dialog')
-    .or(page.locator('form, main, ga-admin-root, [role="main"], body'))
     .filter({ visible: true })
     .first();
 }
@@ -288,17 +194,11 @@ export {
   safeGoto,
   bodyText,
   waitRendered,
-  clickFirst,
   clickCardLike,
   clickLocator,
   clickDirectLocator,
   clickAnyLocator,
   clickDomElement,
   fillDomInput,
-  fillAny,
-  fillWithin,
-  fillWithinOrNth,
-  clickRequired,
   activeStepPanel,
-  visibleFormScope,
 };
