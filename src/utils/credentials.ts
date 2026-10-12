@@ -120,10 +120,26 @@ export async function getSocialAccount(
   };
 }
 
-/** Mark cookies stale and start the corresponding login action as a detached Weles run. */
+/**
+ * Mark cookies stale and start the corresponding login action as a detached
+ * Weles run. Its callers end their run right after and drop what it throws,
+ * so an account that cannot be marked or re-logged is said here, by account
+ * and cause, before the error is raised.
+ */
 export async function markCookiesStale(accountId: string): Promise<void> {
+  try {
+    await markAndRelogin(accountId);
+  } catch (error) {
+    console.error(
+      `[credentials] cookies of ${accountId} are stale but no re-login was started: ${error}`,
+    );
+    throw error;
+  }
+}
+
+async function markAndRelogin(accountId: string): Promise<void> {
   const account = getAccount(accountId);
-  if (!account) return;
+  if (!account) throw new Error(`no account ${accountId} in the Weles account store`);
   updateAccount(accountId, {
     metadata: { cookies_stale_at: new Date().toISOString() },
   });
