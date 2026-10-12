@@ -47,7 +47,7 @@ async function setReactInputValue(locator, value) {
   await humanFill(page, locator, value);
 }
 
-await page.goto('https://lsi2.ncbr.gov.pl/logowanie', {
+await page.goto(`${(await import('#ncbr-settings')).lsi2Origin()}/logowanie`, {
   waitUntil: 'domcontentloaded',
 }); // allow-raw-playwright: Weles-controlled LSI login navigation
 

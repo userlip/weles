@@ -38,7 +38,7 @@ async function authStatus() {
   }, authUrl);
 }
 
-await page.goto('https://lsi2.ncbr.gov.pl/logowanie', {
+await page.goto(`${(await import('#ncbr-settings')).lsi2Origin()}/logowanie`, {
   waitUntil: 'domcontentloaded',
 });
 await page.waitForSelector('input[name="mail"], #mail');

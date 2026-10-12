@@ -10,9 +10,7 @@ import {
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const projectId = (await import('#ncbr-settings')).projectId();
-const projectUrl = ['https://', `lsi2.ncbr.gov.pl/projekt/${projectId}`].join(
-  '',
-);
+const projectUrl = (await import('#ncbr-settings')).projectUrl();
 const fast = Boolean(process.env.FAST);
 const scopeMode = process.env.SCOPE;
 if (!scopeMode)

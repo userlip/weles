@@ -11,9 +11,9 @@ import { humanFill } from '../../../../../dist/human/keyboard.js';
 
 const PROJECT_ID = (await import('#ncbr-settings')).projectId();
 const PROJECT_URL = (await import('#ncbr-settings')).projectUrl();
-const OUT =
-  process.env.OUT ||
-  (await import('#ncbr-settings')).applicationFile('live_lsi_readback.json');
+const OUT = (await import('#ncbr-settings')).applicationFile(
+  'live_lsi_readback.json',
+);
 const email = process.env.NCBR_EMAIL;
 const password = process.env.NCBR_PASSWORD;
 
@@ -91,7 +91,7 @@ const session = await WSession.start({
 });
 const page = session.page;
 
-await page.goto('https://lsi2.ncbr.gov.pl/logowanie', {
+await page.goto(`${(await import('#ncbr-settings')).lsi2Origin()}/logowanie`, {
   waitUntil: 'domcontentloaded',
 }); // allow-raw-playwright: Weles-controlled LSI login navigation
 await setReactInputValue(

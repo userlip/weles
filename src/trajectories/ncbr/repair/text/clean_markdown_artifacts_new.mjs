@@ -10,10 +10,7 @@ import { humanFill } from '../../../../../dist/human/keyboard.js';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const projectId = (await import('#ncbr-settings')).projectId();
-const base = [
-  'https://',
-  `lsi2.ncbr.gov.pl/projekt/${projectId}/projekt_step/`,
-].join('');
+const base = (await import('#ncbr-settings')).sectionBase();
 
 const targets = [
   {

@@ -26,14 +26,14 @@ import {
   waitReady,
 } from './drawer.mjs';
 
-const LSI_ORIGIN = 'https://lsi2.ncbr.gov.pl/';
 const INDENT = '  ';
 const UNSUBMITTED_STATUS = 'Rekomendacje poprawy przekazane wnioskodawcy';
 
 const settings = await import('#ncbr-settings');
+const LSI_ORIGIN = `${settings.lsi2Origin()}/`;
 const endpoint = settings.cdpEndpoint();
 const projectId = settings.projectId();
-const projectUrl = `${LSI_ORIGIN}projekt/${projectId}`;
+const projectUrl = settings.projectUrl();
 const run = declaredRun();
 const declared = run.files;
 const declaredNames = declared.map((file) => file.name);

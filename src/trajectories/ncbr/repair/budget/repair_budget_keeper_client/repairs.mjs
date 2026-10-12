@@ -16,7 +16,7 @@ import {
 } from './keeper.mjs';
 
 export async function loginIfNeeded() {
-  await nav('https://lsi2.ncbr.gov.pl/logowanie');
+  await nav(`${(await import('#ncbr-settings')).lsi2Origin()}/logowanie`);
   const info = await ro(
     `({url:location.href, hasMail:!!document.querySelector('input[name="mail"],#mail'), hasPassword:!!document.querySelector('input[name="password"],#password')})`,
   );

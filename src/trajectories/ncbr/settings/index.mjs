@@ -18,6 +18,8 @@
 //                       the scripts used to name one person's home directory
 //   SESSION             the keeper session a keeper-driven script talks to
 //                       (the scripts used to assume one named ncbr-step-b)
+//   NCBR_CALL           the LSI2 number of the call a new draft is created in
+//                       (the draft script used to carry one call's number)
 //   NCBR_CONTACTS_FILE  optional; the applicant record when it is not
 //                       contacts/applicant-contacts.json in the application
 //                       folder. Its `applicant` object carries the registry
@@ -27,7 +29,24 @@
 
 import { readFileSync } from 'node:fs';
 
-const LSI2_PROJECT_BASE = 'https://lsi2.ncbr.gov.pl/projekt/';
+// The address of NCBR's LSI2 system, the one service every NCBR trajectory
+// drives. Scripts take it from here, never from a copy of their own.
+const LSI2_ORIGIN = 'https://lsi2.ncbr.gov.pl';
+
+/** The LSI2 origin, without a trailing slash, for login and API paths. */
+export function lsi2Origin() {
+  return LSI2_ORIGIN;
+}
+
+/** The NCBR call (nabór) a new draft is created in, by its LSI2 number. */
+export function callNumber() {
+  return required(
+    'NCBR_CALL',
+    'name the LSI2 number of the call (nabór) the new draft is created in',
+  );
+}
+
+const LSI2_PROJECT_BASE = `${LSI2_ORIGIN}/projekt/`;
 
 function required(name, meaning) {
   const value = process.env[name]?.trim();

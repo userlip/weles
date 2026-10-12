@@ -21,9 +21,7 @@ import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const projectId = (await import('#ncbr-settings')).projectId();
-const projectUrl = ['https://', `lsi2.ncbr.gov.pl/projekt/${projectId}`].join(
-  '',
-);
+const projectUrl = (await import('#ncbr-settings')).projectUrl();
 const sectionPattern = process.env.SECTION_PATTERN
   ? new RegExp(process.env.SECTION_PATTERN)
   : null;

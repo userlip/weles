@@ -7,9 +7,12 @@ import { fillField } from '../../../form-input.mjs';
 
 export function lsiForm({ page, email, password }) {
   async function login() {
-    await page.goto('https://lsi2.ncbr.gov.pl/logowanie', {
-      waitUntil: 'domcontentloaded',
-    }); // allow-raw-playwright: LSI login navigation
+    await page.goto(
+      `${(await import('#ncbr-settings')).lsi2Origin()}/logowanie`,
+      {
+        waitUntil: 'domcontentloaded',
+      },
+    ); // allow-raw-playwright: LSI login navigation
     await fillField(
       page,
       page.locator('#mail, input[name="mail"]').first(),

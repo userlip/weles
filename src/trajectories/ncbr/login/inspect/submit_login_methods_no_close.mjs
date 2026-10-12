@@ -20,12 +20,13 @@ const context = browser.contexts()[0] || (await browser.newContext());
 const page = context.pages()[0] || (await context.newPage());
 
 const events = [];
+const LSI2 = (await import('#ncbr-settings')).lsi2Origin();
 page.on('request', (req) => {
   const method = req.method();
   const url = req.url();
   if (
     !(
-      url.includes('lsi2.ncbr.gov.pl') &&
+      url.startsWith(LSI2) &&
       (method !== 'GET' || url.includes('/user/refresh'))
     )
   )
@@ -41,7 +42,7 @@ page.on('response', async (res) => {
   const url = res.url();
   if (
     !(
-      url.includes('lsi2.ncbr.gov.pl') &&
+      url.startsWith(LSI2) &&
       (method !== 'GET' || url.includes('/user/refresh'))
     )
   )
@@ -75,9 +76,12 @@ async function authStatus() {
 }
 
 async function fillForm() {
-  await page.goto('https://lsi2.ncbr.gov.pl/logowanie', {
-    waitUntil: 'domcontentloaded',
-  });
+  await page.goto(
+    `${(await import('#ncbr-settings')).lsi2Origin()}/logowanie`,
+    {
+      waitUntil: 'domcontentloaded',
+    },
+  );
   await page.waitForSelector('#mail');
   await humanFill(page, page.locator('#mail'), '');
   await page.locator('#mail').type(email);

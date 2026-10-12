@@ -8,7 +8,7 @@ import { lsiForm } from './repair_strict_criteria_wsession/form.mjs';
 import { criteriaRepairs } from './repair_strict_criteria_wsession/sections.mjs';
 
 const PROJECT_ID = (await import('#ncbr-settings')).projectId();
-const PROJECT_URL = `https://lsi2.ncbr.gov.pl/projekt/${PROJECT_ID}`;
+const PROJECT_URL = (await import('#ncbr-settings')).projectUrl();
 const BASE = `${PROJECT_URL}/projekt_step/`;
 const URLS = {
   1.2: (await import('#ncbr-settings')).sectionUrl('1_2'),

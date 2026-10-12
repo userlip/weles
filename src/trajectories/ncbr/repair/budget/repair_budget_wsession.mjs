@@ -8,7 +8,7 @@ import { lsiForm } from './repair_budget_wsession/form.mjs';
 import { budgetSections } from './repair_budget_wsession/sections.mjs';
 
 const PROJECT_ID = (await import('#ncbr-settings')).projectId();
-const PROJECT_URL = `https://lsi2.ncbr.gov.pl/projekt/${PROJECT_ID}`;
+const PROJECT_URL = (await import('#ncbr-settings')).projectUrl();
 const BASE = `${PROJECT_URL}/projekt_step/`;
 const URL_63 = (await import('#ncbr-settings')).sectionUrl('6_3');
 const URL_65 = (await import('#ncbr-settings')).sectionUrl('6_5');

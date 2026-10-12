@@ -10,16 +10,14 @@ import { chooseEditInRowMenu } from '../../_shared/ncbr/row_menu.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const projectId = (await import('#ncbr-settings')).projectId();
-const projectUrl = `https://lsi2.ncbr.gov.pl/projekt/${projectId}`;
+const projectUrl = (await import('#ncbr-settings')).projectUrl();
+const lsi2Pages = `${(await import('#ncbr-settings')).lsi2Origin()}/`;
 
 const browser = await chromium.connectOverCDP(endpoint);
 const context = browser.contexts()[0];
 const page =
-  context
-    ?.pages()
-    .find((candidate) =>
-      candidate.url().startsWith('https://lsi2.ncbr.gov.pl/'),
-    ) || (context ? await context.newPage() : null);
+  context?.pages().find((candidate) => candidate.url().startsWith(lsi2Pages)) ||
+  (context ? await context.newPage() : null);
 if (!page) {
   console.log(JSON.stringify({ error: 'NO_PAGE' }, null, 2));
   process.exit(1);

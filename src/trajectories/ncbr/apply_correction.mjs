@@ -1,6 +1,6 @@
 // Apply, verify or inspect a declared correction through the existing LSI2 UI.
-// NCBR_CORRECTION_PLAN_FILE selects JSON; NCBR_CORRECTION_MODE defaults to verify.
-// REPORT_DIR retains complete before/expected/actual values and screenshots.
+// NCBR_CORRECTION_PLAN_FILE selects JSON; NCBR_CORRECTION_MODE states apply, verify or inspect.
+// The run's recordings directory retains complete before/expected/actual values and screenshots.
 // Never edits reviewer recommendations, uploads attachments or submits an application.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -31,8 +31,7 @@ const runId =
   process.env.WELES_RUN_ID ||
   `ncbr-correction-${new Date().toISOString().replace(/[:.]/g, '-')}`;
 process.env.WELES_RUN_ID = runId;
-const reportDir =
-  process.env.REPORT_DIR || runRecordingsDir(`ncbr_${mode}_correction`);
+const reportDir = runRecordingsDir(`ncbr_${mode}_correction`);
 mkdirSync(reportDir, { recursive: true });
 const reportPath = join(reportDir, 'correction-report.json');
 const results = [];

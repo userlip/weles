@@ -5,7 +5,7 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const projectId = (await import('#ncbr-settings')).projectId();
-const projectUrl = `https://lsi2.ncbr.gov.pl/projekt/${projectId}`;
+const projectUrl = (await import('#ncbr-settings')).projectUrl();
 const artifactRe = process.env.MARKDOWN_ARTIFACTS
   ? /(\*\*|^#{1,6}\s|\|---|<!--)/im
   : /\(?\s*limit\s*[\d ]*(?:znak[oó]w)?\)?/i;

@@ -23,6 +23,7 @@ const context = browser.contexts()[0] || (await browser.newContext());
 const page = context.pages()[0] || (await context.newPage());
 
 const events = [];
+const LSI2 = (await import('#ncbr-settings')).lsi2Origin();
 function isRelevant(url, method = '') {
   const u = url.toLowerCase();
   return (
@@ -32,7 +33,7 @@ function isRelevant(url, method = '') {
       u.includes('/token') ||
       u.includes('/refresh') ||
       u.includes('/permissions')) &&
-    (u.includes('lsi2.ncbr.gov.pl') || u.includes('/api/'))
+    (url.startsWith(LSI2) || u.includes('/api/'))
   );
 }
 
@@ -81,7 +82,7 @@ async function authStatus() {
   }, authUrl);
 }
 
-await page.goto('https://lsi2.ncbr.gov.pl/logowanie', {
+await page.goto(`${(await import('#ncbr-settings')).lsi2Origin()}/logowanie`, {
   waitUntil: 'domcontentloaded',
 });
 await page.waitForSelector('#mail, input[name="mail"]');

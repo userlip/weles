@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-export const origin = 'https://lsi2.ncbr.gov.pl';
+export const origin = (await import('#ncbr-settings')).lsi2Origin();
 export const normalize = (value) =>
   String(value ?? '')
     .replace(/\s+/g, ' ')

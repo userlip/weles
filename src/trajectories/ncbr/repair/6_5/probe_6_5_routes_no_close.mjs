@@ -5,7 +5,7 @@ const browser = await chromium.connectOverCDP(endpoint);
 const context = browser.contexts()[0] || (await browser.newContext());
 const page = context.pages()[0] || (await context.newPage());
 
-const BASE = 'https://lsi2.ncbr.gov.pl';
+const BASE = (await import('#ncbr-settings')).lsi2Origin();
 const VERSION_ID = (await import('#ncbr-settings')).projectVersionId();
 const SECTION_ID = (await import('#ncbr-settings')).sectionId('6_5');
 const COLLECTION = 'koszty_posrednie_kolekcja';

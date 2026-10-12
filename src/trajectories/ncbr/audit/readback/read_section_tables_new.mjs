@@ -30,16 +30,14 @@ if (process.env.NAV_LABEL) {
   await humanIdlePause('long');
 }
 if (process.env.ROW_NEEDLE) {
-  const table = page
-    .locator('table')
-    .nth(Number(process.env.ROW_TABLE_INDEX || 0));
-  await table.locator('tbody tr').first().waitFor({ state: 'visible' });
+  // The needle is matched against every table's rows, so no table position is
+  // assumed; it has to name exactly one row on the page.
+  const rows = page.locator('table tbody tr');
+  await rows.first().waitFor({ state: 'visible' });
   // Cells are separate elements, so a needle spanning cells (a first and last name) must match the row's visible text.
-  const rowTexts = await table
-    .locator('tbody tr')
-    .evaluateAll((nodes) =>
-      nodes.map((node) => node.innerText.replace(/\s+/g, ' ').trim()),
-    ); // allow-raw-playwright: read-only row texts
+  const rowTexts = await rows.evaluateAll((nodes) =>
+    nodes.map((node) => node.innerText.replace(/\s+/g, ' ').trim()),
+  ); // allow-raw-playwright: read-only row texts
   const needle = process.env.ROW_NEEDLE.replace(/\s+/g, ' ').trim();
   const indexes = rowTexts
     .map((text, index) => (text.includes(needle) ? index : -1))
@@ -49,7 +47,7 @@ if (process.env.ROW_NEEDLE) {
       `Expected one row matching ${needle}, matched ${indexes.length} of ${rowTexts.length}: ${JSON.stringify(rowTexts.map((text) => text))}`,
     );
   }
-  const row = table.locator('tbody tr').nth(indexes[0]);
+  const row = rows.nth(indexes[0]);
   await row
     .locator('button[aria-label*="overflow-options"]')
     .dispatchEvent('click');

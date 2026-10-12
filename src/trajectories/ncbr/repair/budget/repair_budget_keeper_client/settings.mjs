@@ -6,8 +6,8 @@ import { join } from 'node:path';
 export const SESSION = (await import('#ncbr-settings')).keeperSession();
 export const SOCK = join(homedir(), '.weles', 'keeper', SESSION, 'socket');
 export const PROJECT_ID = (await import('#ncbr-settings')).projectId();
-export const BASE = `https://lsi2.ncbr.gov.pl/projekt/${PROJECT_ID}/projekt_step/`;
-export const PROJECT_URL = `https://lsi2.ncbr.gov.pl/projekt/${PROJECT_ID}`;
+export const BASE = (await import('#ncbr-settings')).sectionBase();
+export const PROJECT_URL = (await import('#ncbr-settings')).projectUrl();
 export const URLS = {
   s22: (await import('#ncbr-settings')).sectionUrl('2_2'),
   s63: (await import('#ncbr-settings')).sectionUrl('6_3'),

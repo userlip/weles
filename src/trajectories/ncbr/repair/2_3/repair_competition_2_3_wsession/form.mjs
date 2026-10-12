@@ -44,9 +44,12 @@ export function lsiForm({ page, session, email, password, progress }) {
 
   async function login() {
     progress('login:start');
-    await page.goto('https://lsi2.ncbr.gov.pl/logowanie', {
-      waitUntil: 'domcontentloaded',
-    }); // allow-raw-playwright: LSI login page
+    await page.goto(
+      `${(await import('#ncbr-settings')).lsi2Origin()}/logowanie`,
+      {
+        waitUntil: 'domcontentloaded',
+      },
+    ); // allow-raw-playwright: LSI login page
     await humanIdlePause('long');
     await setReactInputValue(
       page.locator('#mail, input[name="mail"]').first(),

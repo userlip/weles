@@ -8,17 +8,15 @@ import { lsiForm } from './repair_contacts_2_2_wsession/form.mjs';
 import { contactRepairs } from './repair_contacts_2_2_wsession/sections.mjs';
 
 const PROJECT_ID = (await import('#ncbr-settings')).projectId();
-const PROJECT_URL = `https://lsi2.ncbr.gov.pl/projekt/${PROJECT_ID}`;
+const PROJECT_URL = (await import('#ncbr-settings')).projectUrl();
 const BASE = `${PROJECT_URL}/projekt_step/`;
 const URLS = {
   1.3: (await import('#ncbr-settings')).sectionUrl('1_3'),
   2.2: (await import('#ncbr-settings')).sectionUrl('2_2'),
 };
-const OUT =
-  process.env.OUT ||
-  (await import('#ncbr-settings')).applicationFile(
-    'contacts_2_2_repair_evidence.json',
-  );
+const OUT = (await import('#ncbr-settings')).applicationFile(
+  'contacts_2_2_repair_evidence.json',
+);
 const email = process.env.NCBR_EMAIL;
 const password = process.env.NCBR_PASSWORD;
 if (!email || !password) {

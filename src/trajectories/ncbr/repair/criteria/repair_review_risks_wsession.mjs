@@ -9,7 +9,7 @@ import { riskRepairs } from './repair_review_risks_wsession/sections.mjs';
 import { task5 } from './repair_review_risks_wsession/text.mjs';
 
 const PROJECT_ID = (await import('#ncbr-settings')).projectId();
-const PROJECT_URL = `https://lsi2.ncbr.gov.pl/projekt/${PROJECT_ID}`;
+const PROJECT_URL = (await import('#ncbr-settings')).projectUrl();
 const BASE = `${PROJECT_URL}/projekt_step/`;
 const URL_41 = (await import('#ncbr-settings')).sectionUrl('4_1');
 const URL_61 = (await import('#ncbr-settings')).sectionUrl('6_1');

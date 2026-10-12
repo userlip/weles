@@ -11,7 +11,7 @@ const LABEL = 'ncbr_probe_6_5_collection_routes';
 const OUT_DIR = runRecordingsDir(LABEL);
 mkdirSync(OUT_DIR, { recursive: true });
 
-const BASE = 'https://lsi2.ncbr.gov.pl';
+const BASE = (await import('#ncbr-settings')).lsi2Origin();
 const VERSION_ID = (await import('#ncbr-settings')).projectVersionId();
 const SECTION_ID = (await import('#ncbr-settings')).sectionId('6_5');
 const COLLECTION = 'koszty_posrednie_kolekcja';

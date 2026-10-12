@@ -9,7 +9,7 @@ export const WELES = new URL(
 ).pathname.replace(/\/$/, '');
 export const PROJECT_ID = (await import('#ncbr-settings')).projectId();
 export const SECTION_URL = (await import('#ncbr-settings')).sectionUrl('2_2');
-export const PROJECT_URL = `https://lsi2.ncbr.gov.pl/projekt/${PROJECT_ID}`;
+export const PROJECT_URL = (await import('#ncbr-settings')).projectUrl();
 export const SRC = (await import('#ncbr-settings')).applicationFile(
   'wersja_B_2.2_innowacyjnosc_i_zaleznosci.md',
 );

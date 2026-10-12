@@ -1,4 +1,4 @@
-// Create a fresh draft in STEP Ścieżka B (FENG.05.01-IP.01-003/26) through LSI UI.
+// Create a fresh draft in the call named by NCBR_CALL through LSI UI.
 // DIAG=1 only lists matching call cards/buttons. Never submits or withdraws.
 
 import { chromium } from 'playwright';
@@ -13,8 +13,8 @@ import {
 } from '../../_shared/page/judged/seen.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
-const CALL = 'FENG.05.01-IP.01-003/26';
-const LIST_URL = 'https://lsi2.ncbr.gov.pl/konkursy/w-trakcie-naboru';
+const CALL = (await import('#ncbr-settings')).callNumber();
+const LIST_URL = `${(await import('#ncbr-settings')).lsi2Origin()}/konkursy/w-trakcie-naboru`;
 
 const browser = await chromium.connectOverCDP(endpoint);
 const page = browser.contexts()[0]?.pages()[0];

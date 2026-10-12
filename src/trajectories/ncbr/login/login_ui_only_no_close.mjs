@@ -22,7 +22,7 @@ const browser = await chromium.connectOverCDP(endpoint);
 const context = browser.contexts()[0] || (await browser.newContext());
 const page = context.pages()[0] || (await context.newPage());
 
-await page.goto('https://lsi2.ncbr.gov.pl/logowanie', {
+await page.goto(`${(await import('#ncbr-settings')).lsi2Origin()}/logowanie`, {
   waitUntil: 'domcontentloaded',
 }); // allow-raw-playwright: public LSI login page navigation
 await humanIdlePause('long');

@@ -93,7 +93,7 @@ if (!SECTION)
   throw new Error(
     'SECTION is required: a plan section label, a plan collection label or a registry entry; none is assumed',
   );
-const PLAN_FILE = process.env.NCBR_CORRECTION_PLAN_FILE || '';
+const PLAN_FILE = process.env.NCBR_CORRECTION_PLAN_FILE?.trim();
 // MODE=read compares live values with the plan and types nothing; MODE=apply
 // types them. Neither is assumed.
 const MODE = process.env.MODE;

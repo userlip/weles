@@ -118,7 +118,7 @@ try {
     await nav(PROJECT_URL);
     const meta = await read(`(async () => {
       async function fetchText(path) {
-        const res = await fetch('https://lsi2.ncbr.gov.pl' + path, { credentials: 'include', headers: { Accept: 'application/json' } });
+        const res = await fetch(${JSON.stringify((await import('#ncbr-settings')).lsi2Origin())} + path, { credentials: 'include', headers: { Accept: 'application/json' } });
         const text = await res.text();
         let data = null;
         try { data = JSON.parse(text); } catch {}

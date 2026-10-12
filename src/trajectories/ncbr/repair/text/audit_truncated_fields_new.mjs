@@ -6,9 +6,7 @@ import { pageSettled } from '../../../_shared/page/settled.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const projectId = (await import('#ncbr-settings')).projectId();
-const projectUrl = ['https://', `lsi2.ncbr.gov.pl/projekt/${projectId}`].join(
-  '',
-);
+const projectUrl = (await import('#ncbr-settings')).projectUrl();
 
 const browser = await chromium.connectOverCDP(endpoint);
 const page = browser.contexts()[0]?.pages()[0];
