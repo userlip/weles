@@ -123,7 +123,13 @@ export async function classifyGrid(
         console.log(
           `[recaptcha] captcha_nopecha_processing: grid job ${jobId} has no result yet`,
         );
-    } catch {}
+    } catch (error) {
+      // A rejected key or an unreachable service reads as "no answer" to the
+      // caller; the log says which it was.
+      console.log(
+        `[recaptcha] captcha_nopecha_failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     return null;
   }
   async function capsolverSolve(): Promise<number[] | null> {
@@ -148,7 +154,10 @@ export async function classifyGrid(
       return Array.isArray(d.solution?.objects)
         ? (d.solution.objects as number[]).map((i) => i + 1)
         : null;
-    } catch {
+    } catch (error) {
+      console.log(
+        `[recaptcha] captcha_capsolver_failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
