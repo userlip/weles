@@ -3,6 +3,9 @@ import { SessionStore } from '../../../dist/session/store.js';
 import { humanIdlePause } from '../../../dist/human/mouse.js';
 import { readScopedLogin } from '../../_shared/scoped-secrets.mjs';
 import { switchToTeam, vastTeamName } from './team_context.mjs';
+import { join } from 'node:path';
+import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 
 const LABEL = 'vast';
 const VAST_LOGIN = readScopedLogin('vastDashboard');
@@ -139,35 +142,33 @@ try {
     return { ok: true, raw, raw_len: raw.length, btn_label: copyBtn ? tidy(copyBtn.b.innerText || copyBtn.b.getAttribute('aria-label') || '') : null, btn_dist: copyBtn ? copyBtn.d : null, clipboard: clip };
   })()`);
   console.log('[vast] install block result ->', JSON.stringify(result));
+  // The run exists to read the host install command; a page without one is a
+  // failed run, not a finished one.
+  if (!result.ok)
+    throw new Error(
+      `the Vast host setup page shows no install command: ${result.reason}`,
+    );
 
-  await ws.page
-    .screenshot({ path: '/tmp/vast_install_cmd.png', fullPage: true })
-    .catch(() => {});
-  console.log('[vast] final screenshot -> /tmp/vast_install_cmd.png');
-  await ws.page
-    .screenshot({ path: '/tmp/vast_transcript.png', fullPage: true })
-    .catch(() => {});
-  console.log('[vast] screenshot -> /tmp/vast_transcript.png');
+  const shots = runRecordingsDir('vast_login');
+  await ws.page.screenshot({
+    path: join(shots, 'install_cmd.png'),
+    fullPage: true,
+  });
+  console.log(`[vast] screenshot -> ${join(shots, 'install_cmd.png')}`);
   await humanIdlePause('long');
 
-  const afterState = await ws.page.evaluate(`(() => {
-    var t = ((document.body?.innerText || '').match(/[^\\n]*(listed|success|error|fail|invalid|unauth)[^\\n]*/i) || [null])[0];
-    return { toast: t, url: location.href };
-  })()`);
+  const afterState = await ws.page.evaluate(() => ({
+    toast:
+      document.body.innerText.match(
+        /[^\n]*(listed|success|error|fail|invalid|unauth)[^\n]*/i,
+      )?.[0] ?? null,
+    url: location.href,
+  }));
   console.log('[vast] after state ->', JSON.stringify(afterState));
-
-  await ws.page
-    .screenshot({ path: '/tmp/vast_weles_final.png', fullPage: true })
-    .catch(() => {});
-  console.log('[vast] screenshot -> /tmp/vast_weles_final.png');
-
-  process.exit(0);
+  console.log('PASS: Vast install command read');
 } catch (e) {
   console.log(`FAIL: ${e.message}`);
-  await ws.page
-    .screenshot({ path: '/tmp/vast_weles_err.png', fullPage: true })
-    .catch(() => {});
-  process.exit(1);
+  process.exitCode = exitStatusFor(e);
 } finally {
   await ws.ctx.close?.().catch(() => {});
 }
