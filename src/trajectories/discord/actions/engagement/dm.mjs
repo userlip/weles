@@ -29,10 +29,12 @@ import { statedText } from '../../../_shared/inputs/stated.mjs';
 const RECIPIENT = statedText(
   ['RECIPIENT_HANDLE'],
   'the Discord username the DM goes to',
+  'DISCORD_DM_RECIPIENT_REQUIRED',
 ).replace(/^@/, '');
 const MESSAGE = statedText(
   ['DM_MESSAGE'],
   'the text sent from a real account to a real person',
+  'DISCORD_DM_MESSAGE_REQUIRED',
 );
 
 const acct = await getSocialAccount('discord');

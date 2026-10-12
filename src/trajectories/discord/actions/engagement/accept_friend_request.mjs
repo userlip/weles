@@ -33,6 +33,7 @@ const ACCT_USERNAME = process.env.ACCOUNT_USERNAME;
 const ACCEPT_LIMIT = statedCount(
   'ACCEPT_LIMIT',
   'how many pending friend requests are accepted',
+  'DISCORD_ACCEPT_LIMIT_INVALID',
 );
 
 const acct = ACCT_USERNAME

@@ -1,6 +1,8 @@
 // Values a run cannot know by itself (how many, how far, where on the page)
 // are stated by its caller in the environment. These readers refuse a missing
 // or malformed value by name, saying what it decides, instead of assuming one.
+// A trajectory that documents its own refusal code passes it as `code`: the
+// error then carries it as `code` and leads its message with it.
 
 function refuse(name, raw, shape, what) {
   return new Error(
@@ -8,12 +10,19 @@ function refuse(name, raw, shape, what) {
   );
 }
 
+function coded(error, code) {
+  if (!code) return error;
+  error.message = `${code}: ${error.message}`;
+  error.code = code;
+  return error;
+}
+
 /** A whole number above zero, stated in `name`. */
-export function statedCount(name, what) {
+export function statedCount(name, what, code) {
   const raw = process.env[name];
   const value = Number(raw);
   if (!raw || !Number.isSafeInteger(value) || !(value >= Number.MIN_VALUE)) {
-    throw refuse(name, raw, 'a whole number above zero', what);
+    throw coded(refuse(name, raw, 'a whole number above zero', what), code);
   }
   return value;
 }
@@ -38,11 +47,14 @@ export function statedNumber(name, what) {
 }
 
 /** Non-empty text from the first of `names` that is set (identifiers, ids). */
-export function statedText(names, what) {
+export function statedText(names, what, code) {
   const name = names.find((candidate) => process.env[candidate]?.trim());
   if (!name)
-    throw new Error(
-      `none of ${names.join(', ')} is set: ${what}; nothing is assumed`,
+    throw coded(
+      new Error(
+        `none of ${names.join(', ')} is set: ${what}; nothing is assumed`,
+      ),
+      code,
     );
   return process.env[name].trim();
 }
