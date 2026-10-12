@@ -113,9 +113,13 @@ export function createCredentialOperationService({
     running.set(record.request.request_id, { controller, promise });
   }
 
+  // The phases of a credential operation that has not finished: one in them
+  // with no executor here was interrupted.
+  const UNFINISHED = { queued: true, running: true };
+
   function reconcileExecutor(record) {
     if (
-      ['queued', 'running'].includes(record.phase) &&
+      Object.hasOwn(UNFINISHED, record.phase) &&
       !running.has(record.request.request_id)
     ) {
       settleFailure(
