@@ -79,7 +79,11 @@ try {
       });
       await humanIdlePause('deliberate');
       const url = s.page.url();
-      if (/\/(login|checkpoint|uas)/.test(url))
+      if (
+        ['/login', '/checkpoint', '/uas'].some((wall) =>
+          new URL(url).pathname.startsWith(wall),
+        )
+      )
         throw new AuthProbeError(`auth_wall: redirected to ${url}`);
     });
   } catch (gateErr) {

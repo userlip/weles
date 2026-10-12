@@ -92,7 +92,11 @@ try {
     waitUntil: 'domcontentloaded',
   });
   await humanIdlePause('deliberate');
-  if (/\/(login|checkpoint|uas)/.test(s.page.url())) {
+  if (
+    ['/login', '/checkpoint', '/uas'].some((wall) =>
+      new URL(s.page.url()).pathname.startsWith(wall),
+    )
+  ) {
     const error = new Error(`cookies stale, redirected to ${s.page.url()}`);
     await markCookiesStale(acct.id);
     throw error;
@@ -260,8 +264,7 @@ try {
       )
       .catch(() => []);
     console.log(`[li-profile] visible buttons (${btnDump.length}):`);
-    for (const b of btnDump.filter((s) => /save|cancel|discard/i.test(s)))
-      console.log(`  ${b}`);
+    for (const b of btnDump) console.log(`  ${b}`);
     // 2026 modal: multiple "Save" buttons may be in the DOM (cancel-state,
     // save-state). Target the visible enabled one. LinkedIn disables Save
     // until the form sees a real change event from a typed input.

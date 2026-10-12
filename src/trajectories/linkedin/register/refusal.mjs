@@ -123,34 +123,38 @@ export async function inspectCreateAccountChallenge(session, challengeUrl) {
     out.error = String(e?.message ?? e);
     out.url = session.page.url?.() ?? '';
   }
-  const haystack = [
-    out.challenge_url,
-    out.url,
-    out.title,
-    out.page_key,
-    out.body_text_sample,
-    ...(out.inputs || []).flatMap((i) => [
-      i.id,
-      i.name,
-      i.type,
-      i.autocomplete,
-    ]),
-    ...(out.buttons || []).flatMap((b) => [b.text, b.href]),
-    ...(out.iframes || []).flatMap((f) => [f.id, f.name, f.title, f.src]),
-  ].join(' ');
+  // The kind of challenge is read from what LinkedIn put on the page: a phone
+  // or one-time-code field, a captcha provider's frame, or its checkpoint
+  // route and challenge frame.
+  const inputs = Array.isArray(out.inputs) ? out.inputs : [];
+  const frames = Array.isArray(out.iframes)
+    ? out.iframes.filter((frame) => frame.visible)
+    : [];
+  const CAPTCHA_FRAMES = [
+    'google.com/recaptcha',
+    'recaptcha.net',
+    'arkoselabs.com',
+    'funcaptcha.com',
+    'hcaptcha.com',
+  ];
   if (
-    /Phone Verification|phone verification|verify (your )?phone|phone number|verification code|one-time code/i.test(
-      haystack,
+    inputs.some(
+      (input) => input.type === 'tel' || input.autocomplete === 'one-time-code',
     )
   ) {
     out.kind = 'phone_verification';
   } else if (
-    /Security verification|quick security check|captcha|recaptcha|arkose|funcaptcha|verify you are human|unusual activity/i.test(
-      haystack,
+    frames.some((frame) =>
+      CAPTCHA_FRAMES.some((provider) => String(frame.src).includes(provider)),
     )
   ) {
     out.kind = 'captcha_gauntlet';
-  } else if (/checkpoint|challengeIframe|challenge/i.test(haystack)) {
+  } else if (
+    [out.challenge_url, out.url].some((url) =>
+      String(url).includes('/checkpoint'),
+    ) ||
+    frames.some((frame) => String(frame.src).includes('challengeIframe'))
+  ) {
     out.kind = 'checkpoint_challenge';
   }
   await writeSubmitDiagnostics('create_account_challenge_diagnostics', out);

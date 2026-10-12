@@ -4,15 +4,14 @@
 // that only an asserted identity is allowed to reach.
 //
 // Reading a screen and waiting for a control are evidence here, not decoration.
-// Every read that did not happen therefore has a name of its own -
-// PAGE_TEXT_UNREADABLE, or a false from a wait that never proved the control -
-// and each caller branches on that name instead of on an empty string that would
-// read like a screen which said nothing.
+// The screens are read by the vision model (`sign_in/surfaces.mjs`), and a
+// judgement it could not give is an answer of its own carrying the reason, so
+// each caller branches on that instead of on a screen that seemed to say nothing.
 //
 // Moved out of entra_password_lifecycle.mjs, which keeps the three trajectory
 // entry points.
 
-import { humanFill, humanType } from '../../../../dist/human/keyboard.js';
+import { humanFill } from '../../../../dist/human/keyboard.js';
 import {
   humanClickLocator,
   humanIdlePause,
@@ -23,53 +22,19 @@ import { persistFreshCookieJar } from '../../_shared/auth/cookie-freshness.mjs';
 import { commitPassword, outcome } from './answer_and_custody.mjs';
 import { assertEntraIdentity } from './proven_identity.mjs';
 import {
+  answerStaySignedIn,
+  appears,
+  choosePasswordSignIn,
+  IDENTITY_CHALLENGE,
+  judged,
+  visible,
+} from './sign_in/surfaces.mjs';
+import {
   AUTHORIZED_CONTEXT_HOST,
   AUTHORIZED_CONTEXT_URL,
   AUTHORIZED_CONTEXT_URL_PATTERN,
   updateAccountReference,
 } from './queued_job.mjs';
-
-export const IDENTITY_CHALLENGE =
-  /verify your identity|get a code|approve (?:a )?sign.?in|enter.{0,20}code|passkey|security key|authenticator app|text my mobile|call my (?:mobile|office)|verification (?:step|method)/i;
-const PASSWORD_REJECTED =
-  /your account or password is incorrect|password is incorrect|wrong password|password is invalid/i;
-const USERNAME_UNKNOWN =
-  /isn.t in our system|couldn.t find your account|try entering your details again/i;
-export const PAGE_TEXT_UNREADABLE = 'page_text_unreadable';
-export const IDENTITY_CHALLENGE_PRESENT = 'identity_challenge_present';
-const IDENTITY_CHALLENGE_ABSENT = 'identity_challenge_absent';
-const STAY_SIGNED_IN_SETTLED = 'stay_signed_in_settled';
-
-export async function visible(locator) {
-  const count = await locator.count().catch(() => 0);
-  return (
-    count > 0 &&
-    locator
-      .first()
-      .isVisible()
-      .catch(() => false)
-  );
-}
-
-// Whether the control shows once its page has settled; a missing control is
-// an answer the caller names, not an error the caller never hears about.
-export async function appears(locator) {
-  await pageSettled(locator.page());
-  return visible(locator);
-}
-
-// The rendered text of a Microsoft screen is what every verdict below is read
-// from, so a text this run never got is its own answer carrying the reason.
-export async function pageText(page) {
-  try {
-    return { ok: true, text: await page.locator('body').innerText() };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `the page text could not be read: ${error.message}`,
-    };
-  }
-}
 
 async function controlValue(locator) {
   try {
@@ -103,119 +68,6 @@ async function fillVerified(page, locator, value) {
     throw new Error(
       `a typed sign-in value could not be verified: ${readback.reason}`,
     );
-  }
-}
-
-// 'identity_challenge_present' | 'identity_challenge_absent' | 'page_text_unreadable'
-export async function identityChallengeState(page) {
-  const body = await pageText(page);
-  if (!body.ok) return PAGE_TEXT_UNREADABLE;
-  return IDENTITY_CHALLENGE.test(body.text)
-    ? IDENTITY_CHALLENGE_PRESENT
-    : IDENTITY_CHALLENGE_ABSENT;
-}
-
-// 'stay_signed_in_settled' | 'page_text_unreadable'
-async function dismissStaySignedIn(page) {
-  const body = await pageText(page);
-  if (!body.ok) return PAGE_TEXT_UNREADABLE;
-  if (!/stay signed in/i.test(body.text)) return STAY_SIGNED_IN_SETTLED;
-  const decline = page.getByRole('button', { name: /^No$/i }).first();
-  if (await visible(decline)) {
-    await humanClickLocator(page, decline);
-    await humanIdlePause('long');
-  }
-  return STAY_SIGNED_IN_SETTLED;
-}
-
-// Walks the converged sign-in surfaces until the password credential is
-// chosen. The passkey-first page cancels into an error surface whose
-// "Other ways to sign in" carries the password tile; the bare "Sign-in
-// options" chooser (passkey + organization) does not, so it is backed out of
-// and the email is resubmitted for another pass at the error surface.
-// The second pass is part of the walk, so the error surface may come twice;
-// taking the same step from the same surface a second time means the walk
-// goes round in a circle, and that is the error, named with the steps taken.
-async function choosePasswordSignIn(page) {
-  const taken = [];
-  let from = 'start';
-  const step = (surface) => {
-    const move = `${from} -> ${surface} (${page.url()})`;
-    if (taken.includes(move)) {
-      throw new Error(
-        `Microsoft sign-in repeated the step ${move} without offering the password; steps: ${taken.join(', ')}`,
-      );
-    }
-    taken.push(move);
-    from = surface;
-  };
-  for (;;) {
-    const passwordInput = page
-      .locator('input[name="passwd"], input#i0118, input[type="password"]')
-      .first();
-    if (await visible(passwordInput)) return;
-    const passwordChoice = page.getByText(/^Use (?:your )?password$/i).first();
-    if (await visible(passwordChoice)) {
-      await humanClickLocator(page, passwordChoice);
-      await pageSettled(page);
-      return;
-    }
-    const passkeyFailed = page
-      .getByText(/couldn.t sign you in with your passkey|something went wrong/i)
-      .first();
-    const passkeyPage = page
-      .getByText(
-        /Face, fingerprint, PIN or security key|device will open a security window/i,
-      )
-      .first();
-    const bareChooser = page.getByText(/Sign in to an organization/i).first();
-    const emailInput = page
-      .locator('input[name="loginfmt"], input#i0116, input[type="email"]')
-      .first();
-    if (await visible(passkeyFailed)) {
-      step('passkey error surface');
-      const otherWays = page
-        .getByText(/Other ways to sign in|Use another way/i)
-        .first();
-      if (await visible(otherWays)) {
-        await humanClickLocator(page, otherWays);
-        await pageSettled(page);
-        continue;
-      }
-    }
-    if (await visible(passkeyPage)) {
-      step('passkey page');
-      await page.keyboard.press('Escape');
-      await pageSettled(page);
-      continue;
-    }
-    if (await visible(bareChooser)) {
-      step('sign-in options chooser');
-      const back = page
-        .locator('#idBtn_Back, button[aria-label="Back"]')
-        .first();
-      if (!(await visible(back))) return;
-      await humanClickLocator(page, back);
-      await pageSettled(page);
-      continue;
-    }
-    if (await visible(emailInput)) {
-      step('email page');
-      const next = page
-        .locator('input[type="submit"]#idSIButton9, button[type="submit"]')
-        .first();
-      if (!(await visible(next))) return;
-      await humanClickLocator(page, next);
-      await pageSettled(page);
-      continue;
-    }
-    const otherWays = page
-      .getByText(/Other ways to sign in|Use another way/i)
-      .first();
-    if (!(await visible(otherWays))) return;
-    step('other-ways link');
-    await humanClickLocator(page, otherWays);
-    await pageSettled(page);
   }
 }
 
@@ -264,15 +116,19 @@ export async function signIn(session, contract, password) {
       .first(),
   );
   await humanIdlePause('deliberate');
-  const named = await pageText(page);
-  if (!named.ok) return 'unavailable';
-  if (USERNAME_UNKNOWN.test(named.text)) return 'account_unknown';
+  const unknown = await judged(
+    page,
+    'Does the page say this account does not exist or could not be found?',
+  );
+  if (!unknown.ok) return 'unavailable';
+  if (unknown.shows) return 'account_unknown';
   await choosePasswordSignIn(page);
   const passwordInput = page
     .locator('input[name="passwd"], input#i0118, input[type="password"]')
     .first();
   if (!(await appears(passwordInput)) || !(await visible(passwordInput))) {
-    return (await identityChallengeState(page)) === IDENTITY_CHALLENGE_PRESENT
+    const challenged = await judged(page, IDENTITY_CHALLENGE);
+    return challenged.ok && challenged.shows
       ? 'identity_challenge'
       : 'unavailable';
   }
@@ -284,22 +140,20 @@ export async function signIn(session, contract, password) {
       .first(),
   );
   await humanIdlePause('long');
-  const answered = await pageText(page);
-  if (!answered.ok) return 'unavailable';
-  if (PASSWORD_REJECTED.test(answered.text)) return 'rejected';
+  // A refused password leaves Microsoft's password field on screen.
   if (await visible(page.locator('input[name="passwd"], input#i0118')))
     return 'rejected';
-  if ((await dismissStaySignedIn(page)) === PAGE_TEXT_UNREADABLE)
-    return 'unavailable';
-  const challenged = await identityChallengeState(page);
-  if (challenged === IDENTITY_CHALLENGE_PRESENT) return 'identity_challenge';
-  if (challenged === PAGE_TEXT_UNREADABLE) return 'unavailable';
+  if (!(await answerStaySignedIn(page)).ok) return 'unavailable';
+  const challenged = await judged(page, IDENTITY_CHALLENGE);
+  if (!challenged.ok) return 'unavailable';
+  if (challenged.shows) return 'identity_challenge';
   await pageSettled(page);
   if (
     !AUTHORIZED_CONTEXT_URL_PATTERN.test(page.url()) ||
     !AUTHORIZED_CONTEXT_HOST.test(new URL(page.url()).hostname)
   ) {
-    return (await identityChallengeState(page)) === IDENTITY_CHALLENGE_PRESENT
+    const afterwards = await judged(page, IDENTITY_CHALLENGE);
+    return afterwards.ok && afterwards.shows
       ? 'identity_challenge'
       : 'unavailable';
   }

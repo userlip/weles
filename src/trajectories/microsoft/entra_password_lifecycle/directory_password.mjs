@@ -3,9 +3,9 @@
 // with the compensating restore of the previous value and what that restore
 // leaves the provider in.
 //
-// A screen this run could not read never counts as a screen that confirmed or
-// refused anything: it answers 'unavailable' where nothing was submitted yet,
-// and 'ambiguous' where a password had already been sent to the directory.
+// A screen the vision model could not judge never counts as a screen that
+// confirmed or refused anything: it answers 'unavailable' where nothing was
+// submitted yet, and 'ambiguous' where a password had already been sent.
 //
 // Moved out of entra_password_lifecycle.mjs, which keeps the three trajectory
 // entry points.
@@ -15,28 +15,20 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 
+import { fill, signIn } from './authorized_session.mjs';
 import {
   appears,
-  fill,
   IDENTITY_CHALLENGE,
-  IDENTITY_CHALLENGE_PRESENT,
-  identityChallengeState,
-  PAGE_TEXT_UNREADABLE,
-  pageText,
-  signIn,
+  judged,
   visible,
-} from './authorized_session.mjs';
+} from './sign_in/surfaces.mjs';
 import { assertEntraIdentity } from './proven_identity.mjs';
 import { CHANGE_PASSWORD_URL, SELF_SERVICE_RESET_URL } from './queued_job.mjs';
 
 const CHANGE_CONFIRMED =
-  /password (?:has been |was )?(?:changed|updated)|password change (?:was )?successful|you (?:have )?(?:successfully )?changed your password/i;
+  'Does the page confirm the password was changed or reset?';
 const CHANGE_REJECTED =
-  /(?:current|old) password (?:is )?(?:incorrect|wrong)|(?:doesn.t|does not) meet|couldn.t (?:be )?chang|password (?:is )?(?:incorrect|invalid)|try again/i;
-const RESET_VERIFICATION =
-  /verification step|email my alternate email|text my mobile phone|call my (?:mobile|office) phone|approve a notification|enter a code from my authenticator|enter the characters (?:in|you see)|security check/i;
-const RESET_NOT_ELIGIBLE =
-  /we couldn.t verify (?:the |your )?account|account (?:was )?not found|contact your administrator|self-service password reset (?:is )?(?:not|isn.t) (?:enabled|available)/i;
+  'Does the page say the password was not changed (a wrong current password, a password that does not meet the rules, or an error)?';
 
 // 'changed' | 'rejected' | 'ambiguous' | 'challenged' | 'unavailable'
 export async function changeEntraPassword(
@@ -47,9 +39,9 @@ export async function changeEntraPassword(
   const page = session.page;
   await page.goto(CHANGE_PASSWORD_URL, { waitUntil: 'domcontentloaded' });
   await humanIdlePause('long');
-  const challenged = await identityChallengeState(page);
-  if (challenged === IDENTITY_CHALLENGE_PRESENT) return 'challenged';
-  if (challenged === PAGE_TEXT_UNREADABLE) return 'unavailable';
+  const challenged = await judged(page, IDENTITY_CHALLENGE);
+  if (!challenged.ok) return 'unavailable';
+  if (challenged.shows) return 'challenged';
   const passwordInputs = page.locator('input[type="password"]');
   const rendered = await appears(passwordInputs.first());
   const count = await passwordInputs.count().catch(() => 0);
@@ -62,10 +54,12 @@ export async function changeEntraPassword(
     page.locator('input[type="submit"], button[type="submit"]').first(),
   );
   await humanIdlePause('long');
-  const answered = await pageText(page);
-  if (!answered.ok) return 'ambiguous';
-  if (CHANGE_CONFIRMED.test(answered.text)) return 'changed';
-  if (CHANGE_REJECTED.test(answered.text)) return 'rejected';
+  const confirmed = await judged(page, CHANGE_CONFIRMED);
+  if (!confirmed.ok) return 'ambiguous';
+  if (confirmed.shows) return 'changed';
+  const refused = await judged(page, CHANGE_REJECTED);
+  if (!refused.ok) return 'ambiguous';
+  if (refused.shows) return 'rejected';
   return (await visible(page.locator('input[type="password"]')))
     ? 'rejected'
     : 'ambiguous';
@@ -73,9 +67,10 @@ export async function changeEntraPassword(
 
 // 'none' | 'completed' | 'failed' | 'unknown'
 //
-// 'failed' is the known-state refusal: the restore never reached the directory,
-// so it still holds the value this run wrote. Everything the restore leaves
-// unproven is 'unknown'.
+// 'failed' is the known-state refusal: the restore never changed the directory
+// (refused, or never submitted), so it still holds the value this run wrote. A
+// restore whose outcome is ambiguous, and everything after it left unproven,
+// is 'unknown'.
 export async function rollbackEntraPassword(
   session,
   contract,
@@ -92,8 +87,8 @@ export async function rollbackEntraPassword(
     changedPassword,
     previousPassword,
   );
-  if (restored === 'rejected' || restored === 'unavailable') return 'failed';
-  if (restored !== 'changed') return 'unknown';
+  if (restored === 'ambiguous') return 'unknown';
+  if (restored !== 'changed') return 'failed';
   const reauthenticated = await signIn(session, contract, previousPassword);
   if (reauthenticated !== 'authenticated') return 'unknown';
   const restoredIdentity = await assertEntraIdentity(session, contract, sink);
@@ -122,28 +117,21 @@ export async function openSelfServiceReset(session, contract) {
     .first();
   if ((await appears(userInput)) && (await visible(userInput))) {
     await fill(page, userInput, contract.accountUpn);
-    const proceed = page
-      .getByRole('button', { name: /Next|Continue|Submit/i })
-      .first();
-    if (await visible(proceed)) {
-      await humanClickLocator(page, proceed);
-    } else {
-      await humanClickLocator(
-        page,
-        page.locator('input[type="submit"], button[type="submit"]').first(),
-      );
-    }
+    await userInput.press('Enter');
     await humanIdlePause('long');
   }
-  const answered = await pageText(page);
-  if (!answered.ok) return 'unavailable';
-  if (RESET_NOT_ELIGIBLE.test(answered.text)) return 'not_eligible';
-  if (
-    RESET_VERIFICATION.test(answered.text) ||
-    IDENTITY_CHALLENGE.test(answered.text)
-  ) {
-    return 'identity_verification_required';
-  }
+  const ineligible = await judged(
+    page,
+    'Does the page say this account cannot reset its password here (account not found, or the administrator must be contacted)?',
+  );
+  if (!ineligible.ok) return 'unavailable';
+  if (ineligible.shows) return 'not_eligible';
+  const verification = await judged(
+    page,
+    'Does the page ask for a verification step before the password can be reset (a code, a phone, an alternate email, an authenticator, or characters from a picture)?',
+  );
+  if (!verification.ok) return 'unavailable';
+  if (verification.shows) return 'identity_verification_required';
   const captcha = page
     .locator(
       'iframe[src*="recaptcha"], iframe[title*="captcha" i], #wCaptchaDiv',
@@ -167,14 +155,12 @@ export async function submitResetPasswordForm(session, nextPassword) {
     page.locator('input[type="submit"], button[type="submit"]').first(),
   );
   await humanIdlePause('long');
-  const answered = await pageText(page);
-  if (!answered.ok) return 'ambiguous';
-  if (
-    CHANGE_CONFIRMED.test(answered.text) ||
-    /your password has been reset/i.test(answered.text)
-  )
-    return 'changed';
-  if (CHANGE_REJECTED.test(answered.text)) return 'rejected';
+  const confirmed = await judged(page, CHANGE_CONFIRMED);
+  if (!confirmed.ok) return 'ambiguous';
+  if (confirmed.shows) return 'changed';
+  const refused = await judged(page, CHANGE_REJECTED);
+  if (!refused.ok) return 'ambiguous';
+  if (refused.shows) return 'rejected';
   return (await visible(page.locator('input[type="password"]')))
     ? 'rejected'
     : 'ambiguous';

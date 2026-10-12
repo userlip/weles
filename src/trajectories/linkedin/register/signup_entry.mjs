@@ -131,7 +131,12 @@ export async function enterLinkedinSignup(session, entryUrl) {
                   el.getClientRects().length
                 ),
               }))
-              .filter((el) => /^(sign up|join now)$/i.test(el.text)),
+              .filter(
+                (el) =>
+                  ['/signup', '/join'].some((route) =>
+                    el.href.includes(route),
+                  ) || String(el.trk).includes('signup'),
+              ),
           };
         }, stage)
         .catch((e) => ({

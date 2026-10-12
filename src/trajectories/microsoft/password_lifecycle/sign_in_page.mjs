@@ -11,10 +11,10 @@ import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { clickOffered, pageShows } from '../../_shared/page/judged/seen.mjs';
 import {
   CODE_FILE_MODE,
   CODE_FILE_MODE_MASK,
-  IDENTITY_CHALLENGE,
   LOGIN_HOSTS,
   SECOND_PASSWORD_INPUT,
 } from './constants.mjs';
@@ -70,12 +70,12 @@ export async function fill(page, locator, value) {
 
 /** Leave a passkey prompt for the password sign-in, on the login origin only. */
 export async function choosePasswordSignIn(page, selectPassword = true) {
-  const passkeyPage = page
-    .getByText(
-      /Face, fingerprint, PIN or security key|device will open a security window/i,
+  if (
+    await pageShows(
+      page,
+      'Does the page ask to sign in with a passkey (face, fingerprint, PIN or security key)?',
     )
-    .first();
-  if (await visible(passkeyPage)) {
+  ) {
     await press(page, 'Escape');
     await pageSettled(page);
     const resume = await pageConfig(
@@ -102,26 +102,22 @@ export async function choosePasswordSignIn(page, selectPassword = true) {
       }
     }
   }
-  const otherWays = page
-    .getByText(/Other ways to sign in|Sign-in options|Use another way/i)
-    .first();
-  if (await visible(otherWays)) {
-    await humanClickLocator(page, otherWays);
+  if (await clickOffered(page, 'the control that shows other ways to sign in'))
     await pageSettled(page);
-  }
-  if (selectPassword) {
-    const passwordChoice = page
-      .getByText(/Use (?:your )?password|Password/i)
-      .first();
-    if (await visible(passwordChoice)) {
-      await humanClickLocator(page, passwordChoice);
-      await pageSettled(page);
-    }
-  }
+  if (
+    selectPassword &&
+    (await clickOffered(page, 'the option to sign in with a password'))
+  )
+    await pageSettled(page);
 }
 
-export async function hasIdentityChallenge(page) {
-  return IDENTITY_CHALLENGE.test(await bodyText(page));
+// Whether Microsoft asks the person to prove who they are (a code, an
+// approval, a passkey), as the vision model reads the page in its language.
+export function hasIdentityChallenge(page) {
+  return pageShows(
+    page,
+    'Does the page ask to verify identity with a code, an approval on another device, a passkey or a security key?',
+  );
 }
 
 /**
@@ -189,12 +185,14 @@ async function findPasswordPage(page) {
   for (const candidate of pages) {
     if (/account\.live\.com\/password\/Change/i.test(candidate.url()))
       statePage = candidate;
-    if (/stay signed in/i.test(await bodyText(candidate))) {
-      const no = candidate.getByRole('button', { name: /^No$/i }).first();
-      if (await visible(no)) {
-        await humanClickLocator(candidate, no);
-        await pageSettled(candidate);
-      }
+    if (
+      await pageShows(candidate, 'Does the page ask whether to stay signed in?')
+    ) {
+      await clickOffered(
+        candidate,
+        'the button that declines staying signed in',
+      );
+      await pageSettled(candidate);
     }
     if (
       await visible(
@@ -214,81 +212,52 @@ async function findPasswordPage(page) {
  * when the challenge could not be completed).
  */
 export async function completeEmailIdentityChallenge(page, email) {
-  let sendEmail = page
-    .getByRole('group', {
-      name: new RegExp(
-        `Send a code to ${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
-        'i',
-      ),
-    })
-    .first();
-  if (!(await visible(sendEmail))) {
-    const otherOption = page
-      .getByText(
-        /Use a different verification option|Other ways to verify|Use another way/i,
-      )
-      .first();
-    if (await visible(otherOption)) {
-      await humanClickLocator(page, otherOption);
-      await pageSettled(page);
-    }
-    sendEmail = page.getByLabel(/Email.*@/i).last();
-    if (!(await visible(sendEmail))) {
-      sendEmail = page.getByText(/Email.*@|Send a code to.*@/i).last();
-    }
-  }
-  if (!(await visible(sendEmail))) return false;
-  await humanClickLocator(page, sendEmail);
-  const requestCode = page
-    .getByRole('button', { name: /Get code|Send code|Next/i })
-    .first();
-  if (await visible(requestCode)) {
-    await humanClickLocator(page, requestCode);
-  }
+  const emailOption = `the option to send a verification code to the email address ${email} (possibly shown partly masked)`;
+  if (
+    !(await pageShows(page, `Does the page show ${emailOption}?`)) &&
+    (await clickOffered(
+      page,
+      'the control that shows other ways to verify identity',
+    ))
+  )
+    await pageSettled(page);
+  if (!(await clickOffered(page, emailOption))) return false;
+  await clickOffered(page, 'the button that sends the verification code');
   await pageSettled(page);
 
-  let body = await bodyText(page);
   let visibleInput = page
     .locator(
       'input:not([type="hidden"]):not([type="submit"]):not([type="button"])',
     )
     .first();
   if (
-    /enter.{0,40}(email|address)|confirm.{0,40}(email|address)|matches the email address|email address on your account/i.test(
-      body,
-    ) &&
-    (await visible(visibleInput))
+    (await visible(visibleInput)) &&
+    (await pageShows(
+      page,
+      'Does the page ask to type the full email address to confirm it before the code is sent?',
+    ))
   ) {
     await fill(page, visibleInput, email);
-    const send = page
-      .getByRole('button', { name: /Next|Send code|Send/i })
-      .first();
-    if (!(await visible(send))) return false;
-    await humanClickLocator(page, send);
+    await visibleInput.press('Enter');
     await pageSettled(page);
   }
 
-  body = await bodyText(page);
-  if (!/code/i.test(body)) return false;
   visibleInput = page.locator(CODE_INPUT).first();
   if (!(await visible(visibleInput))) return false;
   const code = await waitForVerificationCode();
   if (!code) return false;
   visibleInput = page.locator(CODE_INPUT).first();
   await fill(page, visibleInput, code);
-  const verify = page
-    .getByRole('button', { name: /Verify|Next|Submit|Continue/i })
-    .first();
-  if (!(await visible(verify))) return false;
-  await humanClickLocator(page, verify);
+  await visibleInput.press('Enter');
   const { passwordPage, statePage } = await findPasswordPage(page);
   const passwordReady = Boolean(passwordPage);
   const resultBody = await bodyText(statePage);
   if (
     !passwordReady &&
-    /code.{0,40}(incorrect|invalid|expired|didn.t work)|wrong.{0,20}code/i.test(
-      resultBody,
-    )
+    (await pageShows(
+      statePage,
+      'Does the page say the verification code is wrong, invalid or expired?',
+    ))
   ) {
     throw new Error('Microsoft email verification code was rejected');
   }

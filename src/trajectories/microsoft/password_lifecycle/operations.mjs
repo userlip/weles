@@ -3,14 +3,9 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { clickOffered, pageShows } from '../../_shared/page/judged/seen.mjs';
+import { LOGIN_HOSTS, LOGIN_URL, PASSWORD_CHANGE_URL } from './constants.mjs';
 import {
-  IDENTITY_CHALLENGE,
-  LOGIN_HOSTS,
-  LOGIN_URL,
-  PASSWORD_CHANGE_URL,
-} from './constants.mjs';
-import {
-  bodyText,
   choosePasswordSignIn,
   completeEmailIdentityChallenge,
   fill,
@@ -52,15 +47,16 @@ export async function verifyPassword(session, email, password) {
   const submit = session.page.locator(SUBMIT).first();
   await humanClickLocator(session.page, submit);
   await humanIdlePause('long');
-  const body = await bodyText(session.page);
-  if (/incorrect|wrong password|password is invalid|try again/i.test(body))
-    return false;
+  // A refused password leaves Microsoft's password field on screen.
   if (await visible(session.page.locator('input[name="passwd"], input#i0118')))
     return false;
-  if (IDENTITY_CHALLENGE.test(body)) return true;
+  if (await hasIdentityChallenge(session.page)) return true;
   return (
-    /stay signed in/i.test(body) ||
-    !/login\.live\.com\/login/i.test(session.page.url())
+    !/login\.live\.com\/login/i.test(session.page.url()) ||
+    (await pageShows(
+      session.page,
+      'Does the page ask whether to stay signed in?',
+    ))
   );
 }
 
@@ -86,12 +82,8 @@ async function openRecovery(page, email) {
       '',
   );
   if (!resetUrl) {
-    const forgotPassword = page
-      .getByText(/Forgot password|Reset password/i)
-      .first();
     await pageSettled(page);
-    if (await visible(forgotPassword)) {
-      await humanClickLocator(page, forgotPassword);
+    if (await clickOffered(page, 'the link for a forgotten password')) {
       await humanIdlePause('long');
     }
     return;
@@ -112,7 +104,6 @@ async function openRecovery(page, email) {
       .catch(noteAbsent('passkey back control'));
     await humanIdlePause('long');
   }
-  const recoveryBody = await bodyText(page);
   const resumeUrl = await pageConfig(
     page,
     () =>
@@ -122,7 +113,13 @@ async function openRecovery(page, email) {
       globalThis.ServerData?.urlResume ??
       '',
   );
-  if (/security window|try again/i.test(recoveryBody) && resumeUrl) {
+  if (
+    resumeUrl &&
+    (await pageShows(
+      page,
+      'Does the page say the recovery cannot continue now (a security waiting period) and offer to try again?',
+    ))
+  ) {
     const resumeTarget = new URL(resumeUrl, page.url());
     if (!LOGIN_HOSTS.includes(resumeTarget.hostname)) {
       throw new Error('Microsoft recovery resume URL escaped the login origin');
@@ -139,15 +136,7 @@ async function openRecovery(page, email) {
   await pageSettled(page);
   if (await visible(recoveryEmail)) {
     await fill(page, recoveryEmail, email);
-    const recoveryNext = page.getByRole('button', { name: /^Next$/i }).first();
-    if (await visible(recoveryNext)) {
-      await humanClickLocator(page, recoveryNext);
-    } else {
-      await humanClickLocator(
-        page,
-        page.locator('input[type="submit"]').first(),
-      );
-    }
+    await recoveryEmail.press('Enter');
     await humanIdlePause('long');
   }
 }
@@ -218,12 +207,17 @@ export async function changePassword(
   }
 
   await humanIdlePause('long');
-  const body = await bodyText(page);
-  if (/couldn.t change|try again|incorrect|error/i.test(body))
+  if (
+    (await visible(page.locator('input[aria-invalid="true"]'))) ||
+    (await pageShows(
+      page,
+      'Does the page say the password could not be changed?',
+    ))
+  )
     return 'rejected';
-  return /password.{0,40}(changed|updated|success)/i.test(body) ||
-    /account\.microsoft\.com\/security/i.test(page.url()) ||
-    !(await visible(page.locator('input#iPassword, input[type="password"]')))
+  return /account\.microsoft\.com\/security/i.test(page.url()) ||
+    !(await visible(page.locator('input#iPassword, input[type="password"]'))) ||
+    (await pageShows(page, 'Does the page confirm the password was changed?'))
     ? 'changed'
     : 'ambiguous';
 }
