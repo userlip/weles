@@ -40,10 +40,7 @@ try {
     .first()
     .click();
   const ok = await googleSso(s, login, { originHost: 'anti-captcha.com' });
-  if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
-    process.exit(1);
-  }
+  if (!ok) throw new Error('Google SSO did not complete');
 
   await humanIdlePause('deliberate');
   await s.page.goto('https://anti-captcha.com/clients/finance/refill', {
@@ -69,10 +66,8 @@ try {
     .locator(`button:has-text("$${amount}"), div:has-text("$${amount}")`)
     .filter({ visible: true })
     .first();
-  if (!(await amountBtn.isVisible().catch(() => false))) {
-    console.log(`FAIL: amount button $${amount} not found`);
-    process.exit(1);
-  }
+  if (!(await amountBtn.isVisible().catch(() => false)))
+    throw new Error(`amount button $${amount} not found`);
   console.log(`[trajectory] found amount button $${amount}`);
 
   // CONFIRM: Click amount to redirect to Stripe checkout

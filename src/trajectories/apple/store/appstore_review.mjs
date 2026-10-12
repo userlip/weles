@@ -100,10 +100,8 @@ try {
     )
     .first();
   const box = await starLocator.boundingBox();
-  if (!box) {
-    console.log(`FAIL: rating radio has no bounding box for RATING=${RATING}`);
-    process.exit(1);
-  }
+  if (!box)
+    throw new Error(`rating radio has no bounding box for RATING=${RATING}`);
   await humanClick(
     s.page,
     Math.round(box.x + box.width / 2),

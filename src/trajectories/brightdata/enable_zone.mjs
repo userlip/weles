@@ -32,10 +32,7 @@ try {
     .first()
     .click();
   const ok = await googleSso(s, login, { originHost: 'brightdata.com' });
-  if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
-    process.exit(1);
-  }
+  if (!ok) throw new Error('Google SSO did not complete');
   await humanIdlePause('deliberate');
 
   // Skip onboarding modal.

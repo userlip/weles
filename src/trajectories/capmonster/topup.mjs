@@ -32,10 +32,7 @@ try {
     .first()
     .click();
   const ok = await googleSso(s, login, { originHost: 'capmonster.cloud' });
-  if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
-    process.exit(1);
-  }
+  if (!ok) throw new Error('Google SSO did not complete');
 
   await humanIdlePause('long');
   // The pay button is looked for on whatever page is open; a top-up that
@@ -60,10 +57,7 @@ try {
 
   // CONFIRM: Find and click the pay/checkout button
   const clicked = await findAndClickPayButton(s.page);
-  if (!clicked) {
-    console.log('FAIL: could not find pay/checkout button');
-    process.exit(1);
-  }
+  if (!clicked) throw new Error('could not find pay/checkout button');
   await humanIdlePause('long');
   console.log(`PASS-CHARGED: checkout initiated, url=${s.page.url()}`);
 } catch (e) {

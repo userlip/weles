@@ -201,10 +201,7 @@ try {
       }
     }
   }
-  if (changes.length === 0) {
-    console.log('FAIL: no fields successfully updated');
-    process.exit(1);
-  }
+  if (changes.length === 0) throw new Error('no fields successfully updated');
 
   if (!acct.id) throw new Error('Discord account has no stable Skarbiec id');
   updateAccountMetadata(acct.id, {
