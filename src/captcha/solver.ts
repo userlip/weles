@@ -12,6 +12,10 @@ import {
   type ProxyCredentials,
 } from './providers/api.js';
 import { solveFuncaptchaToken } from './providers/funcaptcha.js';
+import {
+  solveHcaptchaToken,
+  type HcaptchaOptions,
+} from './providers/hcaptcha.js';
 import { solvePerimeterXCookies } from './providers/perimeterx.js';
 import {
   solveRecaptchaV2Token,
@@ -208,105 +212,14 @@ export class CaptchaSolver {
     return { token, userAgent, cookies };
   }
 
+  /** An hCaptcha token; see ./providers/hcaptcha.ts. */
   async solveHcaptcha(
     sitekey: string,
     url: string,
-    options?: {
-      enterprisePayload?: { rqdata: string; rqtoken?: string };
-      userAgent?: string;
-      proxy?: { server: string; username?: string; password?: string };
-    },
+    options?: HcaptchaOptions,
   ): Promise<string | null> {
     await this._ensureInit();
-    markCaptchaChallenge(); // G8
-    const enterprise = !!options?.enterprisePayload;
-    const useProxy = !!options?.proxy?.server;
-    const baseTask: Record<string, any> = {
-      type: useProxy ? 'HCaptchaTask' : 'HCaptchaTaskProxyless',
-      websiteURL: url,
-      websiteKey: sitekey,
-    };
-    if (enterprise) {
-      baseTask.isEnterprise = true;
-      baseTask.enterprisePayload = {
-        rqdata: options!.enterprisePayload!.rqdata,
-      };
-    }
-    if (options?.userAgent) baseTask.userAgent = options.userAgent;
-    if (useProxy) {
-      const u = new URL(options!.proxy!.server);
-      // Resolve hostname to IP — captcha services require IP, not hostname
-      let ip = u.hostname;
-      try {
-        const dns = await import('node:dns');
-        ip = await new Promise((res, rej) =>
-          dns.lookup(u.hostname, (e: any, a: string) => (e ? rej(e) : res(a))),
-        );
-      } catch {}
-      Object.assign(baseTask, {
-        proxyType: u.protocol.replace(':', '') || 'http',
-        proxyAddress: ip,
-        proxyPort: parseInt(u.port, 10),
-        proxyLogin: options!.proxy!.username,
-        proxyPassword: options!.proxy!.password,
-      });
-    }
-    console.log(
-      `[captcha:solver] solveHcaptcha enterprise=${enterprise} proxy=${useProxy} addr=${baseTask.proxyAddress ?? 'none'} sitekey=${sitekey}`,
-    );
-    // Try all services: anticaptcha → capmonster → capsolver
-    if (this._creds.anticaptcha) {
-      const token = await apiSolve(
-        'https://api.anti-captcha.com',
-        this._creds.anticaptcha,
-        baseTask,
-      );
-      if (token) {
-        console.log('[captcha:solver] Solved via anticaptcha');
-        costTracker.recordCaptcha('anticaptcha', 'hcaptcha');
-        return token;
-      }
-    }
-    if (this._creds.capmonster) {
-      const token = await apiSolve(
-        'https://api.capmonster.cloud',
-        this._creds.capmonster,
-        baseTask,
-      );
-      if (token) {
-        console.log('[captcha:solver] Solved via capmonster');
-        costTracker.recordCaptcha('capmonster', 'hcaptcha');
-        return token;
-      }
-    }
-    if (this._creds.capsolver) {
-      // CapSolver: HCaptchaEnterpriseTaskProxyLess is its own task type;
-      // HCaptchaTaskProxyless + isEnterprise returns ERROR_INVALID_TASK_DATA.
-      const t: Record<string, any> = {
-        ...baseTask,
-        type: enterprise
-          ? useProxy
-            ? 'HCaptchaEnterpriseTask'
-            : 'HCaptchaEnterpriseTaskProxyLess'
-          : useProxy
-            ? 'HCaptchaTask'
-            : 'HCaptchaTaskProxyLess',
-      };
-      delete t.isEnterprise;
-      const token = await apiSolve(
-        'https://api.capsolver.com',
-        this._creds.capsolver,
-        t,
-      );
-      if (token) {
-        console.log('[captcha:solver] Solved via capsolver');
-        costTracker.recordCaptcha('capsolver', 'hcaptcha');
-        return token;
-      }
-    }
-    console.log('[captcha:solver] All services failed for hCaptcha');
-    markAllProvidersFailed('hcaptcha'); // G8
-    return null;
+    return solveHcaptchaToken(this._creds, sitekey, url, options);
   }
 
   /** PerimeterX cookies; see ./providers/perimeterx.ts. */
