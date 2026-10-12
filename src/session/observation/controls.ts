@@ -38,18 +38,13 @@ function captureFrame(request: {
       typeof control.value === 'string'
         ? control.value.replace(/\s+/g, ' ').trim()
         : undefined;
-    const sensitive =
-      /password|token|key|secret|email|captcha|cookie|authorization/i.test(
-        `${type} ${name} ${label}`,
-      );
+    // What a person typed is never shown, only its length; a select's chosen
+    // option is the page's own offered text, so it is.
     const selected = control.selectedOptions?.[0]?.text
       .replace(/\s+/g, ' ')
       .trim();
-    const valueState = value
-      ? sensitive || !selected
-        ? `[set len=${value.length}]`
-        : selected
-      : undefined;
+    let valueState: string | undefined;
+    if (value) valueState = selected ? selected : `[set len=${value.length}]`;
     const role = control.getAttribute('role');
     const normalizedLabel = label?.replace(/\s+/g, ' ').trim();
     const bits = [

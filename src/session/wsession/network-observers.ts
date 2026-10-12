@@ -5,8 +5,8 @@
  *  - the auth interception (/auth/register, /auth/login) that lifts captcha
  *    sitekeys, the submitted form, the x-* headers and platform-side account
  *    blocks off the responses the page itself made;
- *  - the rolling context-wide response ledger behind WSession.capturedResponses
- *    (written to network.ndjson at close);
+ *  - the context-wide response ledger behind WSession.capturedResponses,
+ *    every response of the session (written to network.ndjson at close);
  *  - the devtools-protocol byte counter that funds the per-trajectory egress
  *    cost computed in close().
  *
@@ -23,14 +23,13 @@ interface ObservedRequest {
   method(): string;
   postData(): string | null;
   headers(): Record<string, string>;
-  resourceType?(): string;
 }
 
 interface ObservedResponse {
   url(): string;
   status(): number;
   headers(): Record<string, string>;
-  request(): ObservedRequest | undefined;
+  request(): ObservedRequest;
   json(): Promise<AuthResponsePayload>;
   text(): Promise<string>;
 }
@@ -65,29 +64,20 @@ interface ObservedSessionState {
   _proxyBytes: number;
 }
 
-function shouldCaptureResponseBody(res: ObservedResponse): boolean {
-  try {
-    if (process.env.WELES_CAPTURE_RESPONSE_BODIES !== '1') return false;
-    const req = res.request?.();
-    const resourceType = req?.resourceType?.();
-    if (
-      resourceType &&
-      ['image', 'media', 'font', 'stylesheet'].includes(resourceType)
-    )
-      return false;
-    const headers = res.headers?.() ?? {};
-    const contentType = String(headers['content-type'] ?? '').toLowerCase();
-    if (
-      contentType &&
-      !/json|text|javascript|xml|html|x-www-form-urlencoded/.test(contentType)
-    )
-      return false;
-    const len = Number(headers['content-length'] ?? 0);
-    return !len || len <= 256 * 1024;
-  } catch {
-    return false;
-  }
-}
+/**
+ * Discord's account-state refusals of a sign-in, as its auth API names them:
+ * the account itself is disabled or blocked, not the credentials wrong. Only
+ * these mark the session's account blocked; any other refusal is the
+ * caller's to read from the captured response.
+ */
+const DISCORD_ACCOUNT_REFUSALS: Record<string, true> = {
+  ACCOUNT_PERMANENTLY_DISABLED: true,
+  ACCOUNT_DISABLED: true,
+  ACCOUNT_LOGIN_BLOCKED: true,
+};
+
+/** Discord's own sign-in and registration calls. */
+const DISCORD_AUTH_CALL = /\/auth\/(register|login)$/;
 
 export function observeSessionNetwork(
   ws: WSession,
@@ -97,78 +87,95 @@ export function observeSessionNetwork(
   // The counters and the credential-task flag are private to WSession; this is
   // the same session object, viewed through the members these observers write.
   const state = ws as unknown as ObservedSessionState;
-  // Intercept API responses to capture captcha data (Discord register + login)
-  const authPaths = ['/auth/register', '/auth/login'];
+  // Discord's sign-in and registration answers carry its captcha challenge
+  // and its account-state refusals; a request or answer that cannot be read
+  // is said, not dropped.
   page.on?.('request', (req: ObservedRequest) => {
+    const u = req.url();
+    if (!DISCORD_AUTH_CALL.test(new URL(u).pathname) || req.method() !== 'POST')
+      return;
+    const sent = req.postData();
+    if (sent === null) {
+      console.error(
+        `[wsession] the sign-in POST to ${u} carries no form, so no captcha fields are kept`,
+      );
+      return;
+    }
     try {
-      const u = req.url();
-      if (authPaths.some((p) => u.includes(p)) && req.method() === 'POST') {
-        ws.captchaFormData = JSON.parse(req.postData() ?? '{}');
-        ws.captchaEndpoint = u;
-        const h = req.headers();
-        ws.captchaHeaders = {};
-        for (const k of Object.keys(h)) {
-          if (k.startsWith('x-')) ws.captchaHeaders[k] = h[k];
-        }
-      }
-    } catch {}
+      ws.captchaFormData = JSON.parse(sent);
+    } catch (error) {
+      console.error(
+        `[wsession] the form sent to ${u} is not JSON, so its captcha fields are not kept: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+    ws.captchaEndpoint = u;
+    const h = req.headers();
+    ws.captchaHeaders = {};
+    for (const k of Object.keys(h)) {
+      if (k.startsWith('x-')) ws.captchaHeaders[k] = h[k];
+    }
   });
   page.on?.('response', async (res: ObservedResponse) => {
+    const u = res.url();
+    if (!DISCORD_AUTH_CALL.test(new URL(u).pathname) || res.status() < 400)
+      return;
+    let d: AuthResponsePayload;
     try {
-      const u = res.url();
-      if (authPaths.some((p) => u.includes(p)) && res.status() >= 400) {
-        const d = await res.json();
-        if (d.captcha_key !== undefined) {
-          ws.captchaResponse = d;
-          console.log(
-            `[wsession] Captured captcha data: sitekey=${d.captcha_sitekey}`,
-          );
-        }
-        const errs =
-          d?.errors?.login?._errors ?? d?.errors?.email?._errors ?? [];
-        const code = errs[0]?.code;
-        if (
-          code === 'ACCOUNT_PERMANENTLY_DISABLED' ||
-          code === 'ACCOUNT_DISABLED' ||
-          code === 'ACCOUNT_LOGIN_BLOCKED'
-        ) {
-          ws.authBlocked = code;
-          console.log(`[wsession] Auth blocked by platform: ${code}`);
-        }
-      }
-    } catch {}
+      d = await res.json();
+    } catch (error) {
+      console.error(
+        `[wsession] the ${res.status()} answer from ${u} could not be read as JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+    if (d.captcha_key !== undefined) {
+      ws.captchaResponse = d;
+      console.log(
+        `[wsession] Captured captcha data: sitekey=${d.captcha_sitekey}`,
+      );
+    }
+    const errs = d?.errors?.login?._errors ?? d?.errors?.email?._errors;
+    const code = Array.isArray(errs) ? errs[0]?.code : undefined;
+    if (
+      typeof code === 'string' &&
+      Object.hasOwn(DISCORD_ACCOUNT_REFUSALS, code)
+    ) {
+      ws.authBlocked = code;
+      console.log(`[wsession] Auth blocked by platform: ${code}`);
+    }
   });
+  // Every response of the context is kept in the ledger written at close;
+  // its body only when WELES_CAPTURE_RESPONSE_BODIES=1 asks for bodies, and
+  // never during a credential task.
+  const captureBodies = process.env.WELES_CAPTURE_RESPONSE_BODIES === '1';
   ctx.on?.('response', (res: ObservedResponse) => {
-    try {
-      if (ws.capturedResponses.length >= 500) ws.capturedResponses.shift();
-      const entry = {
-        ts: Date.now(),
-        method: res.request()?.method?.() ?? 'GET',
-        url: res.url(),
-        status: res.status(),
-        headers: res.headers(),
-        body: '',
-      };
-      ws.capturedResponses.push(entry);
-      if (state._secureCredentialTask || !shouldCaptureResponseBody(res))
-        return;
-      // A body we could not read is its own answer in the ledger: an empty
-      // string there would read as a response that arrived empty.
-      const read: Promise<void> = res
-        .text()
-        .then(
-          (text: string) => {
-            entry.body = text;
-          },
-          (error: unknown) => {
-            entry.body = `[body unavailable: ${error instanceof Error ? error.message : String(error)}]`;
-          },
-        )
-        .finally(() => {
-          ws.pendingResponseBodies.delete(read);
-        });
-      ws.pendingResponseBodies.add(read);
-    } catch {}
+    const entry = {
+      ts: Date.now(),
+      method: res.request().method(),
+      url: res.url(),
+      status: res.status(),
+      headers: res.headers(),
+      body: '',
+    };
+    ws.capturedResponses.push(entry);
+    if (state._secureCredentialTask || !captureBodies) return;
+    // A body we could not read is its own answer in the ledger: an empty
+    // string there would read as a response that arrived empty.
+    const read: Promise<void> = res
+      .text()
+      .then(
+        (text: string) => {
+          entry.body = text;
+        },
+        (error: unknown) => {
+          entry.body = `[body unavailable: ${error instanceof Error ? error.message : String(error)}]`;
+        },
+      )
+      .finally(() => {
+        ws.pendingResponseBodies.delete(read);
+      });
+    ws.pendingResponseBodies.add(read);
   });
   return attachEgressByteCounter(state, ctx, page);
 }
