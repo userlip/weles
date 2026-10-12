@@ -308,26 +308,27 @@ try {
   }
   await pageSettled(s.page);
 
-  // 5) Verify the version moved into a waiting/in-review status. Best-effort:
-  //    the submit click already succeeded, so a read error here does not undo it.
+  // 5) Verify the version moved into a waiting/in-review status. "Preparing
+  //    for Submission" is the state before a submit, so it does not count:
+  //    a page that still shows it, or shows no status at all, is not proof
+  //    that App Review received the version.
   let status = '';
   try {
     status = await s.page.evaluate(() => {
       const m = (document.body?.innerText || '').match(
-        /Waiting for Review|In Review|Pending Developer Release|Preparing for Submission|Processing for App Store|Ready for (Distribution|Sale)/i,
+        /Waiting for Review|In Review|Pending Developer Release|Processing for App Store|Ready for (Distribution|Sale)/i,
       );
       return m ? m[0] : '';
     });
   } catch (e) {
     console.log('[asc-submit] status read failed:', e.message);
   }
-  if (status) {
-    console.log(`PASS: app ${APP_ID} submitted — status now "${status}"`);
-    process.exit(0);
+  if (!status) {
+    throw new Error(
+      `app ${APP_ID} submit-for-review was clicked but the page shows no review status; read the version's status in App Store Connect before running this again, so the version is not submitted twice`,
+    );
   }
-  console.log(
-    `PASS: app ${APP_ID} submit-for-review clicked (status text not confirmed on page)`,
-  );
+  console.log(`PASS: app ${APP_ID} submitted — status now "${status}"`);
   process.exit(0);
 } catch (error) {
   console.error('FAIL:', error);
