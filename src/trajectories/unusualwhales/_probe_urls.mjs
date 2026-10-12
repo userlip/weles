@@ -180,7 +180,7 @@ if (mode === 'inventory') {
       const tabs = (r.tabs || []).length;
       const tables = (r.tables || []).length;
       console.error(
-        `[inv] ${p}: bodyLen=${r.bodyLen} has404=${r.has404} tabs=${tabs} charts=${charts} tables=${tables}`,
+        `[inv] ${p}: finalUrl=${r.finalUrl} bodyLen=${r.bodyLen} tabs=${tabs} charts=${charts} tables=${tables}`,
       );
     }
     process.stdout.write(JSON.stringify(existing, null, 2) + '\n');
