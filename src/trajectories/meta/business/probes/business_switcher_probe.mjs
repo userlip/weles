@@ -1,4 +1,7 @@
 // Probe Meta Business Suite's portfolio switcher with a logged-in Weles profile.
+// The switcher is found by the vision model from its description
+// (`_shared/page/judged/seen.mjs`) instead of a guessed point and a score over
+// the words of one language and one business name.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -7,6 +10,8 @@ import { generatePersona } from '../../../../../dist/browser/persona.js';
 import { WSession } from '../../../../../dist/session/wsession.js';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
+import { clickDescribed } from '../../../_shared/page/judged/seen.mjs';
+import { redactedUrl } from '../../../_shared/page/navigation/redacted.mjs';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -24,20 +29,6 @@ function stableProfilePersona() {
   const persona = generatePersona({ os: 'macos', browser: 'chromium' });
   writeFileSync(p, JSON.stringify(persona, null, 2));
   return persona;
-}
-
-function sanitizedUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.hash = parsed.hash ? '#<redacted>' : '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|code|secret|state|session|auth/i.test(key))
-        parsed.searchParams.set(key, '<redacted>');
-    }
-    return parsed.toString();
-  } catch {
-    return '<invalid-url>';
-  }
 }
 
 async function snapshot(page, label) {
@@ -107,11 +98,11 @@ async function snapshot(page, label) {
       {
         stage: 'snapshot',
         label,
-        url: sanitizedUrl(page.url?.() || ''),
+        url: redactedUrl(page.url()),
         ...data,
         links: data.links.map((link) => ({
           ...link,
-          href: sanitizedUrl(link.href),
+          href: redactedUrl(link.href, page.url()),
         })),
       },
       null,
@@ -122,75 +113,11 @@ async function snapshot(page, label) {
 }
 
 async function clickBusinessSwitcher(page) {
-  const topLeft = { text: 'top-left portfolio selector', x: 220, y: 36 };
-  await page.mouse.click(topLeft.x, topLeft.y);
-  await pageSettled(page);
-  const opened = await page
-    .evaluate(() => {
-      const bodyText = (document.body?.innerText || '').replace(/\s+/g, ' ');
-      return (
-        /switch|przełącz|portfolio|firmowe|business/i.test(bodyText) &&
-        /Wisent-AI/i.test(bodyText)
-      );
-    })
-    .catch(() => false);
-  if (opened) {
-    console.log(JSON.stringify({ stage: 'clicked_switcher', ...topLeft }));
-    return topLeft;
-  }
-
-  const target = await page
-    .evaluate(() => {
-      const textOf = (el) =>
-        (el.innerText || el.textContent || el.getAttribute('aria-label') || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-      const visible = (el) => {
-        const style = window.getComputedStyle(el);
-        const rect = el.getBoundingClientRect();
-        return (
-          style.visibility !== 'hidden' &&
-          style.display !== 'none' &&
-          rect.width > 0 &&
-          rect.height > 0
-        );
-      };
-      const controls = Array.from(
-        document.querySelectorAll('button, [role="button"], [aria-label], a'),
-      )
-        .filter(visible)
-        .map((el) => {
-          const rect = el.getBoundingClientRect();
-          const text = textOf(el);
-          let score = 0;
-          if (/Wisent|portfolio|firmowe|business/i.test(text)) score += 1000;
-          if (rect.top < 80 && rect.left < 360) score += 1000;
-          if (/Meta Business Suite|All Tools|Pomoc|Powiadomienia/i.test(text))
-            score -= 1000;
-          return {
-            text,
-            x: Math.round(rect.left + rect.width / 2),
-            y: Math.round(rect.top + rect.height / 2),
-            score,
-          };
-        })
-        .filter((item) => item.score > 0)
-        .sort((a, b) => b.score - a.score);
-      return controls[0] || null;
-    })
-    .catch(() => null);
-  if (!target) return null;
-  await page.mouse.click(target.x, target.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked_switcher',
-      text: target.text,
-      x: target.x,
-      y: target.y,
-    }),
+  const target = await clickDescribed(
+    page,
+    'the business portfolio selector that switches between business portfolios, near the top left of Meta Business Suite',
   );
-  return target;
+  console.log(JSON.stringify({ stage: 'clicked_switcher', ...target }));
 }
 
 console.log(
@@ -221,13 +148,8 @@ try {
   const url = `https://business.facebook.com/latest/settings/business_users?business_id=${encodeURIComponent(BUSINESS_ID)}`;
   await s.page.goto(url, { waitUntil: 'domcontentloaded' });
   await snapshot(s.page, 'before_switcher');
-  const clicked = await clickBusinessSwitcher(s.page);
-  if (!clicked) {
-    exitCode = 1;
-    console.log('FAIL: no business switcher control found');
-  } else {
-    await snapshot(s.page, 'after_switcher');
-  }
+  await clickBusinessSwitcher(s.page);
+  await snapshot(s.page, 'after_switcher');
 } catch (error) {
   exitCode = 1;
   console.log(`FAIL: ${error.message || String(error)}`);

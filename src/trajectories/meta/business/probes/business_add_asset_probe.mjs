@@ -1,4 +1,6 @@
-// Probe the non-submitting Add flow for Meta Business Settings assets.
+// Probe the non-submitting Add flow for Meta Business Settings assets. The Add
+// control is found by the vision model from its description
+// (`_shared/page/judged/seen.mjs`), in the account's language.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -7,6 +9,8 @@ import { generatePersona } from '../../../../../dist/browser/persona.js';
 import { WSession } from '../../../../../dist/session/wsession.js';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
+import { clickDescribed } from '../../../_shared/page/judged/seen.mjs';
+import { redactedUrl } from '../../../_shared/page/navigation/redacted.mjs';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -31,20 +35,6 @@ function stableProfilePersona() {
   const persona = generatePersona({ os: 'macos', browser: 'chromium' });
   writeFileSync(p, JSON.stringify(persona, null, 2));
   return persona;
-}
-
-function sanitizedUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.hash = parsed.hash ? '#<redacted>' : '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|code|secret|state|session|auth/i.test(key))
-        parsed.searchParams.set(key, '<redacted>');
-    }
-    return parsed.toString();
-  } catch {
-    return '<invalid-url>';
-  }
 }
 
 async function snapshot(page, label) {
@@ -96,11 +86,11 @@ async function snapshot(page, label) {
       {
         stage: 'snapshot',
         label,
-        url: sanitizedUrl(page.url?.() || ''),
+        url: redactedUrl(page.url()),
         ...data,
         controls: data.controls.map((control) => ({
           ...control,
-          href: sanitizedUrl(control.href),
+          href: control.href && redactedUrl(control.href, page.url()),
         })),
       },
       null,
@@ -111,55 +101,11 @@ async function snapshot(page, label) {
 }
 
 async function clickEnabledAdd(page) {
-  const target = await page
-    .evaluate(() => {
-      const textOf = (el) =>
-        (el.innerText || el.textContent || el.getAttribute('aria-label') || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-      const visible = (el) => {
-        const style = window.getComputedStyle(el);
-        const rect = el.getBoundingClientRect();
-        return (
-          style.visibility !== 'hidden' &&
-          style.display !== 'none' &&
-          rect.width > 0 &&
-          rect.height > 0
-        );
-      };
-      const candidates = Array.from(
-        document.querySelectorAll('button, [role="button"]'),
-      )
-        .filter(visible)
-        .map((el) => {
-          const rect = el.getBoundingClientRect();
-          return {
-            text: textOf(el),
-            x: Math.round(rect.left + rect.width / 2),
-            y: Math.round(rect.top + rect.height / 2),
-            disabled:
-              el.disabled === true ||
-              el.getAttribute('aria-disabled') === 'true',
-            score: rect.left > 300 ? 1000 - rect.top : 0,
-          };
-        })
-        .filter((item) => /^add$|^dodaj$/i.test(item.text) && !item.disabled)
-        .sort((a, b) => b.score - a.score);
-      return candidates[0] || null;
-    })
-    .catch(() => null);
-  if (!target) return null;
-  await page.mouse.click(target.x, target.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked_add',
-      text: target.text,
-      x: target.x,
-      y: target.y,
-    }),
+  const target = await clickDescribed(
+    page,
+    `the enabled button that adds a new item to the ${ASSET_KIND.replace('_', ' ')} list of Business Settings`,
   );
-  return target;
+  console.log(JSON.stringify({ stage: 'clicked_add', ...target }));
 }
 
 const path = pagePaths[ASSET_KIND];
@@ -197,13 +143,8 @@ try {
   const url = `https://business.facebook.com/latest/settings/${path}?business_id=${encodeURIComponent(BUSINESS_ID)}`;
   await s.page.goto(url, { waitUntil: 'domcontentloaded' });
   await snapshot(s.page, 'before_add');
-  const clicked = await clickEnabledAdd(s.page);
-  if (!clicked) {
-    exitCode = 1;
-    console.log('FAIL: no enabled Add/Dodaj control found');
-  } else {
-    await snapshot(s.page, 'after_add');
-  }
+  await clickEnabledAdd(s.page);
+  await snapshot(s.page, 'after_add');
 } catch (error) {
   exitCode = 1;
   console.log(`FAIL: ${error.message || String(error)}`);

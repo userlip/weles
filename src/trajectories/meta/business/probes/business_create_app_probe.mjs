@@ -1,4 +1,7 @@
-// Probe Meta Business Settings' app creation form without submitting it.
+// Probe Meta Business Settings' app creation form without submitting it. The
+// Add control and the create-app option are found by the vision model from
+// their description (`_shared/page/judged/seen.mjs`), in whatever language the
+// account's Business Settings speak; each page is recorded as it stands.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -7,6 +10,8 @@ import { generatePersona } from '../../../../../dist/browser/persona.js';
 import { WSession } from '../../../../../dist/session/wsession.js';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
+import { clickDescribed } from '../../../_shared/page/judged/seen.mjs';
+import { redactedUrl } from '../../../_shared/page/navigation/redacted.mjs';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -24,20 +29,6 @@ function stableProfilePersona() {
   const persona = generatePersona({ os: 'macos', browser: 'chromium' });
   writeFileSync(p, JSON.stringify(persona, null, 2));
   return persona;
-}
-
-function sanitizedUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.hash = parsed.hash ? '#<redacted>' : '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|code|secret|state|session|auth/i.test(key))
-        parsed.searchParams.set(key, '<redacted>');
-    }
-    return parsed.toString();
-  } catch {
-    return '<invalid-url>';
-  }
 }
 
 async function snapshot(page, label) {
@@ -83,18 +74,6 @@ async function snapshot(page, label) {
       title: document.title || null,
       bodyText: bodyText,
       controls,
-      statusHints: {
-        appCreate:
-          /utwórz.*identyfikator aplikacji|create.*app id|create app|utwórz aplikację/i.test(
-            bodyText,
-          ),
-        developerRegistration:
-          /register as a meta developer|zarejestruj|developer/i.test(bodyText),
-        technicalError:
-          /niespodziewany problem techniczny|unexpected technical problem|spróbuj ponownie/i.test(
-            bodyText,
-          ),
-      },
     };
   });
   console.log(
@@ -102,11 +81,11 @@ async function snapshot(page, label) {
       {
         stage: 'snapshot',
         label,
-        url: sanitizedUrl(page.url?.() || ''),
+        url: redactedUrl(page.url()),
         ...data,
         controls: data.controls.map((control) => ({
           ...control,
-          href: sanitizedUrl(control.href),
+          href: control.href && redactedUrl(control.href, page.url()),
         })),
       },
       null,
@@ -116,94 +95,9 @@ async function snapshot(page, label) {
   return data;
 }
 
-async function clickFirst(
-  page,
-  label,
-  allow,
-  deny = /delete|remove|usuń|anuluj|cancel|zamknij|przenieś|transfer/i,
-) {
-  const target = await page
-    .evaluate(
-      ({ allowSource, allowFlags, denySource, denyFlags }) => {
-        const allowRe = new RegExp(allowSource, allowFlags);
-        const denyRe = new RegExp(denySource, denyFlags);
-        const textOf = (el) =>
-          (
-            el.innerText ||
-            el.textContent ||
-            el.getAttribute('aria-label') ||
-            ''
-          )
-            .replace(/\s+/g, ' ')
-            .trim();
-        const visible = (el) => {
-          const style = window.getComputedStyle(el);
-          const rect = el.getBoundingClientRect();
-          return (
-            style.visibility !== 'hidden' &&
-            style.display !== 'none' &&
-            rect.width > 0 &&
-            rect.height > 0
-          );
-        };
-        const nodes = Array.from(
-          document.querySelectorAll(
-            'button, [role="button"], a, [role="menuitem"], div, span',
-          ),
-        )
-          .filter(visible)
-          .map((el) => {
-            const rect = el.getBoundingClientRect();
-            const text = textOf(el);
-            let score = 0;
-            if (el.matches('button, [role="button"], [role="menuitem"]'))
-              score += 1000;
-            if (rect.left > 300) score += 100;
-            if (rect.width * rect.height < 400000) score += 50;
-            score -= Math.min(rect.width * rect.height, 100000) / 10000;
-            return {
-              text,
-              x: Math.round(rect.left + rect.width / 2),
-              y: Math.round(rect.top + rect.height / 2),
-              disabled:
-                el.disabled === true ||
-                el.getAttribute('aria-disabled') === 'true',
-              area: rect.width * rect.height,
-              score,
-            };
-          })
-          .filter(
-            (item) =>
-              item.area < 500000 &&
-              item.text &&
-              !item.disabled &&
-              allowRe.test(item.text) &&
-              !denyRe.test(item.text),
-          )
-          .sort((a, b) => b.score - a.score);
-        return nodes[0] || null;
-      },
-      {
-        allowSource: allow.source,
-        allowFlags: allow.flags,
-        denySource: deny.source,
-        denyFlags: deny.flags,
-      },
-    )
-    .catch(() => null);
-  if (!target) return null;
-  await page.mouse.click(target.x, target.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked',
-      label,
-      text: target.text,
-      x: target.x,
-      y: target.y,
-    }),
-  );
-  return target;
+async function clickControl(page, label, description) {
+  const target = await clickDescribed(page, description);
+  console.log(JSON.stringify({ stage: 'clicked', label, ...target }));
 }
 
 console.log(
@@ -236,15 +130,17 @@ try {
     { waitUntil: 'domcontentloaded' },
   );
   await snapshot(s.page, 'apps_initial');
-  const add = await clickFirst(s.page, 'add', /^add$|^dodaj$/i);
-  if (!add) throw new Error('No enabled Add/Dodaj control found on Apps page');
+  await clickControl(
+    s.page,
+    'add',
+    'the enabled button that adds an app on the Apps page of Business Settings',
+  );
   await snapshot(s.page, 'add_menu');
-  const create = await clickFirst(
+  await clickControl(
     s.page,
     'create_app_id',
-    /utwórz nowy identyfikator aplikacji|create new app id|create app/i,
+    'the option in the open Add menu that creates a new app ID',
   );
-  if (!create) throw new Error('No create-app option found in Apps Add menu');
   await snapshot(s.page, 'create_app_form');
 } catch (error) {
   exitCode = 1;

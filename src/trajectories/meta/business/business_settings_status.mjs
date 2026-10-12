@@ -1,12 +1,15 @@
-// Meta Business Settings inspector for system-user/token paths.
+// Meta Business Settings inspector for system-user/token paths. It reads each
+// settings page as it stands - its title, text and visible controls - and
+// clicks nothing; what the page means is read from that record, not decided
+// here from the words one language prints.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
-import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -28,49 +31,8 @@ function stableProfilePersona() {
   return persona;
 }
 
-function sanitizedUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.hash = parsed.hash ? '#<redacted>' : '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|code|secret|state|session|auth/i.test(key))
-        parsed.searchParams.set(key, '<redacted>');
-    }
-    return parsed.toString();
-  } catch {
-    return '<invalid-url>';
-  }
-}
-
-async function clickSafeContinue(page) {
-  const allow = /^(continue|kontynuuj|dalej|next|ok|confirm|potwierdź)$/i;
-  const deny = /create|utwórz|delete|usuń|remove|cancel|anuluj/i;
-  const candidates = page
-    .locator('button, [role="button"], a')
-    .filter({ visible: true });
-  const count = await candidates.count().catch(() => 0);
-  for (let index = 0; index < count; index += 1) {
-    const candidate = candidates.nth(index);
-    const text = String(
-      await candidate
-        .innerText()
-        .catch(async () =>
-          candidate.getAttribute('aria-label').catch(() => ''),
-        ),
-    )
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!allow.test(text) || deny.test(text)) continue;
-    await humanClickLocator(page, candidate);
-    return text;
-  }
-  return null;
-}
-
 async function snapshot(page, label) {
   await pageSettled(page);
-  const clicked = await clickSafeContinue(page);
-  if (clicked) await pageSettled(page);
   const data = await page
     .evaluate(() => {
       const textOf = (el) =>
@@ -106,18 +68,6 @@ async function snapshot(page, label) {
         title: document.title || null,
         bodyText,
         controls,
-        statusHints: {
-          login: /log in|login|password|email|zaloguj|hasło/i.test(bodyText),
-          systemUsers:
-            /system users|systemowi|użytkownicy systemowi|system user/i.test(
-              bodyText,
-            ),
-          tokens: /token|access token|wygeneruj|generate/i.test(bodyText),
-          permissionDenied:
-            /permission|uprawn|access denied|brak dostępu|not authorized/i.test(
-              bodyText,
-            ),
-        },
       };
     })
     .catch((error) => ({ error: error.message || String(error) }));
@@ -126,8 +76,7 @@ async function snapshot(page, label) {
       {
         stage: 'snapshot',
         label,
-        clicked: clicked || null,
-        url: sanitizedUrl(page.url?.() || ''),
+        url: redactedUrl(page.url()),
         ...data,
       },
       null,

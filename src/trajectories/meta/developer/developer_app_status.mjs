@@ -1,7 +1,9 @@
 // Meta developer app status inspector.
 //
 // Uses a Weles browser session with an existing Meta login profile and prints a
-// sanitized snapshot of the Meta developer app dashboard/settings pages.
+// sanitized snapshot of the Meta developer app dashboard/settings pages: the
+// title, text and visible controls as they stand. The app's mode is read from
+// that record, not guessed here from the words one language prints.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -10,6 +12,7 @@ import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
+import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
 
 const APP_ID = statedText(
   ['META_APP_ID', 'NEXT_PUBLIC_META_ADS_APP_ID'],
@@ -27,20 +30,6 @@ function stableProfilePersona() {
   const persona = generatePersona({ os: 'macos', browser: 'chromium' });
   writeFileSync(p, JSON.stringify(persona, null, 2));
   return persona;
-}
-
-function sanitizedUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.hash = parsed.hash ? '#<redacted>' : '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|code|secret|state|session|auth/i.test(key))
-        parsed.searchParams.set(key, '<redacted>');
-    }
-    return parsed.toString();
-  } catch {
-    return '<invalid-url>';
-  }
 }
 
 async function snapshot(page, label) {
@@ -80,16 +69,6 @@ async function snapshot(page, label) {
         title: document.title || null,
         bodyText,
         controls,
-        statusHints: {
-          inactive:
-            /inactive|nieaktywna|nieaktywne|unavailable|niedostępna/i.test(
-              bodyText,
-            ),
-          developmentMode:
-            /development mode|tryb deweloperski|in development/i.test(bodyText),
-          liveMode: /live mode|tryb publiczny|publiczny/i.test(bodyText),
-          appReview: /app review|weryfikacja aplikacji|review/i.test(bodyText),
-        },
       };
     })
     .catch((error) => ({ error: error.message || String(error) }));
@@ -98,7 +77,7 @@ async function snapshot(page, label) {
       {
         stage: 'snapshot',
         label,
-        url: sanitizedUrl(page.url?.() || ''),
+        url: redactedUrl(page.url()),
         ...data,
       },
       null,

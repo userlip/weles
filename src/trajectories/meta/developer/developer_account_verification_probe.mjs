@@ -1,4 +1,6 @@
 // Probe Meta developer account verification without submitting phone/card data.
+// Each page is recorded as it stands (title, text, visible controls); what it
+// asks for is read from that record, not guessed from one language's words.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -6,6 +8,9 @@ import { join } from 'node:path';
 import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
+
+const INDENT = '  ';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -19,20 +24,6 @@ function stableProfilePersona() {
   const persona = generatePersona({ os: 'macos', browser: 'chromium' });
   writeFileSync(p, JSON.stringify(persona, null, 2));
   return persona;
-}
-
-function sanitizedUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.hash = parsed.hash ? '#<redacted>' : '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|code|secret|state|session|auth/i.test(key))
-        parsed.searchParams.set(key, '<redacted>');
-    }
-    return parsed.toString();
-  } catch {
-    return '<invalid-url>';
-  }
 }
 
 async function snapshot(page, label) {
@@ -85,35 +76,19 @@ async function snapshot(page, label) {
       title: document.title || null,
       bodyText: bodyText,
       controls,
-      statusHints: {
-        login: /log in|zaloguj|hasło|password/i.test(bodyText),
-        phone: /phone|mobile|telefon|numer telefonu/i.test(bodyText),
-        card: /credit card|debit card|karta kredytowa|karta/i.test(bodyText),
-        alreadyVerified: /verified|zweryfikowano|confirmed|potwierdzono/i.test(
-          bodyText,
-        ),
-        blocked: /cannot|can't|nie można|niedostęp|unavailable|problem/i.test(
-          bodyText,
-        ),
-      },
     };
   });
-  console.log(
-    JSON.stringify(
-      {
-        stage: 'snapshot',
-        label,
-        url: sanitizedUrl(page.url?.() || ''),
-        ...data,
-        controls: data.controls.map((control) => ({
-          ...control,
-          href: sanitizedUrl(control.href),
-        })),
-      },
-      null,
-      2,
-    ),
-  );
+  const record = {
+    stage: 'snapshot',
+    label,
+    url: redactedUrl(page.url()),
+    ...data,
+    controls: data.controls.map((control) => ({
+      ...control,
+      href: control.href && redactedUrl(control.href, page.url()),
+    })),
+  };
+  console.log(JSON.stringify(record, null, INDENT));
   return data;
 }
 
@@ -125,7 +100,7 @@ console.log(
       headless: process.env.META_VERIFY_HEADLESS !== '0',
     },
     null,
-    2,
+    INDENT,
   ),
 );
 
@@ -141,12 +116,10 @@ const s = await WSession.start({
 
 let exitCode = 0;
 try {
-  await s.page
-    .goto(
-      'https://developers.facebook.com/async/developer/account/verification/',
-      { waitUntil: 'domcontentloaded' },
-    )
-    .catch(() => {});
+  await s.page.goto(
+    'https://developers.facebook.com/async/developer/account/verification/',
+    { waitUntil: 'domcontentloaded' },
+  );
   await snapshot(s.page, 'verification_page');
 } catch (error) {
   exitCode = 1;
