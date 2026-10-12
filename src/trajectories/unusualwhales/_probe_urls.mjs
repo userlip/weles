@@ -125,7 +125,6 @@ async function inventoryPage(sess, urlPath) {
       finalUrl: location.pathname + location.search,
       title: document.title,
       bodyLen: (document.body?.innerText || '').length,
-      has404: /page like that|not found/i.test(document.body?.innerText || ''),
       tabs: Array.from(new Map(tabs.map(t => [t.text, t])).values()),
       selects, charts, tables, inputs,
     };

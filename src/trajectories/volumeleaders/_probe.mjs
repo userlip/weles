@@ -110,16 +110,21 @@ async function probePage(urlPath) {
   await s.goto(url);
   // The page has rendered when it has loaded and its DOM has gone quiet.
   await pageSettled(s.page);
-  return await s.page
-    .evaluate(`(() => ({
-    finalUrl: location.pathname + location.search,
-    title: document.title,
-    bodyLen: (document.body?.innerText || '').length,
-    has404: /page not found|404|doesn.t exist/i.test(document.body?.innerText || ''),
-    hasLogin: /please log in|sign in|log in/i.test(document.body?.innerText || '') && !/logout|sign out/i.test(document.body?.innerText || ''),
-    heading: document.querySelector('h1, h2')?.innerText?.trim() || null,
-  }))()`)
-    .catch((e) => ({ err: e.message }));
+  // The page's own HTTP answer says whether it exists; where it ended up
+  // (finalUrl) says whether a sign-in wall took its place.
+  const answered = [...s.capturedResponses]
+    .reverse()
+    .find((response) => response.url === s.page.url());
+  const shown = await s.page.evaluate(`(() => {
+    const heading = document.querySelector('h1, h2');
+    return {
+      finalUrl: location.pathname + location.search,
+      title: document.title,
+      bodyLen: document.body ? document.body.innerText.length : null,
+      heading: heading ? heading.innerText.trim() : null,
+    };
+  })()`);
+  return { ...shown, status: answered ? answered.status : null };
 }
 
 async function inventoryPage(sess, urlPath) {
