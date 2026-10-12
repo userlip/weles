@@ -32,6 +32,7 @@ import {
   assertGoogleAdsProfileNotAlreadyOpen,
   closeAllowedByEnv,
 } from './_profile_guard.mjs';
+import { closeGoogleAdsSession } from './_close_session.mjs';
 import {
   ADS_URL,
   APP_ID,
@@ -324,6 +325,6 @@ try {
   process.exit(1);
 } finally {
   if (closeAllowedByEnv('GOOGLE_ADS_CLOSE_AFTER_HARVEST'))
-    await s.close().catch(() => {});
+    await closeGoogleAdsSession(s, 'google-ads');
   else console.log('[google-ads] leaving Google Ads profile open');
 }

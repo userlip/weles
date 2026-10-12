@@ -22,6 +22,7 @@ import {
   assertGoogleAdsProfileNotAlreadyOpen,
   closeAllowedByEnv,
 } from './_profile_guard.mjs';
+import { closeGoogleAdsSession } from './_close_session.mjs';
 
 const SOURCE_USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -240,7 +241,7 @@ try {
     preparedProfile.dir !== SOURCE_USER_DATA_DIR ||
     closeAllowedByEnv('GOOGLE_VERIFY_CLOSE_AFTER')
   )
-    await s.close().catch(() => {});
+    await closeGoogleAdsSession(s, 'google-ads-verify-access');
   else
     console.log('[google-ads-verify-access] leaving Google Ads profile open');
   preparedProfile.cleanup();

@@ -13,6 +13,7 @@ import {
   assertGoogleAdsProfileNotAlreadyOpen,
   closeAllowedByEnv,
 } from './_profile_guard.mjs';
+import { closeGoogleAdsSession } from './_close_session.mjs';
 import { readScopedLogin } from '../../../_shared/scoped-secrets.mjs';
 
 const ALLOW_MANUAL_LOGIN =
@@ -133,6 +134,6 @@ try {
   console.log('PASS: Google Ads login persisted');
 } finally {
   if (closeAllowedByEnv('GOOGLE_ADS_LOGIN_CLOSE_AFTER'))
-    await s.close().catch(() => {});
+    await closeGoogleAdsSession(s, 'google-ads-login');
   else console.log('[google-ads-login] leaving Google Ads profile open');
 }

@@ -11,6 +11,7 @@ import { pageSettled } from '../../../_shared/page/settled.mjs';
 import { writeFileSync } from 'node:fs';
 import { WSession } from '../../../../../dist/session/wsession.js';
 import { assertGoogleAdsProfileNotAlreadyOpen } from '../_profile_guard.mjs';
+import { closeGoogleAdsSession } from '../_close_session.mjs';
 import {
   CLOSE_AFTER_HARVEST,
   RESULT_FILE,
@@ -124,7 +125,8 @@ async function main() {
     console.log(JSON.stringify(report, null, 2));
     console.log('PASS: Google Ads keyword planner read completed (browser)');
   } finally {
-    if (CLOSE_AFTER_HARVEST) await s.close().catch(() => {});
+    if (CLOSE_AFTER_HARVEST)
+      await closeGoogleAdsSession(s, 'google-ads-keyword-planner');
     else
       console.log(
         '[google-ads-keyword-planner] leaving Google Ads profile open',

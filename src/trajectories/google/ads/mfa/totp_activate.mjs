@@ -7,6 +7,7 @@ import {
   assertGoogleAdsProfileNotAlreadyOpen,
   closeAllowedByEnv,
 } from '../_profile_guard.mjs';
+import { closeGoogleAdsSession } from '../_close_session.mjs';
 import {
   EMAIL,
   GOOGLE_ADS_LOGIN,
@@ -63,7 +64,7 @@ async function main() {
     console.log('PASS: Google Authenticator TOTP setup activated');
   } finally {
     if (closeAllowedByEnv('GOOGLE_TOTP_ACTIVATION_CLOSE_AFTER'))
-      await s.close().catch(() => {});
+      await closeGoogleAdsSession(s, 'google-totp-activate');
     else console.log('[google-totp-activate] leaving Google Ads profile open');
   }
 }
