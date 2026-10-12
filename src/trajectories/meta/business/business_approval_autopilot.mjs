@@ -319,7 +319,7 @@ let exitCode = 0;
 const actions = [];
 try {
   for (const [label, url] of candidateUrls) {
-    await s.page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await s.page.goto(url, { waitUntil: 'domcontentloaded' });
     const first = await snapshot(s.page, label);
     const action = await tryApproveOrActivate(s.page, label);
     if (action) {

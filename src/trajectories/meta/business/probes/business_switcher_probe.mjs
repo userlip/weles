@@ -219,7 +219,7 @@ const s = await WSession.start({
 let exitCode = 0;
 try {
   const url = `https://business.facebook.com/latest/settings/business_users?business_id=${encodeURIComponent(BUSINESS_ID)}`;
-  await s.page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await s.page.goto(url, { waitUntil: 'domcontentloaded' });
   await snapshot(s.page, 'before_switcher');
   const clicked = await clickBusinessSwitcher(s.page);
   if (!clicked) {

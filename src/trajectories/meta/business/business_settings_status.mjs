@@ -202,7 +202,7 @@ const s = await WSession.start({
 let exitCode = 0;
 try {
   for (const [label, url] of urls) {
-    await s.page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await s.page.goto(url, { waitUntil: 'domcontentloaded' });
     await snapshot(s.page, label);
   }
 } catch (error) {

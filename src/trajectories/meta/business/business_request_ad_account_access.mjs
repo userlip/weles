@@ -415,7 +415,7 @@ const s = await WSession.start({
 let exitCode = 0;
 try {
   const url = `https://business.facebook.com/latest/settings/ad_accounts?business_id=${encodeURIComponent(BUSINESS_ID)}`;
-  await s.page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await s.page.goto(url, { waitUntil: 'domcontentloaded' });
   await snapshot(s.page, 'initial_ad_accounts');
   await clickFirst(s.page, 'add', /^add$|^dodaj$/i);
   await snapshot(s.page, 'add_menu');
