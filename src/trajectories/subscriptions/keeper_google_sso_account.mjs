@@ -152,18 +152,18 @@ async function main() {
     /(Continue|Allow|Dalej|Kontynuuj|Zezwól|Zgadzam)/i.test(currentText) &&
     (await url(args.session)).includes('accounts.google.com')
   ) {
-    try {
-      const clicked = await clickFirstText(args.session, [
-        'Continue',
-        'Allow',
-        'Dalej',
-        'Kontynuuj',
-        'Zezwól',
-        'Zgadzam',
-      ]);
-      await action(args.session, { action: 'settle' });
-      await mark(`google_consent_${clicked}`);
-    } catch {}
+    // A consent screen that cannot be answered leaves the account signed out
+    // of the target; the run fails with the cause instead of reporting ok.
+    const clicked = await clickFirstText(args.session, [
+      'Continue',
+      'Allow',
+      'Dalej',
+      'Kontynuuj',
+      'Zezwól',
+      'Zgadzam',
+    ]);
+    await action(args.session, { action: 'settle' });
+    await mark(`google_consent_${clicked}`);
   }
 
   if (args.targetUrl) {
