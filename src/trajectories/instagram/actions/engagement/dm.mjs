@@ -18,6 +18,7 @@ import {
   CookieJarStaleError,
 } from '../../../_shared/auth/cookie-freshness.mjs';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
+import { textShownOutsideEditors } from '../../../_shared/page/shows.mjs';
 
 const RECIPIENT = statedText(
   ['RECIPIENT_HANDLE'],
@@ -156,16 +157,10 @@ try {
   }
   await humanIdlePause('deliberate');
 
-  const echoCount = await s.page
-    .locator(`:text("${MESSAGE}")`)
-    .filter({ visible: true })
-    .count()
-    .catch(() => 0);
-  if (!echoCount) {
+  if (!(await textShownOutsideEditors(s.page, MESSAGE)))
     throw new Error(
       'composer typed but message not echoed in conversation pane',
     );
-  }
   console.log(`PASS: DM sent to @${RECIPIENT}`);
 } catch (e) {
   console.log('FAIL:', e.message);

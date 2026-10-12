@@ -16,6 +16,7 @@ import {
   CookieJarStaleError,
 } from '../../../_shared/auth/cookie-freshness.mjs';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
+import { textShownOutsideEditors } from '../../../_shared/page/shows.mjs';
 
 // RECIPIENT_HANDLE accepts vanity ("williamhgates") or full /in/ URL. We
 // always click "Message" on the public profile — the only deterministic
@@ -136,14 +137,7 @@ try {
   await humanClickLocator(s.page, sendBtn);
   await humanIdlePause('deliberate');
 
-  const echoCount = await s.page
-    .locator(
-      `.msg-s-event-listitem :text("${MESSAGE}"), li.msg-s-message-list__event :text("${MESSAGE}"), :text("${MESSAGE}")`,
-    )
-    .filter({ visible: true })
-    .count()
-    .catch(() => 0);
-  if (!echoCount)
+  if (!(await textShownOutsideEditors(s.page, MESSAGE)))
     throw new Error('composer typed but message not echoed in conversation');
   console.log(`PASS: DM sent to ${RECIPIENT}`);
 } catch (e) {

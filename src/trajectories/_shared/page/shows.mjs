@@ -52,3 +52,18 @@ export function rowShowingSource(wanted) {
   }
   return rows.indexOf(match);
 }
+
+// Whether text a trajectory typed now shows on the page as posted content.
+// A composer keeps the typed draft until the send goes through, and a
+// contenteditable composer's draft is page text, so finding the text anywhere
+// on the page proves nothing: a send that failed leaves it in the composer.
+// The text counts only when it shows outside every editable field.
+export async function textShownOutsideEditors(page, text) {
+  return page.evaluate((wanted) => {
+    const body = document.body.cloneNode(true);
+    body
+      .querySelectorAll('[contenteditable="true"], textarea, input')
+      .forEach((field) => field.remove());
+    return body.textContent.includes(wanted);
+  }, text);
+}
