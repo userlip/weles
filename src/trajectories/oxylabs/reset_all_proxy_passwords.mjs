@@ -9,7 +9,7 @@ import {
   humanIdlePause,
   humanClickLocator,
 } from '../../../dist/human/mouse.js';
-import { urlMatching } from '../_shared/page/settled.mjs';
+import { responseAfterAction, urlMatching } from '../_shared/page/settled.mjs';
 import { humanType } from '../../../dist/human/keyboard.js';
 import {
   assertScopedSecretWriter,
@@ -19,6 +19,8 @@ import {
 } from '../../_shared/scoped-secrets.mjs';
 import { registrationPassword } from '../../../dist/utils/identity/password.js';
 
+/** The calls a dashboard's script sends, as the browser classes them. */
+const SCRIPT_CALLS = { fetch: true, xhr: true };
 // Oxylabs accepts only `_ ~ + =` as special symbols.
 function generatePassword() {
   return registrationPassword({ symbols: '_~+=' });
@@ -128,48 +130,37 @@ try {
       await passInput.fill(newPassword);
       await humanIdlePause('short');
 
-      // Save/Submit. The dedicated-ISP modal uses "Change password" / "Submit
-      // changes"; the mobile modal uses "Submit changes". Click the last
-      // visible submit-ish button, but avoid "Generate password".
-      const saveBtn = s.page
-        .locator('button')
-        .filter({
-          hasText:
-            /^(Save|Submit|Update|Confirm|Submit changes|Change password)$/i,
-        })
-        .filter({ visible: true })
-        .last();
-      // Without a save the new password exists only here; storing it would
-      // replace a working credential with one Oxylabs never set.
-      if (!(await saveBtn.isVisible())) {
-        results.push({ product, status: 'save_button_not_found' });
+      // Submit the form the password field belongs to, and read Oxylabs'
+      // own answer to the change it sends: the dashboard's first script call
+      // that writes. Its status is the verdict, not words on the page.
+      const answer = await responseAfterAction(
+        s.page,
+        (request) =>
+          request.method() !== 'GET' &&
+          Object.hasOwn(SCRIPT_CALLS, request.resourceType()),
+        () => passInput.press('Enter'),
+      );
+      // Without Oxylabs accepting it the new password exists only here;
+      // storing it would replace a working credential with one never set.
+      if (!answer.ok()) {
+        const said = await answer
+          .text()
+          .catch((error) => `[answer body unreadable: ${error.message}]`);
+        results.push({
+          product,
+          status: 'refused',
+          answer: { status: answer.status(), url: answer.url(), body: said },
+        });
+        console.log(
+          `[reset] ${product} Oxylabs refused the change: ${answer.status()} ${answer.url()} ${said}`,
+        );
         return;
       }
-      await saveBtn.click({ force: true });
-      await humanIdlePause('deliberate');
-
-      // Verify success toast. Oxylabs shows "Success!" + "Your user has been
-      // updated successfully!" or "Password changed for user <username>".
-      const bodyText = await s.page.evaluate(() => document.body.innerText);
-      const hasSuccess = /success|updated successfully|password changed/i.test(
-        bodyText,
-      );
-      const hasError =
-        /error|failed|incorrect|invalid|weak password|must contain/i.test(
-          bodyText,
-        );
-      const status =
-        hasSuccess && !hasError
-          ? 'password_set'
-          : hasError
-            ? 'possible_error'
-            : 'unknown';
-      if (status === 'password_set') {
-        writeScopedSecretItem(serviceName, {
-          ...current,
-          password: newPassword,
-        });
-      }
+      const status = 'password_set';
+      writeScopedSecretItem(serviceName, {
+        ...current,
+        password: newPassword,
+      });
       results.push({ product, status });
       console.log(`[reset] ${product} done status=${status}`);
     } catch (e) {
