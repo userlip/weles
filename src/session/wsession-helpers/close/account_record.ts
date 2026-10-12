@@ -78,24 +78,35 @@ export async function wsSaveAccount(
 ): Promise<string> {
   // The account item is the durable result of this trajectory. A platform
   // account that was created but not saved is lost, so an item that could not
-  // be written, or a session whose cookies could not be read, throws instead
-  // of answering a string the caller may not read.
+  // be written throws instead of answering a string the caller may not read.
+  // A session that could not be read does not stop the save: the account is
+  // recorded with its credentials and no session (the next login mints one),
+  // the cause is kept in the record and said in the answer.
   const username = s.resolveEnv(data.username);
   const email = s.resolveEnv(data.email);
   const password = s.resolveEnv(data.password);
   const name = data.name ? s.resolveEnv(data.name) : undefined;
-  const storageState = await s.ctx.storageState();
-  const cookies = storageState.cookies;
+  let session: Record<string, unknown>;
+  let sessionError: string | null = null;
+  try {
+    const storageState = await s.ctx.storageState();
+    session = {
+      cookies: storageState.cookies,
+      storage_state: storageState,
+      cookies_updated_at: new Date().toISOString(),
+      cookies_minted_at: new Date().toISOString(),
+      cookies_minted_proxy: (s as any)._proxySignature(),
+      cookies_minted_persona: (s as any)._personaSignature(),
+    };
+  } catch (error) {
+    sessionError = error instanceof Error ? error.message : String(error);
+    session = { session_unreadable: sessionError };
+  }
   const metadata = {
     email,
     status: data.status ?? 'created',
     created_via: 'weles',
-    cookies,
-    storage_state: storageState,
-    cookies_updated_at: new Date().toISOString(),
-    cookies_minted_at: new Date().toISOString(),
-    cookies_minted_proxy: (s as any)._proxySignature(),
-    cookies_minted_persona: (s as any)._personaSignature(),
+    ...session,
     proxy: s.proxyConfig ?? null,
     persona: (s as any).personaConfig ?? null,
     profile_url: profileUrl(platform, username, name),
@@ -111,12 +122,15 @@ export async function wsSaveAccount(
     join(recordingsDir(s.label || undefined), 'account.json'),
     JSON.stringify({ item, platform, username }, null, 2),
   );
-  // The account is saved either way; a signup-success mark that failed is
-  // said in the step's answer, not dropped.
+  // The account is saved either way; a session that was not captured and a
+  // signup-success mark that failed are said in the step's answer.
+  const unsession = sessionError
+    ? `; session not captured: ${sessionError}`
+    : '';
   try {
     await markSignupSuccess(email, platform);
   } catch (error) {
-    return `account saved: ${item}; signup success not marked for ${email}: ${error instanceof Error ? error.message : String(error)}`;
+    return `account saved: ${item}${unsession}; signup success not marked for ${email}: ${error instanceof Error ? error.message : String(error)}`;
   }
-  return `account saved: ${item}`;
+  return `account saved: ${item}${unsession}`;
 }
