@@ -134,6 +134,20 @@ export async function activateSetup(creds) {
         )
       )
         return { ok: false, blocked: 'new_google_totp_code_rejected', steps };
+      // A page still asking for the code or showing the key has not activated
+      // the authenticator; storing its seed would replace the account's
+      // working seed in Skarbiec with one Google never accepted.
+      if (
+        /Enter code|verification code|setup key|secret key/i.test(
+          finalState.text,
+        )
+      )
+        return {
+          ok: false,
+          blocked: 'google_totp_activation_unconfirmed',
+          url: finalState.url,
+          steps,
+        };
       writeScopedLogin('googleAds', {
         email: creds.email,
         password: creds.password,
