@@ -77,6 +77,12 @@ try {
     .last()
     .click();
   await pageSettled(s.page);
+  // The invite counts once App Store Connect lists the address in the group;
+  // a click that landed nowhere leaves it absent, and the run fails there.
+  await s.page
+    .getByText(TESTER_EMAIL, { exact: true })
+    .first()
+    .waitFor({ state: 'visible' });
 
   console.log(`PASS: invited ${TESTER_EMAIL} to app ${APP_ID}`);
 } catch (e) {
