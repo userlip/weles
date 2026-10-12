@@ -190,7 +190,11 @@ export async function wsClick(s: WSession, target: string): Promise<string> {
         },
         { wanted: target.toLowerCase().trim(), mark: marker },
       )
-      .catch(() => null);
+      .catch((error) => {
+        // A page that cannot be searched is not a page without the control;
+        // clicking by vision then would hide why the text search failed.
+        throw new Error(`could not search the page for ${target}: ${error}`);
+      });
     if (c) {
       const loc = s.page.locator(`[data-weles-click="${marker}"]`).first();
       try {
@@ -295,7 +299,9 @@ export async function fillPage(
     .evaluate(
       `(()=>{var t=${tgt};for(var el of document.querySelectorAll('*')){var r=el.getBoundingClientRect();var ph=(el.getAttribute('placeholder')||'').toLowerCase();if(r.width>50&&r.height>10&&r.x>0&&ph&&ph.indexOf(t)>=0)return{x:r.x+r.width/2,y:r.y+r.height/2}}return null})()`,
     )
-    .catch(() => null);
+    .catch((error) => {
+      throw new Error(`could not search the page for a ${target} placeholder: ${error}`);
+    });
   const point = byPlaceholder ?? (await findClickTarget(asV(s.page), target));
   if (!point) return 'no-field-found';
   await humanClick(s.page, point.x, point.y);
