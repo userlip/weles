@@ -7,8 +7,70 @@
 // to. Both are bounded and run once per run.
 import { humanClick, humanClickLocator } from '../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
-import { clickVisibleText, navEval } from './page_controls.mjs';
+import { navEval } from './page_controls.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
+
+// The hosts OpenAI sends its invitation and verification links from. Gmail's
+// search already narrowed the mailbox to OpenAI's own mail, so the first
+// result is the message and its link is the one on these hosts.
+const OPENAI_LINK_HOSTS = ['chatgpt.com', 'chat.openai.com', 'auth.openai.com'];
+
+/** Opens the first message of the current Gmail search; false when there is none. */
+async function openFirstResult(page) {
+  const row = await navEval(
+    page,
+    () => {
+      const first = Array.from(
+        document.querySelectorAll('tr.zA, div[role="listitem"]'),
+      ).find((element) => element.getClientRects().length);
+      if (!first) return null;
+      const box = first.getBoundingClientRect();
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    },
+    null,
+  );
+  if (!row) return false;
+  await humanClick(page, Math.round(row.x), Math.round(row.y));
+  return true;
+}
+
+/** The first link of the open message that points at an OpenAI host. */
+function openaiLink(page) {
+  return navEval(
+    page,
+    (hosts) => {
+      for (const anchor of Array.from(document.querySelectorAll('a[href]'))) {
+        if (
+          URL.canParse(anchor.href) &&
+          hosts.includes(new URL(anchor.href).hostname)
+        )
+          return anchor.href;
+      }
+      return null;
+    },
+    null,
+    OPENAI_LINK_HOSTS,
+  );
+}
+
+/**
+ * The code in `mail` as long as `field` takes: the verification form's own
+ * maxlength says how many digits OpenAI's code has.
+ */
+async function codeFor(field, mail) {
+  const length = await field.getAttribute('maxlength');
+  if (!length)
+    throw new Error(
+      "OpenAI's verification code field states no maxlength, so the code in the mail cannot be told from other numbers",
+    );
+  const found = mail.match(new RegExp(`\\b\\d{${length}}\\b`));
+  if (!found)
+    throw new Error(
+      `the OpenAI verification mail holds no ${length}-digit code and no link`,
+    );
+  return found.shift();
+}
 
 // Accept the ChatGPT workspace invitation waiting in this account's own mailbox.
 //
@@ -29,54 +91,16 @@ export async function acceptPendingWorkspaceInvite(page, login, mark) {
   await page.goto(`https://mail.google.com/mail/u/0/#search/${query}`, {
     waitUntil: 'commit',
   });
-  let opened = false;
   await pageSettled(page);
-  {
-    const row = await navEval(
-      page,
-      () => {
-        for (const element of Array.from(
-          document.querySelectorAll('tr.zA, div[role="listitem"]'),
-        )) {
-          const text = (element.innerText || '').replace(/\s+/g, ' ').trim();
-          if (!/invit/i.test(text)) continue;
-          const box = element.getBoundingClientRect();
-          if (box.width < 20 || box.height < 8) continue;
-          return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-        }
-        return null;
-      },
-      null,
-    );
-    if (row) {
-      await humanClick(page, Math.round(row.x), Math.round(row.y));
-      opened = true;
-    }
-  }
-  if (!opened) {
+  if (!(await openFirstResult(page))) {
     console.log(
       `[google_sso] no ChatGPT invitation in the mailbox of ${login.email}`,
     );
     return null;
   }
   mark('workspace_invite_opened');
-  let target = null;
   await pageSettled(page);
-  {
-    target = await navEval(
-      page,
-      () => {
-        const wanted =
-          /(chatgpt\.com|chat\.openai\.com|auth\.openai\.com)\/[^"']*(invit|join|accept)/i;
-        for (const anchor of Array.from(document.querySelectorAll('a[href]'))) {
-          const href = anchor.getAttribute('href');
-          if (wanted.test(href)) return href;
-        }
-        return null;
-      },
-      null,
-    );
-  }
+  const target = await openaiLink(page);
   if (!target) {
     console.log(
       '[google_sso] the invitation mail carries no workspace acceptance link',
@@ -85,21 +109,11 @@ export async function acceptPendingWorkspaceInvite(page, login, mark) {
   }
   await page.goto(target, { waitUntil: 'commit' });
   await pageSettled(page);
-  const control = await clickVisibleText(
+  await clickDescribed(
     page,
-    /^(accept invite|accept invitation|accept|join workspace|join|continue)$/i,
+    'the button that accepts the ChatGPT workspace invitation and joins the workspace',
   );
-  if (!control.clicked) {
-    mark(`workspace_invite_control_${control.reason}`);
-    console.log(
-      `[google_sso] invitation control not clicked: ${control.reason}`,
-    );
-  } else {
-    mark('workspace_invite_control_clicked');
-    console.log(
-      `[google_sso] clicked the workspace acceptance control "${control.text}"`,
-    );
-  }
+  mark('workspace_invite_control_clicked');
   await pageSettled(page);
   const landed = await navEval(page, () => location.href, '?');
   console.log(`[google_sso] the workspace invitation flow ended at ${landed}`);
@@ -121,31 +135,8 @@ export async function completeEmailVerification(page, login, mark) {
   await page.goto(`https://mail.google.com/mail/u/0/#search/${query}`, {
     waitUntil: 'commit',
   });
-  let opened = false;
   await pageSettled(page);
-  {
-    const row = await navEval(
-      page,
-      () => {
-        for (const element of Array.from(
-          document.querySelectorAll('tr.zA, div[role="listitem"]'),
-        )) {
-          const text = (element.innerText || '').replace(/\s+/g, ' ').trim();
-          if (!/verif|code/i.test(text)) continue;
-          const box = element.getBoundingClientRect();
-          if (box.width < 20 || box.height < 8) continue;
-          return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-        }
-        return null;
-      },
-      null,
-    );
-    if (row) {
-      await humanClick(page, Math.round(row.x), Math.round(row.y));
-      opened = true;
-    }
-  }
-  if (!opened) {
+  if (!(await openFirstResult(page))) {
     console.log(
       `[google_sso] no OpenAI verification mail in the mailbox of ${login.email} yet`,
     );
@@ -153,32 +144,13 @@ export async function completeEmailVerification(page, login, mark) {
   }
   await pageSettled(page);
   mark('email_verification_opened');
-  const found = await navEval(
-    page,
-    () => {
-      const wanted =
-        /(auth\.openai\.com|chatgpt\.com)\/[^"']*(verify|verification|confirm)/i;
-      for (const anchor of Array.from(document.querySelectorAll('a[href]'))) {
-        const href = anchor.getAttribute('href');
-        if (wanted.test(href)) return { link: href };
-      }
-      const body = (document.body?.innerText || '').replace(/\s+/g, ' ');
-      const code = body.match(/\b(\d{6})\b/);
-      return code ? { code: code[1] } : null;
-    },
-    null,
-  );
-  if (!found) {
-    console.log(
-      '[google_sso] verification mail carries neither a link nor a code',
-    );
-    return null;
-  }
-  if (found.link) {
-    await page.goto(found.link, { waitUntil: 'commit' });
+  const link = await openaiLink(page);
+  if (link) {
+    await page.goto(link, { waitUntil: 'commit' });
     await pageSettled(page);
     mark('email_verification_link_used');
   } else {
+    const mail = await navEval(page, () => document.body.innerText, null);
     await page.goBack({ waitUntil: 'commit' });
     const field = page
       .locator(
@@ -187,18 +159,15 @@ export async function completeEmailVerification(page, login, mark) {
       .filter({ visible: true })
       .first();
     await field.waitFor({ state: 'visible' });
+    const code = await codeFor(field, mail);
     await humanClickLocator(page, field);
-    await humanFill(page, field, found.code);
+    await humanFill(page, field, code);
     mark('email_verification_code_entered');
-    const submitted = await clickVisibleText(
+    await clickDescribed(
       page,
-      /^(continue|verify|submit|next)$/i,
+      'the button that submits the entered verification code',
     );
-    mark(
-      submitted.clicked
-        ? 'email_verification_submit_clicked'
-        : `email_verification_submit_${submitted.reason}`,
-    );
+    mark('email_verification_submit_clicked');
     await pageSettled(page);
   }
   const landed = await navEval(page, () => location.href, '?');
