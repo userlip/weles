@@ -14,6 +14,11 @@ if (!profile) {
   console.log('FAIL: no chrome profile');
   process.exit(1);
 }
+const CHROMIUM = process.env.CHROMIUM_PATH;
+if (!CHROMIUM) {
+  console.log('FAIL: CHROMIUM_PATH');
+  process.exit(1);
+}
 const scratch = join(tmpdir(), `weles_list_${Date.now()}`);
 mkdirSync(scratch, { recursive: true });
 cpSync(profile.path, join(scratch, 'Default'), {
@@ -27,12 +32,6 @@ try {
   );
 } catch {}
 
-const CHROMIUM = process.env.CHROMIUM_PATH;
-if (!CHROMIUM) {
-  console.log('FAIL: CHROMIUM_PATH');
-  process.exit(1);
-}
-
 // The launch lives in the reviewed browser boundary. This flow runs on a copy
 // of the operator's real Chrome profile, so the provider keeps treating it as
 // the returning visitor it already trusts.
@@ -45,6 +44,23 @@ const ctx = await launchProfileChrome({
 });
 const page = ctx.pages()[0] ?? (await ctx.newPage());
 const wait = () => pageSettled(page);
+
+// The scratch directory is a copy of the operator's Chrome profile with its
+// cookies and Local State. process.exit ends the run without running a
+// finally block, so the copy is released explicitly before every exit, and a
+// copy that could not be removed is named in the log.
+async function release() {
+  await ctx
+    .close()
+    .catch((e) => console.log(`[vast] browser close err: ${e.message}`));
+  try {
+    rmSync(scratch, { recursive: true, force: true });
+  } catch (e) {
+    console.log(
+      `[vast] copied Chrome profile ${scratch} not removed: ${e.message}`,
+    );
+  }
+}
 
 try {
   await page.goto('https://cloud.vast.ai/', { waitUntil: 'domcontentloaded' });
@@ -223,13 +239,10 @@ try {
     .screenshot({ path: '/tmp/vast_list_result.png', fullPage: true })
     .catch(() => {});
   console.log('screenshot -> /tmp/vast_list_result.png');
+  await release();
   process.exit(0);
 } catch (e) {
   console.log(`FAIL: ${e.message}`);
+  await release();
   process.exit(1);
-} finally {
-  await ctx.close().catch(() => {});
-  try {
-    rmSync(scratch, { recursive: true, force: true });
-  } catch {}
 }
