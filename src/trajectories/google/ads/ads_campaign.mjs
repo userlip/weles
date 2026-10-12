@@ -320,7 +320,7 @@ try {
   );
 } catch (e) {
   console.log('FAIL:', e.message);
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
   if (closeAllowedByEnv('GOOGLE_ADS_CLOSE_AFTER_HARVEST'))
     await closeGoogleAdsSession(s, 'google-ads');

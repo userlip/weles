@@ -155,7 +155,7 @@ try {
   console.log(`PASS: review submitted for app ${APP_ID} (${RATING}★)`);
 } catch (e) {
   console.log('FAIL:', e.message);
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
   await s.close();
 }

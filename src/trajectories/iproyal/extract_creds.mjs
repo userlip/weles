@@ -153,7 +153,7 @@ try {
   }
 } catch (e) {
   console.log('FAIL:', e.message || String(e));
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
   await s.close();
 }
