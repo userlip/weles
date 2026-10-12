@@ -321,11 +321,25 @@ async function adoptOperatorBrowser(
 async function probeExitIp(launch: LaunchedSession): Promise<void> {
   const proxy = launch.proxy;
   if (!proxy?.server) return;
+  // Provenance and cost accounting read exit_ip, so a probe that did not
+  // learn it says why rather than leaving the exit silently unknown.
   try {
     const r = await launch.ctx.request.get('https://api.ipify.org');
-    if (r.ok()) {
-      const t = (await r.text()).trim();
-      if (/^[0-9a-fA-F.:]+$/.test(t)) proxy.exit_ip = t;
+    if (!r.ok()) {
+      console.error(
+        `[launch] ${launch.label}: exit IP probe answered HTTP ${r.status()}; the proxy exit stays unknown`,
+      );
+      return;
     }
-  } catch {}
+    const t = (await r.text()).trim();
+    if (/^[0-9a-fA-F.:]+$/.test(t)) proxy.exit_ip = t;
+    else
+      console.error(
+        `[launch] ${launch.label}: exit IP probe answered no address (${JSON.stringify(t)}); the proxy exit stays unknown`,
+      );
+  } catch (error) {
+    console.error(
+      `[launch] ${launch.label}: exit IP probe failed; the proxy exit stays unknown: ${error}`,
+    );
+  }
 }
