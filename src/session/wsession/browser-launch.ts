@@ -27,6 +27,7 @@ import { type Persona, generatePersona } from '../../browser/persona.js';
 import { Capture } from '../../capture/capture.js';
 import { installBrowserEvidencePolicy } from '../../agent/browser-evidence-policy.js';
 import { resolveProxy } from '../../proxy/config.js';
+import { requestsNoProxy } from '../../proxy/resolve/url_form.js';
 import { seedHumanTiming } from '../../utils/motion/timing.js';
 import type { WSession } from '../wsession.js';
 import { SessionStore } from '../store.js';
@@ -51,11 +52,6 @@ import {
   writePrelaunchSessionMeta,
   writeRealizedSessionMeta,
 } from './run-provenance.js';
-
-/** A proxy request that names no proxy at all. */
-const NO_PROXY = 'none';
-/** A proxy request for the host's own egress. */
-const DIRECT_EGRESS = 'direct';
 
 function recordingsDir(label?: string): string {
   return label ? runRecordingsDir(label) : runRecordingsRoot();
@@ -120,11 +116,7 @@ export async function openSessionBrowser(
   );
   if (label && !secureCredentialTask) process.env.WELES_LABEL = label;
   if (operatorCdp) return await adoptOperatorBrowser(operatorCdp, label);
-  const requestedProxy = String(opts.proxy).toLowerCase();
-  const proxyRequested =
-    !!opts.proxy &&
-    requestedProxy !== NO_PROXY &&
-    requestedProxy !== DIRECT_EGRESS;
+  const proxyRequested = !!opts.proxy && !requestsNoProxy(String(opts.proxy));
   // WELES_FORCE_BROWSER pins the persona's browser engine globally (e.g. on a
   // host that only has the patched Chromium installed, not Firefox). Explicit
   // opts.browser still wins; unset rolls naturally (60/40 chromium/firefox).

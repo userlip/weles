@@ -6,6 +6,20 @@ import {
   writeProxyPreflightDiagnostics,
 } from './diagnostics.js';
 
+/** A proxy request that names no proxy at all. */
+export const NO_PROXY = 'none';
+/** A proxy request for the host's own egress. */
+export const DIRECT_EGRESS = 'direct';
+
+/**
+ * Whether a proxy request routes the browser without any proxy: no request,
+ * or one of the two requests declared above, in any case and spacing.
+ */
+export function requestsNoProxy(request: string | undefined): boolean {
+  if (request === undefined) return true;
+  const asked = request.trim().toLowerCase();
+  return !asked || asked === NO_PROXY || asked === DIRECT_EGRESS;
+}
 export async function resolveUrlFormProxy(
   proxy: string,
   targetHost: string | undefined,

@@ -1,6 +1,7 @@
 // The proxy a LinkedIn registration runs through: its summarised state, the diagnostics of a
 // failure, and the assertions that it is the requested, stable, dedicated ISP exit.
 import { isIP } from 'node:net';
+import { requestsNoProxy } from '../../../../../../dist/proxy/resolve/url_form.js';
 import {
   getLinkedinAuthState,
   getLinkedinChallengeSignal,
@@ -95,14 +96,12 @@ export async function assertLinkedinProxyStable(
 }
 
 export function assertLinkedinRegisterProxyRequest(requestedProxy = '') {
-  const raw = String(requestedProxy ?? '')
-    .trim()
-    .toLowerCase();
-  if (raw === 'none' || raw === 'direct') {
+  const raw = String(requestedProxy).trim().toLowerCase();
+  if (requestsNoProxy(raw)) {
     if (process.env.LINKEDIN_ALLOW_NO_PROXY === '1') return;
-  }
-  if (!raw || raw === 'none' || raw === 'direct') {
-    throw new Error(`PROXY_NOT_DEDICATED_ISP: requested=${raw || 'empty'}`);
+    throw new Error(
+      `PROXY_NOT_DEDICATED_ISP: requested=${JSON.stringify(raw)}`,
+    );
   }
   if (/^(https?:|socks)/.test(raw)) {
     throw new Error('PROXY_NOT_DEDICATED_ISP: url_form_proxy_request');
@@ -128,9 +127,8 @@ export function assertLinkedinRegisterProxyRequest(requestedProxy = '') {
 
 export function assertLinkedinDedicatedIspProxy(session, requestedProxy = '') {
   const raw = String(requestedProxy).toLowerCase();
-  if (raw === 'none' || raw === 'direct') {
-    if (process.env.LINKEDIN_ALLOW_NO_PROXY === '1') return;
-  }
+  if (requestsNoProxy(raw) && process.env.LINKEDIN_ALLOW_NO_PROXY === '1')
+    return;
   const server = String(session.proxyConfig?.server ?? '').toLowerCase();
   const username = String(session.proxyConfig?.username ?? '').toLowerCase();
   const provider = String(session.proxyConfig?.provider ?? '').toLowerCase();

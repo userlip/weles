@@ -16,14 +16,14 @@ import {
   type ProxyPreflightAttempt,
 } from './diagnostics.js';
 import { preflightExit } from './exit_preflight.js';
-import { resolveUrlFormProxy } from './url_form.js';
+import { requestsNoProxy, resolveUrlFormProxy } from './url_form.js';
 
 export async function resolveProxy(
   proxy: string,
   targetHost?: string,
   preflightPersona?: LinkedInProbePersona,
 ): Promise<ResolvedProxy | undefined> {
-  if (!proxy || proxy === 'none' || proxy === 'direct') return undefined;
+  if (requestsNoProxy(proxy)) return undefined;
   const attempts: ProxyPreflightAttempt[] = [];
   const startedAt = new Date().toISOString();
 
