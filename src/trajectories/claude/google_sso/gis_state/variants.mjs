@@ -56,7 +56,7 @@ export function classifyGisState(st) {
   if (!st || !st.ok) return 'unknown';
   if (st.host === 'platform.claude.com') return 'code_page';
   if (st.host === 'accounts.google.com') {
-    if (/\/signin\/rejected|deniedsigninrejected/.test(st.pathname))
+    if (under(st.pathname, ['/signin/rejected', 'deniedsigninrejected']))
       return 'google_rejected';
     if (st.accountRow) return 'google_account_chooser';
     if (

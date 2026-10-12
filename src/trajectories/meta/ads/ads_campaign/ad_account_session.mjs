@@ -16,6 +16,7 @@ import {
   targetUrl,
 } from './campaign_request.mjs';
 import { pageText } from './panel_controls.mjs';
+import { isLoginUrl, isSecurityWall } from '../session/login_wall.mjs';
 
 async function bringBrowserToFront(s) {
   await s.page.bringToFront();
@@ -30,12 +31,6 @@ async function bringBrowserToFront(s) {
       'tell application "System Events" to set frontmost of every process whose name is "Chromium" to true',
     ],
     { stdio: 'ignore' },
-  );
-}
-
-function isLoginUrl(url) {
-  return /facebook\.com\/login|business\.facebook\.com\/business\/loginpage|checkpoint|recover/i.test(
-    url,
   );
 }
 
@@ -56,11 +51,7 @@ async function passLoginGate(s) {
     await pageSettled(s.page);
   }
   // Meta's security and two-factor steps live at their own addresses.
-  if (
-    /business\.facebook\.com\/security|two_factor|checkpoint/i.test(
-      s.page.url(),
-    )
-  ) {
+  if (isSecurityWall(s.page.url())) {
     console.log('FAIL: Meta account requires security verification');
     process.exit(2);
   }

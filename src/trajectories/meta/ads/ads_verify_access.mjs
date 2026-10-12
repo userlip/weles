@@ -1,4 +1,5 @@
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { isLoginUrl } from './session/login_wall.mjs';
 // Meta Ads browser access verifier.
 //
 // Reuses the persistent Weles Meta Ads profile and reports the selected account
@@ -83,12 +84,6 @@ function prepareUserDataDir() {
     dir: cloneDir,
     cleanup: () => rmSync(cloneParent, { recursive: true, force: true }),
   };
-}
-
-function isLoginUrl(url) {
-  return /facebook\.com\/login|business\.facebook\.com\/business\/loginpage|checkpoint|recover/i.test(
-    url,
-  );
 }
 
 function hasMetaAuthCookie(cookies) {

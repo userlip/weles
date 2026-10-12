@@ -156,7 +156,7 @@ async function waitForApprovalAdvance(page) {
   await Promise.any([
     urlMatching(
       page,
-      (u) => u !== initialUrl && !/qrcode|qrsignin|qr_code/i.test(u),
+      (u) => u !== initialUrl && !u.toLowerCase().includes('qr'),
     ),
     qrDropped(),
   ]);

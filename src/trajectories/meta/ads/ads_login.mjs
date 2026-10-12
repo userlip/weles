@@ -1,4 +1,5 @@
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { isLoginUrl } from './session/login_wall.mjs';
 // Meta Ads persistent login bootstrap.
 //
 // Opens a visible Weles Chromium profile, waits for manual login, verifies
@@ -39,12 +40,6 @@ async function bringBrowserToFront(s) {
       'tell application "System Events" to set frontmost of every process whose name is "Chromium" to true',
     ],
     { stdio: 'ignore' },
-  );
-}
-
-function isLoginUrl(url) {
-  return /facebook\.com\/login|business\.facebook\.com\/business\/loginpage|checkpoint|recover/i.test(
-    url,
   );
 }
 

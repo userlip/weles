@@ -205,7 +205,7 @@ async function fillCodeBoxes(boxes, code, refusal) {
 
     // 9. Phone OTP
     const smsCode = await s.pollSmsCode();
-    if (!smsCode || /^no code|^error/i.test(smsCode))
+    if (!/^\d+$/.test(smsCode))
       throw new Error(`apple_sms_otp_failed: ${smsCode}`);
     const smsBoxes = await frame
       .locator(
@@ -215,15 +215,18 @@ async function fillCodeBoxes(boxes, code, refusal) {
     await fillCodeBoxes(smsBoxes, smsCode, 'apple_sms_otp_unexpected_inputs');
     await humanIdlePause('long');
 
-    // 10. Land on appleid.apple.com/manage (or /account/done) on success.
-    const finalUrl = s.page.url?.() ?? '';
+    // 10. Success lands on appleid.apple.com, or on idmsa's auth/done page.
+    const landed = new URL(s.page.url());
     if (
-      !/appleid\.apple\.com.*\/(manage|account)/.test(finalUrl) &&
-      !/idmsa\.apple\.com.*\/auth\/done/.test(finalUrl)
+      landed.hostname !== 'appleid.apple.com' &&
+      !(
+        landed.hostname === 'idmsa.apple.com' &&
+        landed.pathname.includes('/auth/done')
+      )
     ) {
       await humanIdlePause('deliberate');
-      const settled = s.page.url?.() ?? '';
-      if (!/appleid\.apple\.com/.test(settled))
+      const settled = s.page.url();
+      if (new URL(settled).hostname !== 'appleid.apple.com')
         throw new Error(`apple_register_no_landing: ${settled}`);
     }
 

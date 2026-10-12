@@ -86,7 +86,8 @@ async function main() {
       process.exit(2);
     }
     if (
-      /multifactorauthalert|block=true/i.test(current) ||
+      current.toLowerCase().includes('multifactorauthalert') ||
+      new URL(current).searchParams.get('block') === 'true' ||
       (await pageShows(
         s.page,
         'Does the page say 2-step verification or multi-factor authentication is required?',

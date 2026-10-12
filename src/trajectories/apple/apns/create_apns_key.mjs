@@ -35,7 +35,12 @@ const s = await WSession.start({
 
 await s.goto(ADD_URL);
 await pageSettled(s.page);
-if (/idmsa|\/login|authResult=FAILED/.test(s.page.url())) {
+const landed = new URL(s.page.url());
+if (
+  landed.hostname.startsWith('idmsa.') ||
+  landed.pathname.includes('/login') ||
+  landed.searchParams.get('authResult') === 'FAILED'
+) {
   console.log(
     'NEED_LOGIN: persisted Apple session expired — cannot create the key without a fresh login.',
   );
