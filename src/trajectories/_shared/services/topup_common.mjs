@@ -152,7 +152,10 @@ export async function fillStripeElements(page, card = null) {
     }
     try {
       await entry.handle.click({ force: true });
-      await entry.handle.fill('').catch(() => {});
+      // A field that cannot be cleared would take the typed digits after
+      // whatever it already held: a card number or expiry Stripe charges
+      // wrong. Its failure is the field's err:, not a silent 'filled'.
+      await entry.handle.fill('');
       await humanType(page, value);
       filled[field] = 'filled';
     } catch (e) {
