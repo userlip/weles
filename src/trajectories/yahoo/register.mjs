@@ -20,28 +20,16 @@ function writeJson(name, value) {
   writeFileSync(join(dir, name), JSON.stringify(value, null, 2));
 }
 
-function monthNumber(value) {
-  const months = [
-    'january',
-    'february',
-    'march',
-    'april',
-    'may',
-    'june',
-    'july',
-    'august',
-    'september',
-    'october',
-    'november',
-    'december',
-  ];
-  const lower = String(value || '').toLowerCase();
-  const idx = months.indexOf(lower);
-  if (idx >= 0) return String(idx + 1).padStart(2, '0');
-  const n = Number(value);
-  return Number.isFinite(n)
-    ? String(Math.max(1, Math.min(12, Math.trunc(n)))).padStart(2, '0')
-    : '01';
+/** The identity's birth date, read from its own month name, day and year. A
+ * date that does not parse is refused: a month guessed in its place would
+ * register the account under a birth date nobody recorded. */
+function birthDate(id) {
+  const born = new Date(`${id.birthMonth} ${id.birthDay}, ${id.birthYear}`);
+  if (Number.isNaN(born.getTime()))
+    throw new Error(
+      `birth_date_unreadable: ${id.birthMonth} ${id.birthDay} ${id.birthYear}`,
+    );
+  return born;
 }
 
 async function bodyText(page) {
@@ -179,7 +167,7 @@ async function fillSignupForm(s, id) {
     (await fillFirst(
       page,
       ['input[name="mm"]', 'input[id$="-mm"]', 'input[placeholder*="Month" i]'],
-      monthNumber(id.birthMonth),
+      birthDate(id).toLocaleString('en', { month: '2-digit' }),
     )) ||
       (() => {
         throw new Error('birth_month_input_not_found');
@@ -187,7 +175,7 @@ async function fillSignupForm(s, id) {
     (await fillFirst(
       page,
       ['input[name="dd"]', 'input[id$="-dd"]', 'input[placeholder*="Day" i]'],
-      String(id.birthDay).padStart(2, '0'),
+      birthDate(id).toLocaleString('en', { day: '2-digit' }),
     )) ||
       (() => {
         throw new Error('birth_day_input_not_found');
@@ -324,7 +312,9 @@ async function successState(s) {
   ) {
     return { ok: false, url, accountUi: 0, sample: text };
   }
-  await s.goto(FINANCE_URL).catch(() => {});
+  // The account is judged signed in from Yahoo Finance; a load that failed
+  // would judge it from the sign-up page instead.
+  await s.goto(FINANCE_URL);
   await humanIdlePause('deliberate');
   url = s.page.url?.() ?? '';
   text = await bodyText(s.page);
@@ -335,8 +325,7 @@ async function successState(s) {
     .locator(
       'button[aria-label*="account" i], a[href*="account" i], a[href*="login.yahoo.com/account"]',
     )
-    .count()
-    .catch(() => 0);
+    .count();
   return {
     ok: !loggedOut && (/finance\.yahoo\.com/.test(url) || accountUi > 0),
     url,
