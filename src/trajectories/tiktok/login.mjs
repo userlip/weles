@@ -17,7 +17,7 @@ import {
   verifyDialogPresent,
 } from './login/new_device_verify.mjs';
 import { waitForSignedIn } from './login/session_wait.mjs';
-import { recordLoginFailure } from './login/failure_signal.mjs';
+import { recordLoginFailure, refusedLogin } from './login/failure_signal.mjs';
 
 const PASSWORD_URL =
   'https://www.tiktok.com/login/phone-or-email/email?lang=en';
@@ -51,7 +51,9 @@ const s = await WSession.start({
 const loginDiag = {
   account_id: acct.id,
   username: acct.username,
-  accountApiError: '',
+  // TikTok's own refusal of the sign-in: the first passport login answer
+  // whose message is not success, with its data (error_code, description).
+  refusal: null,
   loginResponses: [],
   failedRequests: [],
   captcha: { present: false, solved: false },
@@ -71,44 +73,50 @@ async function captureCookies() {
   }
 }
 
-/** Record the passport login XHRs, failed requests and page errors into loginDiag. */
+/** TikTok's own passport sign-in calls. */
+const PASSPORT_LOGIN =
+  /\/passport\/web\/(login|login_with_email|account_check)\/?$/;
+
+/**
+ * Record the passport login answers with their bodies, every failed request
+ * and every console message into loginDiag and the log. A refusal is
+ * TikTok's own answer to its login call, read from that answer, not from
+ * words in the console.
+ */
 function observeLoginTraffic(page) {
-  page.on('response', (res) => {
+  page.on('response', async (res) => {
     const u = res.url();
-    if (
-      /\/passport\/web\/login|\/passport\/web\/login_with_email|\/passport\/web\/account_check/.test(
-        u,
-      )
-    ) {
-      loginDiag.loginResponses.push({
-        url: u,
-        status: res.status(),
-        ts: Date.now(),
-      });
+    if (!PASSPORT_LOGIN.test(new URL(u).pathname)) return;
+    const entry = { url: u, status: res.status(), ts: Date.now() };
+    loginDiag.loginResponses.push(entry);
+    try {
+      entry.body = await res.text();
+    } catch (error) {
+      entry.body_error = error.message;
+      return;
     }
+    let answer;
+    try {
+      answer = JSON.parse(entry.body);
+    } catch (error) {
+      entry.body_error = `not JSON: ${error.message}`;
+      return;
+    }
+    if (answer?.message !== 'success' && loginDiag.refusal === null)
+      loginDiag.refusal = { url: u, status: entry.status, answer };
   });
   page.on('requestfailed', (req) => {
-    const u = req.url();
-    const f = req.failure?.();
-    if (/passport|tiktok|webmssdk|secsdk|verification|captcha/i.test(u)) {
-      const headers = req.headers ? req.headers() : {};
-      loginDiag.failedRequests.push({
-        url: u,
-        failure: f?.errorText,
-        method: req.method(),
-        origin: headers.origin || headers.referer,
-      });
-    }
+    const headers = req.headers();
+    loginDiag.failedRequests.push({
+      url: req.url(),
+      failure: req.failure()?.errorText,
+      method: req.method(),
+      origin: headers.origin ? headers.origin : headers.referer,
+    });
   });
-  page.on('console', (msg) => {
-    if (msg.type() === 'error' || msg.type() === 'warning') {
-      const text = msg.text();
-      if (/Maximum number of attempts reached|account-api error/i.test(text)) {
-        loginDiag.accountApiError = text;
-      }
-      console.log(`[tiktok_login] page-${msg.type()}: ${text}`);
-    }
-  });
+  page.on('console', (msg) =>
+    console.log(`[tiktok_login] page-${msg.type()}: ${msg.text()}`),
+  );
 }
 
 /** Fill the email/password form. Its selectors are stable on TikTok's login page. */
@@ -216,8 +224,7 @@ async function passCaptcha(page) {
   console.log(
     `[tiktok_login] post-captcha loginResponses=${JSON.stringify(loginDiag.loginResponses)}`,
   );
-  if (loginDiag.accountApiError)
-    throw new Error(`login_rate_limited: ${loginDiag.accountApiError}`);
+  if (loginDiag.refusal) throw refusedLogin(loginDiag);
 }
 
 try {
@@ -257,7 +264,7 @@ try {
   await captureCookies();
 } catch (e) {
   try {
-    recordLoginFailure(e, s, acct, loginDiag);
+    await recordLoginFailure(e, s, acct, loginDiag);
   } catch (recordError) {
     console.log(
       `[tiktok_login] could not record the failure: ${recordError.message}`,

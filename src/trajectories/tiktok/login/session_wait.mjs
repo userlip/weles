@@ -1,5 +1,6 @@
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { screenshotIfPossible } from '../../_shared/runner/evidence.mjs';
+import { refusedLogin } from './failure_signal.mjs';
 
 /** Whether the context holds TikTok's httpOnly sessionid cookie. */
 async function hasSessionCookie(ctx) {
@@ -118,8 +119,7 @@ export async function waitForSignedIn(s, loginDiag) {
   console.log(
     `[tiktok_login] loginResponses: ${JSON.stringify(loginDiag.loginResponses)}`,
   );
-  if (loginDiag.accountApiError)
-    throw new Error(`login_rate_limited: ${loginDiag.accountApiError}`);
+  if (loginDiag.refusal) throw refusedLogin(loginDiag);
   throw new Error(
     `tiktok login did not sign in: at ${path}, sessionid=${finalState.hasSessionId}, errors=${JSON.stringify(finalState.errors ?? [])}`,
   );
