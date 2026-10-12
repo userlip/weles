@@ -2,12 +2,13 @@ import { WSession } from '../../../dist/session/wsession.js';
 import { SessionStore } from '../../../dist/session/store.js';
 import { humanIdlePause } from '../../../dist/human/mouse.js';
 import { readScopedLogin } from '../../_shared/scoped-secrets.mjs';
+import { switchToTeam, vastTeamName } from './team_context.mjs';
 
 const LABEL = 'vast';
 const VAST_LOGIN = readScopedLogin('vastDashboard');
 const EMAIL = VAST_LOGIN.email;
 const PWD = VAST_LOGIN.password;
-const PRICE_GPU = process.env.PRICE_GPU ?? '0.80';
+const TEAM_NAME = vastTeamName();
 
 const ws = await WSession.start({ label: LABEL, headless: false });
 const store = new SessionStore();
@@ -89,18 +90,7 @@ try {
     console.log('[vast] session restored from SessionStore');
   }
 
-  await ws.page.evaluate(`(async () => {
-    var r = await fetch('/api/v0/auth/apikeys/', { credentials: 'include' });
-    var keys = (await r.json()).apikeys || [];
-    var team = keys.find(k => k.key_type === 'team' && k.team_name === 'Wisent');
-    if (team) {
-      await fetch('/api/v0/users/save-context/', {
-        method: 'PUT', credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ context_key_id: team.id }),
-      });
-    }
-  })()`);
+  await switchToTeam(ws.page, TEAM_NAME);
 
   await ws.goto('https://cloud.vast.ai/host/machines/');
   await humanIdlePause('long');

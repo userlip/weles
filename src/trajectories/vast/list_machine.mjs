@@ -8,6 +8,7 @@ import { pageSettled } from '../_shared/page/settled.mjs';
 import { statedText } from '../_shared/inputs/stated.mjs';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 import { exitStatusFor } from '../../../dist/cli/usage.js';
+import { switchToTeam, vastTeamName } from './team_context.mjs';
 
 const VAST_LOGIN = readScopedLogin('vastDashboard');
 const EMAIL = VAST_LOGIN.email;
@@ -17,10 +18,7 @@ const PRICE_GPU = statedText(
   ['PRICE_GPU'],
   'the hourly price per GPU the machine is listed at, in US dollars',
 );
-const TEAM_NAME = statedText(
-  ['VAST_TEAM_NAME'],
-  'the Vast team whose context the machine is listed under',
-);
+const TEAM_NAME = vastTeamName();
 const profile = findProfileByEmail(EMAIL);
 if (!profile) {
   console.log('FAIL: no chrome profile');
@@ -144,27 +142,7 @@ try {
     }
   }
 
-  const teamSwitched = await page.evaluate(async (teamName) => {
-    const r = await fetch('/api/v0/auth/apikeys/', { credentials: 'include' });
-    const keys = await r.json();
-    const team = keys.apikeys.find(
-      (k) => k.key_type === 'team' && k.team_name === teamName,
-    );
-    if (!team) return false;
-    const saved = await fetch('/api/v0/users/save-context/', {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ context_key_id: team.id }),
-    });
-    return saved.ok;
-  }, TEAM_NAME);
-  // A machine listed in the personal context would rent out under the wrong
-  // owner.
-  if (!teamSwitched)
-    throw new Error(
-      `the Vast context could not be switched to team ${TEAM_NAME}; nothing was listed`,
-    );
+  await switchToTeam(page, TEAM_NAME);
 
   await page.goto('https://cloud.vast.ai/host/machines/', {
     waitUntil: 'domcontentloaded',
