@@ -9,7 +9,10 @@ import {
   markCookiesStale,
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
-import { confirmedFill } from '../../_shared/page/confirmed-fill.mjs';
+import {
+  confirmedFill,
+  statedField,
+} from '../../_shared/page/confirmed-fill.mjs';
 import {
   humanClickLocator,
   humanIdlePause,
@@ -131,14 +134,14 @@ try {
     .first();
 
   const writes = [];
-  if (targetName && (await nameIn.count())) {
+  if (await statedField(nameIn, targetName, 'the X name field')) {
     const cur = await nameIn.inputValue();
     if (cur.trim() !== targetName.trim()) {
       await confirmedFill(s.page, nameIn, targetName, 'the X name field');
       writes.push(`name "${cur}" -> "${targetName}"`);
     }
   }
-  if (targetBio && (await bioIn.count())) {
+  if (await statedField(bioIn, targetBio, 'the X bio field')) {
     const cur = await bioIn.inputValue();
     if (cur.trim() !== targetBio.trim()) {
       await fitsField(bioIn, targetBio, 'the X bio');

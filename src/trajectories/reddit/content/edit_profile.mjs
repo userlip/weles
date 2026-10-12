@@ -8,7 +8,10 @@ import {
   markCookiesStale,
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
-import { confirmedFill } from '../../_shared/page/confirmed-fill.mjs';
+import {
+  confirmedFill,
+  statedField,
+} from '../../_shared/page/confirmed-fill.mjs';
 import {
   humanClickLocator,
   humanIdlePause,
@@ -108,7 +111,7 @@ try {
     .first();
 
   const writes = [];
-  if (targetName && (await nameIn.count())) {
+  if (await statedField(nameIn, targetName, 'the Reddit display name field')) {
     const cur = await nameIn.inputValue();
     if (cur.trim() !== targetName.trim()) {
       await fitsField(nameIn, targetName, 'the Reddit display name');
@@ -121,7 +124,7 @@ try {
       writes.push(`name "${cur}" -> "${targetName}"`);
     }
   }
-  if (targetBio && (await bioIn.count())) {
+  if (await statedField(bioIn, targetBio, 'the Reddit about field')) {
     const cur = await bioIn.inputValue();
     if (cur.trim() !== targetBio.trim()) {
       await fitsField(bioIn, targetBio, 'the Reddit about text');

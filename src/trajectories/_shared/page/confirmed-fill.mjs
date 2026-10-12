@@ -14,3 +14,15 @@ export async function confirmedFill(page, field, text, what) {
     );
   return held;
 }
+
+// Whether a field is to be written: a value nobody stated leaves the field as
+// it is (false); a stated value whose field the page does not show fails the
+// run, instead of a PASS for a profile that was never updated.
+export async function statedField(field, value, what) {
+  if (!value) return false;
+  if (!(await field.count()))
+    throw new Error(
+      `${what} is not on the page; the stated value was not written`,
+    );
+  return true;
+}
