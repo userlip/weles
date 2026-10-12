@@ -29,7 +29,6 @@ const SIGN_IN_HOSTS = Object.freeze([
   'login.microsoftonline.com',
   'login.microsoft.com',
 ]);
-const OPERATIONS = Object.freeze(['adopt', 'rotate', 'reset', 'verify']);
 export const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 export const LOWER_UUID =
   /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/;
@@ -82,8 +81,6 @@ export function constraints(allowedOperations) {
   const skarbiecTenantId =
     typeof parsed.weles_tenant_id === 'string' ? parsed.weles_tenant_id : null;
   const actionLogId = process.env.ACTION_LOG_ID ?? '';
-  const expectedOperation =
-    process.env.WELES_CREDENTIAL_EXPECTED_OPERATION ?? '';
   if (
     !ENTRA_PASSWORD_ID.test(credentialId) ||
     parsed.provider !== ENTRA_PROVIDER ||
@@ -92,9 +89,7 @@ export function constraints(allowedOperations) {
     parsed.vault_field !== PASSWORD_FIELD ||
     !/^[\da-f]{64}$/i.test(requestId) ||
     !ACTION_LOG_ID.test(actionLogId) ||
-    !OPERATIONS.includes(operation) ||
     !allowedOperations.includes(operation) ||
-    (expectedOperation && expectedOperation !== operation) ||
     !EMAIL.test(accountUpn) ||
     (accountEmail && !EMAIL.test(accountEmail)) ||
     !LOWER_UUID.test(tenantId) ||
