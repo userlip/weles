@@ -8,7 +8,7 @@ import {
 import type { CapabilityRef } from '../../../utils/capability.js';
 import type { WSession } from '../../wsession.js';
 import type { ElementHandle, Page } from 'playwright';
-import { fillPage } from '../finalize.js';
+import { fillPage } from './page_fill.js';
 import { humanFill } from '../../../human/keyboard.js';
 import {
   describeInputTarget,
