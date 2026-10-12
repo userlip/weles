@@ -2,6 +2,7 @@ import { WSession } from '../../../dist/session/wsession.js';
 import { SessionStore } from '../../../dist/session/store.js';
 import { humanIdlePause } from '../../../dist/human/mouse.js';
 import { readScopedLogin } from '../../_shared/scoped-secrets.mjs';
+import { googleSso } from '../_shared/services/google_sso.mjs';
 import { switchToTeam, vastTeamName } from './team_context.mjs';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
@@ -9,8 +10,6 @@ import { exitStatusFor } from '../../../dist/cli/usage.js';
 
 const LABEL = 'vast';
 const VAST_LOGIN = readScopedLogin('vastDashboard');
-const EMAIL = VAST_LOGIN.email;
-const PWD = VAST_LOGIN.password;
 const TEAM_NAME = vastTeamName();
 
 const ws = await WSession.start({ label: LABEL, headless: false });
@@ -22,15 +21,14 @@ await ws.ctx
   })
   .catch(() => {});
 
+// Vast's own account endpoint answers the signed-in user for this browser's
+// session and refuses any other; its answer, not words in the page header
+// (or the team's name in the page), says whether the session is signed in.
+const CURRENT_USER = 'https://cloud.vast.ai/api/v0/users/current/';
+
 async function loggedIn() {
-  return ws.page
-    .evaluate(`(() => {
-    var h = (document.querySelector('header')?.innerText || '').toLowerCase();
-    if (/\\blog\\s*in\\b|\\bsign\\s*in\\b/.test(h)) return false;
-    var all = (document.body?.innerText || '').toLowerCase();
-    return /wisent/.test(all) || /credit:/.test(h);
-  })()`)
-    .catch(() => false);
+  const answer = await ws.ctx.request.get(CURRENT_USER);
+  return answer.ok();
 }
 
 try {
@@ -41,52 +39,20 @@ try {
     console.log('[vast] not logged in; running OAuth');
     await ws.click('Login');
     await humanIdlePause('deliberate');
-    const popupP = ws.ctx.waitForEvent('page').catch(() => null);
+    const popupP = ws.ctx.waitForEvent('page');
     await ws.click('Continue with Google');
     const popup = await popupP;
-    console.log('[vast] popup opened:', !!popup);
-    if (popup) {
-      try {
-        await popup.waitForLoadState('domcontentloaded');
-      } catch {}
-      // Google's OAuth popup closes itself when sign-in completes; each step
-      // it shows is answered until then.
-      while (!popup.isClosed()) {
-        let path = '';
-        try {
-          path = new URL(popup.url()).pathname;
-        } catch {}
-        if (path.includes('/signin/identifier')) {
-          try {
-            await popup.fill('input[type="email"]', EMAIL);
-            await popup.click('#identifierNext').catch(() => {});
-          } catch {}
-        } else if (
-          path.includes('/challenge/pwd') ||
-          path.includes('/challenge/password')
-        ) {
-          if (!PWD)
-            throw new Error(
-              'Google asked for the password and no password is configured',
-            );
-          try {
-            await popup.fill('input[type="password"]', PWD);
-            await popup.click('#passwordNext').catch(() => {});
-          } catch {}
-        } else if (
-          path.includes('/signin/oauth/') ||
-          path.includes('/oauthconsent')
-        ) {
-          await popup
-            .evaluate(
-              `(() => { var b = Array.from(document.querySelectorAll('button,[role="button"],a')).find(e => /^(continue|allow|confirm)$/i.test((e.innerText||'').trim())); if (b) b.click(); })()`,
-            )
-            .catch(() => {});
-        }
-        await humanIdlePause('short');
-      }
-    }
-    await humanIdlePause('deliberate');
+    await popup.waitForLoadState('domcontentloaded');
+    // Google's own sign-in steps, through the shared driver every Google SSO
+    // trajectory uses.
+    const signedIn = await googleSso(ws, VAST_LOGIN, {
+      page: popup,
+      originHost: 'cloud.vast.ai',
+    });
+    if (!signedIn || !(await loggedIn()))
+      throw new Error(
+        `VAST_SIGN_IN_FAILED: Google sign-in did not leave a Vast session (${CURRENT_USER} still refuses this browser)`,
+      );
     const saved = await store.capturePlaywright(ws.ctx, LABEL);
     console.log(`[vast] login flow captured ${saved.length} cookies`);
   } else {
