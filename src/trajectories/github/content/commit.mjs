@@ -97,10 +97,15 @@ try {
     .first();
   if (await msgIn.count()) {
     await humanClickLocator(s.page, msgIn);
-    await s.page.keyboard.press('Control+A').catch(() => {});
-    await s.page.keyboard.press('Meta+A').catch(() => {});
-    await s.page.keyboard.press('Delete').catch(() => {});
+    await s.page.keyboard.press('ControlOrMeta+A');
+    await s.page.keyboard.press('Delete');
     await humanType(s.page, COMMIT_MESSAGE);
+    // A commit made with GitHub's default message is not the change asked for.
+    const held = await msgIn.inputValue();
+    if (held !== COMMIT_MESSAGE)
+      throw new Error(
+        `commit message field holds ${JSON.stringify(held)}, not the message typed`,
+      );
   }
   await pageSettled(s.page);
   // Modal confirm button — second "Commit changes" inside dialog/Box--overlay.
