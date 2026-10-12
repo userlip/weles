@@ -14,6 +14,7 @@ import {
 } from '../../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../../dist/session/wsession.js';
 import { detectRedditBanSignals } from '../../../../../dist/platforms/reddit/ban_signals.js';
+import { banSignalOf } from '../../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -57,9 +58,7 @@ try {
   console.log(`[ban-signal] ${banSignal.signal}`);
   console.log(`PASS: scrolled ${observed.scrolls}x on ${observed.origin}`);
 } catch (e) {
-  banSignal = await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  banSignal = await banSignalOf(detectRedditBanSignals, s, 'after the failure');
   if (banSignal) console.log(`[ban-signal] ${banSignal.signal}`);
   console.log('FAIL:', e.message);
   process.exitCode = 1;

@@ -4,6 +4,7 @@ import {
 } from '../../../dist/utils/credentials.js';
 import { WSession } from '../../../dist/session/wsession.js';
 import { detectRedditBanSignals } from '../../../dist/platforms/reddit/ban_signals.js';
+import { banSignalOf } from '../_shared/auth/ban-signal.mjs';
 import { humanType } from '../../../dist/human/keyboard.js';
 import {
   humanIdlePause,
@@ -64,10 +65,11 @@ try {
   // Login always means form login now. Action trajectories use
   // assertAuthed() from _shared/auth/auth-probe.mjs.
   await s.goto(URL);
-  const earlySignal = await detectRedditBanSignals(
-    s.page,
-    s.capturedResponses,
-  ).catch(() => null);
+  const earlySignal = await banSignalOf(
+    detectRedditBanSignals,
+    s,
+    'on the login page',
+  );
   if (earlySignal?.signal === 'ip_blocked') {
     banSignal = earlySignal;
     console.log(`[ban-signal] ${earlySignal.signal} (early) — rotating proxy`);
@@ -130,9 +132,7 @@ try {
     console.log(`PASS: logged in (${s.page.url()})`);
   }
 } catch (e) {
-  banSignal = await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  banSignal = await banSignalOf(detectRedditBanSignals, s, 'after the failure');
   if (banSignal) console.log(`[ban-signal] ${banSignal.signal}`);
   if (banSignal?.signal === 'ip_blocked') await wipeStoredProxy(acct.id);
   console.log('FAIL:', e.message);
