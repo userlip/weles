@@ -106,28 +106,22 @@ async function ensureAdAccount(s) {
   console.log(
     `[meta-ads] ad account after switch=${after || 'unknown'} visible=${visible.label || 'unknown'}`,
   );
-  if (after !== AD_ACCOUNT_ID) {
-    console.log(
-      `FAIL: wrong Meta ad account selected; expected=${AD_ACCOUNT_ID} actual=${after || 'unknown'} url=${s.page.url?.() ?? ''}`,
+  if (after !== AD_ACCOUNT_ID)
+    throw new Error(
+      `wrong Meta ad account selected; expected=${AD_ACCOUNT_ID} actual=${after} url=${s.page.url()}`,
     );
-    process.exit(1);
-  }
-  if (visible.id && visible.id !== AD_ACCOUNT_ID) {
-    console.log(
-      `FAIL: Meta visible account mismatch; expected=${AD_ACCOUNT_ID} actual=${visible.id} label=${visible.label || ''}`,
+  if (visible.id && visible.id !== AD_ACCOUNT_ID)
+    throw new Error(
+      `Meta visible account mismatch; expected=${AD_ACCOUNT_ID} actual=${visible.id} label=${visible.label}`,
     );
-    process.exit(1);
-  }
   if (
     AD_ACCOUNT_NAME &&
     visible.label &&
     !visible.label.toLowerCase().includes(AD_ACCOUNT_NAME.toLowerCase())
-  ) {
-    console.log(
-      `FAIL: Meta visible account name mismatch; expected contains=${AD_ACCOUNT_NAME} label=${visible.label}`,
+  )
+    throw new Error(
+      `Meta visible account name mismatch; expected contains=${AD_ACCOUNT_NAME} label=${visible.label}`,
     );
-    process.exit(1);
-  }
   return after;
 }
 

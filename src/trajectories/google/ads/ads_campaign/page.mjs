@@ -201,11 +201,9 @@ export async function ensureCustomer(s) {
   await pageSettled(s.page);
   const after = currentCustomerId(s.page.url?.() ?? '');
   console.log(`[google-ads] customer after switch=${after || 'unknown'}`);
-  if (after && after !== target) {
-    console.log(
-      `FAIL: wrong Google Ads customer selected; expected=${target} actual=${after} url=${s.page.url?.() ?? ''}`,
+  if (after && after !== target)
+    throw new Error(
+      `wrong Google Ads customer selected; expected=${target} actual=${after} url=${s.page.url()}`,
     );
-    process.exit(1);
-  }
   return after;
 }
