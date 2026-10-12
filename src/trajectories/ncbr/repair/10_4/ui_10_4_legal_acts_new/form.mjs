@@ -6,7 +6,8 @@ import {
 } from '../../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../../dist/human/keyboard.js';
 import { pageShows } from '../../../../_shared/page/judged/seen.mjs';
-import { rowNeedles, target } from './source.mjs';
+import { rowAbout } from '../../../../_shared/page/judged/matched.mjs';
+import { actSubject, target } from './source.mjs';
 
 export function legalActForm({ page }) {
   async function diagForm(opened) {
@@ -142,62 +143,38 @@ export function legalActForm({ page }) {
     return { selected: 'Pozostałe inne' };
   }
 
+  // The form's own option for an act its list does not carry; such a row
+  // names the act in its justification instead.
+  const OTHER_ACT_OPTION = 'inne (w polu uzasadnienie wpisz jakie)';
+
+  /**
+   * Picks the act of `row` in the autocomplete. The list is searched with
+   * the act's own title, and which offered option is that act is judged by
+   * the model over the options' text, however the list spells the statute.
+   */
   async function setLegalAct(row) {
     const input = page.locator('input[name="akt_prawny"]').first();
     await input.waitFor({ state: 'visible' });
-    const optionText =
-      row.kind === 'inne' ? 'inne (w polu uzasadnienie wpisz jakie)' : row.act;
-    const searches =
-      row.kind === 'inne'
-        ? ['inne']
-        : /odpadach/i.test(row.act)
-          ? ['ustawa z dnia 14 grudnia', 'odpadach', row.act]
-          : /Prawo ochrony środowiska/i.test(row.act)
-            ? [
-                'Prawo ochrony środowiska',
-                'ustawa Prawo ochrony środowiska',
-                row.act,
-              ]
-            : /Prawo wodne/i.test(row.act)
-              ? ['Prawo wodne', 'ustawa Prawo wodne', row.act]
-              : /ochronie przyrody/i.test(row.act)
-                ? ['ochrony przyrody', 'ustawa o ochronie przyrody', row.act]
-                : /3 października 2008|udostępnianiu informacji/i.test(row.act)
-                  ? ['ustawa OOŚ', 'udostępnianiu informacji', row.act]
-                  : [row.act];
-    let option = null;
-    let seen = [];
-    for (const search of searches) {
-      await humanFill(page, input, search);
-      await humanIdlePause('deliberate');
-      seen = await page.evaluate(() =>
-        Array.from(
-          document.querySelectorAll(
-            "[role='listbox'] [role='option'], [role='option']",
-          ),
-        )
-          .map((o) => o.textContent.trim())
-          .filter(Boolean),
-      ); // allow-raw-playwright: read visible legal-act options only
-      option = page
-        .getByRole('option', { name: optionText, exact: true })
-        .first();
-      if ((await option.count()) === 0) {
-        const needle = row.kind === 'inne' ? 'inne' : rowNeedles(row)[0];
-        option = page
-          .locator("[role='listbox'] [role='option'], [role='option']")
-          .filter({ hasText: needle })
-          .first();
-      }
-      if ((await option.count()) > 0) break;
-    }
-    if ((await option.count()) === 0) {
+    const other = row.kind === 'inne';
+    const search = other ? OTHER_ACT_OPTION : row.act;
+    await humanFill(page, input, search);
+    await humanIdlePause('deliberate');
+    const options = page.locator(
+      "[role='listbox'] [role='option'], [role='option']",
+    );
+    const seen = (await options.allTextContents())
+      .map((text) => text.trim())
+      .filter(Boolean);
+    const subject = other
+      ? `the option "${OTHER_ACT_OPTION}"`
+      : actSubject(row);
+    const index = await rowAbout(seen, subject);
+    if (index === null)
       throw new Error(
-        `legal act option not found: ${row.act}; seen=${seen.join(' | ')}`,
+        `legal act option not found: ${row.act}; searched "${search}"; seen=${seen.join(' | ')}`,
       );
-    }
-    const picked = (await option.textContent())?.trim() || optionText;
-    await option.dispatchEvent('click'); // allow-raw-playwright: select legal-act option
+    const picked = seen[index];
+    await options.filter({ hasText: picked }).first().dispatchEvent('click'); // allow-raw-playwright: select legal-act option
     await humanIdlePause('short');
     return picked;
   }

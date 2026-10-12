@@ -1,5 +1,6 @@
 // The vetted legal-act rows of section 10.4, parsed from the application's markdown source,
-// the stale rows to remove, and the needles that find a row in the table.
+// and the outdated acts the table must no longer hold. Which table row or
+// autocomplete option is about an act is judged by the model (`rowAbout`).
 import { readFileSync } from 'node:fs';
 
 const MD = (await import('#ncbr-settings')).applicationFile(
@@ -38,28 +39,13 @@ function legalRows() {
 
 export const targets = legalRows();
 export const target = targets[0];
-export const staleNeedles = [['2010/75'], ['emisji przemys']];
+// The acts the application cited before its legal basis was vetted, as the
+// model is asked to recognise them in the table.
+export const staleActs = [
+  'the EU directive on industrial emissions (integrated pollution prevention and control)',
+];
 
-export function rowNeedles(row) {
-  if (/2018\/2001/i.test(row.act)) return ['2018/2001'];
-  if (/2023\/1791/i.test(row.act)) return ['2023/1791'];
-  if (/2024\/1364/i.test(row.act)) return ['2024/1364'];
-  // An "Inne" row carries its act at the start of the saved justification, so
-  // the whole act names it; the row text is read with whitespace collapsed.
-  if (row.kind === 'inne')
-    return [
-      row.act
-        .replace(/^Inne:\s*/, '')
-        .replace(/\s+/g, ' ')
-        .trim(),
-    ];
-  if (/odpadach/i.test(row.act)) return ['odpadach'];
-  if (/Prawo ochrony środowiska/i.test(row.act))
-    return ['Prawo ochrony środowiska'];
-  if (/Prawo wodne/i.test(row.act)) return ['Prawo wodne'];
-  if (/ochronie przyrody/i.test(row.act))
-    return ['ustawa o ochronie przyrody', 'ochronie przyrody'];
-  if (/3 października 2008|udostępnianiu informacji/i.test(row.act))
-    return ['ustawa OOŚ', 'udostępnianiu informacji'];
-  return [row.act];
+/** What a table row or an autocomplete option about `row` is about. */
+export function actSubject(row) {
+  return `the legal act ${row.act}`;
 }

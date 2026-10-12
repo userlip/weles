@@ -1,5 +1,8 @@
-// The 10.4 table, bound to the page: reading it, opening a row by its needles or the
-// outdated one, opening a row menu, deleting a row and adding a new one.
+// The 10.4 table, bound to the page: reading it, opening, editing or deleting
+// the row about a legal act, and adding a new one. Which row is about an act is
+// judged by the model over every row's text (`rowAbout`): the table names a
+// statute by its full title, its short name or its journal reference, and a
+// list of the phrases one person once saw misses the next spelling.
 import {
   humanClickLocator,
   humanIdlePause,
@@ -8,6 +11,12 @@ import {
   chooseDeleteInRowMenu,
   confirmDeletion,
 } from '../../../../_shared/ncbr/row_menu.mjs';
+import { rowAbout } from '../../../../_shared/page/judged/matched.mjs';
+import { staleActs } from './source.mjs';
+
+const ROWS = 'table tbody tr';
+const ROW_MENU =
+  'button[aria-label="overflow-options"], button, [role="button"]';
 
 export function legalActsTable({ page }) {
   async function tableState() {
@@ -23,8 +32,8 @@ export function legalActsTable({ page }) {
               buttons: Array.from(
                 row.querySelectorAll('button, [role="button"]'),
               ).map((button) => ({
-                text: (button.textContent || '').trim(),
-                aria: button.getAttribute('aria-label') || '',
+                text: button.textContent.trim(),
+                aria: button.getAttribute('aria-label'),
               })),
             }),
           ),
@@ -33,133 +42,59 @@ export function legalActsTable({ page }) {
     })); // allow-raw-playwright: read 10.4 table state only
   }
 
-  async function openOutdatedRow() {
-    const rows = page.locator('table tbody tr');
-    let targetRow = null;
-    for (let index = 0; index < (await rows.count()); index += 1) {
-      const candidate = rows.nth(index);
-      if (
-        /2010\/75|emisji przemys|BAT|efektywno/i.test(
-          await candidate.innerText().catch(() => ''),
-        )
-      ) {
-        targetRow = candidate;
-        break;
-      }
-    }
-    if (!targetRow) {
-      const rowTexts = await rows.allTextContents();
-      throw new Error(
-        JSON.stringify({
-          opened: false,
-          reason: 'target row not found',
-          rows: rowTexts.map((text) => text.trim().replace(/\s+/g, ' ')),
-        }),
-      );
-    }
-    const button = targetRow
-      .locator('button[aria-label="overflow-options"], button, [role="button"]')
-      .first();
-    if ((await button.count()) === 0)
-      throw new Error(
-        JSON.stringify({
-          opened: false,
-          reason: 'row menu not found',
-          row: (await targetRow.innerText()).trim().replace(/\s+/g, ' '),
-        }),
-      );
-    const row = (await targetRow.innerText()).trim().replace(/\s+/g, ' ');
-    await humanClickLocator(page, button);
-    await humanIdlePause('deliberate');
-    const edit = page
-      .getByRole('menuitem', { name: 'Edytuj', exact: true })
-      .first();
-    if ((await edit.count()) === 0) {
-      const menu = await page.evaluate(() =>
-        Array.from(document.querySelectorAll('[role="menuitem"], li, button'))
-          .map((e) => (e.textContent || '').trim())
-          .filter(Boolean),
-      ); // allow-raw-playwright: read visible menu labels
-      throw new Error(`edit menu item not found: ${menu.join(' | ')}`);
-    }
-    await humanClickLocator(page, edit);
-    await humanIdlePause('long');
-    return { opened: true, row };
+  /** Every row's visible text, whitespace collapsed. */
+  async function rowTexts() {
+    return (await page.locator(ROWS).allInnerTexts()).map((text) =>
+      text.trim().replace(/\s+/g, ' '),
+    );
   }
 
-  async function openRowByNeedle(needles) {
-    const items = Array.isArray(needles) ? needles : [needles];
-    const rows = page.locator('table tbody tr');
-    let targetRow = null;
-    for (let index = 0; index < (await rows.count()); index += 1) {
-      const candidate = rows.nth(index);
-      const text = await candidate.innerText().catch(() => '');
-      if (items.some((needle) => text.includes(needle))) {
-        targetRow = candidate;
-        break;
-      }
-    }
-    if (!targetRow) {
-      const rowTexts = await rows.allTextContents();
-      throw new Error(
-        JSON.stringify({
-          opened: false,
-          reason: 'target row not found',
-          needles: items,
-          rows: rowTexts.map((text) => text.trim().replace(/\s+/g, ' ')),
-        }),
-      );
-    }
-    const button = targetRow
-      .locator('button[aria-label="overflow-options"], button, [role="button"]')
-      .first();
+  /** The row about `subject`, with its text, or null when no row is. */
+  async function rowAboutSubject(subject) {
+    const texts = await rowTexts();
+    const index = await rowAbout(texts, subject);
+    if (index === null) return null;
+    return { row: page.locator(ROWS).nth(index), text: texts[index] };
+  }
+
+  /** Opens the menu of the row about `subject`; says why when it cannot. */
+  async function openMenuAbout(subject) {
+    const found = await rowAboutSubject(subject);
+    if (!found)
+      return {
+        opened: false,
+        reason: 'no row is about the act',
+        subject,
+        rows: await rowTexts(),
+      };
+    const button = found.row.locator(ROW_MENU).first();
     if ((await button.count()) === 0)
-      throw new Error(
-        JSON.stringify({
-          opened: false,
-          reason: 'row menu not found',
-          row: (await targetRow.innerText()).trim().replace(/\s+/g, ' '),
-        }),
-      );
-    const row = (await targetRow.innerText()).trim().replace(/\s+/g, ' ');
+      return { opened: false, reason: 'row menu not found', row: found.text };
     await humanClickLocator(page, button);
     await humanIdlePause('deliberate');
+    return { opened: true, row: found.text };
+  }
+
+  /** Opens the editor of the row about `subject`, or throws naming it. */
+  async function openRowAbout(subject) {
+    const menu = await openMenuAbout(subject);
+    if (!menu.opened) throw new Error(JSON.stringify(menu));
     await humanClickLocator(
       page,
       page.getByRole('menuitem', { name: 'Edytuj', exact: true }).first(),
     );
     await humanIdlePause('long');
-    return { opened: true, row };
+    return menu;
   }
 
-  async function openMenuByNeedle(needles) {
-    const items = Array.isArray(needles) ? needles : [needles];
-    const rows = page.locator('table tbody tr');
-    for (let index = 0; index < (await rows.count()); index += 1) {
-      const row = rows.nth(index);
-      const text = await row.innerText().catch(() => '');
-      if (!items.some((needle) => text.includes(needle))) continue;
-      const button = row
-        .locator(
-          'button[aria-label="overflow-options"], button, [role="button"]',
-        )
-        .first();
-      if ((await button.count()) === 0) {
-        return {
-          opened: false,
-          reason: 'row menu not found',
-          row: text.trim().replace(/\s+/g, ' '),
-        };
-      }
-      await humanClickLocator(page, button);
-      await humanIdlePause('deliberate');
-      return { opened: true, row: text.trim().replace(/\s+/g, ' ') };
-    }
-    return { opened: false, reason: 'target row not found', needles: items };
+  /** Opens the row of the outdated act the application must no longer cite. */
+  async function openOutdatedRow() {
+    const [outdated] = staleActs;
+    return openRowAbout(outdated);
   }
 
-  async function deleteRowByNeedle(needles) {
-    const opened = await openMenuByNeedle(needles);
+  async function deleteRowAbout(subject) {
+    const opened = await openMenuAbout(subject);
     if (!opened.opened) return { skipped: opened };
     await chooseDeleteInRowMenu(page);
     const confirmed = await confirmDeletion(page);
@@ -179,10 +114,11 @@ export function legalActsTable({ page }) {
   }
   return {
     tableState,
+    rowAboutSubject,
     openOutdatedRow,
-    openRowByNeedle,
-    openMenuByNeedle,
-    deleteRowByNeedle,
+    openRowAbout,
+    openMenuAbout,
+    deleteRowAbout,
     clickAdd,
   };
 }

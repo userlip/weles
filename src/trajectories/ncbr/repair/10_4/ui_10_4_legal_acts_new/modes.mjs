@@ -1,19 +1,31 @@
-// The explicit modes of the 10.4 sync: listing what the act autocomplete offers, adding the
-// OOŚ row alone, and syncing every vetted row. Each prints its result and exits.
+// The explicit modes of the 10.4 sync: listing what the act autocomplete
+// offers for the searches the caller states, adding one vetted act alone, and
+// syncing every vetted row. Each prints its result and exits. Which table row
+// is about an act is judged by the model (table.mjs), never by phrases.
 import { humanIdlePause } from '../../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../../dist/human/keyboard.js';
-import { rowNeedles, staleNeedles, targets } from './source.mjs';
+import {
+  statedBudget,
+  statedText,
+} from '../../../../_shared/inputs/stated.mjs';
+import { actSubject, staleActs, targets } from './source.mjs';
 
 export async function runModes({ page, SECTION_URL, table, form }) {
-  const { tableState, openRowByNeedle, deleteRowByNeedle, clickAdd } = table;
+  const {
+    tableState,
+    rowAboutSubject,
+    openRowAbout,
+    deleteRowAbout,
+    clickAdd,
+  } = table;
   const { fillTextLikeField, setLegalAct, saveRow, fillLegalActForm } = form;
   if (process.env.DIAG_ADD) {
     await clickAdd();
     const input = page.locator('input[name="akt_prawny"]').first();
     await input.waitFor({ state: 'visible' });
-    const searches = (
-      process.env.DIAG_SEARCHES ||
-      'Prawo ochrony środowiska|ustawa z dnia 27 kwietnia|ustawa OOŚ|ustawa z dnia 3 października|udostępnianiu informacji'
+    const searches = statedText(
+      ['DIAG_SEARCHES'],
+      'the searches to type into the act autocomplete, separated by |',
     )
       .split('|')
       .filter(Boolean);
@@ -21,26 +33,29 @@ export async function runModes({ page, SECTION_URL, table, form }) {
     for (const search of searches) {
       await humanFill(page, input, search);
       await humanIdlePause('deliberate');
-      const options = await page.evaluate(() =>
-        Array.from(
-          document.querySelectorAll(
-            "[role='listbox'] [role='option'], [role='option']",
-          ),
-        )
-          .map((o) => o.textContent.trim())
-          .filter(Boolean),
-      ); // allow-raw-playwright: read visible legal-act options only
+      const options = (
+        await page
+          .locator("[role='listbox'] [role='option'], [role='option']")
+          .allTextContents()
+      )
+        .map((text) => text.trim())
+        .filter(Boolean);
       results.push({ search, options });
     }
     console.log(JSON.stringify({ diagAdd: results }, null, 2));
     process.exit(0);
   }
 
-  if (process.env.ADD_OOS_ONLY) {
-    const row = targets.find((candidate) =>
-      /udostępnianiu informacji|3 października 2008/i.test(candidate.act),
+  if (process.env.ADD_ONLY_ACT !== undefined) {
+    const act = statedText(
+      ['ADD_ONLY_ACT'],
+      'the vetted act to add alone, as the markdown source names it',
     );
-    if (!row) throw new Error('OOŚ row not found in markdown');
+    const row = targets.find((candidate) => candidate.act === act);
+    if (!row)
+      throw new Error(
+        `ADD_ONLY_ACT names no vetted act of the markdown source: ${act}; the source has ${targets.map((candidate) => candidate.act).join(' | ')}`,
+      );
     console.log(
       JSON.stringify({
         stage: 'start',
@@ -51,10 +66,12 @@ export async function runModes({ page, SECTION_URL, table, form }) {
     console.log(JSON.stringify({ stage: 'opened' }));
     const picked = await setLegalAct(row);
     console.log(JSON.stringify({ stage: 'picked', picked }));
-    const justFill = await fillTextLikeField((el) => {
-      const name = el.name || '';
-      return name === 'uzasadnienie' || name.endsWith('.uzasadnienie');
-    }, row.formJustification);
+    // Serialized into the page, so it carries its own pattern: the form's
+    // justification field, under its own name or nested under a row.
+    const justFill = await fillTextLikeField(
+      (el) => /(^|\.)uzasadnienie$/.test(el.name),
+      row.formJustification,
+    );
     console.log(JSON.stringify({ stage: 'filled', justFill }));
     if (!justFill.filled)
       throw new Error(
@@ -64,11 +81,11 @@ export async function runModes({ page, SECTION_URL, table, form }) {
       visibleFields: Array.from(document.querySelectorAll('input, textarea'))
         .filter((el) => el.offsetParent !== null)
         .map((el) => ({
-          name: el.name || '',
-          value: el.value || '',
-          len: (el.value || '').length,
-          role: el.getAttribute('role') || '',
-          invalid: el.getAttribute('aria-invalid') || '',
+          name: el.name,
+          value: el.value,
+          len: el.value.length,
+          role: el.getAttribute('role'),
+          invalid: el.getAttribute('aria-invalid'),
         })),
       saves: Array.from(document.querySelectorAll('button'))
         .filter((button) => button.innerText.trim() === 'Zapisz')
@@ -79,7 +96,11 @@ export async function runModes({ page, SECTION_URL, table, form }) {
       errors: Array.from(
         document.querySelectorAll('[aria-invalid="true"], .Mui-error'),
       )
-        .map((el) => (el.getAttribute('name') || el.textContent || '').trim())
+        .map((el) =>
+          el.hasAttribute('name')
+            ? el.getAttribute('name')
+            : el.textContent.trim(),
+        )
         .filter(Boolean),
     })); // allow-raw-playwright: read add-form state before save
     console.log(JSON.stringify({ stage: 'formState', formState }));
@@ -95,24 +116,28 @@ export async function runModes({ page, SECTION_URL, table, form }) {
   if (process.env.SYNC_ALL) {
     const before = await tableState();
     const deleted = [];
-    for (const needles of staleNeedles) {
-      deleted.push({ needles, ...(await deleteRowByNeedle(needles)) });
+    for (const stale of staleActs) {
+      deleted.push({ stale, ...(await deleteRowAbout(stale)) });
       await page.goto(SECTION_URL, { waitUntil: 'domcontentloaded' }); // allow-raw-playwright: return to 10.4 table after delete attempt
       await humanIdlePause('long');
     }
-    const startAt = Number(process.env.START_AT || 0);
-    const syncTargets = targets.slice(startAt);
+    // A caller resuming an interrupted sync states how many vetted rows are
+    // already done; without it the sync starts from the first.
+    const syncTargets =
+      process.env.START_AT === undefined
+        ? targets
+        : targets.slice(
+            statedBudget('START_AT', 'how many vetted rows are already synced'),
+          );
     const results = [];
     for (const row of syncTargets) {
-      const current = await tableState();
-      const text = JSON.stringify(current);
-      const needles = rowNeedles(row);
-      const alreadyPresent = needles.some((needle) => text.includes(needle));
-      if (alreadyPresent) {
-        await openRowByNeedle(needles);
+      const present = await rowAboutSubject(actSubject(row));
+      if (present) {
+        await openRowAbout(actSubject(row));
         results.push({
           act: row.act,
           action: 'edit',
+          row: present.text,
           ...(await fillLegalActForm(row)),
         });
       } else {
@@ -127,7 +152,15 @@ export async function runModes({ page, SECTION_URL, table, form }) {
       await humanIdlePause('long');
     }
     const readback = await tableState();
-    const allText = JSON.stringify(readback);
+    const found = [];
+    for (const row of targets) {
+      if (await rowAboutSubject(actSubject(row))) found.push(row.act);
+    }
+    const staleRemaining = [];
+    for (const stale of staleActs) {
+      const remaining = await rowAboutSubject(stale);
+      if (remaining) staleRemaining.push({ stale, row: remaining.text });
+    }
     console.log(
       JSON.stringify(
         {
@@ -139,18 +172,9 @@ export async function runModes({ page, SECTION_URL, table, form }) {
           deleted,
           results,
           readback,
-          foundCount: targets.filter((row) =>
-            rowNeedles(row).some((needle) => allText.includes(needle)),
-          ).length,
-          staleHits: {
-            industrialDirective: /2010\/75/.test(allText),
-            renewablesDirective: /2018\/2001/.test(allText),
-            oos: /ustawa z dnia 3 października 2008|udostępnianiu informacji o środowisku/i.test(
-              allText,
-            ),
-            bat: /\bBAT\b|najlepsz/i.test(allText),
-            industrialEmissions: /emisji przemys/i.test(allText),
-          },
+          found,
+          foundCount: found.length,
+          staleRemaining,
         },
         null,
         2,

@@ -29,7 +29,6 @@ export const competitors14 = [
   },
   {
     name: 'Gray Swan AI',
-    aliases: ['Gray Swan AI', 'Greyswan AI'],
     nip: '0000000000',
     desc: 'Gray Swan AI jest konkurentem Wisent w obszarze bezpieczeństwa, red-teamingu oraz ewaluacji modeli sztucznej inteligencji. Firma rozwija platformę do adversarial evaluation, testowania podatności modeli i agentów AI oraz ochrony wdrożeń produkcyjnych przed atakami takimi jak jailbreaki, prompt injection czy niepożądane wyjścia modelu. Rozwiązania kieruje do laboratoriów frontier AI i przedsiębiorstw wdrażających systemy AI w środowiskach o wysokich wymaganiach bezpieczeństwa. Przewagą Gray Swan jest pozycja w testowaniu bezpieczeństwa i ochronie runtime. Przewaga Wisent polega na przesunięciu kontroli głębiej, z warstwy zewnętrznego testowania i filtrowania na poziom samej architektury modelu.',
   },

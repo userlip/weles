@@ -48,8 +48,13 @@ function progress(message) {
 }
 
 const form = lsiForm({ page, session, email, password, progress });
-const { login, readSectionTables, visibleTableText, hasAnyName, clickDodaj } =
-  form;
+const {
+  login,
+  readSectionTables,
+  visibleTableText,
+  competitorRow,
+  clickDodaj,
+} = form;
 const {
   addCompetitor14,
   addCompetition23,
@@ -108,8 +113,7 @@ async function run() {
   progress('section:1.4');
   await humanIdlePause('long');
   for (const row of competitors14) {
-    const current = await visibleTableText();
-    if (hasAnyName(current, row)) {
+    if (await competitorRow(row)) {
       progress(`1.4:skip:${row.name}`);
       out.actions.push({ section: '1.4', skippedExisting: row.name });
       continue;

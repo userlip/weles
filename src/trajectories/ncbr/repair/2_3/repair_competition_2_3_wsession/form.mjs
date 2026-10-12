@@ -5,6 +5,7 @@ import {
 } from '../../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../../dist/human/keyboard.js';
 import { assertFits } from '../../../form-input.mjs';
+import { rowAbout } from '../../../../_shared/page/judged/matched.mjs';
 
 export function lsiForm({ page, session, email, password, progress }) {
   async function setReactInputValue(locator, value) {
@@ -105,11 +106,24 @@ export function lsiForm({ page, session, email, password, progress }) {
     ); // allow-raw-playwright: read visible table text only
   }
 
-  function hasAnyName(text, row) {
-    const names = [row.name, row.producer, ...(row.aliases || [])].filter(
-      Boolean,
-    );
-    return names.some((name) => text.includes(name));
+  /** The visible text of every table row, whitespace collapsed. */
+  async function visibleRows() {
+    return page.evaluate(() =>
+      Array.from(document.querySelectorAll('table tbody tr')).map((row) =>
+        row.innerText.replace(/\s+/g, ' ').trim(),
+      ),
+    ); // allow-raw-playwright: read visible table row text only
+  }
+
+  /**
+   * The visible row about competitor `row`, as its text, or null when the
+   * model says no row is: the table may spell the company differently than
+   * the application source does.
+   */
+  async function competitorRow(row) {
+    const rows = await visibleRows();
+    const index = await rowAbout(rows, `the competing company ${row.name}`);
+    return index === null ? null : rows[index];
   }
 
   async function clickDodaj(nth) {
@@ -203,7 +217,7 @@ export function lsiForm({ page, session, email, password, progress }) {
     login,
     readSectionTables,
     visibleTableText,
-    hasAnyName,
+    competitorRow,
     clickDodaj,
     saveVisibleForm,
     selectApplicantIfPresent,

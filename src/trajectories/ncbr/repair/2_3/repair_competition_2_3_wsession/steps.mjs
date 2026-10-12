@@ -11,7 +11,7 @@ export function competitionSteps({
   PROJECT_URL,
   setReactInputValue,
   visibleTableText,
-  hasAnyName,
+  competitorRow,
   clickDodaj,
   saveVisibleForm,
   selectApplicantIfPresent,
@@ -101,22 +101,10 @@ export function competitionSteps({
     await humanIdlePause('long');
     const repaired = [];
     for (const row of competitors14) {
-      const rowText = await page.evaluate(
-        (names) => {
-          const rows = Array.from(document.querySelectorAll('table tbody tr'));
-          const hit = rows.find((candidate) =>
-            names.some((name) => (candidate.innerText || '').includes(name)),
-          );
-          return hit ? (hit.innerText || '').replace(/\s+/g, ' ').trim() : null;
-        },
-        [row.name, ...(row.aliases || [])],
-      ); // allow-raw-playwright: read matching visible row text
+      const rowText = await competitorRow(row);
       if (!rowText || rowText.includes(row.nip)) continue;
       progress(`1.4:repair-nip:${row.name}`);
-      await editVisibleRowContaining(
-        (row.aliases || [row.name]).find((name) => rowText.includes(name)) ||
-          row.name,
-      );
+      await editVisibleRowContaining(rowText);
       await fillNamedField('nip', row.nip);
       await saveVisibleForm();
       repaired.push(row.name);

@@ -6,7 +6,7 @@ import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../../../dist/human/mouse.js';
-import { target } from './ui_10_4_legal_acts_new/source.mjs';
+import { staleActs, target } from './ui_10_4_legal_acts_new/source.mjs';
 import { legalActsTable } from './ui_10_4_legal_acts_new/table.mjs';
 import { legalActForm } from './ui_10_4_legal_acts_new/form.mjs';
 import { runModes } from './ui_10_4_legal_acts_new/modes.mjs';
@@ -32,7 +32,7 @@ await page.evaluate(() => {
 
 const table = legalActsTable({ page });
 const form = legalActForm({ page });
-const { tableState, openOutdatedRow } = table;
+const { tableState, openOutdatedRow, rowAboutSubject } = table;
 const { diagForm, fillTextLikeField, setActTypeIfPresent } = form;
 await runModes({ page, SECTION_URL, table, form });
 
@@ -68,7 +68,11 @@ try {
 }
 
 const readback = await tableState();
-const allText = JSON.stringify(readback);
+const staleRemaining = [];
+for (const stale of staleActs) {
+  const remaining = await rowAboutSubject(stale);
+  if (remaining) staleRemaining.push({ stale, row: remaining.text });
+}
 console.log(
   JSON.stringify(
     {
@@ -77,11 +81,7 @@ console.log(
       justFill,
       saveResult,
       readback,
-      staleHits: {
-        industrialDirective: /2010\/75/.test(allText),
-        bat: /\bBAT\b|najlepsz/i.test(allText),
-        industrialEmissions: /emisji przemys/i.test(allText),
-      },
+      staleRemaining,
     },
     null,
     2,
