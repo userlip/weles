@@ -16,6 +16,8 @@
 //   NCBR_APPLICATION_TEXT_DIR  the applicant's folder holding the application
 //                       text (markdown sections, contacts, audit outputs);
 //                       the scripts used to name one person's home directory
+//   SESSION             the keeper session a keeper-driven script talks to
+//                       (the scripts used to assume one named ncbr-step-b)
 
 const LSI2_PROJECT_BASE = 'https://lsi2.ncbr.gov.pl/projekt/';
 
@@ -102,4 +104,12 @@ export function applicationFile(name) {
       'a file name inside the application text folder is required',
     );
   return `${applicationTextDir()}${name}`;
+}
+
+/** The keeper session a keeper-driven script talks to. */
+export function keeperSession() {
+  return required(
+    'SESSION',
+    'name the keeper session (weles keeper) that holds the signed-in NCBR page',
+  );
 }

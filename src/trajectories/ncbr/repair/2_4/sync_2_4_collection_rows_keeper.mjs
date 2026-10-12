@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { shows } from '../../../_shared/page/shows.mjs';
 
-const SESSION = process.env.SESSION || 'ncbr-step-b';
+const SESSION = (await import('#ncbr-settings')).keeperSession();
 const WELES = new URL('../../../../..', import.meta.url).pathname.replace(
   /\/$/,
   '',

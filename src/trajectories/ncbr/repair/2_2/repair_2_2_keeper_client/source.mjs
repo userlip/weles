@@ -2,7 +2,7 @@
 // read from the application's markdown source and checked against the field limits.
 import { readFileSync } from 'node:fs';
 
-export const SESSION = process.env.SESSION || 'ncbr-step-b';
+export const SESSION = (await import('#ncbr-settings')).keeperSession();
 export const WELES = new URL(
   '../../../../../..',
   import.meta.url,
@@ -17,8 +17,8 @@ export const OUT = (await import('#ncbr-settings')).applicationFile(
   'repair_2_2_evidence_20260625.json',
 );
 
-export const EMAIL = process.env.NCBR_EMAIL || '';
-export const PASSWORD = process.env.NCBR_PASSWORD || '';
+export const EMAIL = process.env.NCBR_EMAIL;
+export const PASSWORD = process.env.NCBR_PASSWORD;
 delete process.env.NCBR_PASSWORD;
 
 export const md = readFileSync(SRC, 'utf8');

@@ -2,8 +2,10 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { shows } from '../../../_shared/page/shows.mjs';
 
-const SESSION = process.env.SESSION || 'ncbr-step-b';
-const PART = process.env.PART || 'eu';
+const SESSION = (await import('#ncbr-settings')).keeperSession();
+const PART = process.env.PART;
+if (!PART)
+  throw new Error('PART is required: name the 2.3 collection part to sync');
 const WELES = new URL('../../../../..', import.meta.url).pathname.replace(
   /\/$/,
   '',

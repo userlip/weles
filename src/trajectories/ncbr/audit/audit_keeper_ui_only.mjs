@@ -4,15 +4,15 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { keeperRequest, keeperSocket } from '../../_shared/keeper/client.mjs';
 
-const SESSION = process.env.SESSION || 'ncbr-step-b';
+const SESSION = (await import('#ncbr-settings')).keeperSession();
 const PROJECT_ID = (await import('#ncbr-settings')).projectId();
 const PROJECT_URL = `https://lsi2.ncbr.gov.pl/projekt/${PROJECT_ID}`;
 const BASE = `${PROJECT_URL}/projekt_step/`;
 const OUT_DIR =
   process.env.OUT_DIR ||
   (await import('#ncbr-settings')).applicationFile('audit_keeper_ui_only');
-const EMAIL = process.env.NCBR_EMAIL || '';
-const PASSWORD = process.env.NCBR_PASSWORD || '';
+const EMAIL = process.env.NCBR_EMAIL;
+const PASSWORD = process.env.NCBR_PASSWORD;
 delete process.env.NCBR_PASSWORD;
 
 const FALLBACK_SECTIONS = [

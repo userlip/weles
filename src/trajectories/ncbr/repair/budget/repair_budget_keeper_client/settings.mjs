@@ -3,7 +3,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const SESSION = process.env.SESSION || 'ncbr-step-b';
+export const SESSION = (await import('#ncbr-settings')).keeperSession();
 export const SOCK = join(homedir(), '.weles', 'keeper', SESSION, 'socket');
 export const PROJECT_ID = (await import('#ncbr-settings')).projectId();
 export const BASE = `https://lsi2.ncbr.gov.pl/projekt/${PROJECT_ID}/projekt_step/`;

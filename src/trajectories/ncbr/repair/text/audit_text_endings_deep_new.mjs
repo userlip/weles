@@ -14,7 +14,11 @@ const projectUrl = ['https://', `lsi2.ncbr.gov.pl/projekt/${projectId}`].join(
   '',
 );
 const fast = Boolean(process.env.FAST);
-const scopeMode = process.env.SCOPE || 'all';
+const scopeMode = process.env.SCOPE;
+if (!scopeMode)
+  throw new Error(
+    'SCOPE is required: visible audits the open fields, any other value opens every row',
+  );
 
 const browser = await chromium.connectOverCDP(endpoint);
 const page = browser.contexts()[0]?.pages()[0];

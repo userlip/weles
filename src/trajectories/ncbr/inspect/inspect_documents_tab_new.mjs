@@ -29,7 +29,9 @@ if (!process.env.CURRENT_VIEW) {
   await page.goto(projectUrl, { waitUntil: 'domcontentloaded' }); // allow-raw-playwright: read-only navigation
   await humanIdlePause('long');
 
-  const viewLabel = process.env.VIEW_LABEL || 'Dokumenty';
+  const viewLabel = process.env.VIEW_LABEL;
+  if (!viewLabel)
+    throw new Error('VIEW_LABEL is required: name the project tab to open');
   const documents = page
     .getByText(viewLabel, { exact: true })
     .filter({ visible: true })

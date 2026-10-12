@@ -151,7 +151,12 @@ if (process.env.DIAG) {
     } catch (e) {
       /* may be auto */
     }
-    await setAuto('rodzaj_pomocy', process.env.HELP || 'Badania przemysłowe');
+    const help = process.env.HELP;
+    if (!help)
+      throw new Error(
+        'HELP is required: name the rodzaj_pomocy option to choose',
+      );
+    await setAuto('rodzaj_pomocy', help);
     await humanIdlePause('long');
   }
   const fields = await page.evaluate(() =>
@@ -214,7 +219,8 @@ if (process.env.DIAG) {
 }
 
 if (process.env.MENU) {
-  const contains = process.env.CONTAINS || 'badania przemysłowe';
+  const contains = process.env.CONTAINS;
+  if (!contains) throw new Error('MENU requires CONTAINS');
   const row = page
     .locator('table')
     .first()

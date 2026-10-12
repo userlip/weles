@@ -13,10 +13,14 @@ import { assertFits } from '../form-input.mjs';
 import { cdpEndpoint, projectUrl as declaredProjectUrl } from '#ncbr-settings';
 
 const endpoint = cdpEndpoint();
-const SECTION_GROUP = process.env.SECTION_GROUP || '';
-// With a group, the section label defaults to whatever entry appears once the group is expanded.
-const SECTION_LABEL_ENV =
-  process.env.SECTION_LABEL || (SECTION_GROUP ? '' : '1.1.');
+const SECTION_GROUP = process.env.SECTION_GROUP;
+// With a group, the section label is whatever entry appears once the group is
+// expanded; without one, the label is stated.
+const SECTION_LABEL_ENV = process.env.SECTION_LABEL;
+if (!SECTION_GROUP && !SECTION_LABEL_ENV)
+  throw new Error(
+    'SECTION_LABEL or SECTION_GROUP is required: name the section to map',
+  );
 const navPattern = (label) =>
   `text=/^\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`;
 

@@ -3,7 +3,7 @@
 
 import { spawnSync } from 'node:child_process';
 
-const SESSION = process.env.SESSION || 'ncbr-step-b';
+const SESSION = (await import('#ncbr-settings')).keeperSession();
 const WELES = new URL('../../../../..', import.meta.url).pathname.replace(
   /\/$/,
   '',
