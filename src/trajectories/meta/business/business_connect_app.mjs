@@ -1,4 +1,7 @@
 // Connect the configured Meta app ID to the current Business portfolio via UI.
+// Each control is found by the vision model from its description
+// (`_shared/page/judged/seen.mjs`), and the connection counts only once the
+// app ID is listed on the portfolio's Apps page.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -9,6 +12,10 @@ import { humanType } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
+import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
+import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
+
+const INDENT = '  ';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -30,20 +37,6 @@ function stableProfilePersona() {
   const persona = generatePersona({ os: 'macos', browser: 'chromium' });
   writeFileSync(p, JSON.stringify(persona, null, 2));
   return persona;
-}
-
-function sanitizedUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.hash = parsed.hash ? '#<redacted>' : '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|code|secret|state|session|auth/i.test(key))
-        parsed.searchParams.set(key, '<redacted>');
-    }
-    return parsed.toString();
-  } catch {
-    return '<invalid-url>';
-  }
 }
 
 async function snapshot(page, label) {
@@ -88,124 +81,22 @@ async function snapshot(page, label) {
       title: document.title || null,
       bodyText: bodyText,
       controls,
-      statusHints: {
-        permissionDenied:
-          /brak dostępu|permission|uprawn|not authorized|nie możesz|nie masz/i.test(
-            bodyText,
-          ),
-        technicalError:
-          /niespodziewany problem techniczny|unexpected technical problem|try again|spróbuj ponownie/i.test(
-            bodyText,
-          ),
-        alreadyConnected: /już.*dod|already|połączono|connected/i.test(
-          bodyText,
-        ),
-        appPresent: bodyText.includes(appId),
-      },
+      appPresent: bodyText.includes(appId),
     };
   }, APP_ID);
-  console.log(
-    JSON.stringify(
-      {
-        stage: 'snapshot',
-        label,
-        url: sanitizedUrl(page.url?.() || ''),
-        ...data,
-      },
-      null,
-      2,
-    ),
-  );
+  const record = {
+    stage: 'snapshot',
+    label,
+    url: redactedUrl(page.url()),
+    ...data,
+  };
+  console.log(JSON.stringify(record, null, INDENT));
   return data;
 }
 
-async function clickFirst(
-  page,
-  label,
-  allow,
-  deny = /delete|remove|usuń|anuluj|cancel|zamknij/i,
-) {
-  const target = await page
-    .evaluate(
-      ({ allowSource, allowFlags, denySource, denyFlags }) => {
-        const allowRe = new RegExp(allowSource, allowFlags);
-        const denyRe = new RegExp(denySource, denyFlags);
-        const textOf = (el) =>
-          (
-            el.innerText ||
-            el.textContent ||
-            el.getAttribute('aria-label') ||
-            ''
-          )
-            .replace(/\s+/g, ' ')
-            .trim();
-        const visible = (el) => {
-          const style = window.getComputedStyle(el);
-          const rect = el.getBoundingClientRect();
-          return (
-            style.visibility !== 'hidden' &&
-            style.display !== 'none' &&
-            rect.width > 0 &&
-            rect.height > 0
-          );
-        };
-        const nodes = Array.from(
-          document.querySelectorAll(
-            'button, [role="button"], a, [role="menuitem"], div, span',
-          ),
-        )
-          .filter(visible)
-          .map((el) => {
-            const rect = el.getBoundingClientRect();
-            const text = textOf(el);
-            const area = rect.width * rect.height;
-            let score = Math.max(0, 500000 - area);
-            if (el.matches('button, [role="button"], a, [role="menuitem"]'))
-              score += 100000;
-            if (rect.left > 300) score += 10000;
-            return {
-              text,
-              x: Math.round(rect.left + rect.width / 2),
-              y: Math.round(rect.top + rect.height / 2),
-              disabled:
-                el.disabled === true ||
-                el.getAttribute('aria-disabled') === 'true',
-              area,
-              score,
-            };
-          })
-          .filter((item) => item.area < 500000)
-          .filter(
-            (item) =>
-              item.text &&
-              !item.disabled &&
-              allowRe.test(item.text) &&
-              !denyRe.test(item.text),
-          )
-          .sort((a, b) => b.score - a.score);
-        return nodes[0] || null;
-      },
-      {
-        allowSource: allow.source,
-        allowFlags: allow.flags,
-        denySource: deny.source,
-        denyFlags: deny.flags,
-      },
-    )
-    .catch(() => null);
-  if (!target) return null;
-  await page.mouse.click(target.x, target.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked',
-      label,
-      text: target.text,
-      x: target.x,
-      y: target.y,
-    }),
-  );
-  return target;
+async function clickControl(page, label, description) {
+  const target = await clickDescribed(page, description);
+  console.log(JSON.stringify({ stage: 'clicked', label, ...target }));
 }
 
 // The id goes into the open dialog's text field, found on the page, so no
@@ -231,19 +122,14 @@ async function fillAppId(page) {
   return true;
 }
 
-console.log(
-  JSON.stringify(
-    {
-      stage: 'start',
-      userDataDir: USER_DATA_DIR,
-      businessId: BUSINESS_ID,
-      appId: APP_ID,
-      headless: process.env.META_BUSINESS_HEADLESS !== '0',
-    },
-    null,
-    2,
-  ),
-);
+const start = {
+  stage: 'start',
+  userDataDir: USER_DATA_DIR,
+  businessId: BUSINESS_ID,
+  appId: APP_ID,
+  headless: process.env.META_BUSINESS_HEADLESS !== '0',
+};
+console.log(JSON.stringify(start, null, INDENT));
 
 const s = await WSession.start({
   label: 'meta_business_connect_app',
@@ -260,38 +146,45 @@ try {
   const url = `https://business.facebook.com/latest/settings/apps?business_id=${encodeURIComponent(BUSINESS_ID)}`;
   await s.page.goto(url, { waitUntil: 'domcontentloaded' });
   await snapshot(s.page, 'initial_apps');
-  await clickFirst(s.page, 'add', /^add$|^dodaj$/i);
+  await clickControl(
+    s.page,
+    'add',
+    'the enabled button that adds an app on the Apps page of Business Settings',
+  );
   await snapshot(s.page, 'add_menu');
-  const choseConnect = await clickFirst(
+  await clickControl(
     s.page,
     'connect_app_id',
-    /połącz identyfikator aplikacji|connect app id|add an app|dodaj aplikacj/i,
+    'the option in the open Add menu that connects an existing app by its app ID',
   );
-  if (!choseConnect)
-    throw new Error('Meta did not expose a Connect App ID option');
   await snapshot(s.page, 'connect_app_form');
-  if (!(await fillAppId(s.page)))
-    throw new Error('Meta did not expose an app ID input');
+  await fillAppId(s.page);
   await snapshot(s.page, 'app_id_filled');
-  const submitted = await clickFirst(
+  await clickControl(
     s.page,
     'submit_app_id',
-    /^dodaj aplikację$|^add app$|poproś o aplikację|request app|^dalej$|^next$|^połącz$|^connect$/i,
+    'the enabled button that submits the app ID in the open dialog (not the one that closes or cancels it)',
   );
-  if (!submitted)
-    throw new Error('Meta did not expose an enabled app connect submit button');
   const result = await snapshot(s.page, 'after_submit');
-  if (result.statusHints.technicalError) {
+  if (
+    await pageShows(
+      s.page,
+      'Does the page show an error or a refusal of the app connection?',
+    )
+  ) {
     throw new Error(
-      `Meta returned a technical error while connecting app ${APP_ID}: ${result.bodyText}`,
+      `Meta refused or failed the connection of app ${APP_ID}: ${result.bodyText}`,
     );
   }
-  if (result.statusHints.permissionDenied) {
+  await s.page.goto(url, { waitUntil: 'domcontentloaded' });
+  const listed = await snapshot(s.page, 'apps_after_submit');
+  if (!listed.appPresent)
     throw new Error(
-      `Meta refused app connection for app ${APP_ID}: ${result.bodyText}`,
+      `the connection was submitted but app ${APP_ID} is not listed on the portfolio's Apps page`,
     );
-  }
-  console.log('PASS: Meta app connection flow submitted');
+  console.log(
+    `PASS: Meta app ${APP_ID} is connected to business ${BUSINESS_ID}`,
+  );
 } catch (error) {
   exitCode = 1;
   console.log(`FAIL: ${error.message || String(error)}`);

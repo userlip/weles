@@ -1,4 +1,9 @@
-// Search Meta owner/approval surfaces and complete any exposed safe approval steps.
+// Search Meta owner/approval surfaces and complete any exposed safe approval
+// steps. Whether a surface offers an approval, an activation, a request tab
+// or a confirmation is judged by the vision model, and the control it names is
+// clicked (`_shared/page/judged/seen.mjs`); nothing here reads one language's
+// button words, and the model is told never to pick a cancel, delete, leave or
+// transfer control.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -7,6 +12,12 @@ import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
+import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
+import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
+
+const INDENT = '  ';
+const NEVER =
+  'Never a control that cancels, deletes, removes, leaves or transfers anything.';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -29,20 +40,6 @@ function stableProfilePersona() {
   const persona = generatePersona({ os: 'macos', browser: 'chromium' });
   writeFileSync(p, JSON.stringify(persona, null, 2));
   return persona;
-}
-
-function sanitizedUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    parsed.hash = parsed.hash ? '#<redacted>' : '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|code|secret|state|session|auth/i.test(key))
-        parsed.searchParams.set(key, '<redacted>');
-    }
-    return parsed.toString();
-  } catch {
-    return '<invalid-url>';
-  }
 }
 
 async function snapshot(page, label) {
@@ -88,175 +85,71 @@ async function snapshot(page, label) {
         title: document.title || null,
         bodyText: bodyText,
         controls,
-        statusHints: {
-          login: /log in|login|password|email|zaloguj|hasło/i.test(bodyText),
-          needsReviewEmpty:
-            /no requests need review|there are no requests for you to review|brak próśb do sprawdzenia/i.test(
-              bodyText,
-            ),
-          sentRequest:
-            /prośba została wysłana|request sent|request has been sent|oczekuje na rozpatrzenie|pending approval/i.test(
-              bodyText,
-            ),
-          adAccountPresent: bodyText.includes(adAccountId),
-          appPresent: bodyText.includes(appId),
-          inactiveApp:
-            /aplikacja nieaktywna|app inactive|this app is currently unavailable|ta aplikacja nie jest teraz dostępna/i.test(
-              bodyText,
-            ),
-          approveControl: controls.some(
-            (item) =>
-              /^(approve|accept|confirm|grant access|zatwierdź|zaakceptuj|potwierdź|udziel dostępu)$/i.test(
-                item.text,
-              ) && !item.disabled,
-          ),
-          activateControl: controls.some(
-            (item) =>
-              /activate|reactivate|switch to live|go live|aktywuj|włącz/i.test(
-                item.text,
-              ) && !item.disabled,
-          ),
-        },
+        adAccountPresent: bodyText.includes(adAccountId),
+        appPresent: bodyText.includes(appId),
       };
     },
     { adAccountId: AD_ACCOUNT_ID, appId: APP_ID },
   );
-  console.log(
-    JSON.stringify(
-      {
-        stage: 'snapshot',
-        label,
-        url: sanitizedUrl(page.url?.() || ''),
-        ...data,
-      },
-      null,
-      2,
-    ),
-  );
+  const record = {
+    stage: 'snapshot',
+    label,
+    url: redactedUrl(page.url()),
+    ...data,
+  };
+  console.log(JSON.stringify(record, null, INDENT));
   return data;
 }
 
-async function clickFirst(
-  page,
-  label,
-  allow,
-  deny = /cancel|anuluj|delete|remove|usuń|leave|opuść|transfer|przenieś|cancel request|anuluj prośbę/i,
-) {
-  const target = await page
-    .evaluate(
-      ({ allowSource, allowFlags, denySource, denyFlags }) => {
-        const allowRe = new RegExp(allowSource, allowFlags);
-        const denyRe = new RegExp(denySource, denyFlags);
-        const textOf = (el) =>
-          (
-            el.innerText ||
-            el.textContent ||
-            el.getAttribute('aria-label') ||
-            ''
-          )
-            .replace(/\s+/g, ' ')
-            .trim();
-        const visible = (el) => {
-          const style = window.getComputedStyle(el);
-          const rect = el.getBoundingClientRect();
-          return (
-            style.visibility !== 'hidden' &&
-            style.display !== 'none' &&
-            rect.width > 0 &&
-            rect.height > 0
-          );
-        };
-        const nodes = Array.from(
-          document.querySelectorAll(
-            'button, [role="button"], a, [role="menuitem"], input[type="button"], input[type="submit"]',
-          ),
-        )
-          .filter(visible)
-          .map((el) => {
-            const rect = el.getBoundingClientRect();
-            const text = textOf(el);
-            let score = 0;
-            if (
-              el.matches(
-                'button, [role="button"], input[type="button"], input[type="submit"]',
-              )
-            )
-              score += 1000;
-            if (rect.left > 300) score += 100;
-            if (rect.top > 80) score += 50;
-            score -= Math.min(rect.width * rect.height, 100000) / 10000;
-            return {
-              text,
-              x: Math.round(rect.left + rect.width / 2),
-              y: Math.round(rect.top + rect.height / 2),
-              disabled:
-                el.disabled === true ||
-                el.getAttribute('aria-disabled') === 'true',
-              score,
-            };
-          })
-          .filter(
-            (item) =>
-              item.text &&
-              !item.disabled &&
-              allowRe.test(item.text) &&
-              !denyRe.test(item.text),
-          )
-          .sort((a, b) => b.score - a.score);
-        return nodes[0] || null;
-      },
-      {
-        allowSource: allow.source,
-        allowFlags: allow.flags,
-        denySource: deny.source,
-        denyFlags: deny.flags,
-      },
-    )
-    .catch(() => null);
-  if (!target) return null;
-  await page.mouse.click(target.x, target.y);
-  await pageSettled(page);
-  console.log(
-    JSON.stringify({
-      stage: 'clicked',
-      label,
-      text: target.text,
-      x: target.x,
-      y: target.y,
-    }),
+/** Clicks what `description` names when the page shows what `question` asks. */
+async function clickWhenShown(page, label, question, description) {
+  if (!(await pageShows(page, `${question} ${NEVER}`))) return false;
+  const target = await clickDescribed(page, `${description}. ${NEVER}`);
+  console.log(JSON.stringify({ stage: 'clicked', label, ...target }));
+  return true;
+}
+
+async function confirmWhenAsked(page, label) {
+  await clickWhenShown(
+    page,
+    `${label}_confirm`,
+    'Is a dialog open asking to confirm the action just taken?',
+    'the button in the open dialog that confirms the action',
   );
-  return target;
 }
 
 async function tryApproveOrActivate(page, label) {
-  const approve = await clickFirst(
-    page,
-    `${label}:approve`,
-    /^(approve|accept|grant access|zatwierdź|zaakceptuj|udziel dostępu)$/i,
-  );
-  if (approve) {
-    await clickFirst(
+  if (
+    await clickWhenShown(
       page,
-      `${label}:approve_confirm`,
-      /^(confirm|potwierdź|approve|accept|zatwierdź|zaakceptuj)$/i,
-    );
+      `${label}:approve`,
+      'Is there an enabled control that approves or accepts a pending access request?',
+      'the enabled control that approves or accepts the pending access request',
+    )
+  ) {
+    await confirmWhenAsked(page, `${label}:approve`);
     return 'approval_clicked';
   }
-  const activate = await clickFirst(
-    page,
-    `${label}:activate`,
-    /activate|reactivate|switch to live|go live|aktywuj|włącz/i,
-  );
-  if (activate) {
-    await clickFirst(
+  if (
+    await clickWhenShown(
       page,
-      `${label}:activate_confirm`,
-      /^(confirm|potwierdź|activate|aktywuj|włącz)$/i,
-    );
+      `${label}:activate`,
+      'Is there an enabled control that activates or reactivates the app or switches it to live?',
+      'the enabled control that activates the app or switches it to live',
+    )
+  ) {
+    await confirmWhenAsked(page, `${label}:activate`);
     return 'activate_clicked';
   }
   return null;
 }
+
+/** The request lists Business Settings shows as tabs, by what each holds. */
+const REQUEST_TABS = [
+  { tab: 'needs_review', holds: 'requests that need your review' },
+  { tab: 'sent', holds: 'requests you sent' },
+  { tab: 'completed', holds: 'completed requests' },
+];
 
 const candidateUrls = [
   [
@@ -290,20 +183,15 @@ const candidateUrls = [
   ['developer_apps', 'https://developers.facebook.com/apps/'],
 ];
 
-console.log(
-  JSON.stringify(
-    {
-      stage: 'start',
-      userDataDir: USER_DATA_DIR,
-      businessId: BUSINESS_ID,
-      adAccountId: AD_ACCOUNT_ID,
-      appId: APP_ID,
-      headless: process.env.META_BUSINESS_HEADLESS !== '0',
-    },
-    null,
-    2,
-  ),
-);
+const start = {
+  stage: 'start',
+  userDataDir: USER_DATA_DIR,
+  businessId: BUSINESS_ID,
+  adAccountId: AD_ACCOUNT_ID,
+  appId: APP_ID,
+  headless: process.env.META_BUSINESS_HEADLESS !== '0',
+};
+console.log(JSON.stringify(start, null, INDENT));
 
 const s = await WSession.start({
   label: 'meta_business_approval_autopilot',
@@ -320,50 +208,45 @@ const actions = [];
 try {
   for (const [label, url] of candidateUrls) {
     await s.page.goto(url, { waitUntil: 'domcontentloaded' });
-    const first = await snapshot(s.page, label);
+    await snapshot(s.page, label);
     const action = await tryApproveOrActivate(s.page, label);
     if (action) {
       actions.push({ label, action });
       await snapshot(s.page, `${label}:after_action`);
     }
     if (/requests/i.test(label)) {
-      for (const tab of [
-        ['needs_review', /needs review|do sprawdzenia|wymaga sprawdzenia/i],
-        ['sent', /^sent$|wysłane|wysłano/i],
-        ['completed', /completed|zakończone/i],
-      ]) {
-        const clicked = await clickFirst(
+      for (const { tab, holds } of REQUEST_TABS) {
+        const opened = await clickWhenShown(
           s.page,
-          `${label}:${tab[0]}`,
-          tab[1],
-          /cancel|anuluj/i,
+          `${label}:${tab}`,
+          `Is there a tab listing ${holds}?`,
+          `the tab listing ${holds}`,
         );
-        if (clicked) {
-          const tabSnap = await snapshot(s.page, `${label}:${tab[0]}`);
-          const tabAction = await tryApproveOrActivate(
+        if (!opened) continue;
+        const tabSnap = await snapshot(s.page, `${label}:${tab}`);
+        const tabAction = await tryApproveOrActivate(s.page, `${label}:${tab}`);
+        if (tabAction) {
+          actions.push({ label: `${label}:${tab}`, action: tabAction });
+          await snapshot(s.page, `${label}:${tab}:after_action`);
+        }
+        if (tabSnap.adAccountPresent) {
+          const target = await clickDescribed(
             s.page,
-            `${label}:${tab[0]}`,
+            `the request row for ad account ${AD_ACCOUNT_ID}. ${NEVER}`,
           );
-          if (tabAction) {
-            actions.push({ label: `${label}:${tab[0]}`, action: tabAction });
-            await snapshot(s.page, `${label}:${tab[0]}:after_action`);
-          }
-          if (tabSnap.statusHints.adAccountPresent) {
-            await clickFirst(
-              s.page,
-              `${label}:${tab[0]}:open_request`,
-              new RegExp(AD_ACCOUNT_ID),
-            );
-            await snapshot(s.page, `${label}:${tab[0]}:request_opened`);
-          }
+          console.log(
+            JSON.stringify({
+              stage: 'clicked',
+              label: `${label}:${tab}:open_request`,
+              ...target,
+            }),
+          );
+          await snapshot(s.page, `${label}:${tab}:request_opened`);
         }
       }
     }
-    if (first.statusHints.login) {
-      console.log(JSON.stringify({ stage: 'login_surface', label }));
-    }
   }
-  console.log(JSON.stringify({ stage: 'actions', actions }, null, 2));
+  console.log(JSON.stringify({ stage: 'actions', actions }, null, INDENT));
   if (!actions.length) {
     console.log(
       'PASS: approval autopilot found no exposed approval or activation controls in the current Weles Meta session',
