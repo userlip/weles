@@ -108,9 +108,13 @@ try {
       finalUrl,
     )
   ) {
-    // Try a known landing to confirm session.
-    await s.page.goto('https://account.microsoft.com').catch(() => {});
+    // Confirm the session on a known landing: a jar persisted from a page
+    // that never signed in would be reported as a login that worked.
+    await s.page.goto('https://account.microsoft.com');
     await humanIdlePause('deliberate');
+    const landed = s.page.url();
+    if (new URL(landed).hostname !== 'account.microsoft.com')
+      throw new Error(`microsoft_session_unconfirmed: ${landed}`);
   }
 
   const cookies = await s.ctx.cookies();

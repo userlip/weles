@@ -100,8 +100,12 @@ try {
     throw new Error(`facebook_checkpoint: ${finalUrl}`);
   }
   if (!/facebook\.com\/(\?|$|home)/.test(finalUrl)) {
-    await s.page.goto('https://www.facebook.com/').catch(() => {});
+    // Confirm the session on the home page before the jar is persisted.
+    await s.page.goto('https://www.facebook.com/');
     await humanIdlePause('deliberate');
+    const landed = s.page.url();
+    if (!/facebook\.com\/(\?|$|home)/.test(landed))
+      throw new Error(`facebook_session_unconfirmed: ${landed}`);
   }
 
   const cookies = await s.ctx.cookies();

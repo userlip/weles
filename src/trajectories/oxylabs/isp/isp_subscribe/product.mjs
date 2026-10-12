@@ -25,7 +25,7 @@ export async function openIspProduct(s) {
   // so /overview/ISP is the most-likely shape. If 404, fall back to clicking
   // an ISP card on /products.
   let ispUrl = 'https://dashboard.oxylabs.io/en/overview/ISP';
-  await s.page.goto(ispUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await s.page.goto(ispUrl, { waitUntil: 'domcontentloaded' });
   await humanIdlePause('long');
   console.log(`[trajectory] /overview/ISP url=${s.page.url()}`);
   await shot(s, 'overview_isp');
