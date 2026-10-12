@@ -8,11 +8,11 @@ import { costTracker } from '../utils/runtime/cost.js';
 import { markCaptchaChallenge, markAllProvidersFailed } from './events.js';
 import {
   apiSolve,
-  nopechaProxyFields,
-  proxyTaskFields,
   type CaptchaCredentials,
   type ProxyCredentials,
 } from './providers/api.js';
+import { solveFuncaptchaToken } from './providers/funcaptcha.js';
+import { solvePerimeterXCookies } from './providers/perimeterx.js';
 import {
   solveRecaptchaV2Token,
   solveRecaptchaV3Token,
@@ -309,13 +309,7 @@ export class CaptchaSolver {
     return null;
   }
 
-  /**
-   * PerimeterX (HUMAN Security) — used by LinkedIn checkpointV2 / NewYorkTimes /
-   * Zillow. Solved via nocaptcha.io wanda/perimeterx/universal which returns the
-   * _px3/_pxde/pxcts cookies that satisfy the challenge. The NoCaptcha key is
-   * acquired from its exact Skarbiec item. Returns Playwright-shaped cookies
-   * ready for ctx.addCookies(); caller then re-navigates and proceeds.
-   */
+  /** PerimeterX cookies; see ./providers/perimeterx.ts. */
   async solvePerimeterX(
     url: string,
     userAgent: string,
@@ -328,163 +322,10 @@ export class CaptchaSolver {
     path: string;
   }> | null> {
     await this._ensureInit();
-    markCaptchaChallenge(); // G8
-    const u = new URL(url);
-    const dotDom = u.hostname.startsWith('www.')
-      ? u.hostname.slice(3)
-      : '.' + u.hostname;
-    if (this._creds.capsolver) {
-      const cookieMapCs: Record<string, string> = {};
-      for (const c of cookies ?? [])
-        if (c?.name && c?.value) cookieMapCs[c.name] = c.value;
-      const task: Record<string, any> = {
-        type: proxy ? 'AntiPerimeterxTask' : 'AntiPerimeterxTaskProxyLess',
-        websiteURL: url,
-        userAgent,
-      };
-      if (Object.keys(cookieMapCs).length) task.cookies = cookieMapCs;
-      if (proxy) {
-        const pp = new URL(proxy);
-        task.proxyType = pp.protocol.replace(':', '');
-        task.proxyAddress = pp.hostname;
-        task.proxyPort = Number(pp.port);
-        if (pp.username) task.proxyLogin = decodeURIComponent(pp.username);
-        if (pp.password) task.proxyPassword = decodeURIComponent(pp.password);
-      }
-      console.log(
-        `[captcha:api] capsolver AntiPerimeterx createTask type=${task.type} url=${url}`,
-      );
-      try {
-        const cr = (await (
-          await fetch('https://api.capsolver.com/createTask', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ clientKey: this._creds.capsolver, task }),
-          })
-        ).json()) as any;
-        if (cr.errorId)
-          console.log(
-            `[captcha:api] capsolver AntiPerimeterx createTask err: ${cr.errorCode} ${cr.errorDescription}`,
-          );
-        else if (cr.taskId) {
-          // One read: CapSolver has no push or blocking answer.
-          const tr = (await (
-            await fetch('https://api.capsolver.com/getTaskResult', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                clientKey: this._creds.capsolver,
-                taskId: cr.taskId,
-              }),
-            })
-          ).json()) as any;
-          if (tr.errorId)
-            console.log(
-              `[captcha:api] capsolver AntiPerimeterx err: ${tr.errorCode} ${tr.errorDescription}`,
-            );
-          else if (tr.status !== 'ready')
-            console.log(
-              `[captcha:api] captcha_capsolver_processing: AntiPerimeterx task ${cr.taskId} has no result yet (status ${tr.status})`,
-            );
-          else {
-            const sol = tr.solution ?? {};
-            const cm: Record<string, unknown> =
-              sol.cookies && typeof sol.cookies === 'object' ? sol.cookies : {};
-            const out: Array<{
-              name: string;
-              value: string;
-              domain: string;
-              path: string;
-            }> = [];
-            for (const [n, v] of Object.entries(cm))
-              out.push({
-                name: n,
-                value: String(v),
-                domain: dotDom,
-                path: '/',
-              });
-            if (out.length) {
-              console.log(
-                `[captcha:solver] PerimeterX solved via capsolver (${out.length} cookies)`,
-              );
-              costTracker.recordCaptcha('capsolver', 'perimeterx');
-              return out;
-            }
-            console.log(
-              '[captcha:api] capsolver AntiPerimeterx returned no cookies in solution',
-            );
-          }
-        }
-      } catch (e: any) {
-        console.log(
-          `[captcha:api] capsolver AntiPerimeterx fetch err: ${e.message}`,
-        );
-      }
-    }
-    const token = this._creds.nocaptcha;
-    if (!token) {
-      console.log(
-        '[captcha:solver] PerimeterX: no NOCAPTCHA_API_KEY (capsolver path returned no cookies)',
-      );
-      markAllProvidersFailed('perimeterx');
-      return null;
-    } // G8
-    const cookieMap: Record<string, string> = {};
-    for (const c of cookies ?? [])
-      if (c?.name && c?.value) cookieMap[c.name] = c.value;
-    const body: Record<string, any> = {
-      href: url,
-      user_agent: userAgent,
-      cookies: cookieMap,
-    };
-    if (proxy) {
-      const p = new URL(proxy);
-      body.proxy = p.username
-        ? `${p.username}:${p.password}@${p.hostname}:${p.port}`
-        : `${p.hostname}:${p.port}`;
-    }
-    console.log(
-      `[captcha:api] nocaptcha PerimeterX solve href=${url} proxy=${!!proxy}`,
-    );
-    try {
-      const r = await fetch(
-        'http://api.nocaptcha.io/api/wanda/perimeterx/universal',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'User-Token': token },
-          body: JSON.stringify(body),
-        },
-      );
-      const j = (await r.json()) as any;
-      if (j?.status !== 1) {
-        console.log(
-          `[captcha:api] nocaptcha PerimeterX err status=${j?.status} msg=${j?.msg ?? j?.message ?? JSON.stringify(j)}`,
-        );
-        markAllProvidersFailed('perimeterx');
-        return null;
-      } // G8
-      const out: Array<{
-        name: string;
-        value: string;
-        domain: string;
-        path: string;
-      }> = [];
-      const dot = u.hostname.startsWith('www.')
-        ? u.hostname.slice(3)
-        : '.' + u.hostname;
-      for (const [name, value] of Object.entries(j.data?.cookies ?? {}))
-        out.push({ name, value: String(value), domain: dot, path: '/' });
-      console.log(
-        `[captcha:solver] PerimeterX solved via nocaptcha (${out.length} cookies)`,
-      );
-      if (out.length) costTracker.recordCaptcha('nocaptcha', 'perimeterx');
-      return out.length ? out : null;
-    } catch (e: any) {
-      console.log(`[captcha:api] nocaptcha PerimeterX fetch err: ${e.message}`);
-      return null;
-    }
+    return solvePerimeterXCookies(this._creds, url, userAgent, cookies, proxy);
   }
 
+  /** A FunCaptcha token; see ./providers/funcaptcha.ts. */
   async solveFuncaptcha(
     publicKey: string,
     url: string,
@@ -492,128 +333,6 @@ export class CaptchaSolver {
     blob?: string,
   ): Promise<string | null> {
     await this._ensureInit();
-    markCaptchaChallenge(); // G8
-    console.log(
-      `[captcha:solver] solveFuncaptcha pkey=${publicKey} subdomain=${subdomain} blob=${blob}...`,
-    );
-    if (this._creds.anticaptcha) {
-      const task: Record<string, any> = {
-        type: 'FunCaptchaTaskProxyless',
-        websiteURL: url,
-        websitePublicKey: publicKey,
-      };
-      if (subdomain)
-        task.funcaptchaApiJSSubdomain = subdomain
-          .replace(/^https?:\/\//, '')
-          .replace('iframe.arkoselabs.com', 'client-api.arkoselabs.com');
-      if (blob) task.data = JSON.stringify({ blob });
-      const token = await apiSolve(
-        'https://api.anti-captcha.com',
-        this._creds.anticaptcha,
-        task,
-      );
-      if (token) {
-        console.log('[captcha:solver] FunCaptcha solved via anticaptcha');
-        costTracker.recordCaptcha('anticaptcha', 'funcaptcha');
-        return token;
-      }
-    }
-    if (this._creds.twocaptcha) {
-      const sd = subdomain
-        ? subdomain
-            .replace(/^https?:\/\//, '')
-            .replace('iframe.arkoselabs.com', 'client-api.arkoselabs.com')
-        : '';
-      const surl = sd ? `https://${sd}` : '';
-      const params = new URLSearchParams({
-        key: this._creds.twocaptcha,
-        method: 'funcaptcha',
-        publickey: publicKey,
-        pageurl: url,
-        json: '1',
-      });
-      if (surl) params.set('surl', surl);
-      if (blob) params.set('data[blob]', blob);
-      console.log(`[captcha:api] 2captcha funcaptcha surl=${surl}`);
-      const cr = (await (
-        await fetch('https://2captcha.com/in.php?' + params.toString())
-      )
-        .json()
-        .catch(() => ({}))) as any;
-      if (cr.status === 1 && cr.request) {
-        const tid = cr.request;
-        console.log(`[captcha:api] 2captcha taskId=${tid}`);
-        // One read: 2captcha has no push or blocking answer.
-        const res = (await (
-          await fetch(
-            `https://2captcha.com/res.php?key=${this._creds.twocaptcha}&action=get&id=${tid}&json=1`,
-          )
-        ).json()) as any;
-        if (res.status === 1) {
-          console.log(`[captcha:api] 2captcha solved`);
-          costTracker.recordCaptcha('twocaptcha', 'funcaptcha');
-          return res.request;
-        }
-        if (res.request === 'CAPCHA_NOT_READY')
-          console.log(
-            `[captcha:api] captcha_2captcha_processing: task ${tid} has no result yet`,
-          );
-        else console.log(`[captcha:api] 2captcha error: ${res.request}`);
-      } else {
-        console.log(
-          `[captcha:api] 2captcha create error: ${cr.request ?? cr.error_text ?? JSON.stringify(cr)}`,
-        );
-      }
-    }
-    if (this._creds.capmonster) {
-      const task: Record<string, any> = {
-        type: 'FunCaptchaTaskProxyless',
-        websiteURL: url,
-        websitePublicKey: publicKey,
-      };
-      if (subdomain)
-        task.funcaptchaApiJSSubdomain = subdomain
-          .replace(/^https?:\/\//, '')
-          .replace('iframe.arkoselabs.com', 'client-api.arkoselabs.com');
-      if (blob) task.data = JSON.stringify({ blob });
-      const token = await apiSolve(
-        'https://api.capmonster.cloud',
-        this._creds.capmonster,
-        task,
-      );
-      if (token) {
-        console.log('[captcha:solver] FunCaptcha solved via capmonster');
-        costTracker.recordCaptcha('capmonster', 'funcaptcha');
-        return token;
-      }
-    }
-    if (this._creds.capsolver) {
-      const task: Record<string, any> = {
-        type: 'FunCaptchaTaskProxyLess',
-        websiteURL: url,
-        websitePublicKey: publicKey,
-      };
-      if (subdomain) {
-        let s = subdomain.startsWith('http')
-          ? subdomain
-          : `https://${subdomain}`;
-        s = s.replace('iframe.arkoselabs.com', 'client-api.arkoselabs.com');
-        task.funcaptchaApiJSSubdomain = s;
-      }
-      if (blob) task.data = JSON.stringify({ blob });
-      const token = await apiSolve(
-        'https://api.capsolver.com',
-        this._creds.capsolver,
-        task,
-      );
-      if (token) {
-        console.log('[captcha:solver] FunCaptcha solved via capsolver');
-        costTracker.recordCaptcha('capsolver', 'funcaptcha');
-        return token;
-      }
-    }
-    console.log('[captcha:solver] All services failed for FunCaptcha');
-    markAllProvidersFailed('funcaptcha'); // G8
-    return null;
+    return solveFuncaptchaToken(this._creds, publicKey, url, subdomain, blob);
   }
 }
