@@ -4,7 +4,6 @@
 // out of capture_extras.ts, whose other surfaces are Playwright-side.
 
 import type { BrowserContext } from 'playwright';
-import { CDP_EVENTS } from './cdp_events.generated.js';
 
 // CDP target lifecycle + frame attach/detach/navigate +
 // performance setup + raw wire-level Network.* extra info. Uses the
@@ -26,34 +25,13 @@ export function attachCdpLifecycle(
         if (name === 'FIREHOSE') return value === '1';
         return value !== '0';
       };
-      const cdpFirehoseMode = (): 'off' | 'passive' | 'enable-domains' => {
-        const value = String(process.env.WELES_CDP_FIREHOSE ?? '')
-          .trim()
-          .toLowerCase();
-        const mode = String(process.env.WELES_CDP_FIREHOSE_MODE ?? '')
-          .trim()
-          .toLowerCase();
-        if (
-          value === '0' ||
-          value === 'false' ||
-          value === 'off' ||
-          mode === 'off'
-        )
-          return 'off';
-        if (
-          mode === 'enable-domains' ||
-          mode === 'all' ||
-          value === 'enable-domains' ||
-          value === 'all'
-        )
-          return 'enable-domains';
-        if (
-          process.env.WELES_FULL_DIAGNOSTICS === '1' ||
-          value === '1' ||
-          value === 'passive' ||
-          mode === 'passive'
-        )
-          return 'passive';
+      // The firehose records every protocol event of the domains this
+      // diagnostics module enabled: WELES_CDP_FIREHOSE turns it on or off,
+      // and when it is unset it follows WELES_FULL_DIAGNOSTICS.
+      const cdpFirehoseMode = (): 'off' | 'passive' => {
+        if (process.env.WELES_CDP_FIREHOSE !== undefined)
+          return cdpFeatureEnabled('FIREHOSE') ? 'passive' : 'off';
+        if (process.env.WELES_FULL_DIAGNOSTICS === '1') return 'passive';
         return 'off';
       };
       // Observe the constructor's actual protocol setup, including its failure.
@@ -614,43 +592,34 @@ export function attachCdpLifecycle(
           });
         } catch {}
       });
-      // CDP firehose — subscribe to every documented event from protocol.d.ts.
-      // Safe/default mode is passive: it records events only from domains this
-      // diagnostics module already enabled. The old all-domains mode is still
-      // available via WELES_CDP_FIREHOSE_MODE=enable-domains, but is isolated
-      // because it reproduced Chromium navigation hangs.
+      // CDP firehose — Playwright's CDP session announces every protocol
+      // event it delivers as 'event' {method, params}; each is recorded under
+      // its domain and name, so no copy of the protocol's event list is kept
+      // here. Only the domains this diagnostics module enabled deliver
+      // events; the firehose enables none of its own.
       ws._instCdpFirehose = [];
       ws._instCdpFirehoseMode = cdpFirehoseMode();
       if (ws._instCdpFirehoseMode !== 'off') {
-        if (ws._instCdpFirehoseMode === 'enable-domains') {
-          const enableDomains = new Set(CDP_EVENTS.map((e) => e[0]));
-          for (const d of enableDomains) {
+        (cdp as any).on(
+          'event',
+          ({ method, params }: { method: string; params: unknown }) => {
             try {
-              await cdp.send(`${d}.enable` as any);
-            } catch {}
-          }
-        }
-        for (const [domain, event] of CDP_EVENTS) {
-          const key = `${domain}.${event}`;
-          try {
-            cdp.on(key, (payload: any) => {
+              const [domain, ...name] = method.split('.');
+              let stored: unknown = params;
               try {
-                let stored: any = payload;
-                try {
-                  JSON.stringify(payload);
-                } catch (err: any) {
-                  stored = { _stringify_error: String(err?.message ?? err) };
-                }
-                ws._instCdpFirehose.push({
-                  t: Date.now(),
-                  domain,
-                  event,
-                  payload: stored,
-                });
-              } catch {}
-            });
-          } catch {}
-        }
+                JSON.stringify(params);
+              } catch (err: any) {
+                stored = { _stringify_error: String(err?.message ?? err) };
+              }
+              ws._instCdpFirehose.push({
+                t: Date.now(),
+                domain,
+                event: name.join('.'),
+                payload: stored,
+              });
+            } catch {}
+          },
+        );
       }
     } catch (e: any) {
       try {
