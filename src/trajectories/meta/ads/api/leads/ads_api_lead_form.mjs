@@ -1,4 +1,9 @@
 // Meta Marketing API: lead generation form wrapper.
+//
+// ACTION_KIND (or META_ACTION) is required: create, read, list or update.
+// Only the fields the caller states are sent; an update never rewrites a
+// field, such as the locale, that the caller did not name, and a read returns
+// the fields named in FIELDS or, without it, the ones Meta returns by default.
 
 import {
   compactObject,
@@ -7,12 +12,8 @@ import {
   submitEnabled,
   withValidateOnly,
 } from '../marketing_api.mjs';
+import { statedText } from '../../../../_shared/inputs/stated.mjs';
 
-const ACTION = (
-  process.env.ACTION_KIND ||
-  process.env.META_ACTION ||
-  'create'
-).toLowerCase();
 const PAGE_ID =
   process.env.PAGE_ID ||
   process.env.FACEBOOK_PAGE_ID ||
@@ -22,7 +23,7 @@ const FORM_ID = process.env.LEAD_FORM_ID || process.env.FORM_ID;
 function payload() {
   return compactObject({
     name: process.env.LEAD_FORM_NAME || process.env.NAME,
-    locale: process.env.LOCALE || 'en_US',
+    locale: process.env.LOCALE,
     privacy_policy: parseJsonEnv(
       'PRIVACY_POLICY_JSON',
       process.env.PRIVACY_POLICY_URL
@@ -38,44 +39,53 @@ function payload() {
   });
 }
 
+async function create() {
+  if (!PAGE_ID) throw new Error('PAGE_ID or META_FACEBOOK_PAGE_ID required');
+  await graphRequest(
+    'POST',
+    `/${PAGE_ID}/leadgen_forms`,
+    withValidateOnly(payload(), { validateOnly: false }),
+    { label: 'meta-ads-api-lead-form' },
+  );
+}
+
+async function read() {
+  const path = FORM_ID ? `/${FORM_ID}` : `/${PAGE_ID}/leadgen_forms`;
+  await graphRequest(
+    'GET',
+    path,
+    { fields: process.env.FIELDS, limit: process.env.LIMIT },
+    {
+      execute: submitEnabled() || process.env.LIVE_READ === '1',
+      label: 'meta-ads-api-lead-form-read',
+    },
+  );
+}
+
+async function update() {
+  if (!FORM_ID) throw new Error('LEAD_FORM_ID or FORM_ID required for update');
+  await graphRequest(
+    'POST',
+    `/${FORM_ID}`,
+    withValidateOnly(payload(), { validateOnly: false }),
+    { label: 'meta-ads-api-lead-form-update' },
+  );
+}
+
+// What each ACTION does; `list` is a read without a form id.
+const ACTIONS = { create, read, list: read, update };
+
 try {
-  if (ACTION === 'create') {
-    if (!PAGE_ID) throw new Error('PAGE_ID or META_FACEBOOK_PAGE_ID required');
-    await graphRequest(
-      'POST',
-      `/${PAGE_ID}/leadgen_forms`,
-      withValidateOnly(payload(), { validateOnly: false }),
-      { label: 'meta-ads-api-lead-form' },
+  const action = statedText(
+    ['ACTION_KIND', 'META_ACTION'],
+    `what is done with the lead form: ${Object.keys(ACTIONS).join(', ')}`,
+  ).toLowerCase();
+  if (!Object.hasOwn(ACTIONS, action))
+    throw new Error(
+      `unsupported ACTION=${action}; one of ${Object.keys(ACTIONS).join(', ')}`,
     );
-  } else if (ACTION === 'read' || ACTION === 'list') {
-    const path = FORM_ID ? `/${FORM_ID}` : `/${PAGE_ID}/leadgen_forms`;
-    await graphRequest(
-      'GET',
-      path,
-      {
-        fields:
-          process.env.FIELDS ||
-          'id,name,status,locale,leads_count,created_time',
-        limit: process.env.LIMIT,
-      },
-      {
-        execute: submitEnabled() || process.env.LIVE_READ === '1',
-        label: 'meta-ads-api-lead-form-read',
-      },
-    );
-  } else if (ACTION === 'update') {
-    if (!FORM_ID)
-      throw new Error('LEAD_FORM_ID or FORM_ID required for update');
-    await graphRequest(
-      'POST',
-      `/${FORM_ID}`,
-      withValidateOnly(payload(), { validateOnly: false }),
-      { label: 'meta-ads-api-lead-form-update' },
-    );
-  } else {
-    throw new Error(`unsupported ACTION=${ACTION}`);
-  }
-  console.log(`PASS: Meta lead form API ${ACTION} completed`);
+  await ACTIONS[action]();
+  console.log(`PASS: Meta lead form API ${action} completed`);
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exit(1);
