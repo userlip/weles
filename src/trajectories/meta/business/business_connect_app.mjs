@@ -219,10 +219,15 @@ async function fillAppId(page) {
     .first();
   await field.waitFor({ state: 'visible' });
   await humanClickLocator(page, field);
-  await page.keyboard.press('ControlOrMeta+A').catch(() => {});
+  await page.keyboard.press('ControlOrMeta+A');
   await humanType(page, APP_ID);
-  console.log(JSON.stringify({ stage: 'filled_app_id', appId: APP_ID }));
   await pageSettled(page);
+  const held = await field.inputValue();
+  if (held.trim() !== String(APP_ID))
+    throw new Error(
+      `app id field holds ${JSON.stringify(held)}, not ${APP_ID}`,
+    );
+  console.log(JSON.stringify({ stage: 'filled_app_id', appId: APP_ID }));
   return true;
 }
 

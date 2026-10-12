@@ -240,17 +240,21 @@ async function fillAdAccountId(page) {
     .first();
   await field.waitFor({ state: 'visible' });
   await humanClickLocator(page, field);
-  await page.keyboard.press('ControlOrMeta+A').catch(() => {});
-  await humanType(page, AD_ACCOUNT_ID).catch(async () => {
-    await page.keyboard.insertText(AD_ACCOUNT_ID).catch(() => {});
-  });
+  await page.keyboard.press('ControlOrMeta+A');
+  await humanType(page, AD_ACCOUNT_ID);
+  await pageSettled(page);
+  // A request sent with another id asks access to someone else's account.
+  const held = await field.inputValue();
+  if (held.trim() !== String(AD_ACCOUNT_ID))
+    throw new Error(
+      `ad account id field holds ${JSON.stringify(held)}, not ${AD_ACCOUNT_ID}`,
+    );
   console.log(
     JSON.stringify({
       stage: 'filled_ad_account_id',
       adAccountId: AD_ACCOUNT_ID,
     }),
   );
-  await pageSettled(page);
 }
 
 async function clickEnabledDialogAction(page, label, allow) {
