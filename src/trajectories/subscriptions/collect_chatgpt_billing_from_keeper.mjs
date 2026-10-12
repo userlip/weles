@@ -12,33 +12,16 @@
 
 import { keeperRequest, keeperSocket } from '../_shared/keeper/client.mjs';
 import { upsertSubscription } from '../../lib/service_subscriptions.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
+import { dayIn, invoiceRows, linesOf } from './billing_text.mjs';
 
-const MONTHS = new Map([
-  ['jan', '01'],
-  ['january', '01'],
-  ['feb', '02'],
-  ['february', '02'],
-  ['mar', '03'],
-  ['march', '03'],
-  ['apr', '04'],
-  ['april', '04'],
-  ['may', '05'],
-  ['jun', '06'],
-  ['june', '06'],
-  ['jul', '07'],
-  ['july', '07'],
-  ['aug', '08'],
-  ['august', '08'],
-  ['sep', '09'],
-  ['sept', '09'],
-  ['september', '09'],
-  ['oct', '10'],
-  ['october', '10'],
-  ['nov', '11'],
-  ['november', '11'],
-  ['dec', '12'],
-  ['december', '12'],
-]);
+/** ChatGPT's billing history amounts, written in US dollars. */
+const AMOUNT = /^US\$(?<amount>[\d.]+)$/;
+/** The provider as the subscription store names it, stated by the caller. */
+const PROVIDER = statedText(
+  ['SUBSCRIPTION_PROVIDER'],
+  'the provider this subscription is billed by, as the subscription store names it',
+);
 
 function parseArgs() {
   const out = {
@@ -76,29 +59,11 @@ async function readText(session) {
 }
 
 function parseHumanDate(value) {
-  const m = String(value || '').match(/\b([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})\b/);
-  if (!m) return null;
-  const month = MONTHS.get(m[1].toLowerCase());
-  if (!month) return null;
-  const day = String(Number(m[2])).padStart(2, '0');
-  return `${m[3]}-${month}-${day}T00:00:00+00:00`;
+  return dayIn(value);
 }
 
 function parseBillingHistory(lines) {
-  const history = [];
-  for (let i = 0; i < lines.length - 2; i += 1) {
-    const date = parseHumanDate(lines[i]);
-    const amount = lines[i + 1]?.match(/^US\$(\d+(?:\.\d{2})?)$/);
-    const status = lines[i + 2]?.trim();
-    if (!date || !amount || !/^(Paid|Refunded|Open|Void)$/i.test(status || ''))
-      continue;
-    history.push({
-      date,
-      amount_usd: Number(amount[1]),
-      status,
-    });
-  }
-  return history;
+  return invoiceRows(lines, AMOUNT);
 }
 
 function latestPaidMonthTotal(history) {
@@ -115,10 +80,7 @@ function latestPaidMonthTotal(history) {
 }
 
 function extractBilling(text) {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const lines = linesOf(text);
   const billingIdx = lines.findIndex(
     (line, idx) => line === 'Billing' && lines[idx + 1]?.startsWith('ChatGPT '),
   );
@@ -136,7 +98,7 @@ function extractBilling(text) {
   const latestPaidMonthCost = latestPaidMonthTotal(billingHistory);
   return {
     service_name: 'Codex',
-    provider: ['op', 'en', 'ai'].join(''),
+    provider: PROVIDER,
     status: expiresAt ? 'active' : plan ? 'active' : 'unknown',
     plan,
     expires_at: expiresAt,

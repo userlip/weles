@@ -11,6 +11,7 @@
 
 import { keeperRequest, keeperSocket } from '../_shared/keeper/client.mjs';
 import { upsertSubscription } from '../../lib/service_subscriptions.mjs';
+import { dayIn, invoiceRows, linesOf } from './billing_text.mjs';
 
 function parseArgs() {
   const out = {
@@ -63,9 +64,7 @@ async function clickExactText(session, textValue) {
         const text = (el.innerText || el.textContent || '').trim();
         if (text !== wanted) continue;
         const r = el.getBoundingClientRect();
-        if (r.width < 5 || r.height < 5) continue;
-        const cs = getComputedStyle(el);
-        if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+        if (!el.checkVisibility() || !r.width || !r.height) continue;
         return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
       }
       return null;
@@ -80,38 +79,23 @@ async function clickExactText(session, textValue) {
   await action(session, { action: 'settle' });
 }
 
-function linesOf(text) {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
+/** Kimi's invoice amounts, written in dollars. */
+const AMOUNT = /^\$(?<amount>[\d.]+)$/;
 
 function parseDate(value) {
-  const m = String(value || '').match(/\b(20\d{2}-\d{2}-\d{2})\b/);
-  return m ? `${m[1]}T00:00:00+00:00` : null;
+  return dayIn(value);
 }
 
 function parseInvoices(lines) {
-  const invoices = [];
-  for (let i = 0; i < lines.length - 2; i += 1) {
-    const date = parseDate(lines[i]);
-    const amount = lines[i + 1]?.match(/^\$(\d+(?:\.\d{2})?)$/);
-    const status = lines[i + 2]?.trim();
-    if (!date || !amount || !/^(Paid|Refunded|Open|Void)$/i.test(status || ''))
-      continue;
-    invoices.push({ date, amount_usd: Number(amount[1]), status });
-  }
-  return invoices;
+  return invoiceRows(lines, AMOUNT);
 }
 
 function extractInfo(text) {
   const lines = linesOf(text);
   const upgradeIdx = lines.findIndex((line) => line === 'Upgrade Plan');
-  const plan =
-    upgradeIdx > 0
-      ? lines[upgradeIdx - 1]
-      : lines.find((line) => line === 'Allegro') || null;
+  // The plan is named on the line before Kimi's own Upgrade Plan control;
+  // a page without that control names no plan.
+  const plan = upgradeIdx > 0 ? lines[upgradeIdx - 1] : null;
   const renewLine = lines.find((line) =>
     /^Next auto-renewal date:/i.test(line),
   );

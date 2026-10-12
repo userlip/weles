@@ -12,33 +12,18 @@
 
 import { keeperRequest, keeperSocket } from '../_shared/keeper/client.mjs';
 import { upsertSubscription } from '../../lib/service_subscriptions.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
+import { dayIn, invoiceRows, linesOf } from './billing_text.mjs';
 
-const MONTHS = new Map([
-  ['jan', '01'],
-  ['january', '01'],
-  ['feb', '02'],
-  ['february', '02'],
-  ['mar', '03'],
-  ['march', '03'],
-  ['apr', '04'],
-  ['april', '04'],
-  ['may', '05'],
-  ['jun', '06'],
-  ['june', '06'],
-  ['jul', '07'],
-  ['july', '07'],
-  ['aug', '08'],
-  ['august', '08'],
-  ['sep', '09'],
-  ['sept', '09'],
-  ['september', '09'],
-  ['oct', '10'],
-  ['october', '10'],
-  ['nov', '11'],
-  ['november', '11'],
-  ['dec', '12'],
-  ['december', '12'],
-]);
+/** Claude's invoice amounts, written in dollars. */
+const AMOUNT = /^\$(?<amount>[\d.]+)$/;
+/** The line naming the plan: "<plan name> plan", whatever the plan is called. */
+const PLAN_LINE = /^\S+ plan$/i;
+/** The provider as the subscription store names it, stated by the caller. */
+const PROVIDER = statedText(
+  ['SUBSCRIPTION_PROVIDER'],
+  'the provider this subscription is billed by, as the subscription store names it',
+);
 
 function parseArgs() {
   const out = {
@@ -83,45 +68,17 @@ async function readText(session) {
 }
 
 function parseHumanDate(value) {
-  const m = String(value || '').match(/\b([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})\b/);
-  if (!m) return null;
-  const month = MONTHS.get(m[1].toLowerCase());
-  if (!month) return null;
-  const day = String(Number(m[2])).padStart(2, '0');
-  return `${m[3]}-${month}-${day}T00:00:00+00:00`;
-}
-
-function parseAmount(value) {
-  const m = String(value || '').match(/^\$?(\d+(?:\.\d{2})?)$/);
-  return m ? Number(m[1]) : null;
+  return dayIn(value);
 }
 
 function parseInvoices(lines) {
-  const invoices = [];
-  for (let i = 0; i < lines.length - 2; i += 1) {
-    const date = parseHumanDate(lines[i]);
-    const amount = parseAmount(lines[i + 1]);
-    const status = lines[i + 2]?.trim();
-    if (
-      !date ||
-      amount == null ||
-      !/^(Paid|Refunded|Open|Void)$/i.test(status || '')
-    )
-      continue;
-    invoices.push({ date, amount_usd: amount, status });
-  }
-  return invoices;
+  return invoiceRows(lines, AMOUNT);
 }
 
 function extractBilling(text) {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const lines = linesOf(text);
   const billingIdx = lines.findIndex((line) => line === 'Billing');
-  const planIdx = lines.findIndex((line) =>
-    /^(Max|Pro|Free|Team|Enterprise) plan$/i.test(line),
-  );
+  const planIdx = lines.findIndex((line) => PLAN_LINE.test(line));
   const plan = planIdx >= 0 ? lines[planIdx] : null;
   const usageLine = planIdx >= 0 ? lines[planIdx + 1] || null : null;
   const cancelLine = lines.find((line) =>
@@ -134,7 +91,7 @@ function extractBilling(text) {
   const monthlyCost = latestPaid?.amount_usd ?? null;
   return {
     service_name: 'Claude Code',
-    provider: ['anth', 'ropic'].join(''),
+    provider: PROVIDER,
     status: plan ? 'active' : 'unknown',
     plan,
     expires_at: expiresAt,
