@@ -18,16 +18,17 @@ import ts from 'typescript';
 import { readdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { loadManifest } from './manifest.mjs';
+import {
+  NONTERMINAL_STATUSES,
+  TERMINAL_STATUSES,
+} from '../worker/public-task-service/wire.mjs';
 
-const CHANGE_KINDS = ['internal', 'additive', 'breaking'];
-const TASK_STATUSES = [
-  'queued',
-  'leased',
-  'running',
-  'succeeded',
-  'failed',
-  'cancelled',
-];
+// AutoVersion's change decisions, each with what it says about the surface.
+const CHANGE_KINDS = {
+  internal: 'no published surface changed',
+  additive: 'surface was added and none removed',
+  breaking: 'published surface was removed',
+};
 
 /** The repository root, from this module's own location. */
 export function repositoryRoot() {
@@ -233,7 +234,13 @@ export async function surface(root = repositoryRoot()) {
   }
   for (const schema of compatibility.api.supportedSchemas)
     published.add(`schema:${schema}`);
-  for (const status of TASK_STATUSES) published.add(`task-status:${status}`);
+  // The task statuses are the public task service's wire vocabulary, read
+  // from the module that refuses any other status at its boundary.
+  for (const status of Object.keys({
+    ...NONTERMINAL_STATUSES,
+    ...TERMINAL_STATUSES,
+  }))
+    published.add(`task-status:${status}`);
 
   const versionChange = JSON.parse(
     await readFile(join(root, 'release/version-change.json'), 'utf8'),
@@ -276,7 +283,7 @@ export function enforceVersion({ decision, baseline, declaration, manifest }) {
       `package version ${manifest.version} does not match declaration candidate ${declaration.candidate}`,
     );
   }
-  if (!CHANGE_KINDS.includes(decision.change)) {
+  if (!Object.hasOwn(CHANGE_KINDS, decision.change)) {
     throw new Error(`unsupported AutoVersion change ${decision.change}`);
   }
   if (!Array.isArray(decision.added) || !Array.isArray(decision.removed)) {

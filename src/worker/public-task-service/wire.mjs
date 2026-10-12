@@ -11,7 +11,10 @@ export const TERMINAL_STATUSES = Object.freeze({
   failed: true,
   cancelled: true,
 });
-const NONTERMINAL_STATUSES = Object.freeze({ queued: true, running: true });
+export const NONTERMINAL_STATUSES = Object.freeze({
+  queued: true,
+  running: true,
+});
 
 export class PublicTaskError extends Error {
   constructor(status, code, message) {
