@@ -19,6 +19,13 @@ import {
   CookieJarStaleError,
 } from '../../_shared/auth/cookie-freshness.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
+import { responseAfterAction } from '../../_shared/page/settled.mjs';
+import { exitStatusFor } from '../../../../dist/cli/usage.js';
+
+// old.reddit's compose form posts itself to /api/compose and is answered with
+// the jQuery calls its page runs; a refused field is a call on the element
+// carrying Reddit's own error code as a class (`.error.<CODE>`).
+const ERROR_CALL = /\.error\.(?<code>[A-Z_]+)/g;
 
 // Reddit messaging surfaces:
 //   * legacy PM at old.reddit.com/message/compose — subject + body, persistent,
@@ -43,10 +50,10 @@ const MESSAGE = statedText(
 );
 
 const acct = await getSocialAccount('reddit');
-if (!acct) {
-  console.log('FAIL: no active reddit account in DB');
-  process.exit(1);
-}
+if (!acct)
+  throw new Error(
+    'REDDIT_ACCOUNT_UNAVAILABLE: no active reddit account in the account store',
+  );
 console.log(`[trajectory] Using account: ${acct.username}`);
 
 const { proxyUrl, persona } = await resolveAccountSession(acct);
@@ -124,35 +131,29 @@ try {
     .filter({ visible: true })
     .first();
   await sendBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, sendBtn);
-
-  await humanIdlePause('deliberate');
-  const successCount = await s.page
-    .locator(
-      ':text("your message has been delivered"), :text("message delivered"), .status:has-text("delivered")',
-    )
-    .count()
-    .catch(() => 0);
-  const errorHits = await s.page
-    .evaluate(() => {
-      const txt = (document.body?.innerText || '').toLowerCase();
-      const hits = [];
-      if (/doesn't exist|user doesn't exist|that user does not exist/.test(txt))
-        hits.push('user_not_found');
-      if (/doing that too much|ratelimit|rate limit|try again in/.test(txt))
-        hits.push('ratelimit');
-      if (/captcha/.test(txt)) hits.push('captcha');
-      if (/blocked|cannot send|don't accept/.test(txt)) hits.push('blocked');
-      return hits;
-    })
-    .catch(() => []);
-  if (errorHits.length) throw new Error(errorHits.join(','));
-  if (!successCount)
-    throw new Error('no delivery confirmation on response page');
+  const response = await responseAfterAction(
+    s.page,
+    (request) =>
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname.endsWith('/api/compose'),
+    () => humanClickLocator(s.page, sendBtn),
+  );
+  const answer = await response.text();
+  if (!response.ok())
+    throw new Error(
+      `REDDIT_DM_HTTP_ERROR: ${response.status()} from ${response.url()}: ${answer}`,
+    );
+  const refused = [...answer.matchAll(ERROR_CALL)].map(
+    (match) => match.groups.code,
+  );
+  if (refused.length)
+    throw new Error(
+      `REDDIT_DM_REFUSED: reddit answered ${[...new Set(refused)].join(', ')}: ${answer}`,
+    );
   console.log(`PASS: DM (PM) sent to u/${RECIPIENT}`);
 } catch (e) {
   console.log('FAIL:', e.message);
-  process.exitCode = 1;
+  process.exitCode = exitStatusFor(e);
 } finally {
   await s.close();
 }

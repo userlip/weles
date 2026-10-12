@@ -108,11 +108,9 @@ try {
   await humanType(s.page, id.email);
   await pageSettled(s.page);
   await vpJitter();
-  const continueBtn = s.page
-    .getByRole('button', { name: /continue/i })
-    .filter({ visible: true })
-    .first();
-  await humanClickLocator(s.page, continueBtn);
+  // Each step is submitted by its own form, from the field just typed into,
+  // instead of a button found by guessing its label.
+  await s.page.keyboard.press('Enter');
   console.log('[register] submitted email');
 
   // Step 2: wait for verification code page, fetch code, fill it
@@ -121,17 +119,13 @@ try {
   // (no code will ever arrive) rather than burning the full email-poll timeout.
   if (verifyInit && !verifyInit.ok) {
     throw new Error(
-      `verify_init_rejected: status=${verifyInit.status} recaptcha_token=${verifyInit.recaptcha || 'n/a'} reason="${verifyInit.reason}"`,
+      `verify_init_rejected: status=${verifyInit.status} recaptcha_token=${verifyInit.recaptcha} reason="${verifyInit.reason}"`,
     );
   }
+  // A code is digits; anything else checkEmail answers is its sentence for
+  // why there is none.
   const code = await s.checkEmail(id.email, 'reddit');
-  if (/^error|^no (code|email)/.test(code)) {
-    const detail =
-      verifyInit && !verifyInit.ok
-        ? ` (verify_init status=${verifyInit.status} recaptcha_token=${verifyInit.recaptcha})`
-        : '';
-    throw new Error(`email_code_failed: ${code}${detail}`);
-  }
+  if (!/^\d+$/.test(code)) throw new Error(`email_code_failed: ${code}`);
   console.log(`[register] got verification code: ${code}`);
   await pageSettled(s.page);
   await vpJitter();
@@ -146,13 +140,7 @@ try {
   await pageSettled(s.page);
   await humanType(s.page, code);
   await pageSettled(s.page);
-  await humanClickLocator(
-    s.page,
-    s.page
-      .getByRole('button', { name: /continue|verify|submit/i })
-      .filter({ visible: true })
-      .first(),
-  );
+  await s.page.keyboard.press('Enter');
   console.log('[register] submitted code');
 
   // Step 3: username + password
@@ -172,7 +160,7 @@ try {
   // "low-effort signups" and auto-shadowbans them within minutes of the
   // first action. Clearing the field first restores the chosen username
   // and lifts the auto-shadowban.
-  const beforeVal = await userIn.inputValue().catch(() => '');
+  const beforeVal = await userIn.inputValue();
   if (beforeVal)
     console.log(
       `[register] clearing auto-suggested username "${beforeVal}" before typing chosen "${id.username}"`,
@@ -206,13 +194,7 @@ try {
   await humanType(s.page, id.password);
   await pageSettled(s.page);
   await vpJitter();
-  await humanClickLocator(
-    s.page,
-    s.page
-      .getByRole('button', { name: /sign up|continue|create/i })
-      .filter({ visible: true })
-      .first(),
-  );
+  await s.page.keyboard.press('Enter');
   console.log('[register] submitted username + password');
 
   // Step 4: the post-signup redirect (/onboarding, /, etc) has happened once

@@ -1,12 +1,14 @@
 /**
- * Reddit ban inspector — logs into an account, navigates to its own profile,
- * and dumps the full page text + any ban/suspension banners so we can see
- * why Reddit banned the account and whether there's an appeal option.
+ * Reddit ban inspector — logs into an account, opens its home page and own
+ * profile logged in and logged out, and prints each page's text beside the
+ * account record Reddit itself serves (`/user/<name>/about.json`): its HTTP
+ * status and body, where `data.is_suspended` says a suspension and a
+ * logged-out 404 says the profile is hidden from others. Words on the page
+ * are not classified: what Reddit states about the account is printed as it
+ * states it.
  *
  * Usage:
  *   ACCOUNT_ID=<id> xvfb-run -a node src/trajectories/reddit/diagnostics/inspect_ban.mjs
- *
- * Output: full page text + detected ban elements printed to stdout.
  */
 import {
   getSocialAccount,
@@ -15,12 +17,13 @@ import {
 import { WSession } from '../../../../dist/session/wsession.js';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { humanIdlePause } from '../../../../dist/human/mouse.js';
+import { exitStatusFor } from '../../../../dist/cli/usage.js';
 
 const acct = await getSocialAccount('reddit');
-if (!acct) {
-  console.log('FAIL: no active reddit account in DB');
-  process.exit(1);
-}
+if (!acct)
+  throw new Error(
+    'REDDIT_ACCOUNT_UNAVAILABLE: no active reddit account in the account store',
+  );
 console.log(`[inspect] account: ${acct.username}`);
 
 const { proxyUrl } = await resolveAccountSession(acct);
@@ -58,29 +61,19 @@ try {
   console.log(`[inspect] homepage url: ${homeUrl}`);
   console.log(`[inspect] homepage text:\n${homeText}`);
 
-  // Find ban/suspension/restriction elements on homepage
-  const homeBanEls = await s.page.evaluate(() => {
-    const results = [];
-    const keywords =
-      /ban|suspend|restrict|deactivat|blocked|removed|appeal|violation|shadow/i;
-    const walker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_ELEMENT,
+  // What Reddit states about the account, as it states it.
+  const about = async (view) => {
+    const response = await s.page.goto(
+      `https://www.reddit.com/user/${encodeURIComponent(acct.username)}/about.json`,
     );
-    while (walker.nextNode()) {
-      const el = walker.currentNode;
-      const text = (el.innerText || '').trim();
-      const cls = String(el.className || '');
-      const tag = el.tagName || '';
-      if (keywords.test(text) && text.length < 500) {
-        results.push({ tag, cls, text });
-      }
-    }
-    return results;
-  });
-  console.log(
-    `[inspect] ban elements on homepage (logged-in): ${JSON.stringify(homeBanEls, null, 2)}`,
-  );
+    if (!response)
+      throw new Error(`the ${view} about.json navigation produced no response`);
+    const body = await response.text();
+    console.log(
+      `[inspect] account record (${view}): HTTP ${response.status()} ${body}`,
+    );
+  };
+  await about('logged in');
 
   // Now navigate to own profile
   const profileUrl = `https://www.reddit.com/user/${acct.username}/`;
@@ -94,30 +87,6 @@ try {
   console.log(`[inspect] profile url: ${finalUrl}`);
   console.log(`[inspect] profile text:\n${fullText}`);
 
-  // Find ban/suspension/restriction elements
-  const banEls = await s.page.evaluate(() => {
-    const results = [];
-    const keywords =
-      /ban|suspend|restrict|deactivat|blocked|removed|appeal|violation|shadow/i;
-    const walker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_ELEMENT,
-    );
-    while (walker.nextNode()) {
-      const el = walker.currentNode;
-      const text = (el.innerText || '').trim();
-      const cls = String(el.className || '');
-      const tag = el.tagName || '';
-      if (keywords.test(text) && text.length < 500) {
-        results.push({ tag, cls, text });
-      }
-    }
-    return results;
-  });
-  console.log(
-    `[inspect] ban elements on profile (logged-in): ${JSON.stringify(banEls, null, 2)}`,
-  );
-
   // Now check the same profile WITHOUT cookies (logged-out view)
   console.log('[inspect] --- checking logged-out view ---');
   await s.ctx.clearCookies();
@@ -129,30 +98,10 @@ try {
   );
   console.log(`[inspect] logged-out url: ${logoutUrl}`);
   console.log(`[inspect] logged-out text:\n${logoutText}`);
-  const logoutBanEls = await s.page.evaluate(() => {
-    const results = [];
-    const keywords =
-      /ban|suspend|restrict|deactivat|blocked|removed|appeal|violation/i;
-    const walker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_ELEMENT,
-    );
-    while (walker.nextNode()) {
-      const el = walker.currentNode;
-      const text = (el.innerText || '').trim();
-      const cls = String(el.className || '');
-      const tag = el.tagName || '';
-      if (keywords.test(text) && text.length < 500) {
-        results.push({ tag, cls, text });
-      }
-    }
-    return results;
-  });
-  console.log(
-    `[inspect] ban elements (logged-out): ${JSON.stringify(logoutBanEls, null, 2)}`,
-  );
+  await about('logged out');
 } catch (e) {
   console.log(`[inspect] error: ${e.message}`);
+  process.exitCode = exitStatusFor(e);
 } finally {
   await s.close();
 }

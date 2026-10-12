@@ -6,36 +6,27 @@ import {
 } from './reddit_json.mjs';
 
 /**
- * Check a blocking submission signal against the authenticated comment
- * listing. The listing can prove the comment was accepted despite that
- * signal. Return false when it contains the comment; otherwise throw.
+ * Check an unhealthy signal read after submitting against the authenticated
+ * comment listing. The listing can prove the comment was accepted despite
+ * that signal. Return false when it contains the comment; otherwise throw.
+ * A healthy verdict, or none, is returned as it is.
  */
 export async function confirmBlockingSignal(s, banSignal, body) {
-  if (
-    !banSignal ||
-    !/^(rate_limited|shadowbanned|banned_account|banned_subreddit|thread_locked)$/.test(
-      banSignal.signal,
-    )
-  )
-    return banSignal;
-  let inAuthListing = false;
-  try {
-    const me = await readOwnHandle(s.page);
-    if (me) inAuthListing = await ownListingHas(s.page, me, body, 10);
-  } catch (e) {
-    console.log(`[ban-signal] auth listing unreadable: ${e.message}`);
-  }
-  if (inAuthListing) {
+  if (!banSignal || banSignal.healthy) return banSignal;
+  // An unreadable listing cannot clear the signal; its cause goes with it.
+  const me = await readOwnHandle(s.page);
+  if (!me)
+    throw new Error(
+      `reddit returned ${banSignal.signal} on submit, and the account's own handle could not be read to check its comment listing: ${JSON.stringify(banSignal.details)}`,
+    );
+  if (await ownListingHas(s.page, me, body, 10)) {
     console.log(
-      `[ban-signal] ${banSignal.signal} XHR signal — but comment IS in auth listing. Treating as false positive, continuing to public-visibility poll.`,
+      `[ban-signal] ${banSignal.signal} after submit, but the comment is in the account's own listing; continuing to the public-visibility check`,
     );
     return false;
   }
-  console.log(
-    `[ban-signal] ${banSignal.signal} (auth listing missing the comment, real failure)`,
-  );
   throw new Error(
-    `reddit returned ${banSignal.signal} on submit — ${banSignal?.details?.flagged_url ?? 'unknown endpoint'}`,
+    `reddit returned ${banSignal.signal} on submit and the comment is not in u/${me}'s own listing: ${JSON.stringify(banSignal.details)}`,
   );
 }
 
