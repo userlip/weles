@@ -3,7 +3,11 @@ import { CLOSE_AFTER_HARVEST } from './settings.mjs';
 import { reviewUntilClosed } from '../../../_shared/page/settled.mjs';
 
 export async function fetchExactCampaignReports(page, templatePayload, ranges) {
-  if (!templatePayload || !ranges.length) return [];
+  if (!ranges.length) return [];
+  if (!templatePayload)
+    throw new Error(
+      `apple_ads_exact_reports_unavailable: ${ranges.length} exact range(s) were asked for, but the reports page issued no campaign report request to copy; no figures were read`,
+    );
   return await page.evaluate(
     async ({ templatePayload, ranges }) => {
       const outputs = [];
@@ -49,57 +53,69 @@ export async function fetchExactCampaignReports(page, templatePayload, ranges) {
   );
 }
 
-export function moneyAmount(value) {
-  return Number(value?.amount ?? value ?? 0) || 0;
+// A figure Apple did not return is unknown, not zero: it is reported as null
+// so no reader takes a missing spend or install count for a real one.
+function figure(value) {
+  const raw = value?.amount ?? value;
+  if (raw === undefined || raw === null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n))
+    throw new Error(
+      `apple_ads_report_figure_unreadable: ${JSON.stringify(raw)}`,
+    );
+  return n;
+}
+
+// The currency Apple states for a money figure, or null when it states none.
+function currencyOf(money) {
+  return money?.currency ?? null;
+}
+
+function figures(total) {
+  return {
+    spend: figure(total?.localSpend),
+    currency: currencyOf(total?.localSpend),
+    impressions: figure(total?.impressions),
+    taps: figure(total?.taps),
+    installs: figure(total?.totalInstalls),
+    newDownloads: figure(total?.totalNewDownloads),
+    redownloads: figure(total?.totalRedownloads),
+    avgCPT: figure(total?.avgCPT),
+    avgCPM: figure(total?.avgCPM),
+    avgCPI: figure(total?.totalAvgCPI),
+    ttr: figure(total?.ttr),
+    installRate: figure(total?.totalInstallRate),
+  };
 }
 
 export function summarizeExactReports(exactReports) {
   return exactReports.map((report) => {
     const data = report.json?.data?.reportingV5?.getReportsByCampaign;
-    const grand = data?.grandTotals?.total || {};
+    // A failed or unparsable range is a failed harvest, never a range of zeros.
+    if (!report.ok || !Array.isArray(data?.row))
+      throw new Error(
+        `apple_ads_exact_report_failed: range ${report.label} (${report.startTime}..${report.endTime}) answered HTTP ${report.status} without campaign rows; errors: ${JSON.stringify(report.json?.errors ?? null)}`,
+      );
     return {
       label: report.label,
       startTime: report.startTime,
       endTime: report.endTime,
       ok: report.ok,
       status: report.status,
-      totalResults: data?.pagination?.totalResults ?? null,
-      totals: {
-        spend: moneyAmount(grand.localSpend),
-        currency: grand.localSpend?.currency || 'USD',
-        impressions: Number(grand.impressions || 0),
-        taps: Number(grand.taps || 0),
-        installs: Number(grand.totalInstalls || 0),
-        newDownloads: Number(grand.totalNewDownloads || 0),
-        redownloads: Number(grand.totalRedownloads || 0),
-        avgCPT: moneyAmount(grand.avgCPT),
-        avgCPM: moneyAmount(grand.avgCPM),
-        avgCPI: moneyAmount(grand.totalAvgCPI),
-        ttr: Number(grand.ttr || 0),
-        installRate: Number(grand.totalInstallRate || 0),
-      },
-      campaigns: (data?.row || []).map((row) => ({
+      totalResults: data.pagination?.totalResults ?? null,
+      totals: figures(data.grandTotals?.total),
+      campaigns: data.row.map((row) => ({
         campaignId: row.metadata?.campaignId,
         campaignName: row.metadata?.campaignName,
         displayStatus: row.metadata?.displayStatus,
-        servingStateReasons: row.metadata?.servingStateReasons || [],
+        servingStateReasons: row.metadata?.servingStateReasons ?? null,
         startDate: row.metadata?.startDate,
         endDate: row.metadata?.endDate,
-        dailyBudget: moneyAmount(row.metadata?.dailyBudget),
-        currency: row.metadata?.dailyBudget?.currency || 'USD',
-        countriesOrRegions: row.metadata?.countriesOrRegions || [],
-        supplySources: row.metadata?.supplySources || [],
-        spend: moneyAmount(row.total?.localSpend),
-        impressions: Number(row.total?.impressions || 0),
-        taps: Number(row.total?.taps || 0),
-        installs: Number(row.total?.totalInstalls || 0),
-        newDownloads: Number(row.total?.totalNewDownloads || 0),
-        redownloads: Number(row.total?.totalRedownloads || 0),
-        avgCPT: moneyAmount(row.total?.avgCPT),
-        avgCPM: moneyAmount(row.total?.avgCPM),
-        avgCPI: moneyAmount(row.total?.totalAvgCPI),
-        ttr: Number(row.total?.ttr || 0),
-        installRate: Number(row.total?.totalInstallRate || 0),
+        dailyBudget: figure(row.metadata?.dailyBudget),
+        dailyBudgetCurrency: currencyOf(row.metadata?.dailyBudget),
+        countriesOrRegions: row.metadata?.countriesOrRegions ?? null,
+        supplySources: row.metadata?.supplySources ?? null,
+        ...figures(row.total),
       })),
     };
   });
