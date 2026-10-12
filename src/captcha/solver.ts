@@ -17,10 +17,8 @@ import {
   type HcaptchaOptions,
 } from './providers/hcaptcha.js';
 import { solvePerimeterXCookies } from './providers/perimeterx.js';
-import {
-  solveRecaptchaV2Token,
-  solveRecaptchaV3Token,
-} from './providers/recaptcha_tokens.js';
+import { solveRecaptchaV2Token } from './providers/recaptcha/v2.js';
+import { solveRecaptchaV3Token } from './providers/recaptcha/v3.js';
 
 type Page = any;
 
