@@ -79,7 +79,11 @@ async function main() {
       exitCode = 2;
       return;
     }
-    await s.saveCookies().catch(() => null);
+    await s
+      .saveCookies()
+      .catch((e) =>
+        console.log('[apple-ads-report-harvest] cookie save err:', e.message),
+      );
     if (!/\/report/i.test(s.page.url?.() || '')) {
       await gotoAndWait(s.page, REPORT_URL);
     } else {
@@ -173,7 +177,11 @@ async function main() {
     };
     const outPath = join(DIAG_DIR, 'report_harvest.json');
     writeFileSync(outPath, JSON.stringify(output, null, 2));
-    await s.saveCookies().catch(() => null);
+    await s
+      .saveCookies()
+      .catch((e) =>
+        console.log('[apple-ads-report-harvest] cookie save err:', e.message),
+      );
     console.log(`[apple-ads-report-harvest] json=${outPath}`);
     console.log(JSON.stringify(summary, null, 2));
   } finally {
