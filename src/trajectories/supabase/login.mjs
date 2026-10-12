@@ -2,13 +2,20 @@
 // Run: node src/trajectories/supabase/login.mjs
 import { readScopedLogin } from '../../_shared/scoped-secrets.mjs';
 import { WSession } from '../../../dist/session/wsession.js';
-import { humanClickLocator } from '../../../dist/human/mouse.js';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 import { pageSettled, submitAnswered } from '../_shared/page/settled.mjs';
 import { humanFill } from '../../../dist/human/keyboard.js';
 
-const SIGNIN_URL = 'https://supabase.com/dashboard/sign-in';
-const SUCCESS_URL_RE =
-  /supabase\.com\/dashboard\/(projects|organizations|org|account)/;
+const SIGNIN = new URL('https://supabase.com/dashboard/sign-in');
+// Signed in is any dashboard page the sign-in route hands over to.
+const signedIn = (url) => {
+  const at = new URL(url);
+  return (
+    at.origin === SIGNIN.origin &&
+    at.pathname.startsWith('/dashboard/') &&
+    !at.pathname.startsWith(SIGNIN.pathname)
+  );
+};
 
 const login = readScopedLogin('supabaseDashboard');
 console.log(
@@ -20,7 +27,7 @@ const s = await WSession.start({
   browser: 'chromium',
 });
 try {
-  await s.goto(SIGNIN_URL);
+  await s.goto(SIGNIN.href);
   await pageSettled(s.page);
 
   const emailInput = s.page
@@ -31,9 +38,9 @@ try {
     .locator('input[name="password"], input[type="password"], input#password')
     .filter({ visible: true })
     .first();
-  if (!(await emailInput.isVisible().catch(() => false)))
+  if (!(await emailInput.isVisible()))
     throw new Error('email input not visible on sign-in page');
-  if (!(await pwInput.isVisible().catch(() => false)))
+  if (!(await pwInput.isVisible()))
     throw new Error(
       'password input not visible (account may be GitHub-SSO-only)',
     );
@@ -43,33 +50,19 @@ try {
   await humanFill(s.page, pwInput, login.password);
   await pageSettled(s.page);
 
-  // Submit via the primary submit button.
-  const submitBtn = s.page
-    .locator(
-      'button[type="submit"]:has-text("Sign In"), button[type="submit"]:has-text("Sign in"), button:has-text("Sign in"), button:has-text("Sign In")',
-    )
-    .filter({ visible: true })
-    .first();
-  if (await submitBtn.isVisible().catch(() => false)) {
-    try {
-      await humanClickLocator(s.page, submitBtn);
-    } catch {
-      /* form may have submitted */
-    }
-  } else {
-    throw new Error('submit button not visible after credentials filled');
-  }
+  // The form is submitted by itself, from the password field just typed in.
+  await s.page.keyboard.press('Enter');
 
   // Supabase answers by routing away from /sign-in or with its own alert.
   const ERROR_SELECTOR =
     '[role="alert"], .error, [data-error="true"], p[class*="error" i]';
   await submitAnswered(
     s.page,
-    /\/dashboard\/sign-in/,
+    (url) => new URL(url).pathname.startsWith(SIGNIN.pathname),
     s.page.locator(ERROR_SELECTOR).filter({ hasText: /\S/ }).first(),
   );
   const url = s.page.url();
-  if (!SUCCESS_URL_RE.test(url)) {
+  if (!signedIn(url)) {
     const errText = await s.page.evaluate((selector) => {
       for (const sel of selector.split(', ')) {
         const el = document.querySelector(sel);
@@ -84,7 +77,7 @@ try {
   console.log(`PASS: landed on ${url}`);
 } catch (e) {
   console.log('FAIL:', e.message);
-  process.exitCode = 1;
+  process.exitCode = exitStatusFor(e);
 } finally {
   await s.close();
 }
