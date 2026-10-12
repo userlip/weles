@@ -4,10 +4,11 @@
 // verifies the count changed by exactly one. Credentials come from injected
 // environment variables, with weles/.env retained only as a local fallback.
 //
-// Env/args: DNS_ACTION (add, the default, or remove), SLD (default wisent),
-//   TLD (default com), NEW_HOST (e.g. oko), NEW_TYPE (default A),
-//   NEW_ADDRESS (default 76.76.21.21), NEW_TTL (1800).
+// Env/args (all required; the zone is production DNS, so no domain, host,
+//   address or TTL is ever assumed): DNS_ACTION (add or remove), SLD, TLD,
+//   NEW_HOST, NEW_TYPE, NEW_ADDRESS, NEW_TTL.
 import { existsSync, readFileSync } from 'node:fs';
+import { statedText } from '../_shared/inputs/stated.mjs';
 
 const envUrl = new URL('../../../.env', import.meta.url);
 const env = existsSync(envUrl) ? readFileSync(envUrl, 'utf8') : '';
@@ -24,20 +25,28 @@ if (!AK || !AU || !UN || !IP) {
   process.exit(1);
 }
 
-const SLD = process.env.SLD || 'wisent';
-const TLD = process.env.TLD || 'com';
+const SLD = statedText(
+  ['SLD'],
+  'the domain name, without its TLD, whose zone changes',
+);
+const TLD = statedText(['TLD'], 'the TLD of the domain whose zone changes');
 const NEW = {
-  Name: process.env.NEW_HOST || 'oko',
-  Type: process.env.NEW_TYPE || 'A',
-  Address: process.env.NEW_ADDRESS || '76.76.21.21',
-  TTL: process.env.NEW_TTL || '1800',
+  Name: statedText(['NEW_HOST'], 'the host name of the record'),
+  Type: statedText(['NEW_TYPE'], 'the record type, e.g. A or CNAME'),
+  Address: statedText(['NEW_ADDRESS'], 'the address the record points to'),
+  TTL: statedText(['NEW_TTL'], 'the record TTL in seconds'),
   MXPref: '10',
 };
-const ACTION = process.env.DNS_ACTION || 'add';
-if (!['add', 'remove'].includes(ACTION)) {
-  console.log('FAIL: DNS_ACTION must be add or remove');
-  process.exit(1);
-}
+// The changes this trajectory makes to a zone.
+const ACTIONS = { add: {}, remove: {} };
+const ACTION = statedText(
+  ['DNS_ACTION'],
+  'whether the record is added or removed',
+);
+if (!Object.hasOwn(ACTIONS, ACTION))
+  throw new Error(
+    `DNS_ACTION is "${ACTION}", not one of ${Object.keys(ACTIONS).join(', ')}; the zone was not touched`,
+  );
 const BASE = 'https://api.namecheap.com/xml.response';
 
 async function getHosts() {

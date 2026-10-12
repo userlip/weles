@@ -22,11 +22,24 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import { statedText } from '../_shared/inputs/stated.mjs';
 
-const ACCOUNT = process.argv[2] || '017364-D3B657-F207B5';
-const TAB = process.env.GCP_CREDITS_TAB || 'issued';
+// Whose credits are read is the caller's: a billing account written here
+// would read another account's credits.
+const ACCOUNT = process.argv[2];
+if (!ACCOUNT)
+  throw new Error(
+    'no billing account given: run with <BILLING_ACCOUNT_ID>; nothing was opened',
+  );
+const TAB = statedText(
+  ['GCP_CREDITS_TAB'],
+  "the credits tab captured: 'issued' for Issued credits, anything else for the page's first tab",
+);
 const URL = `https://console.cloud.google.com/billing/${ACCOUNT}/credits`;
-const OUT_PNG = '/tmp/gcp_credits.png';
+// The capture is kept with this run's recordings, not in a shared /tmp file
+// the next run overwrites.
+const OUT_PNG = join(runRecordingsDir('gcp_credits'), 'gcp_credits.png');
 const PROFILES_CFG = join(homedir(), '.weles', 'chrome_profiles.json');
 
 function loadProfilesConfig() {
@@ -164,19 +177,22 @@ if (TAB === 'issued') {
     (function(){
       var nodes = Array.from(document.querySelectorAll('a,button,[role="tab"],[role="link"]'));
       var hit = nodes.find(function(n){
-        var t = (n.innerText || n.textContent || '').trim().toLowerCase();
-        return t === 'issued credits' || t === 'issued' || t.startsWith('issued credits');
+        return n.textContent.trim().toLowerCase().startsWith('issued');
       });
-      if (hit) { hit.click(); return 'clicked: ' + hit.innerText; }
+      if (hit) { hit.click(); return 'clicked: ' + hit.textContent.trim(); }
       return 'no match';
     })();`.replace(/\s+/g, ' ');
   const r = spawnSync('osascript', [
     '-e',
     `tell application "Google Chrome" to tell active tab of front window to execute javascript "${clickJs.replace(/"/g, '\\"')}"`,
   ]);
-  console.log(
-    `[gcp_credits] tab click result: ${(r.stdout?.toString() || '').trim() || (r.stderr?.toString() || '').trim()}`,
-  );
+  const answer = r.stdout.toString().trim();
+  // A capture of the wrong tab would be read as the issued credits.
+  if (!answer.startsWith('clicked'))
+    throw new Error(
+      `the Issued credits tab was not clicked (${answer} ${r.stderr.toString().trim()}); no capture was taken`,
+    );
+  console.log(`[gcp_credits] tab click result: ${answer}`);
   waitForTabLoaded();
 }
 

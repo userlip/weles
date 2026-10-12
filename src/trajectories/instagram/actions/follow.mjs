@@ -16,8 +16,13 @@ import {
   loadFreshCookieJarOrFail,
   CookieJarStaleError,
 } from '../../_shared/auth/cookie-freshness.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
-const TARGET_USER = (process.env.TARGET_USER || 'wisent.ai').replace(/^@/, '');
+// Who the account follows is the caller's; no account is followed by default.
+const TARGET_USER = statedText(
+  ['TARGET_USER'],
+  'the Instagram account to follow',
+).replace(/^@/, '');
 const URL = `https://www.instagram.com/${encodeURIComponent(TARGET_USER)}/`;
 
 const acct = await getSocialAccount('instagram');
