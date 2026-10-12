@@ -100,7 +100,11 @@ export async function preflightExit(
           encoding: 'utf8',
         }).trim();
       } catch (e: any) {
+        // An exit that cannot be read cannot be checked for burns, country or
+        // platform routing; it is rerolled, not used unchecked.
         console.log(`[proxy] exit-ip probe err: ${e.message}`);
+        attemptDiag.rejected_reason = `exit_ip_unreadable: ${e.message}`;
+        preflightContinue = true;
       }
       console.log(`[proxy] sampled exit_ip="${exitIp}" sticky=${sessId}`);
       attemptDiag.exit_ip_present = !!exitIp;
@@ -193,8 +197,13 @@ export async function preflightExit(
         }
       }
     }
-  } catch {
-    /* skip preflight on unexpected error, return as-is */
+  } catch (error) {
+    // A preflight that failed checked nothing: the sticky is rerolled with the
+    // cause recorded, never handed to the run as if it had passed.
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(`[proxy] preflight err: ${message}`);
+    attemptDiag.rejected_reason = `preflight_error: ${message}`;
+    preflightContinue = true;
   }
   return { exitIp, rejected: preflightContinue, abandonProvider };
 }
