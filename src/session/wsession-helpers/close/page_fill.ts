@@ -17,33 +17,39 @@ import { assertFocusedLiteralInput } from '../../wsession/page-actions.js';
 
 const asV = (p: any) => p as unknown as ScreenshottablePage;
 
-export function childFrames(s: WSession, allowedOrigin?: string): Frame[] {
-  try {
-    const frames: Frame[] = s.page.frames?.() ?? [];
-    const mainFrame = s.page.mainFrame?.();
-    return frames.filter((frame) => {
-      if (frame === mainFrame) return false;
-      if (!allowedOrigin) return true;
-      try {
-        return new URL(frame.url()).origin === allowedOrigin;
-      } catch {
-        return false;
-      }
-    });
-  } catch {
-    return [];
-  }
+// A Playwright page, frame and locator expose frames(), mainFrame(), url()
+// and first() as methods; Weles's CDP page, frame and locator expose them as
+// getters. Both shapes are read here: calling a getter's value used to throw
+// a TypeError that a catch turned into "no frames" and "no match", so a fill
+// on a CDP session never searched a field and went straight to a vision
+// guess.
+function member(owner: any, name: string): any {
+  return typeof owner[name] === 'function' ? owner[name]() : owner[name];
 }
 
-export async function firstVisible(loc: any): Promise<any | null> {
-  try {
-    const first = loc?.first?.() ?? loc;
-    let count = 1;
-    if (typeof loc?.count === 'function')
-      count = await loc.count().catch(() => 0);
-    if (count > 0 && (await first.isVisible())) return first;
-  } catch {}
-  return null;
+export function childFrames(s: WSession, allowedOrigin?: string): Frame[] {
+  const mainFrame = member(s.page, 'mainFrame');
+  return (member(s.page, 'frames') as Frame[]).filter((frame) => {
+    if (frame === mainFrame) return false;
+    if (!allowedOrigin) return true;
+    // A frame without a parsable URL (about:srcdoc) belongs to no origin.
+    const url = member(frame, 'url');
+    return URL.canParse(url) ? new URL(url).origin === allowedOrigin : false;
+  });
+}
+
+/**
+ * The first visible control `loc` names, or null when none is visible. A
+ * locator that cannot be queried (a closed page, a malformed selector) is not
+ * one without a match: its error reaches the caller instead of sending the
+ * fill or click on to a label, keyword or vision guess.
+ */
+export async function firstVisible(
+  loc: Locator | undefined,
+): Promise<Locator | null> {
+  if (!loc) return null;
+  const first = member(loc, 'first');
+  return (await first.isVisible()) ? first : null;
 }
 
 export async function fillPage(
@@ -154,7 +160,7 @@ export async function wsFill(
   value: string,
 ): Promise<string> {
   const pageUrl = new URL(s.page.url());
-  if (!['https:', 'http:'].includes(pageUrl.protocol))
+  if (!/^https?:$/.test(pageUrl.protocol))
     throw new Error('fill requires an HTTP(S) origin');
   const literal = assertNonCredentialInput(value, target);
   return s.runStep(`fill_${target}`, () =>
