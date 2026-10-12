@@ -32,7 +32,7 @@ function summarize(results) {
       });
     }
     const s = sections.get(key);
-    if (r.status === 'checked' || r.status === 'reused') {
+    if (r.verdict) {
       s.checked += 1;
       if (r.verdict === 'human') s.human += 1;
       if (r.verdict === 'ai_generated') s.ai_generated += 1;
@@ -60,9 +60,7 @@ function badCount(s) {
 }
 
 function totals(results) {
-  const checked = results.filter(
-    (r) => r.status === 'checked' || r.status === 'reused',
-  );
+  const checked = results.filter((r) => r.verdict);
   const human = checked.filter((r) => r.verdict === 'human').length;
   const soft = checked.filter(
     (r) => r.verdict === 'human' && (r.ai_percent ?? 0) >= 50,

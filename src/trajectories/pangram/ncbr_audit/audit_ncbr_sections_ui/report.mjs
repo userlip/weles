@@ -29,9 +29,7 @@ export function markdownReport(report) {
       lines.push(`- ${r.path} ${r.id}: ${r.title} (${r.ai_percent}% AI)`);
     lines.push('');
   }
-  const skipped = report.results.filter(
-    (r) => r.status !== 'checked' && r.status !== 'reused',
-  );
+  const skipped = report.results.filter((r) => !r.verdict);
   if (skipped.length) {
     lines.push('## Not checked');
     for (const r of skipped)

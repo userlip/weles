@@ -216,14 +216,13 @@ const report = {
   minChars: MIN_CHARS,
   collectOnly: COLLECT_ONLY,
   reusedExisting: REUSE_EXISTING,
-  checkedCount: results.filter(
-    (r) => r.status === 'checked' || r.status === 'reused',
-  ).length,
+  // A section was analysed when Pangram's verdict is on it, whether the
+  // analysis ran now or was reused; every other row was not checked.
+  checkedCount: results.filter((r) => r.verdict).length,
   aiGeneratedCount: results.filter((r) => r.verdict === 'ai_generated').length,
   humanCount: results.filter((r) => r.verdict === 'human').length,
   failedCount: results.filter((r) => r.status === 'failed').length,
-  skippedCount: results.filter((r) => !['checked', 'reused'].includes(r.status))
-    .length,
+  skippedCount: results.filter((r) => !r.verdict).length,
   results,
 };
 
