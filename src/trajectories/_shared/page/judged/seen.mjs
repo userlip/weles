@@ -99,3 +99,27 @@ export async function fillOffered(page, description, value) {
   await fillDescribed(page, description, value);
   return true;
 }
+
+/**
+ * Activates the control `description` names with a DOM click at the point the
+ * vision model finds, for pages whose scripts break under a pointer moving in
+ * (Instagram's sign-up). Says whether the page offered such a control.
+ */
+export async function pressDescribed(page, description) {
+  await pageSettled(page);
+  const target = await findClickTarget(page, description);
+  if (!target) return false;
+  const pressed = await page.evaluate(
+    ({ x, y }) => {
+      const control = document
+        .elementFromPoint(x, y)
+        ?.closest('button, a, [role="button"], input');
+      if (!control) return false;
+      control.click();
+      return true;
+    },
+    { x: target.x, y: target.y },
+  );
+  await pageSettled(page);
+  return pressed;
+}

@@ -6,6 +6,7 @@ import { autoBindCharacter } from '../lib/character-bind.mjs';
 import { pickInstagramProxy } from '../lib/instagram-proxy.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { autocompleteField, field } from '../_shared/page/offers.mjs';
+import { pressDescribed } from '../_shared/page/judged/seen.mjs';
 
 const URL = 'https://www.instagram.com/accounts/emailsignup/';
 // The SMS countries to order numbers from, in the order tried.
@@ -59,16 +60,10 @@ async function state(page) {
   return 'in';
 }
 
-// Instagram renders its buttons as role="button" containers; a trusted mouse
-// move crashes its page, so clicks go through the untrusted jsClick atom and
-// the result says whether a control was found.
-async function pressAny(s, names) {
-  for (const name of names) {
-    const r = await s.jsClick('[role="button"], a[role="button"]', name);
-    if (r !== 'no-element-found') return name;
-  }
-  return null;
-}
+// Instagram renders its buttons as role="button" containers and a trusted
+// mouse move crashes its page, so the vision model finds the control and an
+// untrusted DOM click activates it; the answer says whether one was found.
+const CONTINUE = 'the button that sends, confirms or continues this step';
 
 async function phoneVerification(s, page) {
   for (let phoneAttempt = 0; !page.isClosed(); phoneAttempt++) {
@@ -102,7 +97,7 @@ async function phoneVerification(s, page) {
     await pageSettled(page);
     await humanType(page, digits);
     await pageSettled(page);
-    await pressAny(s, ['send', 'continue', 'next']);
+    await pressDescribed(page, CONTINUE);
     await pageSettled(page);
     const smsCode = await s.pollSmsCode();
     console.log(`[ig] SMS code: ${smsCode}`);
@@ -114,7 +109,7 @@ async function phoneVerification(s, page) {
         );
       await code.fill(smsCode);
       await pageSettled(page);
-      await pressAny(s, ['confirm', 'continue', 'next']);
+      await pressDescribed(page, CONTINUE);
       await pageSettled(page);
       return;
     }
@@ -218,7 +213,7 @@ async function signup(s, attempt = 1) {
         throw new Error('sms_code_not_received');
       await (await codeField(page)).fill(smsCode);
       await humanIdlePause('short');
-      await pressAny(s, ['Continue', 'Next', 'Confirm']);
+      await pressDescribed(page, CONTINUE);
       await humanIdlePause('deliberate');
       continue;
     }
@@ -231,7 +226,7 @@ async function signup(s, attempt = 1) {
       // A challenge with neither a phone nor a selfie field: continue once;
       // one that then asks for text beside an image is an image code this
       // run does not solve.
-      await pressAny(s, ['continue', 'next']);
+      await pressDescribed(page, CONTINUE);
       await pageSettled(page);
       const text = page
         .locator('main input[type="text"], form input[type="text"]')
@@ -243,7 +238,12 @@ async function signup(s, attempt = 1) {
       }
       continue;
     }
-    if (!(await pressAny(s, ['skip', 'not now', 'next']))) {
+    if (
+      !(await pressDescribed(
+        page,
+        'the button that skips this onboarding step or continues past it',
+      ))
+    ) {
       throw new Error(
         `instagram_onboarding_unrecognised: path=${pathOf(page)} state=${current}`,
       );
@@ -254,22 +254,19 @@ async function signup(s, attempt = 1) {
   if (page.isClosed()) throw new Error('page_closed');
   if (pathOf(page).startsWith(PATH.suspended))
     throw new Error('account_suspended');
-  // Success is the session's auth cookies, not what the page says.
+  // Success is the session cookie Instagram sets on sign-in, not what the
+  // page says (csrftoken is set for anonymous visitors too).
   const cookies = await s.ctx.cookies();
-  const authCookies = cookies.filter(
-    (c) =>
-      c.domain?.includes('instagram.com') &&
-      (c.name === 'sessionid' || c.name === 'csrftoken'),
+  const session = cookies.find(
+    (c) => c.domain?.includes('instagram.com') && c.name === 'sessionid',
   );
-  if (authCookies.length < 2) {
+  if (!session) {
     console.log(
-      `[ig] no auth cookies (cookies=${authCookies.map((c) => c.name)})`,
+      `[ig] no session cookie (cookies=${cookies.map((c) => c.name)})`,
     );
     throw new Error('no_auth_cookies');
   }
-  console.log(
-    `[ig] auth cookies verified: ${authCookies.map((c) => c.name).join(', ')}`,
-  );
+  console.log('[ig] session cookie verified');
 
   const result = await s.saveAccount('instagram', {
     username: id.username,
