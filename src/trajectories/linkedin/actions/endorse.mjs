@@ -50,9 +50,8 @@ try {
     },
   );
   if (!opened.ok) {
-    console.log(`FAIL: inline relogin failed: ${opened.reason}`);
     await markCookiesStale(acct.id);
-    process.exit(1);
+    throw new Error(`inline relogin failed: ${opened.reason}`);
   }
   // First connection card has an anchor pointing to /in/<vanity>/. Pick it.
   // data-test-app-aware-link is gone in the new design system —
@@ -73,7 +72,9 @@ try {
     console.log(
       'FAIL: no_connections_to_endorse — account has 0 accepted connections',
     );
-    await s.close().catch(() => {});
+    await s
+      .close()
+      .catch((e) => console.log(`[session] close failed: ${e.message}`));
     process.exit(0); // benign exit, not a code error
   }
   await profileLink.waitFor({ state: 'visible' });
