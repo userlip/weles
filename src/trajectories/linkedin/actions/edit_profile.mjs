@@ -197,10 +197,9 @@ try {
   // Headline is a textarea (240px wide, multiline) — first visible textarea.
   const hlIn = s.page.locator('textarea').first();
   const indIn = s.page.getByLabel('Industry', { exact: false }).first();
-  const tgtInd =
-    character.occupation ||
-    character.niche ||
-    'Venture Capital and Private Equity';
+  // The industry comes from the character; one it does not name is left as
+  // the profile has it rather than replaced with an industry nobody chose.
+  const tgtInd = character.occupation || character.niche;
 
   const writes = [];
   for (const [el, target, label] of [
