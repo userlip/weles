@@ -243,8 +243,16 @@ const result = await readResponse.json();
 // Skarbiec returns the bound field and optional declared provider metadata.
 // Its schema::exact_token permits nonempty text up to 128 UTF-8 bytes without
 // NUL/CR/LF. This metadata is not restricted to route-name characters.
-const requiredKeys = ['consumer', 'field', 'item', 'value'];
-const optionalKeys = ['provider'];
+// The fields of the one-time read answer, each with whether it must be
+// there: the binding it echoes (consumer, item, field), the value, and the
+// provider Skarbiec declares only when the item names one.
+const READ_ANSWER_FIELDS = {
+  consumer: true,
+  field: true,
+  item: true,
+  value: true,
+  provider: false,
+};
 const keys = Object.keys(result || {});
 const declaredProvider = result?.provider;
 const providerByteLength =
@@ -262,10 +270,10 @@ if (
   result.consumer !== consumer ||
   result.item !== item ||
   result.field !== field ||
-  requiredKeys.some((key) => !keys.includes(key)) ||
-  keys.some(
-    (key) => !requiredKeys.includes(key) && !optionalKeys.includes(key),
+  Object.entries(READ_ANSWER_FIELDS).some(
+    ([key, required]) => required && !keys.includes(key),
   ) ||
+  keys.some((key) => !Object.hasOwn(READ_ANSWER_FIELDS, key)) ||
   typeof result.value !== 'string' ||
   !result.value ||
   !providerValid
