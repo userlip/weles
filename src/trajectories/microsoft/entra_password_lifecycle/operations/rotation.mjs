@@ -77,22 +77,30 @@ export async function rotateDirectoryPassword(
     nextPassword,
   );
   evidence.push(`password_change:${changed}`);
-  if (changed === 'challenged' || changed === 'unavailable') {
+  // The change answers that sent nothing to the directory, each with what it
+  // means for the run.
+  const notSubmitted = {
+    challenged: {
+      code: 'ENTRA_PASSWORD_CHANGE_REQUIRES_HUMAN_VERIFICATION',
+      phase: 'identity_verification',
+      retryable: false,
+      reason:
+        'the Entra password change surface asked for interactive identity verification',
+    },
+    unavailable: {
+      code: 'ENTRA_PASSWORD_CHANGE_SURFACE_UNAVAILABLE',
+      phase: 'password_change',
+      retryable: true,
+      reason:
+        'the Entra password change surface did not present the current and new password fields',
+    },
+  };
+  if (Object.hasOwn(notSubmitted, changed)) {
     return outcome(contract, {
       status: 'needs_human_approval',
-      code:
-        changed === 'challenged'
-          ? 'ENTRA_PASSWORD_CHANGE_REQUIRES_HUMAN_VERIFICATION'
-          : 'ENTRA_PASSWORD_CHANGE_SURFACE_UNAVAILABLE',
-      phase:
-        changed === 'challenged' ? 'identity_verification' : 'password_change',
-      retryable: changed === 'unavailable',
+      ...notSubmitted[changed],
       providerEffect: 'none',
       rollbackStatus: 'none',
-      reason:
-        changed === 'challenged'
-          ? 'the Entra password change surface asked for interactive identity verification'
-          : 'the Entra password change surface did not present the current and new password fields',
     });
   }
   if (changed === 'rejected') {
