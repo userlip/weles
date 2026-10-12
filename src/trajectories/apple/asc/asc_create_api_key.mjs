@@ -184,5 +184,8 @@ try {
   // key id is printed above, so the result is captured without tearing down.
 } catch (e) {
   console.log('FAIL:', e.message);
-  // No teardown on failure either — leave the window so you can finish manually.
+  // No teardown on failure either — leave the window so you can finish
+  // manually; the error is rethrown so the run exits failed instead of
+  // reading as success to its caller.
+  throw e;
 }

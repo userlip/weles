@@ -128,10 +128,7 @@ try {
       headerSwitch = sw;
     }
   }
-  if (!headerSwitch) {
-    console.log('FAIL: no header checkbox found');
-    process.exit(2);
-  }
+  if (!headerSwitch) throw new Error('no header checkbox found');
   // The actual checkbox input is hidden (size 0×0); the visible toggle is
   // a styled wrapper. Click the parent label/wrapper which forwards the click.
   await headerSwitch.evaluate((el) => {
@@ -173,8 +170,11 @@ try {
     return sw.getAttribute('aria-checked');
   });
   console.log(`[trajectory] toggle aria-checked=${enabledNow}`);
-  if (enabledNow === 'true') console.log('PASS: zone enabled');
-  else console.log('WARN: toggle not confirmed enabled — check screenshot');
+  if (enabledNow !== 'true')
+    throw new Error(
+      `toggle not confirmed enabled (aria-checked=${enabledNow}) — see after.png`,
+    );
+  console.log('PASS: zone enabled');
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;
