@@ -162,11 +162,15 @@ try {
     }
   }
 
-  updateAccountMetadata(acct.id, {
-    display_name: targetName || null,
-    profile_url: `https://x.com/${acct.username}`,
-    updated_at: new Date().toISOString(),
-  });
+  // The account record says the profile carries the character's name; it is
+  // written once the form already matches or the save went through, never
+  // before: a save that failed left the record naming a profile X never had.
+  const recordProfile = () =>
+    updateAccountMetadata(acct.id, {
+      display_name: targetName || null,
+      profile_url: `https://x.com/${acct.username}`,
+      updated_at: new Date().toISOString(),
+    });
 
   // Avatar upload — both Edit and Set-up flows expose
   // input[data-testid="fileInput"]. Twitter's
@@ -202,6 +206,7 @@ try {
   }
 
   if (!writes.length) {
+    recordProfile();
     console.log(
       'PASS: no-op (form values already match character; Skarbiec synced)',
     );
@@ -219,6 +224,7 @@ try {
   await saveBtn.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, saveBtn);
   await humanIdlePause('long');
+  recordProfile();
   console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
 } catch (e) {
   console.log('FAIL:', e.message);

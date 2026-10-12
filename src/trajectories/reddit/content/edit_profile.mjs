@@ -216,13 +216,18 @@ try {
     }
   }
 
-  updateAccountMetadata(acct.id, {
-    display_name: targetName || null,
-    profile_url: `https://www.reddit.com/user/${acct.username}/`,
-    updated_at: new Date().toISOString(),
-  });
+  // The account record says the profile carries the character's name; it is
+  // written once the form already matches or the save went through, never
+  // before: a save that failed left the record naming a profile Reddit never had.
+  const recordProfile = () =>
+    updateAccountMetadata(acct.id, {
+      display_name: targetName || null,
+      profile_url: `https://www.reddit.com/user/${acct.username}/`,
+      updated_at: new Date().toISOString(),
+    });
 
   if (!writes.length) {
+    recordProfile();
     console.log(
       'PASS: no-op (form values already match character; Skarbiec synced)',
     );
@@ -238,6 +243,7 @@ try {
   await saveBtn.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, saveBtn);
   await humanIdlePause('deliberate');
+  recordProfile();
   console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
 } catch (e) {
   console.log('FAIL:', e.message);

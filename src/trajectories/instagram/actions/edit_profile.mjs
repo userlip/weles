@@ -200,13 +200,19 @@ try {
     }
   }
 
-  updateAccountMetadata(acct.id, {
-    display_name: targetName || null,
-    profile_url: `https://www.instagram.com/${acct.username}/`,
-    updated_at: new Date().toISOString(),
-  });
+  // The account record says the profile carries the character's name; it is
+  // written once the form already matches or the submit verified, never
+  // before: a submit that failed left the record naming a profile Instagram
+  // never had.
+  const recordProfile = () =>
+    updateAccountMetadata(acct.id, {
+      display_name: targetName || null,
+      profile_url: `https://www.instagram.com/${acct.username}/`,
+      updated_at: new Date().toISOString(),
+    });
 
   if (!writes.length) {
+    recordProfile();
     console.log(
       'PASS: no-op (form values already match character; Skarbiec synced)',
     );
@@ -241,6 +247,7 @@ try {
     );
     process.exit(1);
   }
+  recordProfile();
   console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
 } catch (e) {
   console.log('FAIL:', e.message);
