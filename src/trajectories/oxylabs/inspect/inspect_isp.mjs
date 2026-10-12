@@ -14,18 +14,29 @@ import {
   humanClickLocator,
 } from '../../../../dist/human/mouse.js';
 import { urlMatching } from '../../_shared/page/settled.mjs';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { statedText } from '../../_shared/inputs/stated.mjs';
+import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { exitStatusFor } from '../../../../dist/cli/usage.js';
 
 const LOGIN_URL = 'https://dashboard.oxylabs.io/';
-const OUT = join(process.cwd(), '.work', 'oxylabs_inspect_isp');
-mkdirSync(OUT, { recursive: true });
+// The dumps belong to this run, kept with its recordings.
+const OUT = runRecordingsDir('oxylabs_inspect_isp');
+// Navigate via the REAL left-nav items (guessed URLs 404'd last run).
+// Clicking a nav link to VIEW a page is read-only — no mutation. Which
+// dashboard pages are dumped is the caller's: OXYLABS_INSPECT_NAV lists the
+// nav labels, comma-separated.
+const NAV = statedText(
+  ['OXYLABS_INSPECT_NAV'],
+  'the comma-separated dashboard nav labels whose pages are dumped',
+)
+  .split(',')
+  .map((label) => label.trim())
+  .filter(Boolean);
 
 const login = await getScopedGoogleLogin('oxylabsDashboard');
-if (!login) {
-  console.log('FAIL: no Google SSO creds');
-  process.exit(1);
-}
+if (!login) throw new Error('no Google SSO creds for the Oxylabs dashboard');
 console.log(`[inspect] Using Google SSO: ${login.email}`);
 
 const s = await WSession.start({
@@ -37,10 +48,7 @@ try {
   await humanIdlePause('long');
 
   const gsiFrame = s.page.frames().find((f) => /gsi\/button/.test(f.url()));
-  if (!gsiFrame) {
-    console.log('FAIL: Oxylabs Google GSI iframe not found');
-    process.exit(1);
-  }
+  if (!gsiFrame) throw new Error('Oxylabs Google GSI iframe not found');
   const popupPromise = s.page.waitForEvent('popup');
   await humanClickLocator(
     s.page,
@@ -53,10 +61,7 @@ try {
     originHost: 'oxylabs.io',
     page: popup,
   });
-  if (!ok) {
-    console.log('FAIL: Google SSO did not complete');
-    process.exit(1);
-  }
+  if (!ok) throw new Error('Google SSO did not complete');
 
   await urlMatching(
     s.page,
@@ -77,12 +82,8 @@ try {
 
   await dump('00_home');
 
-  // Navigate via the REAL left-nav items (guessed URLs 404'd last run).
-  // Clicking a nav link to VIEW a page is read-only — no mutation. Capture
-  // the Dedicated ISP + ISP product pages and any IP-management sub-tab.
-  const NAV = ['Dedicated ISP Proxies', 'ISP Proxies', 'Limits and Spending'];
-  for (let i = 0; i < NAV.length; i++) {
-    const label = NAV[i];
+  // The nav labels were stated before sign-in (OXYLABS_INSPECT_NAV).
+  for (const [i, label] of NAV.entries()) {
     try {
       const link = s.page.getByText(label, { exact: false }).first();
       if (!(await link.isVisible().catch(() => false))) {
@@ -122,7 +123,7 @@ try {
   );
 } catch (e) {
   console.log('FAIL:', e.message || String(e));
-  process.exit(1);
+  process.exitCode = exitStatusFor(e);
 } finally {
   await s.close();
 }
