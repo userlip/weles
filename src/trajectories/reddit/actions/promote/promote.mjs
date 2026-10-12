@@ -5,7 +5,7 @@
  * upstream — this trajectory does NOT re-check eligibility, the lifecycle
  * gate is the source of truth.
  *
- * Args via env: SUBREDDIT (required), PRODUCT_ID (required), VARIANT
+ * Args via env: TARGET_URL (a thread) or SUBREDDIT (one subreddit), PRODUCT_ID (required), VARIANT
  * ("link"|"mention", default "mention").
  */
 import {
@@ -18,6 +18,7 @@ import { humanType } from '../../../../../dist/human/keyboard.js';
 import { generatePromoteComment } from '../../../_shared/content/llm.mjs';
 import { checkReachable } from '../../../_shared/action-runner.mjs';
 import { detectRedditBanSignals } from '../../../../../dist/platforms/reddit/ban_signals.js';
+import { banSignalOf } from '../../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../../../dist/session/run-recordings.js';
@@ -27,8 +28,15 @@ import {
   findProduct,
 } from '../../../_shared/skarbiec/accounts.mjs';
 
-const SUBREDDIT = process.env.SUBREDDIT || 'popular';
-const TARGET_URL = process.env.TARGET_URL || ''; // if set, skip listing pick
+// Where the account speaks is the request's: a thread (TARGET_URL) or one
+// subreddit (SUBREDDIT). A default feed chose it for the caller, and an
+// aggregate feed is recognised from its listing below, not from its name.
+const TARGET_URL = process.env.TARGET_URL;
+const SUBREDDIT = process.env.SUBREDDIT?.replace(/^r\//, '');
+if (!TARGET_URL && !SUBREDDIT)
+  throw new Error(
+    'TARGET_URL (the thread) or SUBREDDIT (the subreddit) required: where the comment goes',
+  );
 const PRODUCT_ID = process.env.PRODUCT_ID;
 const VARIANT = (process.env.VARIANT || 'mention').toLowerCase();
 const REQUIRE_APPROVAL = process.env.REQUIRE_APPROVAL === '1';
@@ -103,10 +111,7 @@ try {
   } else {
     // No explicit target — pick from the subreddit listing (organic path).
     // Use page.evaluate fetch — capturedResponses truncates bodies to 8KB.
-    const sortPath =
-      SUBREDDIT === 'popular' || SUBREDDIT === 'all'
-        ? `/r/${SUBREDDIT}/new`
-        : `/r/${SUBREDDIT}`;
+    const sortPath = `/r/${SUBREDDIT}`;
     await s.goto('https://www.reddit.com/');
     const listingUrl = `https://www.reddit.com${sortPath}/.json?limit=50&raw_json=1`;
     const data = await s.page
@@ -120,26 +125,27 @@ try {
         }
       }, listingUrl)
       .catch(() => null);
-    try {
-      const candidates = (data?.data?.children ?? [])
-        .map((c) => c.data)
-        .filter(
-          (p) =>
-            p &&
-            !p.locked &&
-            !p.archived &&
-            p.num_comments < 2000 &&
-            p.num_comments > 2,
-        );
-      const pick =
-        candidates[Math.floor(Math.random() * Math.min(candidates.length, 12))];
-      if (pick) {
-        postUrl = `https://www.reddit.com${pick.permalink}`;
-        postTitle = pick.title || '';
-        postBody = pick.selftext || '';
-      }
-    } catch (e) {
-      console.log('[listing-parse]', e.message);
+    const listed = data?.data?.children;
+    if (!Array.isArray(listed))
+      throw new Error(`the listing ${listingUrl} answered no posts`);
+    const posts = listed.map((c) => c.data).filter(Boolean);
+    const own = posts.filter(
+      (p) => p.subreddit?.toLowerCase() === SUBREDDIT.toLowerCase(),
+    );
+    if (posts.length && !own.length)
+      throw new Error(
+        `r/${SUBREDDIT} lists only posts of other subreddits, so it is an aggregate feed whose filters remove new comments; name one subreddit`,
+      );
+    const candidates = own.filter(
+      (p) =>
+        !p.locked && !p.archived && p.num_comments < 2000 && p.num_comments > 2,
+    );
+    const pick =
+      candidates[Math.floor(Math.random() * Math.min(candidates.length, 12))];
+    if (pick) {
+      postUrl = `https://www.reddit.com${pick.permalink}`;
+      postTitle = pick.title;
+      postBody = pick.selftext;
     }
   }
   if (!postUrl) throw new Error('no eligible post found');
@@ -155,7 +161,11 @@ try {
         personality: character.personality,
         niche: character.niche,
       },
-      post: { surface: `r/${SUBREDDIT}`, title: postTitle, body: postBody },
+      post: {
+        surface: SUBREDDIT ? `r/${SUBREDDIT}` : TARGET_URL,
+        title: postTitle,
+        body: postBody,
+      },
       product: {
         name: product.name,
         description: product.description,
@@ -227,15 +237,11 @@ try {
     (body) => (document.body?.innerText ?? '').includes(body),
     commentText,
   );
-  banSignal = await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  banSignal = await banSignalOf(detectRedditBanSignals, s, 'after promoting');
   console.log(`[ban-signal] ${banSignal?.signal}`);
   console.log('PASS: promoted');
 } catch (e) {
-  banSignal = await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  banSignal = await banSignalOf(detectRedditBanSignals, s, 'after the failure');
   if (banSignal) console.log(`[ban-signal] ${banSignal.signal}`);
   console.log('FAIL:', e.message);
   process.exitCode = 1;
