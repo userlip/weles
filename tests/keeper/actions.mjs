@@ -188,6 +188,36 @@ await test('keeper serves humanized fill, clear, click and explicit action refus
       ).result,
       '',
     );
+    // The vision model, reached through Brama, finds a control from its
+    // description and answers a yes/no question about the page; a command
+    // without its question is refused by name.
+    assert.equal(
+      (await command({ action: 'fill', selector: '#value', text: 'Opisany' }))
+        .ok,
+      true,
+    );
+    const described = await command({
+      action: 'click_described',
+      description: 'the Save button next to the Value field',
+    });
+    assert.equal(described.ok, true, described.error);
+    assert.equal(
+      (
+        await command({
+          action: 'eval',
+          js: 'document.querySelector("#saved").textContent',
+        })
+      ).result,
+      'Opisany',
+    );
+    const seen = await command({
+      action: 'shows',
+      question: 'Does the page show a field labelled Value and a Save button?',
+    });
+    assert.equal(seen.shows, true, JSON.stringify(seen));
+    const unasked = await command({ action: 'shows' });
+    assert.equal(unasked.ok, false);
+    assert.match(unasked.error, /non-empty "question"/);
     const stopped = await keeperControl(
       binary,
       session,

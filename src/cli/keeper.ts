@@ -18,6 +18,7 @@ import {
 } from '../human/mouse.js';
 import { UsageError } from './usage.js';
 import { pageSettled } from '../browser/settled.js';
+import { checkPage, findClickTarget } from '../vision/analyze.js';
 import type { ParsedCli } from '../cli.js';
 import { serveKeeper } from './keeper/server.js';
 import { keeperControl } from './keeper/client.js';
@@ -96,6 +97,27 @@ export async function answerKeeperCommand(
     case 'press':
       await session.page.keyboard.press(text(cmd, 'key'));
       return { ok: true };
+    // What a word list used to decide, the vision model answers: whether the
+    // settled page shows what the question describes, and where the control a
+    // description names is, which is then clicked like a person clicks.
+    case 'shows':
+      await pageSettled(session.page);
+      return {
+        ok: true,
+        shows: await checkPage(session.page, text(cmd, 'question')),
+      };
+    case 'click_described': {
+      await pageSettled(session.page);
+      const description = text(cmd, 'description');
+      const target = await findClickTarget(session.page, description);
+      if (!target)
+        return {
+          ok: false,
+          error: `the vision model found no control matching "${description}" on ${session.page.url()}`,
+        };
+      await humanClick(session.page, target.x, target.y);
+      return { ok: true, x: target.x, y: target.y };
+    }
     case 'eval':
       return { ok: true, result: await session.page.evaluate(text(cmd, 'js')) };
     case 'cookies':

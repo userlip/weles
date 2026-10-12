@@ -2,6 +2,9 @@
 // form for this customer: the product's own planner addresses (plus any planner
 // address earlier runs recorded), the account picker Google puts in front of a
 // multi-account login, and the one control that opens the keyword entry box.
+// Google's routes say where the tab is; what a page offers, and the planner's
+// controls, are judged and found by the vision model through the keeper
+// (`shows`, `clickDescribed`) instead of English page phrases.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,16 +18,18 @@ import {
 } from './run_brief.mjs';
 import {
   clickControl,
+  clickDescribed,
   dismissChrome,
   evalState,
   fillKeywordInput,
   idle,
   nav,
+  shows,
 } from './keeper_browser.mjs';
 import { handleGoogleLogin } from './google_login.mjs';
 
-const PLANNER_READY =
-  /Discover new keywords|Get search volume|forecasts?|Avg\.? monthly searches|Saved keywords|Enter or paste your keywords/i;
+const ACCOUNT_PICKER = /selectaccount/i;
+const SIGN_IN = /accounts\.google\.com/i;
 
 function adsUrl(pathname) {
   const url = new URL(pathname, 'https://ads.google.com');
@@ -68,11 +73,9 @@ function plannerCandidates(paths) {
 
 export async function selectGoogleAdsAccount() {
   const s = await evalState();
-  const text = s.text || '';
   if (
-    !/Select a Google Ads account|Select an active account|No account|Google Ads account/i.test(
-      text,
-    )
+    !ACCOUNT_PICKER.test(String(s.url)) &&
+    !(await shows('Does the page ask to choose a Google Ads account?'))
   )
     return true;
   const accountRow = [
@@ -83,20 +86,14 @@ export async function selectGoogleAdsAccount() {
   if (
     !(await clickControl(accountRow, 'Google Ads account', {
       maxArea: 500_000,
-    }).catch(() => false))
+    }))
   )
     return false;
-  // Selection is done when Google Ads leaves the account-selection page.
+  // Selection is done when Google Ads leaves the account-selection route.
   for (;;) {
     await idle('short');
     const after = await evalState();
-    if (
-      !/selectaccount/i.test(after.url || '') &&
-      !/Select a Google Ads account|Select an active account/i.test(
-        after.text || '',
-      )
-    )
-      return true;
+    if (!ACCOUNT_PICKER.test(String(after.url))) return true;
   }
 }
 
@@ -109,30 +106,24 @@ export async function ensureAdsReady(creds) {
   ])) {
     await nav(url);
     const current = await evalState();
-    if (/accounts\.google\.com/i.test(current.url || '')) {
+    if (SIGN_IN.test(String(current.url))) {
       if (!(await handleGoogleLogin(creds))) return false;
       await nav(url);
     }
     const after = await evalState();
     if (
-      /Google Ads 2-step verification required/i.test(after.text || '') &&
-      !/\/aw\/campaigns/i.test(url)
+      !/\/aw\/campaigns/i.test(url) &&
+      (await shows(
+        'Does the page say that Google Ads 2-step verification is required?',
+      ))
     )
       continue;
-    if (
-      /selectaccount/i.test(after.url || '') ||
-      /Select a Google Ads account|Select an active account|Google Ads account/i.test(
-        after.text || '',
-      )
-    ) {
+    if (ACCOUNT_PICKER.test(String(after.url))) {
       if (await selectGoogleAdsAccount()) return true;
       continue;
     }
-    if (
-      /Keyword Planner|Discover new keywords|Get search volume|Campaigns|Create campaign/i.test(
-        after.text || '',
-      )
-    ) {
+    // Google Ads keeps a signed-in account on its own /aw/ routes.
+    if (/\/aw\//i.test(new URL(after.url).pathname)) {
       return await selectGoogleAdsAccount();
     }
   }
@@ -149,15 +140,16 @@ export async function openKeywordPlanner() {
     await nav(url);
     await selectGoogleAdsAccount();
     await dismissChrome();
-    // The planner is ready when it says so; the next candidate is tried only
-    // when this one has sent the browser to a sign-in or an account selection.
-    let s = await evalState();
-    while (!PLANNER_READY.test(s.text || '')) {
-      if (/accounts\.google\.com|selectaccount/i.test(s.url || '')) break;
-      await idle('short');
-      s = await evalState();
-    }
-    if (PLANNER_READY.test(s.text || '')) {
+    // The next candidate is tried when this one has sent the browser to a
+    // sign-in or an account selection, or does not show the planner.
+    const s = await evalState();
+    if (SIGN_IN.test(String(s.url)) || ACCOUNT_PICKER.test(String(s.url)))
+      continue;
+    if (
+      await shows(
+        'Is the Google Ads Keyword Planner shown, offering to discover new keywords or to get search volume and forecasts?',
+      )
+    ) {
       return { ok: true, path: url, url: s.url, text: norm(s.text) };
     }
   }
@@ -165,43 +157,27 @@ export async function openKeywordPlanner() {
   return { ok: false, url: s.url, text: norm(s.text) };
 }
 
+// The keyword box is the planner form's text area; the website field beside it
+// is a single-line input.
 async function keywordInputVisible() {
   const s = await evalState();
-  return s.inputs.some(
-    (input) =>
-      input.visible &&
-      /keyword|phrase|service|paste/i.test(
-        `${input.aria} ${input.placeholder} ${input.tag}`,
-      ) &&
-      !/website|domain|url/i.test(`${input.aria} ${input.placeholder}`),
-  );
+  return s.inputs.some((input) => input.visible && input.tag === 'textarea');
 }
 
-// One control opens the keyword box, and the planner labels it differently on
-// the ideas page and on the planner home card. Both labels are searched at once
-// and the smallest visible match wins, so the compact "Add keywords" button is
-// preferred over the large card exactly as before.
 export async function chooseVolumeMode() {
   if (await keywordInputVisible()) return true;
   await dismissChrome();
-  if (
-    await clickControl(
-      'Add keywords|Get search volume and forecasts|Get search volume|forecasts',
-      'keyword entry control',
-      { minY: 100, maxY: 650, maxArea: 800_000 },
-    )
-  ) {
-    await idle('deliberate');
-  }
+  await clickDescribed(
+    'the control that opens the box for entering a list of keywords to get their search volume and forecasts (a compact Add keywords button wins over the large card)',
+  );
   return await keywordInputVisible();
 }
 
 export async function submitKeywords() {
   await fillKeywordInput();
   await dismissChrome();
-  return await clickControl(
-    '^Save$|Get started|Get results|See results|View results|^Search$',
-    'planner submit',
-    { minY: 180, maxY: 760, maxArea: 80_000 },
-  ).catch(() => false);
+  await clickDescribed(
+    'the button that submits the entered keywords to get their results',
+  );
+  return true;
 }

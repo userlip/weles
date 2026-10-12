@@ -15,8 +15,7 @@ const PAGE_HELPERS = `
       const visible = (el) => {
         const r = el.getBoundingClientRect?.();
         if (!r || r.width < 2 || r.height < 2) return false;
-        const st = getComputedStyle(el);
-        return st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity || '1') !== 0;
+        return el.checkVisibility({ checkOpacity: true, visibilityProperty: true });
       };`;
 
 const CONTROL_NODES =
@@ -43,6 +42,17 @@ export async function press(key) {
   await idle('deliberate');
 }
 
+/** Whether the keeper's settled page shows what `question` asks (yes/no). */
+export async function shows(question) {
+  return (await action({ action: 'shows', question })).shows;
+}
+
+/** Clicks the control `description` names; the keeper refuses when there is none. */
+export async function clickDescribed(description) {
+  console.log(`[google-ads-keyword-planner-keeper] clicking ${description}`);
+  await action({ action: 'click_described', description });
+  await idle('deliberate');
+}
 export async function evalState() {
   const res = await action({
     action: 'eval',
@@ -145,20 +155,15 @@ export async function fillSelector(selector, text, label) {
   await idle('deliberate');
 }
 
-// The planner's keyword box is the control whose label carries "keywords" or
-// "paste" — the same control chooseVolumeMode waits for. The box counts as
-// filled when the value it reports is the text this run sent (a box that drops
-// the line breaks still reports its start). If nothing on screen reports that,
-// the form is not the one this run was written against.
+// The planner's keyword box is the form's visible text area - the same field
+// chooseVolumeMode waits for. The box counts as filled when the value it
+// reports is the text this run sent (a box that drops the line breaks still
+// reports its start). If nothing on screen reports that, the form is not the
+// one this run was written against.
 export async function fillKeywordInput() {
   const text = keywords.join('\n');
   console.log('[google-ads-keyword-planner-keeper] filling keyword input');
-  await action({
-    action: 'fill',
-    selector:
-      'textarea[aria-label*="keywords" i], textarea[aria-label*="paste" i], [role="textbox"][aria-label*="keywords" i]',
-    text,
-  });
+  await action({ action: 'fill', selector: 'textarea', text });
   await idle('deliberate');
   const state = await evalState();
   const landed = state.inputs.some((input) => {
@@ -172,6 +177,9 @@ export async function fillKeywordInput() {
   }
 }
 
+// Google Ads opens notification, setup and app-promotion dialogs over the
+// planner; each closes on Escape, as for a person, so no dialog is looked up
+// by its wording.
 export async function dismissChrome() {
   await action({
     action: 'eval',
@@ -185,9 +193,5 @@ export async function dismissChrome() {
       return overlays.length;
     })()`,
   });
-  await clickControl(
-    'Close notifications|Get the Google Ads app dismiss|Close setup',
-    'dismiss overlay',
-    { maxArea: 80_000 },
-  ).catch(() => false);
+  await press('Escape');
 }
