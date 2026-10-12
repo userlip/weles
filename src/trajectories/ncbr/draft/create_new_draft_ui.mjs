@@ -7,6 +7,10 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
+import {
+  clickDescribed,
+  clickOffered,
+} from '../../_shared/page/judged/seen.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const CALL = 'FENG.05.01-IP.01-003/26';
@@ -112,23 +116,11 @@ async function clickCall() {
 }
 
 async function clickApplyLikeButton() {
-  const target = page
-    .getByRole('button', {
-      name: /Aplikuj|Rozpocznij|Utwórz|Złóż wniosek o dofinansowanie/i,
-    })
-    .or(
-      page.getByRole('link', {
-        name: /Aplikuj|Rozpocznij|Utwórz|Złóż wniosek o dofinansowanie/i,
-      }),
-    )
-    .filter({ visible: true })
-    .first();
-  const clicked = (await target.count()) > 0;
-  if (clicked) await humanClickLocator(page, target);
-  if (!clicked) throw new Error('apply/start button not found');
-  await humanIdlePause('long');
+  await clickDescribed(
+    page,
+    'the button or link that applies to this call or starts a new application',
+  );
   await page.waitForLoadState('load');
-  await humanIdlePause('long');
 }
 
 await clickCall();
@@ -137,26 +129,15 @@ await clickApplyLikeButton();
 
 // Some LSI flows show additional variant/confirmation modals before creating a
 // draft; each one shown is confirmed until the draft page opens or none is left.
-let extraClicks = [];
-for (;;) {
-  const target = page
-    .getByRole('button', {
-      name: /Utwórz projekt|Rozpocznij|Aplikuj|Dalej|Potwierdzam/i,
-    })
-    .or(
-      page.getByRole('link', {
-        name: /Utwórz projekt|Rozpocznij|Aplikuj|Dalej|Potwierdzam/i,
-      }),
-    )
-    .filter({ visible: true })
-    .first();
-  const clicked = await target.textContent().catch(() => '');
-  if (clicked) await humanClickLocator(page, target);
-  if (!clicked) break;
-  extraClicks.push(clicked);
-  await humanIdlePause('long');
+const extraClicks = [];
+while (
+  await clickOffered(
+    page,
+    'the button that confirms creating the project or continues to it',
+  )
+) {
+  extraClicks.push(page.url());
   await page.waitForLoadState('load');
-  await humanIdlePause('short');
   if (/\/projekt\/[^/]+/.test(page.url())) break;
 }
 

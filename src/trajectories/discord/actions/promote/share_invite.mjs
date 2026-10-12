@@ -25,6 +25,7 @@ import {
   humanIdlePause,
 } from '../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../dist/human/keyboard.js';
+import { clickOffered } from '../../../_shared/page/judged/seen.mjs';
 import {
   getSocialAccount,
   resolveAccountSession,
@@ -138,17 +139,10 @@ try {
       }
       await humanIdlePause('short');
     }
-    const createDm = s.page
-      .locator('button')
-      .filter({ hasText: /^Create (DM|Group DM)$/ })
-      .first();
-    if ((await createDm.count()) > 0) {
-      try {
-        await humanClickLocator(s.page, createDm);
-      } catch (e) {
-        console.log(`[share_invite] create-dm err: ${e.message}`);
-      }
-    }
+    await clickOffered(
+      s.page,
+      'the button that creates the direct message with the chosen person',
+    );
     await humanIdlePause('deliberate');
     const composer = s.page
       .locator('[role="textbox"][data-slate-editor], div[role="textbox"]')

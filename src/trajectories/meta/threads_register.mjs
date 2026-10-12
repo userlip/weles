@@ -2,7 +2,11 @@ import { WSession } from '../../../dist/session/wsession.js';
 import { injectProviderCookies } from '../../../dist/platforms/_shared/cross_platform_oauth.js';
 import { listAccounts } from '../_shared/skarbiec/accounts.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
-import { clickFirst, control, field } from '../_shared/page/offers.mjs';
+import { control, field } from '../_shared/page/offers.mjs';
+import { clickOffered } from '../_shared/page/judged/seen.mjs';
+
+// The control that takes an onboarding step forward without changing it.
+const NEXT_STEP = 'the button that skips or continues this onboarding step';
 
 // An active Instagram account whose record carries a session (its cookies).
 function findUsableInstagramAccount() {
@@ -75,32 +79,15 @@ async function signup(s) {
   await s.goto(URL);
   await pageSettled(page);
 
-  // Cookie consent: one click on whichever consent control the page offers.
-  if (
-    await clickFirst(page, 'button', [
-      'Allow all cookies',
-      'Allow essential and optional cookies',
-    ])
-  ) {
+  // Cookie consent: one click on the consent control the page offers.
+  if (await clickOffered(page, 'the button that accepts cookies')) {
     await pageSettled(page);
     if (page.isClosed()) throw new Error('page_crashed_on_cookie_dismiss');
   }
 
   // Sign in through the Instagram session.
-  if (
-    (await clickFirst(page, 'button', [
-      'Continue with Instagram',
-      'Log in with Instagram',
-      'Use Instagram',
-    ])) ||
-    (await clickFirst(page, 'link', [
-      'Continue with Instagram',
-      'Log in with Instagram',
-      'Use Instagram',
-    ]))
-  ) {
+  if (await clickOffered(page, 'the button or link to continue with Instagram'))
     await pageSettled(page);
-  }
 
   // Instagram's own login form means the cookies no longer carry a session.
   if (onInstagram(page) && (await field(page, 'password'))) {
@@ -117,9 +104,14 @@ async function signup(s) {
     await pageSettled(page);
   }
 
-  // Instagram's own prompts after login (save login, notifications) each
-  // offer "Not now"; every one shown is dismissed.
-  while (await clickFirst(page, 'button', ['Not now'])) {
+  // Instagram's own prompts after login (save login, notifications) are each
+  // dismissed without accepting.
+  while (
+    await clickOffered(
+      page,
+      'the button that dismisses an Instagram prompt (save login, notifications) without accepting it',
+    )
+  ) {
     await pageSettled(page);
   }
 
@@ -137,44 +129,37 @@ async function signup(s) {
       break;
     }
     if (
-      await clickFirst(page, 'button', [
-        'Import from Instagram',
-        'Use Instagram',
-      ])
+      await clickOffered(
+        page,
+        'the button that imports the profile from Instagram',
+      )
     ) {
       await pageSettled(page);
       continue;
     }
     if (await control(page, 'radio', 'Public profile')) {
       await (await control(page, 'radio', 'Public profile')).click();
-      await clickFirst(page, 'button', ['Continue', 'Next']);
-      await pageSettled(page);
-      continue;
-    }
-    if (await clickFirst(page, 'button', ['Follow all'])) {
-      await clickFirst(page, 'button', ['Continue', 'Next', 'Skip']);
+      await clickOffered(page, NEXT_STEP);
       await pageSettled(page);
       continue;
     }
     if (
-      await clickFirst(page, 'button', [
-        'Join Threads',
-        'Sign up',
-        'Get started',
-      ])
+      await clickOffered(page, 'the button that follows all suggested profiles')
     ) {
+      await clickOffered(page, NEXT_STEP);
       await pageSettled(page);
       continue;
     }
     if (
-      await clickFirst(page, 'button', [
-        'Not now',
-        'Skip',
-        'Continue',
-        'Next',
-        'Done',
-      ])
+      await clickOffered(
+        page,
+        'the button that joins Threads or starts signing up',
+      )
     ) {
+      await pageSettled(page);
+      continue;
+    }
+    if (await clickOffered(page, NEXT_STEP)) {
       await pageSettled(page);
       continue;
     }

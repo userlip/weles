@@ -112,13 +112,8 @@ try {
   await humanFill(s.page, phoneInput, num.phone.replace(/^\+/, ''));
   await humanIdlePause('short');
 
-  const sendBtn = s.page
-    .locator('button')
-    .filter({ hasText: /^(Send|Next|Continue)$/ })
-    .first();
-  if ((await sendBtn.count()) === 0)
-    throw new Error('Send/Next button on phone modal not found');
-  await humanClickLocator(s.page, sendBtn);
+  // The phone field submits the modal on Enter.
+  await phoneInput.press('Enter');
   await humanIdlePause('deliberate');
 
   // hCaptcha may render now. solvePageCaptcha handles both invisible and
@@ -147,14 +142,8 @@ try {
     throw new Error('SMS code input not found');
   await humanFill(s.page, codeInput, code);
   await humanIdlePause('short');
-  const verifyBtn = s.page
-    .locator('button')
-    .filter({ hasText: /^(Verify|Submit|Done)$/ })
-    .first();
-  if ((await verifyBtn.count()) > 0) {
-    await humanClickLocator(s.page, verifyBtn);
-    await humanIdlePause('deliberate');
-  }
+  await codeInput.press('Enter');
+  await humanIdlePause('deliberate');
 
   // Assert phone now appears on the Phone Number row.
   const phoneRow2 = s.page

@@ -55,8 +55,8 @@ async function waitForPostPasswordState(session, frame) {
   const page = session.page;
   const twoFactorSelector =
     'input[aria-label*="digit"], input[aria-label*="Digit"], input[id*="char"], input[type="tel"][maxlength="1"]';
-  const explicitFailure =
-    /incorrect|verification failed|account (?:is |has been )?locked|unable to sign in|sign[ -]?in failed/i;
+  // A refused sign-in marks Apple's own field invalid.
+  const refusal = '[aria-invalid="true"]';
   return Promise.any([
     page
       .waitForURL((url) => isDashboardUrl(String(url)))
@@ -66,20 +66,8 @@ async function waitForPostPasswordState(session, frame) {
       .first()
       .waitFor({ state: 'visible' })
       .then(() => 'two_factor'),
-    page
-      .getByText(
-        /Two-Factor Authentication|verification code sent to your Apple devices/i,
-      )
-      .first()
-      .waitFor({ state: 'visible' })
-      .then(() => 'two_factor'),
     frame
-      .getByText(explicitFailure)
-      .first()
-      .waitFor({ state: 'visible' })
-      .then(() => 'failed'),
-    page
-      .getByText(explicitFailure)
+      .locator(refusal)
       .first()
       .waitFor({ state: 'visible' })
       .then(() => 'failed'),

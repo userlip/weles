@@ -170,13 +170,6 @@ export async function requireAuthenticatedSession(s) {
       .first()
       .isVisible()
       .catch(() => false);
-    authPrompt ||= await frame
-      .getByText(
-        /Two-Factor Authentication|verification code sent to your Apple devices/i,
-      )
-      .first()
-      .isVisible()
-      .catch(() => false);
     if (authPrompt) break;
   }
   if (loginUrl || authIframe || authPrompt) {

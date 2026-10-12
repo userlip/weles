@@ -34,8 +34,6 @@ export async function waitForPostPasswordState(session, frame, signInStatus) {
   if (refused(signInStatus())) return 'rejected';
   const twoFactorSelector =
     'input[aria-label*="digit"], input[aria-label*="Digit"], input[id*="char"], input[type="tel"][maxlength="1"]';
-  const explicitFailure =
-    /incorrect|verification failed|account (?:is |has been )?locked|unable to sign in|sign[ -]?in failed/i;
   return Promise.any([
     page
       .waitForURL((url) => isDevPortalUrl(String(url)))
@@ -46,26 +44,15 @@ export async function waitForPostPasswordState(session, frame, signInStatus) {
       .waitFor({ state: 'visible' })
       .then(() => 'two_factor'),
     page
-      .getByText(
-        /Two-Factor Authentication|verification code sent to your Apple devices/i,
-      )
-      .first()
-      .waitFor({ state: 'visible' })
-      .then(() => 'two_factor'),
-    page
       .waitForResponse(
         (response) =>
           response.url().includes('/appleauth/auth/signin/complete') &&
           refused(response.status()),
       )
       .then(() => 'rejected'),
+    // A refused sign-in marks Apple's own field invalid.
     frame
-      .getByText(explicitFailure)
-      .first()
-      .waitFor({ state: 'visible' })
-      .then(() => 'failed'),
-    page
-      .getByText(explicitFailure)
+      .locator('[aria-invalid="true"]')
       .first()
       .waitFor({ state: 'visible' })
       .then(() => 'failed'),

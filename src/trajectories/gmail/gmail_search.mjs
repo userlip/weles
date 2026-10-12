@@ -36,17 +36,9 @@ function log(...a) {
 // Returns 'login' or 'in' from observed page state. Browser failures propagate.
 async function detectSession(page) {
   for (;;) {
-    if (
-      /accounts\.google\.com|ServiceLogin|signin|challenge/.test(page.url())
-    ) {
-      return 'login';
-    }
-    const rows = await page.locator('tr.zA').count();
-    const empty = await page
-      .getByText(/No messages matched|No results found/i)
-      .first()
-      .isVisible();
-    if (rows > 0 || empty) return 'in';
+    if (new URL(page.url()).hostname !== 'mail.google.com') return 'login';
+    // Signed-in Gmail carries its search field, whatever the results show.
+    if (await page.locator('input[name="q"]').count()) return 'in';
     await pageSettled(page);
   }
 }

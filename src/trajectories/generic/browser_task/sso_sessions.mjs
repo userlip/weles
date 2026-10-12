@@ -3,11 +3,10 @@ import {
   googleSso,
 } from '../../_shared/services/google_sso.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
-import { humanClickLocator } from '../../../../dist/human/mouse.js';
+import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
 import { humanFill } from '../../../../dist/human/keyboard.js';
 
-const GOOGLE_BUTTON =
-  /continue with google|log in with google|sign in with google/i;
+const GOOGLE_CONTROL = 'the button or link to continue with Google';
 const FIGMA_LOGIN = /figma\.com\/login(?:[/?#]|$)/i;
 
 /** A wait the page cut short (navigation, closed page) is logged, not fatal. */
@@ -18,10 +17,10 @@ function noteCutShort(step) {
 
 /** Click the Google control and return the Google OAuth surface: the page the
  * click opened, or this page once it has moved to accounts.google.com. */
-async function clickToOAuthPage(context, page, googleButton) {
+async function clickToOAuthPage(context, page) {
   const opened = context.waitForEvent('page');
   const inPlace = page.waitForURL(/accounts\.google\.com/i).then(() => page);
-  await humanClickLocator(page, googleButton);
+  await clickDescribed(page, GOOGLE_CONTROL);
   return Promise.any([opened, inPlace]);
 }
 
@@ -49,16 +48,8 @@ export async function ensureSupabaseSession(activeSession, taskConstraints) {
     );
 
   let authPage = page;
-  if (!/accounts\.google\.com/i.test(page.url())) {
-    const googleButton = page
-      .getByRole('button', { name: GOOGLE_BUTTON })
-      .or(page.getByRole('link', { name: GOOGLE_BUTTON }))
-      .first();
-    if (!(await googleButton.isVisible().catch(() => false))) {
-      throw new Error('Supabase Google sign-in control is unavailable');
-    }
-    authPage = await clickToOAuthPage(page.context(), page, googleButton);
-  }
+  if (!/accounts\.google\.com/i.test(page.url()))
+    authPage = await clickToOAuthPage(page.context(), page);
   const signedIn = await googleSso(activeSession, credentials, {
     page: authPage,
     originHost: 'supabase.com',
@@ -75,12 +66,7 @@ async function figmaDirectLogin(page, credentials) {
     .first();
   if (!(await emailInput.isVisible().catch(() => false))) return false;
   await humanFill(page, emailInput, credentials.email);
-  const continueButton = page
-    .getByRole('button', { name: /^(continue|log in)$/i })
-    .filter({ visible: true })
-    .first();
-  if (!(await continueButton.isVisible().catch(() => false))) return false;
-  await humanClickLocator(page, continueButton);
+  await emailInput.press('Enter');
   await pageSettled(page);
   const passwordInput = page
     .locator('input[type="password"], input[name="password"]')
@@ -119,13 +105,9 @@ export async function ensureFigmaSession(activeSession, taskConstraints) {
   await page
     .waitForLoadState?.('domcontentloaded')
     .catch(noteCutShort('figma load'));
-  const googleButton = page
-    .getByRole('button', { name: GOOGLE_BUTTON })
-    .or(page.getByRole('link', { name: GOOGLE_BUTTON }))
-    .first();
   const requiresSignIn =
     /\/login(?:[/?#]|$)|accounts\.google\.com/i.test(page.url()) ||
-    (await googleButton.isVisible().catch(() => false));
+    (await pageShows(page, `Does the page show ${GOOGLE_CONTROL}?`));
   if (!requiresSignIn) return;
 
   const credentials = await getGoogleSsoCreds(accountEmail);
@@ -149,13 +131,7 @@ export async function ensureFigmaSession(activeSession, taskConstraints) {
   if (!/accounts\.google\.com/i.test(page.url())) {
     recoveryPage = await context.newPage();
     await recoveryPage.goto('about:blank');
-    const buttonMetadata = await googleButton.evaluate((element) => ({
-      tag: element.tagName,
-      href: element instanceof HTMLAnchorElement ? element.href : '',
-      target: element instanceof HTMLAnchorElement ? element.target : '',
-    }));
-    console.log(`[figma_sso] Google control=${JSON.stringify(buttonMetadata)}`);
-    authPage = await clickToOAuthPage(context, page, googleButton);
+    authPage = await clickToOAuthPage(context, page);
   }
   const signedIn = await googleSso(activeSession, credentials, {
     page: authPage,

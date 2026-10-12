@@ -6,6 +6,7 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { writeFileSync } from 'node:fs';
+import { chooseEditInRowMenu } from '../../_shared/ncbr/row_menu.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const projectId = (await import('#ncbr-settings')).projectId();
@@ -78,13 +79,7 @@ if (!process.env.CURRENT_VIEW) {
     await humanClickLocator(page, menu);
     await humanIdlePause('deliberate');
     if (process.env.OPEN_EDIT) {
-      const item = page
-        .locator('li, button, [role="menuitem"]')
-        .filter({ hasText: /edytuj|szczegó|podgląd|otwórz/i })
-        .first();
-      if ((await item.count()) === 0)
-        throw new Error('no edit/detail menu item found');
-      await humanClickLocator(page, item);
+      await chooseEditInRowMenu(page);
       await humanIdlePause('long');
     }
   }

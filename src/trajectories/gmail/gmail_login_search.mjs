@@ -71,32 +71,15 @@ async function resolveCreds() {
 // Returns 'in' or 'login' from observed page state. Browser failures propagate.
 async function detectSession(page) {
   for (;;) {
-    if (
-      /accounts\.google\.com|ServiceLogin|signin|challenge/.test(page.url())
-    ) {
-      return 'login';
-    }
-    const rows = await page.locator('tr.zA').count();
-    const empty = await visible(
-      page
-        .getByText(
-          /No messages matched|No results found|did not match any messages/i,
-        )
-        .first(),
-    );
-    if (rows > 0 || empty) return 'in';
+    if (new URL(page.url()).hostname !== 'mail.google.com') return 'login';
+    // Signed-in Gmail carries its search field, whatever the results show.
+    if (await page.locator('input[name="q"]').count()) return 'in';
     await pageSettled(page);
   }
 }
 
 async function needsGoogleLogin(page) {
   if (new URL(page.url()).hostname !== 'mail.google.com') return true;
-  if (/accounts\.google\.com|ServiceLogin|signin|challenge/.test(page.url()))
-    return true;
-  const heading = await page
-    .getByRole('heading', { name: /^Sign in$/i })
-    .count();
-  if (heading > 0) return true;
   const identifier = await page
     .locator(
       'input[type="email"], input[name="identifier"], input#identifierId',

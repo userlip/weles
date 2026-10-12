@@ -3,12 +3,8 @@ import { approveQr } from './_qr_approve.mjs';
 import { humanFill } from '../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
-import {
-  autocompleteField,
-  clickFirst,
-  control,
-  field,
-} from '../_shared/page/offers.mjs';
+import { autocompleteField, field } from '../_shared/page/offers.mjs';
+import { clickOffered, pageShows } from '../_shared/page/judged/seen.mjs';
 
 const SIGNUP_URL =
   'https://accounts.google.com/signup/v2/createaccount?biz=false&cc=US&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue&dsh=S0&flowEntry=SignUp&flowName=GlifWebSignIn&hl=en&service=youtube';
@@ -26,17 +22,13 @@ function freshProxy() {
     .replace(/_s_\d+/g, `_s_${sid}`);
 }
 
-// The flow's primary action: Google renders Next as a button or a
-// role="button" with the localized caption; the accessible name is the one
-// stable handle. False when the page offers none.
-async function clickNext(page) {
-  const next = page
-    .getByRole('button', { name: /^(next|weiter|suivant|siguiente)$/i })
-    .first();
-  if (!(await next.isVisible())) return false;
-  // Direct locator click: the session-idle timer expires during a longer wait.
-  await humanClickLocator(page, next);
-  return true;
+// The flow's primary action, found by the vision model in whatever language
+// Google renders its caption. False when the page offers none.
+function clickNext(page) {
+  return clickOffered(
+    page,
+    'the primary button that continues to the next step',
+  );
 }
 
 function hostOf(page) {
@@ -129,7 +121,7 @@ async function signup(s) {
   }
 
   console.log(`[google] step 4: username ${gmailUser}`);
-  if (await clickFirst(page, 'button', ['Create your own Gmail address']))
+  if (await clickOffered(page, 'the option to create your own Gmail address'))
     await pageSettled(page);
   await s.fill('Username', gmailUser);
   await pageSettled(page);
@@ -165,26 +157,14 @@ async function signup(s) {
   let phone = await phoneInput(page);
   if (!phone) {
     // Whatever alternative the page offers that leads to a phone field.
-    for (const alt of [
-      'Try another way',
-      "Can't scan",
-      'Use phone instead',
-      'Another method',
-      'Text message',
-      'Call me',
-      'Verify by phone',
-    ]) {
-      if (
-        (await clickFirst(page, 'button', [alt])) ||
-        (await clickFirst(page, 'link', [alt]))
-      ) {
-        await pageSettled(page);
-        phone = await phoneInput(page);
-        if (phone) {
-          console.log(`[google] got phone input via "${alt}"`);
-          break;
-        }
-      }
+    if (
+      await clickOffered(
+        page,
+        'a control that offers verifying by phone instead (another way, a text message or a call)',
+      )
+    ) {
+      await pageSettled(page);
+      phone = await phoneInput(page);
     }
   }
   if (!phone) {
@@ -204,7 +184,10 @@ async function signup(s) {
       if (phone) break;
       if (
         !(await clickNext(page)) &&
-        !(await clickFirst(page, 'button', ['Continue', 'Use phone number']))
+        !(await clickOffered(
+          page,
+          'the button that continues or chooses to use a phone number',
+        ))
       ) {
         throw new Error(
           `google offers no phone field and no control to continue at ${page.url()}`,
@@ -229,8 +212,7 @@ async function signup(s) {
 
   console.log('[google] waiting for SMS code...');
   const code = await s.pollSmsCode();
-  if (!code || code.startsWith('error') || code === 'no code received')
-    throw new Error(`sms code not delivered: ${code}`);
+  if (!/^\d+$/.test(code)) throw new Error(`sms code not delivered: ${code}`);
   console.log(`[google] SMS code: ${code}`);
   const codeField =
     (await field(page, 'code')) ??
@@ -248,20 +230,24 @@ async function signup(s) {
   for (;;) {
     const host = hostOf(page);
     if (
-      host === 'myaccount.google.com' ||
-      host === 'mail.google.com' ||
+      ['myaccount.google.com', 'mail.google.com'].includes(host) ||
       host.endsWith('youtube.com')
     )
       break;
     if (
-      (await control(page, 'button', 'I agree')) ||
-      (await control(page, 'button', 'Accept'))
+      await pageShows(
+        page,
+        'Does the page show terms or a privacy agreement to scroll through and agree to?',
+      )
     ) {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await pageSettled(page);
     }
     if (
-      await clickFirst(page, 'button', ['Skip', 'I agree', 'Accept', 'Confirm'])
+      await clickOffered(
+        page,
+        'the button that agrees to the terms, skips an optional step, or confirms',
+      )
     ) {
       await pageSettled(page);
       continue;
