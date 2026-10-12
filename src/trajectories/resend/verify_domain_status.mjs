@@ -131,6 +131,19 @@ async function records(lookup) {
     throw e;
   }
 }
+/**
+ * The nameserver labels a registrar repoints a domain to while a WHOIS or
+ * registrant-contact verification holds it (failed-whois-verification.*,
+ * verify-contact-details.*), by the host's first label.
+ */
+const HOLD_NAMESERVERS = {
+  'failed-whois-verification': true,
+  'verify-contact-details': true,
+};
+function onHoldNameserver(host) {
+  const [label] = host.toLowerCase().split('.');
+  return Object.hasOwn(HOLD_NAMESERVERS, label);
+}
 async function diagnoseBroken(domain) {
   const ns = await records(() => dnsp.resolveNs(domain));
   if (ns === null)
@@ -138,7 +151,7 @@ async function diagnoseBroken(domain) {
       code: 'dns_unresolved',
       label: 'domain does not resolve (NXDOMAIN / no nameservers)',
     };
-  if (ns.some((h) => /verify|whois/i.test(h)))
+  if (ns.some(onHoldNameserver))
     return {
       code: 'whois_hold',
       label: `WHOIS/registrant-contact verification hold — registrar suspended DNS (ns: ${ns.join(', ')}); a human must verify the registrant contact at the registrar to restore`,
