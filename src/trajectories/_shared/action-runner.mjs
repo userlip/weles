@@ -301,8 +301,7 @@ export async function runAction(cfg) {
     if (
       banSignal &&
       successOnAuthWall &&
-      (banSignal.signal === 'healthy' ||
-        banSignal.signal === 'captcha_challenge')
+      (banSignal.healthy || banSignal.details?.captcha_iframe_present)
     ) {
       banSignal = {
         signal: 'checkpoint',
@@ -316,7 +315,7 @@ export async function runAction(cfg) {
     } else if (
       banSignal &&
       successFinalUrl.startsWith('chrome-error://') &&
-      (banSignal.signal === 'healthy' || banSignal.signal === 'unknown')
+      banSignal.healthy
     ) {
       const sig = /HTTP ERROR 407|ERR_PROXY_AUTH/i.test(successBody)
         ? 'proxy_auth_failed'
@@ -332,7 +331,7 @@ export async function runAction(cfg) {
           prev_signal: banSignal.signal,
         },
       };
-    } else if (banSignal?.signal === 'healthy') {
+    } else if (banSignal?.healthy) {
       const { verifyWriteAction } = await import(
         '../../../dist/platforms/_shared/write_verify.js'
       );
@@ -352,6 +351,12 @@ export async function runAction(cfg) {
           },
         };
     }
+    // A verdict that is not healthy after the action is the run's outcome:
+    // the action's own answer does not turn it into a PASS.
+    if (banSignal && !banSignal.healthy)
+      throw new Error(
+        `the page reads ${banSignal.signal} after the action (${resultValue})`,
+      );
     console.log(`[ban-signal] ${banSignal?.signal}`);
     console.log(`PASS: ${resultValue}`);
   } catch (e) {
@@ -378,8 +383,7 @@ export async function runAction(cfg) {
     if (
       banSignal &&
       onAuthWallFinal &&
-      (banSignal.signal === 'healthy' ||
-        banSignal.signal === 'captcha_challenge')
+      (banSignal.healthy || banSignal.details?.captcha_iframe_present)
     ) {
       banSignal = {
         signal: 'checkpoint',
@@ -393,7 +397,7 @@ export async function runAction(cfg) {
     } else if (
       banSignal &&
       finalUrlForReclass.startsWith('chrome-error://') &&
-      (banSignal.signal === 'healthy' || banSignal.signal === 'unknown')
+      banSignal.healthy
     ) {
       const sig2 = /HTTP ERROR 407|ERR_PROXY_AUTH/i.test(bodySampleForReclass)
         ? 'proxy_auth_failed'

@@ -60,7 +60,6 @@ if (!detector) {
 const label = `${PLATFORM}_${VERB}`;
 let acct = null;
 let s = null;
-let selfHandle = '';
 let banSignal = null;
 try {
   acct = await getSocialAccount(PLATFORM);
@@ -75,7 +74,6 @@ try {
     };
     throw new Error(`no active ${PLATFORM} account`);
   }
-  selfHandle = acct.username;
   console.log(
     `[benign] ${observed.observation} acct=${acct.username} reads=${observed.reads} origin=${observed.origin}`,
   );
@@ -107,7 +105,7 @@ try {
   if (
     banSignal &&
     onAuthWall &&
-    (banSignal.signal === 'healthy' || banSignal.signal === 'captcha_challenge')
+    (banSignal.healthy || banSignal.details?.captcha_iframe_present)
   ) {
     banSignal = {
       signal: 'checkpoint',
@@ -121,7 +119,7 @@ try {
   } else if (
     banSignal &&
     finalUrl.startsWith('chrome-error://') &&
-    (banSignal.signal === 'healthy' || banSignal.signal === 'unknown')
+    banSignal.healthy
   ) {
     const sig = /HTTP ERROR 407|ERR_PROXY_AUTH/i.test(bodySample)
       ? 'proxy_auth_failed'
@@ -137,37 +135,12 @@ try {
         prev_signal: banSignal.signal,
       },
     };
-  } else if (banSignal && banSignal.signal === 'healthy') {
-    // 404 + logged-out shell reclassifier. Per-platform detectors only key
-    // off /login URL patterns; a profile-view that 404s on the platform's
-    // own 404 page (URL stays on /@username, body contains "404" + a Sign in
-    // CTA) sneaks through as healthy. For profile_view of the account's own
-    // handle that's a strong signal the account never finalized signup or
-    // was silently deleted; for any other verb it's at least cookies-stale.
-    const has404 =
-      /\b404\b|page not found|we seem to have lost this page|this page (doesn't|does not) exist/i.test(
-        bodySample,
-      );
-    const hasLoggedOutCta = /\bsign[\s-]?in\b|\blog[\s-]?in\b/i.test(
-      bodySample,
-    );
-    if (has404 && hasLoggedOutCta) {
-      const sig =
-        VERB === 'profile_view' &&
-        finalUrl.toLowerCase().includes(selfHandle.toLowerCase())
-          ? 'account_missing'
-          : 'checkpoint';
-      banSignal = {
-        signal: sig,
-        healthy: false,
-        details: {
-          final_url: finalUrl,
-          reason: `reclassified from healthy — body shows 404 + logged-out CTA (sample: "${bodySample}")`,
-          prev_signal: 'healthy',
-        },
-      };
-    }
   }
+  // A verdict that is not healthy after the loop is the run's outcome.
+  if (banSignal && !banSignal.healthy)
+    throw new Error(
+      `the page reads ${banSignal.signal} after ${PLATFORM}_${VERB}`,
+    );
   console.log(`[ban-signal] ${banSignal?.signal}`);
   console.log(`PASS: ${PLATFORM}_${VERB} ${observed.scrolls}x scrolls`);
 } catch (e) {
@@ -191,8 +164,7 @@ try {
     if (
       banSignal &&
       eOnAuthWall &&
-      (banSignal.signal === 'healthy' ||
-        banSignal.signal === 'captcha_challenge')
+      (banSignal.healthy || banSignal.details?.captcha_iframe_present)
     ) {
       banSignal = {
         signal: 'checkpoint',
@@ -206,7 +178,7 @@ try {
     } else if (
       banSignal &&
       eFinalUrl.startsWith('chrome-error://') &&
-      (banSignal.signal === 'healthy' || banSignal.signal === 'unknown')
+      banSignal.healthy
     ) {
       const sig = /HTTP ERROR 407|ERR_PROXY_AUTH/i.test(eBodySample)
         ? 'proxy_auth_failed'
