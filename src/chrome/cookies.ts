@@ -260,10 +260,14 @@ export function exportCookies(
     }
     return { cookies, v20Skipped, decryptFailed, decryptFailure };
   } finally {
+    // The copy holds the profile's cookies; one left behind is named so it can
+    // be removed.
     try {
       unlinkSync(tmp);
-    } catch {
-      /* ignore */
+    } catch (e) {
+      console.error(
+        `[chrome-cookies] temporary cookie copy ${tmp} was not removed: ${(e as Error).message}`,
+      );
     }
   }
 }
