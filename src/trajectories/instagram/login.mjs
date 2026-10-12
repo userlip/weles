@@ -153,7 +153,10 @@ try {
     try {
       pageBody =
         (await s.page?.evaluate?.(() => document.body?.innerText ?? '')) ?? '';
-    } catch {}
+    } catch (readErr) {
+      // The classification below then works from the URL and error alone.
+      console.log('[ban-signal] page text not read:', readErr.message);
+    }
     const ipBlockMarkers =
       /Sorry,?\s+there was a problem|suspicious activity|please try again later|We restrict certain activity|you'?re using automated|temporarily blocked|We can'?t process/i;
     let sig;
@@ -211,7 +214,11 @@ try {
       );
       if (acct.id) await markCookiesStale(acct.id);
     }
-  } catch {}
+  } catch (persistErr) {
+    // The signal, a suspended account's deactivation or a checkpoint's stale
+    // cookies that did not land are said, not lost behind the FAIL line.
+    console.log('[ban-signal] persist err:', persistErr.message);
+  }
   console.log('FAIL:', e.message);
   process.exitCode = 1;
 } finally {
