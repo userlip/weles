@@ -62,18 +62,11 @@ export async function clickText(page, re) {
   return clicked;
 }
 
+// Overleaf answers /project for a signed-in session and sends any other one
+// to /login; where it landed is the answer, not words on the page (a
+// project titled "Log in" is still a dashboard).
 export async function ensureDashboard(s) {
   await s.goto('https://www.overleaf.com/project');
   await humanIdlePause('deliberate');
-  const current = s.page.url();
-  const body = await s.page
-    .evaluate(() => document.body.innerText)
-    .catch(() => '');
-  if (
-    /\/login(?:[/?#]|$)/.test(current) ||
-    /Log in with Google|Log in/i.test(body)
-  ) {
-    return false;
-  }
-  return true;
+  return !/\/login(?:[/?#]|$)/.test(new URL(s.page.url()).pathname);
 }

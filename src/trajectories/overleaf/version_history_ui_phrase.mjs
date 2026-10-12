@@ -31,6 +31,12 @@ import {
   probeHistoryState,
 } from './version_history_ui_phrase/probe.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
+
+const AUTH_LABEL = statedText(
+  ['OVERLEAF_AUTH_LABEL'],
+  'the session store label the Overleaf session is kept under',
+);
 
 // The session modules read the recording switches at import time; the settings module
 // above has already set them, so they load here, not statically.
@@ -47,9 +53,8 @@ const s = await WSession.start({
 
 try {
   const store = new SessionStore();
-  const injected = await store
-    .injectPlaywright(s.ctx, process.env.OVERLEAF_AUTH_LABEL || 'overleaf')
-    .catch(() => false);
+  // A stored session that cannot be injected fails here with its cause.
+  const injected = await store.injectPlaywright(s.ctx, AUTH_LABEL);
   console.log(`[version_history_ui] injectedCookies=${injected}`);
 
   if (!(await ensureDashboard(s))) {
@@ -57,9 +62,15 @@ try {
       '[version_history_ui] not authenticated; using Google SSO UI fallback',
     );
     await loginWithGoogleUi(s);
+    // The sign-in succeeded; a session that could not be kept is said, and
+    // the next run signs in again.
     await store
-      .capturePlaywright(s.ctx, process.env.OVERLEAF_AUTH_LABEL || 'overleaf')
-      .catch(() => {});
+      .capturePlaywright(s.ctx, AUTH_LABEL)
+      .catch((error) =>
+        console.error(
+          `[version_history_ui] signed in, but the session was not kept under ${AUTH_LABEL}: ${error.message}`,
+        ),
+      );
     if (!(await ensureDashboard(s)))
       throw new Error('still not authenticated after Google SSO UI flow');
   }
