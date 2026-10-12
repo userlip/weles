@@ -33,7 +33,11 @@ const _stored = (acct.metadata?.cookies ?? []).filter((c) =>
 if (_stored.length)
   await s.ctx
     .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
-    .catch(() => {});
+    .catch((e) =>
+      console.log(
+        `[linkedin_endorse] stored cookies not injected: ${e.message}; the auth gate signs in again`,
+      ),
+    );
 let ban = null;
 try {
   const opened = await openLinkedinAuthed(
