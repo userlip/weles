@@ -25,10 +25,15 @@ export async function summarizeVisible(page, queryText) {
         // Ignore inaccessible editor internals.
       }
     };
+    // An editor keeps its document on objects reachable from the element it
+    // renders into (CodeMirror sets its view on the editable content node).
+    // Every object reachable through own properties of each editable element
+    // is read once for a document it exposes; DOM nodes are not followed, so
+    // the walk stays on the editor's objects instead of the whole page.
     const seenObjects = new Set();
     const inspectObject = (obj, label) => {
-      if (!obj || (typeof obj !== 'object' && typeof obj !== 'function'))
-        return;
+      if (!obj || typeof obj !== 'object') return;
+      if (obj instanceof Node || obj === window) return;
       if (seenObjects.has(obj)) return;
       seenObjects.add(obj);
       try {
@@ -38,78 +43,29 @@ export async function summarizeVisible(page, queryText) {
       try {
         addDoc(`${label}.state.doc`, obj.state?.doc);
       } catch {}
+      let keys;
       try {
-        addDoc(`${label}.view.state.doc`, obj.view?.state?.doc);
-      } catch {}
-      try {
-        if (typeof obj.doc?.getValue === 'function')
-          addText(`${label}.doc.getValue`, obj.doc.getValue());
-      } catch {}
-      try {
-        if (typeof obj.cm?.getValue === 'function')
-          addText(`${label}.cm.getValue`, obj.cm.getValue());
-      } catch {}
-      for (const key of [
-        'view',
-        'editor',
-        'sourceEditor',
-        '_editor',
-        'cm',
-        'codeMirror',
-        'doc',
-        'state',
-        'model',
-      ]) {
+        keys = Reflect.ownKeys(obj);
+      } catch {
+        // Some browser objects reject property enumeration.
+        return;
+      }
+      for (const key of keys) {
         try {
-          inspectObject(obj[key], `${label}.${key}`);
+          inspectObject(obj[key], `${label}.${String(key)}`);
         } catch {}
       }
     };
     const inspectDomEditorState = () => {
-      const selectors = [
-        '.cm-editor',
-        '.cm-content',
-        '.cm-scroller',
-        '.CodeMirror',
-        '.CodeMirror-code',
-        '[class*="cm-"]',
-        '[class*="CodeMirror"]',
-      ];
       for (const el of Array.from(
-        document.querySelectorAll(selectors.join(',')),
+        document.querySelectorAll('[contenteditable]'),
       )) {
-        inspectObject(el, `dom.${el.className || el.tagName}`);
-        try {
-          for (const key of Reflect.ownKeys(el)) {
-            const value = el[key];
-            inspectObject(value, `dom.${String(key)}`);
-          }
-        } catch {
-          // Some browser objects reject property enumeration.
+        for (const key of Reflect.ownKeys(el)) {
+          try {
+            inspectObject(el[key], `dom.${String(key)}`);
+          } catch {}
         }
       }
-    };
-    const inspectKnownGlobals = () => {
-      for (const key of [
-        '_ide',
-        'ide',
-        'editor',
-        'editorManager',
-        'angular',
-        'webpackChunkoverleaf',
-      ]) {
-        try {
-          inspectObject(window[key], `window.${key}`);
-        } catch {}
-      }
-      try {
-        const current = window._ide?.editorManager?.getCurrentEditor?.();
-        inspectObject(current, 'window._ide.editorManager.getCurrentEditor');
-      } catch {}
-      try {
-        const current = window.ide?.editorManager?.getCurrentEditor?.();
-        inspectObject(current, 'window.ide.editorManager.getCurrentEditor');
-      } catch {}
     };
     const tokenizeWithOffsets = (s) => {
       const out = [];
@@ -148,23 +104,18 @@ export async function summarizeVisible(page, queryText) {
       const threshold = targetTokens.length >= 10 ? 0.82 : 0.9;
       return best && best.score >= threshold ? best : null;
     };
-    const bestDocumentText = () => {
-      const looksLikeLatex = (text) =>
-        /\\documentclass|\\begin\{document\}|\\title\{|\\section\{|\\subsection\{|\\paragraph\{/.test(
-          text,
-        );
-      const docs = texts
-        .filter(
-          (entry) => entry.text.length >= 500 && looksLikeLatex(entry.text),
-        )
-        .sort((left, right) => right.text.length - left.text.length);
-      return docs[0] || null;
-    };
+    // The document is the longest text an editor object exposes; every other
+    // one is a part of it (a line, a selection, a view of the visible range).
+    const bestDocumentText = () =>
+      texts.reduce(
+        (longest, entry) =>
+          longest && longest.text.length >= entry.text.length ? longest : entry,
+        null,
+      );
     const wanted = normalize(queryText);
     const body = document.body.innerText || '';
     const rawBody = document.documentElement.textContent || '';
     inspectDomEditorState();
-    inspectKnownGlobals();
     const candidates = [];
     for (const el of Array.from(
       document.querySelectorAll('button,a,[role="button"],li,div'),
