@@ -71,15 +71,24 @@ export function attachCdpLifecycle(
           throw new Error('CDP initialization completed without a session');
         return;
       }
-      try {
-        await cdp.send('Target.setDiscoverTargets', { discover: true });
-      } catch {}
-      try {
-        await cdp.send('Page.enable');
-      } catch {}
-      try {
-        await cdp.send('Performance.enable');
-      } catch {}
+      // A domain that failed to enable records nothing; the failure is logged
+      // where the missing events would have been, as the other enables do.
+      for (const [method, params] of [
+        ['Target.setDiscoverTargets', { discover: true }],
+        ['Page.enable', undefined],
+        ['Performance.enable', undefined],
+      ] as const) {
+        try {
+          await cdp.send(method, params);
+        } catch (e: any) {
+          targetEvents.push({
+            t: Date.now(),
+            phase: 'enable_error',
+            method,
+            err: String(e?.message ?? e),
+          });
+        }
+      }
       cdp.on('Target.targetCreated', (e: any) => {
         try {
           targetEvents.push({
