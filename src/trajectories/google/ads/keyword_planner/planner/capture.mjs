@@ -40,13 +40,9 @@ export function installKeywordPlannerCapture(page) {
   page.on('request', (request) => {
     try {
       const url = request.url();
+      // Every Google Ads request the planner page makes is kept; which one
+      // carried the keyword data is read from the answers afterwards.
       if (!/ads\.google\.com/i.test(url)) return;
-      if (
-        !/(keyword|planner|idea|forecast|plan|targeting|batch|rpc|AwAdsGuide)/i.test(
-          url,
-        )
-      )
-        return;
       const headers = request.headers();
       requests.push({
         ts: Date.now(),
@@ -66,22 +62,9 @@ export function installKeywordPlannerCapture(page) {
       try {
         const url = response.url();
         if (!/ads\.google\.com/i.test(url)) return;
-        if (
-          !/(keyword|planner|idea|forecast|plan|targeting|batch|rpc|AwAdsGuide)/i.test(
-            url,
-          )
-        )
-          return;
         const headers = response.headers();
         const contentType = String(headers['content-type'] || '');
-        let body = '';
-        if (
-          /json|text|javascript|html|xml|x-www-form-urlencoded/i.test(
-            contentType,
-          )
-        ) {
-          body = await response.text().catch(() => '');
-        }
+        const body = await response.text();
         const parsedUrl = new URL(url);
         responses.push({
           ts: Date.now(),
@@ -131,7 +114,6 @@ export function walk(value, visit, path = []) {
 export function summarizeKeywordPlannerResponses(responses) {
   const endpointCounts = {};
   const keywordMentions = [];
-  const metricsMentions = [];
   const numericMentions = [];
   const keywordPatterns = keywords.map(
     (keyword) =>
@@ -154,17 +136,6 @@ export function summarizeKeywordPlannerResponses(responses) {
             value: compact,
           });
         }
-        if (
-          /avg|monthly|search|competition|bid|forecast|click|impression|volume/i.test(
-            compact,
-          )
-        ) {
-          metricsMentions.push({
-            endpoint: endpointName,
-            path: path.join('.'),
-            value: compact,
-          });
-        }
       }
       if (typeof value === 'number' && Number.isFinite(value) && value !== 0) {
         numericMentions.push({
@@ -180,7 +151,6 @@ export function summarizeKeywordPlannerResponses(responses) {
     responseCount: responses.length,
     endpointCounts,
     keywordMentions: keywordMentions,
-    metricsMentions: metricsMentions,
     numericMentions: numericMentions,
   };
 }

@@ -13,7 +13,12 @@ import {
   preferredEmail,
   writeResult,
 } from './run_brief.mjs';
-import { evalState, idle } from './keeper_browser.mjs';
+import { evalState, idle, shows } from './keeper_browser.mjs';
+
+/** Whether a table cell is a number, a percentage or an amount of money. */
+function numericCell(line) {
+  return /^[<>]?\s?[-+]?(?:US)?[$£€]?\s?\d[\d,.]*\s?%?$/.test(line);
+}
 
 function parseMoney(value) {
   const match = String(value || '').match(/(?:US)?\$\s?\d+(?:[,.]\d+)?/i);
@@ -38,8 +43,16 @@ export function parseRows(text) {
       (line, i) => i > 0 && /^\d{1,3}(?:,\d{3})*(?:\.\d+)?$/.test(line),
     );
     const changes = window.filter((line) => /^[-+]?\d+%$/.test(line));
-    const competition =
-      window.find((line) => /^(Low|Medium|High)$/i.test(line)) || null;
+    // The competition band is the column after the two changes, in the
+    // planner's own words for it (any language): the first cell after the
+    // last change that is not a number.
+    const lastChange = window.findLastIndex((line) => /^[-+]?\d+%$/.test(line));
+    const afterChanges = changes.length
+      ? window.filter((line, i) => i > lastChange)
+      : [];
+    const [competition = null] = afterChanges.filter(
+      (line) => !numericCell(line),
+    );
     const bids = window.map(parseMoney).filter(Boolean);
     rows.push({
       keyword: window[0] || keyword,
@@ -61,8 +74,9 @@ export function parseRows(text) {
   );
 }
 
-// The planner is read until it shows result rows or its own empty/error
-// answer; no count of reads is chosen here.
+// The planner is read until it shows result rows or the planner itself says it
+// found none (or failed), which the vision model judges through the keeper;
+// no count of reads is chosen here.
 export async function waitForResults() {
   for (;;) {
     await idle('short');
@@ -70,8 +84,9 @@ export async function waitForResults() {
     const rows = parseRows(s.text || '');
     if (rows.length) return { state: s, rows };
     if (
-      /No keywords|No results|No account|Unable|error/i.test(s.text || '') &&
-      /Keyword Planner/i.test(s.text || '')
+      await shows(
+        'Does the Keyword Planner say it found no keywords or results, or show an error?',
+      )
     )
       return { state: s, rows: [] };
   }

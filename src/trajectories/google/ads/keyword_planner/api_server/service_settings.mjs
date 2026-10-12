@@ -75,11 +75,11 @@ export function stripAmbientCredentialEnv(env) {
     'BRIGHTDATA_BROWSER_WS',
   ];
   for (const key of exactAmbientKeys) delete next[key];
+  // Any ambient username or password variable is a credential the child must
+  // not inherit, whichever provider it names; the child reads its own from
+  // Skarbiec.
   for (const key of Object.keys(next)) {
-    if (
-      /^(?:OXYLABS|BRIGHTDATA)_(?:.*(?:USERNAME|PASSWORD|USER|PASS))$/.test(key)
-    )
-      delete next[key];
+    if (/_(?:USER(?:NAME)?|PASS(?:WORD)?)$/.test(key)) delete next[key];
   }
   return next;
 }

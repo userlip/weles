@@ -32,6 +32,7 @@ import {
   installKeywordPlannerCapture,
 } from './planner/capture.mjs';
 import { collectKeywordPlanner, openKeywordPlanner } from './planner/page.mjs';
+import { pageShows } from '../../../_shared/page/judged/seen.mjs';
 
 async function main() {
   console.log(
@@ -86,7 +87,10 @@ async function main() {
     }
     if (
       /multifactorauthalert|block=true/i.test(current) ||
-      /multi-factor|2-step verification|2-Step Verification/i.test(text)
+      (await pageShows(
+        s.page,
+        'Does the page say 2-step verification or multi-factor authentication is required?',
+      ))
     ) {
       const report = {
         ok: false,

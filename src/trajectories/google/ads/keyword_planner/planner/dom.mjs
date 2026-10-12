@@ -39,23 +39,18 @@ export async function collectDom(page) {
       const rows = nodes
         .filter(
           (el) =>
-            visible(el) &&
-            (/^(tr|material-list-item)$/i.test(el.tagName || '') ||
-              el.getAttribute?.('role') === 'row'),
+            visible(el) && el.matches('tr, material-list-item, [role="row"]'),
         )
         .map((row) => norm(row.innerText ?? row.textContent))
         .filter(Boolean);
+      // Every interactive element the page shows, by its markup.
       const controls = nodes
         .filter(
           (el) =>
             visible(el) &&
-            (/^(a|button|input|textarea|material-button)$/i.test(
-              el.tagName || '',
-            ) ||
-              /button|menuitem|textbox/i.test(
-                el.getAttribute?.('role') || '',
-              ) ||
-              el.getAttribute?.('aria-label')),
+            el.matches(
+              'a, button, input, textarea, material-button, [role="button"], [role="menuitem"], [role="textbox"], [aria-label]',
+            ),
         )
         .map((el) => ({
           tag: (el.tagName || '').toLowerCase(),
@@ -65,12 +60,7 @@ export async function collectDom(page) {
           title: el.getAttribute?.('title') || '',
           placeholder: el.getAttribute?.('placeholder') || '',
           value: norm(el.value),
-        }))
-        .filter((control) =>
-          /keyword|planner|search|forecast|volume|result|product|service|website|language|location|competition|bid|start|get|discover/i.test(
-            `${control.text} ${control.aria} ${control.title} ${control.placeholder} ${control.value}`,
-          ),
-        );
+        }));
       return {
         url: location.href,
         title: document.title,
@@ -92,6 +82,10 @@ export function parseVolumeText(value) {
   return number ? number[0].replace(/\s+/g, ' ') : null;
 }
 
+// The page's rows that name one of this run's keywords, with the volume and
+// bids they show. The competition level is Google's own field, read from the
+// planner's API answer (`summarizeKeywordPlannerResponses`), not from the
+// words a row prints.
 export function parseKeywordRows(rows) {
   const parsed = [];
   for (const row of rows.map(norm).filter(Boolean)) {
@@ -99,15 +93,12 @@ export function parseKeywordRows(rows) {
       row.toLowerCase().includes(keyword.toLowerCase()),
     );
     if (!matchedKeyword) continue;
-    const volume = parseVolumeText(row);
-    const competition = row.match(/\b(Low|Medium|High)\b/i)?.[1] || null;
     const bidMentions = [
       ...row.matchAll(/(?:US)?[$£€]\s?\d+(?:[,.]\d+)?/g),
-    ].map((match) => match[0]);
+    ].map((match) => match.shift());
     parsed.push({
       keyword: matchedKeyword,
-      averageMonthlySearchesText: volume,
-      competition,
+      averageMonthlySearchesText: parseVolumeText(row),
       bidMentions,
       raw: row,
     });
