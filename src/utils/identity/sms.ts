@@ -66,7 +66,7 @@ export interface SmsNumber {
 function normalizePhone(raw: string, country: string): string {
   let p = raw.replace(/\D/g, '');
   if (country !== 'US' && p.startsWith('0')) p = p.slice(1);
-  const pfx = COUNTRY_PREFIX[country] ?? '+1';
+  const pfx = COUNTRY_PREFIX[country];
   const pfxDigits = pfx.replace(/\D/g, '');
   // Providers sometimes return the number already including the country code.
   if (p.startsWith(pfxDigits) && p.length > pfxDigits.length) return `+${p}`;
@@ -99,8 +99,14 @@ async function providerText(
 
 export async function getNumber(
   service: string,
-  country = 'UK',
+  country: string,
 ): Promise<SmsNumber | null> {
+  // A number is only ever bought in the country asked for: one with no known
+  // dialling prefix is refused, never normalised as if it were +1.
+  if (!Object.hasOwn(COUNTRY_PREFIX, country))
+    throw new Error(
+      `sms_country_unsupported: ${country} has no dialling prefix here; supported: ${Object.keys(COUNTRY_PREFIX).join(', ')}; no number was bought`,
+    );
   const failures: string[] = [];
   // Try JuicySMS — only the requested country (caller handles rotation)
   const jKey = juicyApiKey();
@@ -151,9 +157,13 @@ export async function getNumber(
   }
   // Try sms-activate
   const saKey = smsActivateApiKey();
-  if (saKey) {
+  const cc = SMSACTIVATE_COUNTRIES[country];
+  if (saKey && !cc)
+    failures.push(
+      `sms-activate has no country code for ${country}, so it was not asked`,
+    );
+  if (saKey && cc) {
     const svc = SMSACTIVATE_SERVICES[service.toLowerCase()] ?? service;
-    const cc = SMSACTIVATE_COUNTRIES[country] ?? '12';
     const url = `https://api.sms-activate.org/stubs/handler_api.php?api_key=${saKey}&action=getNumberV2&service=${svc}&country=${cc}`;
     const answer = await providerText(
       url,

@@ -354,7 +354,7 @@ export class WSession {
     const { wsCheckEmail } = await import('./wsession-helpers/finalize.js');
     return wsCheckEmail(this, email, sender);
   }
-  async checkSms(service: string, country = 'UK'): Promise<string> {
+  async checkSms(service: string, country: string): Promise<string> {
     this._smsOrder = await getNumber(service, country);
     if (!this._smsOrder) return 'error: no SMS number available';
     this._env[`${service.toUpperCase()}_NEW_PHONE`] = this._smsOrder.phone;

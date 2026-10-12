@@ -266,9 +266,9 @@ export const BROWSER_TOOLS: readonly FunctionTool[] = [
   ),
   browserTool(
     'check_sms',
-    'Request an SMS number for the authorized service and country.',
+    'Request an SMS number for the authorized service in the stated country (US, UK, CA, NL or DE).',
     { service: TEXT, country: TEXT },
-    ['service'],
+    ['service', 'country'],
   ),
   browserTool(
     'poll_sms_code',
@@ -389,7 +389,7 @@ export async function dispatch(
     case 'check_sms':
       return session.checkSms(
         stringArg(args, 'service'),
-        stringArg(args, 'country', 'UK'),
+        stringArg(args, 'country'),
       );
     case 'poll_sms_code':
       return session.pollSmsCode();

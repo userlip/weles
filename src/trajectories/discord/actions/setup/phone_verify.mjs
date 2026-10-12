@@ -9,8 +9,8 @@
 //   1. Source account, start WSession, addInitScript-inject discord_token.
 //   2. Navigate /channels/@me, open User Settings via gear button.
 //   3. Click the Phone Number row's Add button on My Account.
-//   4. Pick country code (default US +1 via DISCORD_PHONE_COUNTRY), fill
-//      the number from juicysms getNumber('discord', country).
+//   4. Rent a number in DISCORD_PHONE_COUNTRY (required; the run refuses
+//      without it) via getNumber('discord', country) and fill it.
 //   5. Click Send to dispatch the SMS. Discord renders in-page hCaptcha
 //      challenge — solve via solvePageCaptcha (the keeper-validated
 //      register path works because the SPA carries full fingerprint).
@@ -34,9 +34,14 @@ import {
   readCode,
   cancelOrder,
 } from '../../../../../dist/utils/identity/sms.js';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
 const ACCT_USERNAME = process.env.ACCOUNT_USERNAME;
-const COUNTRY = process.env.DISCORD_PHONE_COUNTRY || 'US';
+// The number is bought, and tied to the account, in this country.
+const COUNTRY = statedText(
+  ['DISCORD_PHONE_COUNTRY'],
+  'the country the SMS number is rented in and the account is verified with',
+);
 
 const acct = ACCT_USERNAME
   ? await getSocialAccount('discord', { username: ACCT_USERNAME })

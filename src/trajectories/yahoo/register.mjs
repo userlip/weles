@@ -206,10 +206,10 @@ async function maybeHandlePhone(s) {
   if (!(await phoneInput.count()) || !(await phoneInput.isVisible()))
     return false;
 
-  const phone = await s.checkSms(
-    'yahoo',
-    process.env.YAHOO_SMS_COUNTRY || 'US',
-  );
+  // Yahoo's phone field keeps its United States country selector and takes
+  // the national digits after +1 (stripped below), so only a US number fits;
+  // a number from anywhere else would be typed in mangled.
+  const phone = await s.checkSms('yahoo', 'US');
   if (phone.startsWith('error'))
     throw new Error(`yahoo_sms_unavailable: ${phone}`);
   const digits = s
