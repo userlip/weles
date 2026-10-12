@@ -116,15 +116,9 @@ function dwellOf(raw: unknown): ObservationDwell | null {
   if (typeof scrolls !== 'number' || !Number.isInteger(scrolls) || scrolls < 0)
     return null;
   if (!Array.isArray(ms) || ms.length !== 2) return null;
-  const [low, high] = ms as unknown[];
-  if (typeof low !== 'number' || typeof high !== 'number') return null;
-  if (
-    !Number.isInteger(low) ||
-    !Number.isInteger(high) ||
-    low <= 0 ||
-    high < low
-  )
-    return null;
+  if (!ms.every(Number.isInteger)) return null;
+  const [low, high] = ms as number[];
+  if (low <= 0 || high < low) return null;
   return { scrolls, ms: [low, high] };
 }
 
