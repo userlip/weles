@@ -1,10 +1,7 @@
 import { pageSettled, responseAfterAction } from '../_shared/page/settled.mjs';
 import { WSession } from '../../../dist/session/wsession.js';
 import { generatePersona } from '../../../dist/browser/persona.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../dist/human/mouse.js';
+import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { humanType } from '../../../dist/human/keyboard.js';
 import { generateIdentity } from '../../../dist/utils/identity/identity.js';
 import { registrationPassword } from '../../../dist/utils/identity/password.js';
@@ -116,7 +113,9 @@ async function answerBody(response) {
           browser: process.env.FORCE_BROWSER || 'chromium',
         }),
       });
-      const net = installNetworkLogger(s);
+      // TikTok's passport traffic is logged for diagnosis; the flow reads
+      // each answer it needs from the call its own action sent.
+      installNetworkLogger(s);
 
       for (const u of [
         'https://www.tiktok.com/',
