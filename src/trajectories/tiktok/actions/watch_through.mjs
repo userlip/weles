@@ -4,6 +4,7 @@ import {
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { detectTikTokBanSignals } from '../../../../dist/platforms/tiktok/ban_signals.js';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
@@ -83,16 +84,12 @@ try {
   await humanIdlePause();
   await s.page.keyboard.press('ArrowDown');
   await humanIdlePause();
-  ban = await detectTikTokBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  ban = await banSignalOf(detectTikTokBanSignals, s, 'after watching');
   console.log(`[ban-signal] ${ban?.signal}  PASS: watched_through_3`);
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectTikTokBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectTikTokBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {

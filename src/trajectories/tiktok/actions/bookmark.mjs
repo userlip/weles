@@ -8,6 +8,7 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { detectTikTokBanSignals } from '../../../../dist/platforms/tiktok/ban_signals.js';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
@@ -110,9 +111,7 @@ try {
   const alreadySaved =
     beforePressed === 'true' || /^Added to/i.test(beforeLabel);
   if (alreadySaved) {
-    ban = await detectTikTokBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    );
+    ban = await banSignalOf(detectTikTokBanSignals, s, 'after finding it saved');
     console.log(`[ban-signal] ${ban?.signal}  PASS: already saved`);
   } else {
     await humanClickLocator(s.page, saveBtn);
@@ -128,17 +127,13 @@ try {
       },
       { el: await saveBtn.elementHandle(), beforeLabel },
     );
-    ban = await detectTikTokBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    );
+    ban = await banSignalOf(detectTikTokBanSignals, s, 'after bookmarking');
     console.log(`[ban-signal] ${ban?.signal}  PASS: bookmarked`);
   }
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectTikTokBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectTikTokBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {

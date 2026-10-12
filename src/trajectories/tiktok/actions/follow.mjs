@@ -8,6 +8,7 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { detectTikTokBanSignals } from '../../../../dist/platforms/tiktok/ban_signals.js';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
@@ -88,9 +89,7 @@ try {
     .filter({ visible: true })
     .first();
   if ((await followingBtn.count().catch(() => 0)) > 0) {
-    ban = await detectTikTokBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    );
+    ban = await banSignalOf(detectTikTokBanSignals, s, 'after finding it followed');
     console.log(
       `[ban-signal] ${ban?.signal}  PASS: already following @${TARGET_USER}`,
     );
@@ -104,17 +103,13 @@ try {
     await followBtn.waitFor({ state: 'visible' });
     await humanClickLocator(s.page, followBtn);
     await followingBtn.waitFor({ state: 'visible' });
-    ban = await detectTikTokBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    );
+    ban = await banSignalOf(detectTikTokBanSignals, s, 'after following');
     console.log(`[ban-signal] ${ban?.signal}  PASS: followed @${TARGET_USER}`);
   }
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectTikTokBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectTikTokBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {

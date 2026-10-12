@@ -8,6 +8,7 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { detectTikTokBanSignals } from '../../../../dist/platforms/tiktok/ban_signals.js';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
@@ -107,9 +108,7 @@ try {
   await likeBtn.scrollIntoViewIfNeeded();
   const before = await likeBtn.getAttribute('aria-pressed').catch(() => null);
   if (before === 'true') {
-    ban = await detectTikTokBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    );
+    ban = await banSignalOf(detectTikTokBanSignals, s, 'after finding it liked');
     console.log(`[ban-signal] ${ban?.signal}  PASS: already liked`);
   } else {
     await humanClickLocator(s.page, likeBtn);
@@ -118,17 +117,13 @@ try {
       (el) => el?.getAttribute('aria-pressed') === 'true',
       await likeBtn.elementHandle(),
     );
-    ban = await detectTikTokBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    );
+    ban = await banSignalOf(detectTikTokBanSignals, s, 'after liking');
     console.log(`[ban-signal] ${ban?.signal}  PASS: liked`);
   }
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectTikTokBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectTikTokBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {
