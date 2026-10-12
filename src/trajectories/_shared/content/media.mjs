@@ -49,15 +49,26 @@ export async function generateImageFile({ prompt, width, height }) {
     },
     body: JSON.stringify(body),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
+  // Brama's own answer is what a failure carries; a body that is not JSON is
+  // quoted, never read as an empty object.
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
     throw new Error(
-      `Brama image generation ${res.status}: ${String(data.error?.message ?? '')}`,
+      `Brama image generation answered HTTP ${res.status} with a body that is not JSON (${error.message}): ${text}`,
     );
   }
+  if (!res.ok)
+    throw new Error(
+      `Brama image generation ${res.status}: ${JSON.stringify(data.error ?? data)}`,
+    );
   const encoded = data.data?.[0]?.b64_json;
   if (typeof encoded !== 'string' || !encoded)
-    throw new Error('Brama image generation returned no data[0].b64_json');
+    throw new Error(
+      `Brama image generation returned no data[0].b64_json: ${JSON.stringify(data)}`,
+    );
   const dir = join(tmpdir(), 'weles-media');
   mkdirSync(dir, { recursive: true });
   const path = join(dir, `${randomUUID()}.png`);
