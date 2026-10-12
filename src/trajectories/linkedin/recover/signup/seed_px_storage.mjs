@@ -9,7 +9,7 @@
 //   ACCOUNT_ITEM=weles-linkedin-<username>-account node src/trajectories/linkedin/recover/seed_px_storage.mjs
 //   USERNAME=<linkedin-username> node src/trajectories/linkedin/recover/seed_px_storage.mjs
 
-import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { humanClickLocator } from '../../../../../dist/human/mouse.js';
@@ -61,6 +61,22 @@ const browser = await launchProfileChrome({
   executablePath: CHROME_BIN,
 });
 const page = browser.pages()[0] || (await browser.newPage());
+
+// The profile directory holds the signed-in LinkedIn session; once its
+// storage is captured it is closed and removed, before either exit, and a
+// directory that could not be removed is named in the log.
+async function release() {
+  await browser
+    .close()
+    .catch((e) => console.log(`[seed-px] browser close err: ${e.message}`));
+  try {
+    rmSync(userDataDir, { recursive: true, force: true });
+  } catch (e) {
+    console.log(
+      `[seed-px] browser profile ${userDataDir} not removed: ${e.message}`,
+    );
+  }
+}
 console.log(
   '[seed-px] navigating to linkedin.com/login (real Chrome, fingerprint genuine)',
 );
@@ -161,7 +177,7 @@ if (lsCount === 0) {
   console.error(
     'FAIL: no PX keys captured. Closed before reaching /feed (or wrong credentials blocked login). Refusing to write empty storage.',
   );
-  await browser.close().catch(() => {});
+  await release();
   process.exit(1);
 }
 
@@ -179,7 +195,7 @@ console.log(
   `[seed-px] captured ${cookies.length} linkedin.com cookies (li_at=${!!liAt})`,
 );
 
-await browser.close().catch(() => {});
+await release();
 
 // Persist metadata.linkedin_px_storage + cookies in Skarbiec.
 const now = new Date().toISOString();
