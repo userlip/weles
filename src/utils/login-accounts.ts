@@ -17,16 +17,16 @@ import {
   fail,
   LoginAccountSelectionError,
   metadata,
-  resolveAccount,
   type LoginAccount,
-} from './login-accounts/resolve.js';
+} from './login-accounts/records.js';
+import { resolveAccount } from './login-accounts/resolve.js';
 
 export {
   LOGIN_METHODS,
   LoginAccountSelectionError,
   type LoginAccount,
   type LoginAccountProvider,
-} from './login-accounts/resolve.js';
+} from './login-accounts/records.js';
 
 /** The Brama provider tags whose subscriptions Weles lists. */
 const LISTED_PROVIDER_TAGS: Readonly<Record<string, true>> = {
