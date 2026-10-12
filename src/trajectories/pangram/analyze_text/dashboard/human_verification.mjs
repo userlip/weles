@@ -1,276 +1,49 @@
 // Whether the public no-login scanner sits behind a Cloudflare Turnstile gate
-// and whether this run can pass it: read the page state, locate the widget by
-// marker or by geometry, click the checkbox inside the frame or - for a
-// cross-origin frame - its computed point, and wait for the scan button to
-// unlock. Separate from the form because this describes somebody else's
-// anti-bot gate and changes when Cloudflare changes the widget.
+// and whether this run passes it. The gate is Cloudflare's own frame, served
+// from challenges.cloudflare.com, and the token it writes into the form's
+// cf-turnstile-response field; whether the scan button is enabled is judged by
+// the vision model, which reads it in whatever words Pangram uses.
 
-import {
-  humanClickLocator,
-  humanMove,
-} from '../../../../../dist/human/mouse.js';
-import { pageCondition, pageSettled } from '../../../_shared/page/settled.mjs';
+import { pageCondition } from '../../../_shared/page/settled.mjs';
+import { clickOffered, pageShows } from '../../../_shared/page/judged/seen.mjs';
 
+const TURNSTILE_HOST = 'challenges.cloudflare.com';
+const TURNSTILE_TOKEN = 'input[name="cf-turnstile-response"]';
+
+// { turnstile, scanEnabled }: whether Cloudflare's gate is on the page, and
+// whether the scan button is enabled.
 async function publicVerificationState(page) {
-  return page.evaluate(() => {
-    const visible = (el) => {
-      const style = window.getComputedStyle(el);
-      const rect = el.getBoundingClientRect();
-      return (
-        style.visibility !== 'hidden' &&
-        style.display !== 'none' &&
-        rect.width > 0 &&
-        rect.height > 0
-      );
-    };
-    // Attributes a node does not carry are simply left out of the marker.
-    const buttonLabel = (el) => {
-      const sources = [
-        el.textContent,
-        el.getAttribute('aria-label'),
-        el.getAttribute('value'),
-      ];
-      const raw = sources.find((value) => value);
-      if (!raw) return '';
-      return raw.replace(/\s+/g, ' ').trim();
-    };
-    const body = document.body?.innerText || '';
-    const visibleFrames = Array.from(document.querySelectorAll('iframe'))
-      .filter(visible)
-      .map((el) => {
-        const rect = el.getBoundingClientRect();
-        const marker = [
-          el.getAttribute('src'),
-          el.getAttribute('title'),
-          el.getAttribute('name'),
-          el.getAttribute('id'),
-          el.getAttribute('class'),
-          el.outerHTML,
-        ]
-          .filter((part) => part)
-          .join(' ');
-        return {
-          marker,
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-          x: Math.round(rect.x),
-          y: Math.round(rect.y),
-        };
-      });
-    const turnstileFrames = visibleFrames.filter(
-      (frame) =>
-        /cloudflare|turnstile|challenge|cf-|verify|human/i.test(frame.marker) ||
-        (frame.width >= 180 && frame.height >= 45 && frame.height <= 120),
-    ).length;
-    const turnstileContainers = Array.from(document.querySelectorAll('div'))
-      .filter((el) => {
-        const text = (el.textContent || '').trim();
-        const html = el.outerHTML || '';
-        return (
-          !text &&
-          /turnstile|cf-turnstile|challenges\.cloudflare\.com/i.test(html)
-        );
-      })
-      .map((el) => {
-        const rect = el.getBoundingClientRect();
-        return {
-          marker: el.outerHTML || '',
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-          x: Math.round(rect.x),
-          y: Math.round(rect.y),
-          visible: visible(el),
-        };
-      });
-    const buttons = Array.from(
-      document.querySelectorAll('button,[role="button"],input[type="submit"]'),
-    ).map((el) => ({
-      text: buttonLabel(el),
-      disabled:
-        Boolean(el.disabled) || el.getAttribute('aria-disabled') === 'true',
-      visible: visible(el),
-    }));
-    const scanButtons = buttons.filter(
-      (b) => /^(scan|check)\s+for\s+ai$/i.test(b.text) && b.visible,
-    );
-    return {
-      turnstileFrames,
-      turnstileContainers: turnstileContainers.length,
-      turnstileContainerBoxes: turnstileContainers,
-      visibleFrames,
-      verifyText: /verify you are human/i.test(body),
-      scanButtons,
-      enabledScan: scanButtons.some((b) => !b.disabled),
-    };
-  }); // allow-raw-playwright: read-only public checker state
-}
-
-async function clickPublicTurnstileIfPresent(page) {
-  const selectors = [
-    'iframe[src*="challenges.cloudflare.com"]',
-    'iframe[src*="turnstile"]',
-    'iframe[title*="Cloudflare" i]',
-    'iframe[title*="challenge" i]',
-    'iframe[title*="security" i]',
-    'iframe[name*="cf" i]',
-    'iframe[id*="cf" i]',
-    'iframe[class*="cf" i]',
-    'iframe',
-    '.cf-turnstile',
-    '[class*="turnstile" i]',
-    '[id*="turnstile" i]',
-    '[data-sitekey]',
-    '[data-callback]',
-    'xpath=//input[@name="cf-turnstile-response"]/ancestor::div[1]',
-    'xpath=//input[@name="cf-turnstile-response"]/ancestor::div[2]',
-    'xpath=//input[contains(@id, "cf-chl-widget")]/ancestor::div[1]',
-    'xpath=//input[contains(@id, "cf-chl-widget")]/ancestor::div[2]',
-    'div',
-  ];
-
-  const tried = [];
-  for (const selector of selectors) {
-    const elements = page.locator(selector);
-    const count = await elements.count();
-    const maxCandidates = selector === 'div' ? 250 : 8;
-    for (let i = 0; i < Math.min(count, maxCandidates); i++) {
-      const elementLocator = elements.nth(i);
-      const box = await elementLocator.boundingBox();
-      const visible = await elementLocator.isVisible().catch(() => false);
-      if (!visible || !box || box.width < 80 || box.height < 30) continue;
-
-      const title = await elementLocator.getAttribute('title');
-      const src = await elementLocator.getAttribute('src');
-      const html = await elementLocator.evaluate((el) => {
-        const outer = el.outerHTML;
-        if (!outer) return '';
-        return outer;
-      });
-      const marker = [selector, title, src, html]
-        .filter((part) => part)
-        .join(' ');
-      const markerLooksRelevant =
-        /cloudflare|turnstile|challenge|verify|human/i.test(marker);
-      const sizeLooksLikeWidget =
-        box.width >= 120 &&
-        box.width <= 520 &&
-        box.height >= 30 &&
-        box.height <= 180;
-      const looksRelevant = selector.startsWith('iframe')
-        ? markerLooksRelevant ||
-          (box.width >= 180 && box.height >= 45 && box.height <= 120)
-        : markerLooksRelevant && sizeLooksLikeWidget;
-      if (!looksRelevant) continue;
-
-      tried.push({
-        selector,
-        title: title,
-        src: src,
-        box: {
-          x: Math.round(box.x),
-          y: Math.round(box.y),
-          width: Math.round(box.width),
-          height: Math.round(box.height),
-        },
-      });
-
-      const handle = await elementLocator.elementHandle();
-      const frame =
-        handle && selector.startsWith('iframe')
-          ? await handle.contentFrame?.()
-          : null;
-      if (frame) {
-        const insideWidget = [
-          frame.getByRole('checkbox', { name: /verify|human/i }).first(),
-          frame.locator('[role="checkbox"]').first(),
-          frame.locator('input[type="checkbox"]').first(),
-          frame.locator('label').first(),
-        ];
-        for (const target of insideWidget) {
-          const visibleTarget = await target.isVisible().catch(() => false);
-          const targetBox = await target.boundingBox();
-          if (!visibleTarget || !targetBox) continue;
-          await humanClickLocator(page, target);
-          await pageSettled(page);
-          return { clicked: true, method: 'frame_locator', tried };
-        }
-      }
-
-      const targetX =
-        box.x +
-        Math.min(
-          Math.max(26, Math.round(box.width * 0.12)),
-          Math.max(8, box.width - 10),
-        );
-      const targetY =
-        box.y +
-        Math.min(
-          Math.max(22, Math.round(box.height * 0.5)),
-          Math.max(8, box.height - 8),
-        );
-      await humanMove(page, targetX, targetY).catch(() =>
-        page.mouse.move(targetX, targetY),
-      ); // allow-raw-playwright: bounded coordinate path into the cross-origin Turnstile iframe
-      await page.mouse.click(targetX, targetY); // allow-raw-playwright: click exact checkbox region inside visible Turnstile widget
-      await pageSettled(page);
-      return {
-        clicked: true,
-        method: selector.startsWith('iframe')
-          ? 'iframe_coordinate'
-          : 'container_coordinate',
-        tried,
-      };
-    }
-  }
-
-  return { clicked: false, method: 'not_found', tried };
+  const turnstile =
+    page
+      .frames()
+      .some(
+        (frame) =>
+          URL.canParse(frame.url()) &&
+          new URL(frame.url()).hostname === TURNSTILE_HOST,
+      ) || Boolean(await page.locator(TURNSTILE_TOKEN).count());
+  const scanEnabled = await pageShows(
+    page,
+    'Is the button that scans the text for AI shown and enabled?',
+  );
+  return { turnstile, scanEnabled };
 }
 
 /** Pass the public checker's Turnstile gate: click its checkbox when the run
- * may, then wait until a scan button is enabled — for as long as the gate (or
- * the person solving it) takes. */
+ * may, then wait until Turnstile writes its token into the form — for as long
+ * as the gate (or the person solving it) takes. */
 export async function waitForPublicVerificationIfNeeded(page) {
   const state = await publicVerificationState(page);
-  if (
-    !state.turnstileFrames &&
-    !state.turnstileContainers &&
-    !state.verifyText &&
-    (!state.scanButtons?.length || state.enabledScan)
-  )
-    return state;
-  if (state.enabledScan) return state;
+  if (!state.turnstile || state.scanEnabled) return state;
   const turnstileClick =
-    process.env.PANGRAM_CLICK_PUBLIC_TURNSTILE !== '0'
-      ? await clickPublicTurnstileIfPresent(page)
-      : null;
-  await pageCondition(page, () =>
-    Array.from(
-      document.querySelectorAll('button,[role="button"],input[type="submit"]'),
-    ).some((el) => {
-      const label = (
-        el.textContent ||
-        el.getAttribute('aria-label') ||
-        el.getAttribute('value') ||
-        ''
-      )
-        .replace(/\s+/g, ' ')
-        .trim();
-      const rect = el.getBoundingClientRect();
-      const style = window.getComputedStyle(el);
-      const shown =
-        style.visibility !== 'hidden' &&
-        style.display !== 'none' &&
-        rect.width > 0 &&
-        rect.height > 0;
-      return (
-        shown &&
-        /^(scan|check)\s+for\s+ai$/i.test(label) &&
-        !el.disabled &&
-        el.getAttribute('aria-disabled') !== 'true'
-      );
-    }),
+    process.env.PANGRAM_CLICK_PUBLIC_TURNSTILE !== '0' &&
+    (await clickOffered(
+      page,
+      'the checkbox of the Cloudflare human-verification widget',
+    ));
+  await pageCondition(
+    page,
+    (selector) => Boolean(document.querySelector(selector)?.value),
+    TURNSTILE_TOKEN,
   );
-  const unlocked = await publicVerificationState(page);
-  if (turnstileClick) unlocked.turnstileClick = turnstileClick;
-  return unlocked;
+  return { ...(await publicVerificationState(page)), turnstileClick };
 }

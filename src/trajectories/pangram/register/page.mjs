@@ -3,15 +3,11 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { humanFill, humanType } from '../../../../dist/human/keyboard.js';
+import { clickOffered } from '../../_shared/page/judged/seen.mjs';
 
 export async function dismissCookies(page) {
-  const btn = page
-    .getByRole('button', { name: /allow all|accept all|akceptuj/i })
-    .first();
-  if ((await btn.count()) > 0 && (await btn.isVisible().catch(() => false))) {
-    await humanClickLocator(page, btn).catch(() => btn.click()); // allow-raw-playwright: a consent banner the humanized click could not reach is still dismissed
+  if (await clickOffered(page, 'the button that accepts all cookies'))
     await humanIdlePause('short');
-  }
 }
 
 /** The visible inputs and controls of the signup page, for DIAG=1 runs. */
@@ -45,23 +41,6 @@ export async function dumpControls(page) {
       }))
       .filter((x) => x.text || x.href),
   })); // allow-raw-playwright: read-only signup diagnostics
-}
-
-/** Click the first visible button or link whose name matches; false when none does. */
-export async function clickByText(page, pattern) {
-  const loc = page.getByRole('button', { name: pattern }).first();
-  if ((await loc.count()) > 0 && (await loc.isVisible().catch(() => false))) {
-    await humanClickLocator(page, loc);
-    await humanIdlePause('deliberate');
-    return true;
-  }
-  const link = page.getByRole('link', { name: pattern }).first();
-  if ((await link.count()) > 0 && (await link.isVisible().catch(() => false))) {
-    await humanClickLocator(page, link);
-    await humanIdlePause('deliberate');
-    return true;
-  }
-  return false;
 }
 
 /** Type the value into the first visible locator of the list; false when none is visible. */
@@ -121,5 +100,8 @@ export async function loginWithPassword(page, email, password) {
     password,
   );
   if (!emailOk || !passwordOk) return false;
-  return clickByText(page, /^sign in$/i);
+  // The login form submits from its password field.
+  await page.keyboard.press('Enter');
+  await humanIdlePause('deliberate');
+  return true;
 }

@@ -200,12 +200,7 @@ for (let runAttempt = 1; ; runAttempt += 1) {
       console.log(
         `[pangram:analyze_text] public_verification=${JSON.stringify(verification)}`,
       );
-      if (
-        !verification.turnstileFrames &&
-        !verification.turnstileContainers &&
-        !verification.verifyText &&
-        verification.enabledScan
-      ) {
+      if (!verification.turnstile && verification.scanEnabled) {
         banSignal = {
           signal: 'auth_required',
           healthy: false,
@@ -218,29 +213,15 @@ for (let runAttempt = 1; ; runAttempt += 1) {
         };
         throw new Error('pangram_public_auth_required');
       }
-      if (
-        (verification.turnstileFrames ||
-          verification.turnstileContainers ||
-          verification.verifyText ||
-          verification.scanButtons?.length) &&
-        !verification.enabledScan
-      ) {
+      if (!verification.scanEnabled) {
         banSignal = {
-          signal:
-            verification.turnstileFrames ||
-            verification.turnstileContainers ||
-            verification.verifyText
-              ? 'captcha_required'
-              : 'scan_disabled',
+          signal: verification.turnstile ? 'captcha_required' : 'scan_disabled',
           healthy: false,
           details: {
             final_url: s.page.url(),
-            reason:
-              verification.turnstileFrames ||
-              verification.turnstileContainers ||
-              verification.verifyText
-                ? 'public no-login checker requires Turnstile token before Scan for AI is enabled'
-                : 'public no-login Scan for AI button remained disabled; no result request was sent',
+            reason: verification.turnstile
+              ? 'public no-login checker requires Turnstile token before Scan for AI is enabled'
+              : 'public no-login Scan for AI button remained disabled; no result request was sent',
             verification,
           },
         };
@@ -254,26 +235,14 @@ for (let runAttempt = 1; ; runAttempt += 1) {
     const finalUrl = s.page.url?.() ?? url;
 
     banSignal = await detectPangramBanSignals(s.page, s.capturedResponses);
-    const authReason =
-      result.source === 'none' ? authRequiredState(finalUrl, result) : null;
-    if (authReason) {
+    // A walled result is named by why Pangram walled it; a result is the API's.
+    if (result.walled) {
       banSignal = {
         signal: 'auth_required',
         healthy: false,
         details: {
           final_url: finalUrl,
-          reason: authReason,
-          body_text_sample: result.body_text_sample,
-        },
-      };
-    }
-    if (banSignal?.signal === 'healthy' && result.source === 'none') {
-      banSignal = {
-        signal: 'unknown_error',
-        healthy: false,
-        details: {
-          final_url: finalUrl,
-          reason: 'pangram_result_not_found',
+          reason: authRequiredState(finalUrl),
           body_text_sample: result.body_text_sample,
         },
       };

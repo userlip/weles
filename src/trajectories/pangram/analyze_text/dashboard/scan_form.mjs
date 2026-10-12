@@ -7,6 +7,10 @@
 import { humanClickLocator } from '../../../../../dist/human/mouse.js';
 import { pageCondition, pageSettled } from '../../../_shared/page/settled.mjs';
 import { humanFill, humanType } from '../../../../../dist/human/keyboard.js';
+import {
+  clickDescribed,
+  clickOffered,
+} from '../../../_shared/page/judged/seen.mjs';
 
 const WRITABLE_SELECTORS = [
   'textarea[name="text"]',
@@ -85,112 +89,20 @@ export async function fillInput(page, text) {
   return hit.selector;
 }
 
+// The consent banner covers the scan button; accepting it takes it down.
 export async function dismissCookieBanner(page) {
-  const cookieButtons = page.getByRole('button', {
-    name: /allow all|accept all|zgadzam|akceptuj/i,
-  });
-  const count = await cookieButtons.count();
-  for (let i = 0; i < Math.min(count, 4); i++) {
-    const btn = cookieButtons.nth(i);
-    const visible = await btn.isVisible().catch(() => false);
-    const disabled = await btn.isDisabled().catch(() => true);
-    if (visible && !disabled) {
-      await humanClickLocator(page, btn);
-      await pageSettled(page);
-      return 'clicked';
-    }
-  }
-  return page.evaluate(() => {
-    const nodes = Array.from(
-      document.querySelectorAll(
-        '[id*="Cookie"], [class*="cookie"], [class*="Cookie"], [aria-label*="cookie" i], div',
-      ),
-    );
-    let hidden = 0;
-    for (const el of nodes) {
-      const text = el.textContent || '';
-      if (
-        /This website uses cookies|Allow all|Allow selection|cookie/i.test(
-          text,
-        ) &&
-        el.getClientRects().length
-      ) {
-        el.style.pointerEvents = 'none';
-        if (/This website uses cookies|Allow all|Allow selection/i.test(text)) {
-          el.style.display = 'none';
-          hidden += 1;
-        }
-      }
-    }
-    return hidden ? 'hidden' : 'none';
-  }); // allow-raw-playwright: neutralise cookie banner that covers the scan button
+  return (await clickOffered(page, 'the button that accepts all cookies'))
+    ? 'clicked'
+    : 'none';
 }
 
+// The scan button is told apart from the marketing and navigation buttons
+// with similar labels by the vision model.
 export async function clickAnalyze(page) {
-  const labels = /scan|check|analy[sz]e|submit|run/i;
-  const primaryLabels = /^(scan|check)\s+for\s+ai$/i;
-  const skip =
-    /scan for ai content|input your text|view results|access past records|detect ai assistance|accuracy|verified|free checks|upload|try it|partner|contact|login|allow/i;
-  const byRole = page.getByRole('button', { name: labels });
-  const roleCount = await byRole.count();
-  const candidates = [];
-  for (let i = 0; i < Math.min(roleCount, 20); i++) {
-    const btn = byRole.nth(i);
-    const visible = await btn.isVisible().catch(() => false);
-    const disabled = await btn.isDisabled().catch(() => true);
-    const name = (
-      (await btn.innerText()) ||
-      (await btn.getAttribute('aria-label')) ||
-      ''
-    ).trim();
-    if (visible && !disabled && labels.test(name) && !skip.test(name))
-      candidates.push({ btn, name });
-  }
-  const primary = candidates.filter((c) => primaryLabels.test(c.name));
-  const visiblePrimaryCount = await page
-    .getByRole('button', { name: primaryLabels })
-    .count();
-  const usableCandidates = primary.length
-    ? primary
-    : visiblePrimaryCount
-      ? []
-      : candidates;
-  usableCandidates.sort((a, b) => {
-    const score = (s) =>
-      /scan\s*for\s*ai/i.test(s)
-        ? 0
-        : /scan/i.test(s)
-          ? 1
-          : /check/i.test(s)
-            ? 2
-            : 3;
-    return score(a.name) - score(b.name);
-  });
-  if (usableCandidates.length) {
-    await usableCandidates[0].btn.scrollIntoViewIfNeeded();
-    await humanClickLocator(page, usableCandidates[0].btn);
-    return `role:button:${usableCandidates[0].name}`;
-  }
-  const domScanButtons = page
-    .locator('button,[role="button"],input[type="submit"]')
-    .filter({ visible: true });
-  let clicked = null;
-  for (let i = 0; i < (await domScanButtons.count()); i += 1) {
-    const button = domScanButtons.nth(i);
-    const text =
-      `${await button.textContent()} ${await button.getAttribute('aria-label')} ${await button.getAttribute('value')}`.trim();
-    if (
-      labels.test(text) &&
-      !skip.test(text) &&
-      !(await button.isDisabled().catch(() => true))
-    ) {
-      await humanClickLocator(page, button);
-      clicked = text;
-      break;
-    }
-  }
-  if (!clicked) throw new Error('pangram_analyze_button_not_found');
-  return `dom:${clicked}`;
+  const description =
+    'the enabled button that scans the entered text for AI (not a marketing, upload or navigation button)';
+  await clickDescribed(page, description);
+  return description;
 }
 
 export async function readVisibleCreditState(page) {

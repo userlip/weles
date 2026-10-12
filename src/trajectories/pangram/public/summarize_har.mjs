@@ -24,12 +24,10 @@ const rows = entries
       status: res.status,
       mimeType: res.content?.mimeType || null,
       requestPostSample: req.postData?.text ? req.postData.text : null,
-      responseSample:
-        /api|signup|dashboard|anonymous|session|feature|csrf|turnstile|classify/i.test(
-          req.url,
-        )
-          ? body.replace(/\s+/g, ' ')
-          : undefined,
+      // API answers are JSON; pages and assets are not sampled.
+      responseSample: String(res.content?.mimeType).includes('json')
+        ? body.replace(/\s+/g, ' ')
+        : undefined,
     };
   });
 

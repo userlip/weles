@@ -5,17 +5,17 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 // Usage:
 //   node src/trajectories/apple/asc/asc_create_api_key.mjs
 import { WSession } from '../../../../dist/session/wsession.js';
-import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
+import { clickOffered } from '../../_shared/page/judged/seen.mjs';
 import { homedir } from 'node:os';
 
 async function requireAuthenticatedSession(s) {
   await pageSettled(s.page);
-  const url = s.page.url?.() ?? '';
+  const landed = new URL(s.page.url());
+  // Apple's sign-in lives on its identity hosts or a /login route.
   const loginUrl =
-    /idmsa\.apple\.com|appleid\.apple\.com|\/login(?:[/?#]|$)|signin/i.test(
-      url,
-    );
+    ['idmsa.apple.com', 'appleid.apple.com'].includes(landed.hostname) ||
+    landed.pathname.startsWith('/login');
   const authIframe =
     (await s.page
       .locator(
@@ -38,13 +38,6 @@ async function requireAuthenticatedSession(s) {
       .first()
       .isVisible()
       .catch(() => false);
-    authPrompt ||= await frame
-      .getByText(
-        /Two-Factor Authentication|verification code sent to your Apple devices/i,
-      )
-      .first()
-      .isVisible()
-      .catch(() => false);
     if (authPrompt) break;
   }
   if (loginUrl || authIframe || authPrompt) {
@@ -63,7 +56,7 @@ async function requireApiPage(s) {
   let parsedUrl = new URL(s.page.url?.() || 'about:blank');
   const authenticatedHost =
     parsedUrl.hostname === 'appstoreconnect.apple.com' &&
-    !/\/login(?:\/|$)|idmsa/i.test(parsedUrl.pathname);
+    !parsedUrl.pathname.startsWith('/login');
   if (
     authenticatedHost &&
     !parsedUrl.pathname.startsWith('/access/integrations/api')
@@ -82,23 +75,6 @@ async function requireApiPage(s) {
     );
   }
   console.log(`[asc-create] strona API — ${parsedUrl.href}`);
-}
-
-// Best-effort UI clicks. Uses count() gates (which never throw) so a missing
-// element is a no-op; a real click error is re-thrown to the caller, which logs
-// it and still falls back to the human clicking in the window.
-async function clickByText(page, rx) {
-  for (const loc of [
-    page.getByRole('button', { name: rx }).first(),
-    page.getByRole('link', { name: rx }).first(),
-    page.getByText(rx).first(),
-  ]) {
-    if ((await loc.count()) > 0) {
-      await humanClickLocator(page, loc);
-      return true;
-    }
-  }
-  return false;
 }
 
 async function clickGenerate(page) {
@@ -124,9 +100,9 @@ async function clickGenerate(page) {
     '[asc-create] klikalne na stronie: ' + JSON.stringify(clickables),
   );
 
-  const opened = await clickByText(
+  const opened = await clickOffered(
     page,
-    /generate api key|generate team key|generate key|add a key/i,
+    'the control that generates a new API key',
   );
   console.log('[asc-create] generate-open=' + opened);
   await pageSettled(page);
@@ -136,11 +112,11 @@ async function clickGenerate(page) {
     await humanFill(page, name, KEY_NAME);
     await pageSettled(page);
   }
-  await clickByText(page, /app manager/i);
+  await clickOffered(page, 'the App Manager access option');
   await pageSettled(page);
-  await clickByText(page, /^\s*generate\s*$|^\s*create\s*$/i);
+  await clickOffered(page, 'the button that generates the key');
   await pageSettled(page);
-  const dl = await clickByText(page, /download api key|download/i);
+  const dl = await clickOffered(page, 'the control that downloads the API key');
   console.log('[asc-create] download=' + dl);
 }
 

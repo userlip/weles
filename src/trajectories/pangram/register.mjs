@@ -20,7 +20,6 @@ import {
   readPangramMail,
 } from './register/inbox.mjs';
 import {
-  clickByText,
   dismissCookies,
   dumpControls,
   fillFirst,
@@ -28,6 +27,7 @@ import {
   loginWithPassword,
   sessionStatus,
 } from './register/page.mjs';
+import { clickDescribed, clickOffered } from '../_shared/page/judged/seen.mjs';
 
 const SIGNUP_URL =
   process.env.PANGRAM_SIGNUP_URL || 'https://www.pangram.com/signup';
@@ -125,31 +125,11 @@ async function fillSignupForm(page) {
     LAST_NAME,
   );
 
-  const boxes = page
-    .locator('input[type="checkbox"]')
-    .filter({ visible: true });
-  const visibleCount = await boxes.count();
-  let termsResult = { clicked: false, visibleCount };
-  for (let index = 0; index < visibleCount; index += 1) {
-    const box = boxes.nth(index);
-    const context = await box.evaluate((el) =>
-      [
-        el.closest('label')?.innerText,
-        el.parentElement?.innerText,
-        el.closest('div')?.innerText,
-        el.closest('form')?.innerText,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase(),
-    );
-    if (/terms|conditions|privacy/.test(context) && !(await box.isChecked())) {
-      await humanClickLocator(page, box);
-      termsResult = { clicked: true, context: context };
-      break;
-    }
-  }
-  console.log(`[pangram_register] terms=${JSON.stringify(termsResult)}`);
+  const termsAccepted = await clickOffered(
+    page,
+    'the unchecked checkbox that accepts the terms of service or privacy policy',
+  );
+  console.log(`[pangram_register] terms_checked=${termsAccepted}`);
   await humanIdlePause('short');
 }
 
@@ -175,7 +155,7 @@ async function verifyThroughMail(page) {
     ) {
       await humanClickLocator(page, codeInput);
       await humanType(page, mail.code);
-      await clickByText(page, /verify|continue|submit/i).catch(() => false);
+      await codeInput.press('Enter');
       await humanIdlePause('long');
     }
   }
@@ -185,10 +165,9 @@ async function verifyThroughMail(page) {
   }
   let status = await sessionStatus(page);
   if (!isAuthenticatedStatus(status)) {
-    const pageText = await page
-      .evaluate(() => document.body?.innerText || '')
-      .catch((e) => `unreadable: ${e.message}`); // allow-raw-playwright: read page state after verify link
-    if (/log in to your account|sign in|password/i.test(pageText)) {
+    // A page that asks for the password is Pangram's sign-in form.
+    const signInForm = page.locator('input[type="password"]').first();
+    if (await signInForm.isVisible()) {
       const loggedIn = await loginWithPassword(page, EMAIL, PASSWORD);
       console.log(`[pangram_register] post_verify_login=${loggedIn}`);
       await humanIdlePause('long');
@@ -209,17 +188,10 @@ try {
   }
 
   console.log(`[pangram_register] email=${EMAIL}`);
-  await clickByText(
-    s.page,
-    /email|password|sign up with email|continue with email/i,
-  ).catch(() => false);
+  await clickOffered(s.page, 'the option to sign up with email and password');
   await fillSignupForm(s.page);
 
-  const submitted = await clickByText(
-    s.page,
-    /sign up|create account|continue|get started|submit/i,
-  );
-  if (!submitted) throw new Error('submit_button_not_found');
+  await clickDescribed(s.page, 'the button that submits the sign-up form');
   await humanIdlePause('long');
 
   let status = await sessionStatus(s.page);
