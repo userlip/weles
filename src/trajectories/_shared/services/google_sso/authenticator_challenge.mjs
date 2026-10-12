@@ -2,89 +2,34 @@
 //
 // Google decides which method it offers, so the challenge is driven by what the
 // page shows: the authenticator option when it is listed, the code field when it
-// is on screen, and "Try another way" when Google parked the run on a method
-// this driver cannot answer. Every one of those is a question about the live
-// page, and the answers are named rather than inferred from an empty read.
+// is on screen, and the other-ways control when Google parked the run on a
+// method this driver cannot answer. Whether an option is offered, and where
+// it is, the vision model answers (`../../page/judged/seen.mjs`) in whatever
+// language Google speaks; the code field is found by its markup and a refused
+// code by the field's own aria-invalid.
 import { humanFill } from '../../../../../dist/human/keyboard.js';
-import { humanClickLocator } from '../../../../../dist/human/mouse.js';
 import { pageSettled } from '../../page/settled.mjs';
+import { clickDescribed, pageShows } from '../../page/judged/seen.mjs';
 import { generateTotp, resolveTotpSecret } from './totp_secret.mjs';
-import {
-  PAGE_TEXT_UNREADABLE,
-  logGooglePageDiag,
-  readGooglePageText,
-} from './page_diagnostics.mjs';
+import { logGooglePageDiag } from './page_diagnostics.mjs';
 
-// 'present' | 'absent' | 'unreadable'. A page whose text could not be read is
-// not a page that fails to offer the authenticator; it is a page that said
-// nothing, and the caller treats the two differently.
+// 'present' | 'absent': whether Google lists the authenticator app as a way
+// to verify.
 async function googleAuthenticatorOptionState(page) {
-  const text = await readGooglePageText(page);
-  if (text === PAGE_TEXT_UNREADABLE) return 'unreadable';
-  const offered =
-    /Google Authenticator|Authenticator app|verification code from the Google Authenticator app/i.test(
-      text,
-    );
+  const offered = await pageShows(
+    page,
+    'Does the page offer getting a verification code from the Google Authenticator app as a way to verify?',
+  );
   return offered ? 'present' : 'absent';
 }
 
 async function clickGoogleAuthenticatorOption(page) {
-  const patterns = [
-    /Get a verification code from the Google Authenticator app/i,
-    /Google Authenticator/i,
-    /Authenticator app/i,
-  ];
-  for (const pattern of patterns) {
-    const semantic = page
-      .getByRole('button', { name: pattern, exact: false })
-      .or(page.getByRole('link', { name: pattern, exact: false }))
-      .or(page.getByRole('option', { name: pattern, exact: false }))
-      .filter({ visible: true })
-      .first();
-    if (await semantic.isVisible().catch(() => false)) {
-      console.log(
-        `[google_sso] selecting Google Authenticator option via role (${pattern.source})`,
-      );
-      await semantic
-        .click({ force: true })
-        .catch(() => humanClickLocator(page, semantic));
-      await pageSettled(page);
-      return true;
-    }
-
-    const textual = page
-      .locator('li, div[role="option"], div[role="button"], button, a')
-      .filter({ hasText: pattern })
-      .filter({ visible: true })
-      .first();
-    if (await textual.isVisible().catch(() => false)) {
-      console.log(
-        `[google_sso] selecting Google Authenticator option via text (${pattern.source})`,
-      );
-      await textual
-        .click({ force: true })
-        .catch(() => humanClickLocator(page, textual));
-      await pageSettled(page);
-      return true;
-    }
-
-    const nearestClickable = page
-      .locator('button, [role="button"], a, [role="link"], li, [role="option"]')
-      .filter({ hasText: pattern })
-      .filter({ visible: true })
-      .first();
-    const clickedByJs = await humanClickLocator(page, nearestClickable)
-      .then(() => true)
-      .catch(() => false);
-    if (clickedByJs) {
-      console.log(
-        `[google_sso] selected Google Authenticator option via JS ancestor (${pattern.source})`,
-      );
-      await pageSettled(page);
-      return true;
-    }
-  }
-  return false;
+  console.log('[google_sso] selecting the Google Authenticator option');
+  await clickDescribed(
+    page,
+    'the option to get a verification code from the Google Authenticator app',
+  );
+  return true;
 }
 
 // Which selector names Google's code field, most specific first. A page that
@@ -106,24 +51,10 @@ async function visibleTotpInput(page) {
   return null;
 }
 
-async function submitGoogleSecondFactor(page) {
-  await page.keyboard.press('Enter');
-  await pageSettled(page);
-  const next = page
-    .getByRole('button', { name: /^(Next|Verify|Continue)$/i })
-    .or(
-      page
-        .locator('button, [role="button"]')
-        .filter({ hasText: /^\s*(Next|Verify|Continue)\s*$/i }),
-    )
-    .filter({ visible: true })
-    .last();
-  if (await next.isVisible().catch(() => false)) {
-    await next
-      .click({ force: true })
-      .catch(() => humanClickLocator(page, next));
-    await pageSettled(page);
-  }
+// Google's code form submits on Enter in its field.
+async function submitGoogleSecondFactor(input) {
+  await input.press('Enter');
+  await pageSettled(input.page());
 }
 
 async function fillGoogleAuthenticatorTotp(page, creds) {
@@ -132,16 +63,14 @@ async function fillGoogleAuthenticatorTotp(page, creds) {
   await pageSettled(page);
   const input = await visibleTotpInput(page);
   if (!input) return false;
-  const pageText = await readGooglePageText(page);
   const existing = await input.inputValue();
   let code = generateTotp(secret);
   if (!code) return false;
-  // A page whose text could not be read did not say the code was wrong. Only
-  // a page that says so, or a field already holding a whole code, forces a
-  // different one: the code of the next 30-second window, which Google's
-  // one-step clock tolerance accepts, instead of waiting for the window to turn.
-  const codeRejected =
-    pageText !== PAGE_TEXT_UNREADABLE && /Wrong code|Try again/i.test(pageText);
+  // Google marks a refused code on the field itself. Only a field so marked,
+  // or one already holding a whole code, forces a different one: the code of
+  // the next window, which Google's one-step clock tolerance accepts, instead
+  // of waiting for the window to turn.
+  const codeRejected = (await input.getAttribute('aria-invalid')) === 'true';
   if (
     (codeRejected || (/^\d+$/.test(existing) && existing.length === 6)) &&
     code === existing
@@ -153,7 +82,7 @@ async function fillGoogleAuthenticatorTotp(page, creds) {
   console.log(
     '[google_sso] filled Google Authenticator TOTP code from the exact scoped secret',
   );
-  await submitGoogleSecondFactor(page);
+  await submitGoogleSecondFactor(input);
   return true;
 }
 
@@ -189,63 +118,20 @@ export async function handleGoogleAuthenticatorTotp(page, creds) {
   return false;
 }
 
+// Google's control for other ways to verify, when the page offers one; false
+// when it does not.
 export async function clickTryAnotherWay(page) {
-  const beforeUrl = page.url();
-  // Called after a click that has already left the page settled.
-  const transitioned = async () => {
-    const text = await readGooglePageText(page);
-    return (
-      page.url() !== beforeUrl ||
-      (text !== PAGE_TEXT_UNREADABLE &&
-        /choose another way|choose how|verification code|authenticator|backup code|security key|text message|phone call/i.test(
-          text,
-        ))
-    );
-  };
-
-  const controller = page
-    .locator(
-      '[data-secondary-action-label="Try another way"] [jsaction*="click:"], ' +
-        '[data-secondary-action-label="Try another way"][jsaction*="click:"]',
-    )
-    .first();
-  const semantic = page
-    .getByRole('button', { name: /Try another way/i })
-    .or(page.getByRole('link', { name: /Try another way/i }))
-    .first();
-  const textual = page
-    .locator('button, [role="button"], a, [role="link"], div, span')
-    .filter({ hasText: /^\s*Try another way\s*$/i })
-    .first();
-
-  for (const [name, candidate] of [
-    ['controller', controller],
-    ['semantic control', semantic],
-    ['text control', textual],
-  ]) {
-    if (!(await candidate.isVisible().catch(() => false))) continue;
-    console.log(`[google_sso] clicking "Try another way" via ${name}`);
-    await humanClickLocator(page, candidate).catch(() =>
-      humanClickLocator(page, candidate),
-    );
-    await pageSettled(page);
-    if (await transitioned()) return true;
-  }
-
-  const nearestClickable = page
-    .locator(
-      '[data-secondary-action-label="Try another way"], button, [role="button"], a, [role="link"], li',
-    )
-    .filter({ hasText: /^\s*Try another way\s*$/i })
-    .filter({ visible: true })
-    .first();
-  const clickedByJs = await humanClickLocator(page, nearestClickable)
-    .then(() => true)
-    .catch(() => false);
-  if (!clickedByJs) return false;
-  console.log(
-    '[google_sso] clicked "Try another way" through the Google action controller',
+  if (
+    !(await pageShows(
+      page,
+      'Does the page offer a control that shows other ways to verify or sign in?',
+    ))
+  )
+    return false;
+  console.log('[google_sso] opening the other ways to verify');
+  await clickDescribed(
+    page,
+    'the control that shows other ways to verify or sign in',
   );
-  await pageSettled(page);
-  return transitioned();
+  return true;
 }

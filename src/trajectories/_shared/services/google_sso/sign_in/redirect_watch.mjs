@@ -7,25 +7,43 @@
 // flow may also close and leave the main page to finish. Each of those is a
 // state of a live page, so the step reads the settled page, answers the state
 // it shows once, and names the state it cannot leave.
-import { humanClickLocator } from '../../../../../../dist/human/mouse.js';
 import {
   pageSettled,
   submitAnswered,
   urlMatching,
 } from '../../../page/settled.mjs';
+import { clickDescribed, pageShows } from '../../../page/judged/seen.mjs';
 import {
   collectGoogleAuthMethods,
   logGooglePageDiag,
 } from '../page_diagnostics.mjs';
-import {
-  DOCUMENT_REPLACED,
-  readAcrossNavigation,
-} from '../../../page/navigation/read.mjs';
 import { resolveTotpSecret } from '../totp_secret.mjs';
 import {
   clickTryAnotherWay,
   handleGoogleAuthenticatorTotp,
 } from '../authenticator_challenge.mjs';
+
+/** Google's OAuth consent screens. */
+const CONSENT_ROUTES = ['/signin/oauth/consent', '/signin/oauth/id'];
+/** Google's security challenges this driver does not answer. */
+const UNANSWERED_CHALLENGES = [
+  '/challenge/deviceauth',
+  '/challenge/recaptcha',
+  '/challenge/az',
+  '/challenge/kpe',
+  '/challenge/sk',
+];
+
+function onRoute(url, routes) {
+  const { pathname } = new URL(url);
+  return routes.some((route) => pathname.includes(route));
+}
+
+// The caller's site is reached once the page is on its host; whether that
+// site then holds a session is the caller's own check.
+function onOrigin(url, originHost) {
+  return Boolean(originHost) && new URL(url).host.endsWith(originHost);
+}
 
 // Only closure of the owned OAuth popup can replace page readiness.
 async function settledOrClosed(page, isPopup) {
@@ -50,21 +68,13 @@ export async function watchGoogleRedirect(page, session, creds, opts) {
       console.log('[google_sso] OAuth popup closed; checking main page');
       await pageSettled(session.page);
       const u = session.page.url();
-      if (
-        originHost &&
-        u.includes(originHost) &&
-        !/login|signin/i.test(u.split('?')[0])
-      )
+      if (onOrigin(u, originHost))
         console.log(`[google_sso] returned to ${originHost}`);
       else console.log(`[google_sso] popup closed; main page=${u}`);
       return true;
     }
     const u = page.url();
-    if (
-      originHost &&
-      u.includes(originHost) &&
-      !/login|signin/i.test(u.split('?')[0])
-    ) {
+    if (onOrigin(u, originHost)) {
       console.log(`[google_sso] main page returned to ${originHost}`);
       return true;
     }
@@ -79,23 +89,20 @@ export async function watchGoogleRedirect(page, session, creds, opts) {
         totpAttempted = true;
         continue;
       }
-      const phonePrompt = page
-        .locator('li, div[role="option"], div[role="button"], button, a')
-        .filter({
-          hasText: /Tap Yes on your phone or tablet|Gmail app|phone or tablet/i,
-        })
-        .filter({ visible: true })
-        .first();
       if (
         !phonePromptChosen &&
-        (await phonePrompt.isVisible().catch(() => false))
+        (await pageShows(
+          page,
+          'Does the page offer approving the sign-in with a prompt on the phone or tablet?',
+        ))
       ) {
         phonePromptChosen = true;
         console.log(
           '[google_sso] selecting phone prompt before alternate-method menu',
         );
-        await humanClickLocator(page, phonePrompt).catch(() =>
-          phonePrompt.click({ force: true }),
+        await clickDescribed(
+          page,
+          'the option to approve the sign-in with a prompt on the phone or tablet',
         );
         continue;
       }
@@ -163,48 +170,27 @@ export async function watchGoogleRedirect(page, session, creds, opts) {
       continue;
     }
     // Handle OAuth consent screen — Google asks to confirm scope before redirecting back.
-    if (/\/signin\/oauth\/(consent|id)/.test(u) && !consentAnswered.has(u)) {
-      const continueBtn = page
-        .locator('button:has-text("Continue"), button:has-text("Allow")')
-        .filter({ visible: true })
-        .first();
-      if (await continueBtn.isVisible().catch(() => false)) {
-        consentAnswered.add(u);
-        console.log('[google_sso] clicking OAuth consent Continue/Allow');
-        await humanClickLocator(page, continueBtn);
-        continue;
-      }
+    if (onRoute(u, CONSENT_ROUTES) && !consentAnswered.has(u)) {
+      consentAnswered.add(u);
+      console.log('[google_sso] allowing the OAuth consent');
+      await clickDescribed(
+        page,
+        'the button on the Google consent screen that allows the sign-in and continues',
+      );
+      continue;
     }
-    // For popup mode: only return when the popup ITSELF leaves accounts.google.com (storagerelay redirect or dashboard redirect).
-    if (
-      isPopup &&
-      originHost &&
-      u.includes(originHost) &&
-      !/accounts\.google\.com/.test(u) &&
-      !/login|signin/i.test(u.split('?')[0])
-    ) {
-      console.log(`[google_sso] popup redirected to ${originHost}`);
+    // Off Google and on the caller's host: the popup or page came back.
+    if (!/accounts\.google\.com/.test(u) && onOrigin(u, originHost)) {
+      console.log(
+        `[google_sso] ${isPopup ? 'popup' : 'main page'} reached ${originHost}`,
+      );
       return true;
     }
-    if (
-      !isPopup &&
-      originHost &&
-      u.includes(originHost) &&
-      !/login|signin/i.test(u.split('?')[0])
-    ) {
-      console.log(`[google_sso] main page returned to ${originHost}`);
-      return true;
-    }
-    if (
-      !isPopup &&
-      !originHost &&
-      !/accounts\.google\.com/.test(u) &&
-      !/login|signin/i.test(u.split('?')[0])
-    ) {
+    if (!isPopup && !originHost && !/accounts\.google\.com/.test(u)) {
       console.log(`[google_sso] redirected off google to ${u}`);
       return true;
     }
-    if (/challenge\/(deviceauth|recaptcha|az|kpe|sk)/.test(u)) {
+    if (onRoute(u, UNANSWERED_CHALLENGES)) {
       await logGooglePageDiag(page, 'security_challenge');
       console.log(`[google_sso] FAIL: hit Google challenge ${u}`);
       return false;
@@ -244,29 +230,26 @@ export async function dismissGooglePostLogin(page) {
     await pageSettled(page);
     const url = page.url();
     if (new URL(url).hostname !== 'accounts.google.com') return;
-    const button = page
-      .locator(
-        'button:has-text("Not now"), button:has-text("Skip"), button:has-text("Cancel")',
-      )
-      .filter({ visible: true })
-      .first();
-    const shown = await readAcrossNavigation(page, () => button.isVisible());
-    if (shown === DOCUMENT_REPLACED) continue;
-    if (!shown) {
+    if (dismissed.has(url)) {
+      throw new Error(
+        `GOOGLE_POST_LOGIN_STATE_REPEATED: the dismissed offer remained at ${url}`,
+      );
+    }
+    if (
+      !(await pageShows(
+        page,
+        'Does the page make an offer after sign-in (such as adding a recovery phone or a passkey) with a control to decline or skip it?',
+      ))
+    ) {
       throw new Error(
         `GOOGLE_POST_LOGIN_CONTROL_UNAVAILABLE: no offered dismissal control at ${url}`,
       );
     }
-    const control = await readAcrossNavigation(page, () => button.innerText());
-    if (control === DOCUMENT_REPLACED) continue;
-    const state = JSON.stringify([url, control]);
-    if (dismissed.has(state)) {
-      throw new Error(
-        `GOOGLE_POST_LOGIN_STATE_REPEATED: the dismissed control remained at ${url}`,
-      );
-    }
-    dismissed.add(state);
+    dismissed.add(url);
     console.log('[google_sso] dismissing post-login prompt');
-    await humanClickLocator(page, button);
+    await clickDescribed(
+      page,
+      'the control that declines or skips the offer for now',
+    );
   }
 }

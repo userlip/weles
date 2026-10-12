@@ -99,7 +99,13 @@ export async function createAppPassword(page, wait, appName) {
     };
   }
   await humanFill(page, field, appName);
-  if (!(await clickByText(page, /^Create$/i, 'create app password'))) {
+  if (
+    !(await clickByText(
+      page,
+      'the button that creates the app password with the entered name',
+      'create app password',
+    ))
+  ) {
     return {
       ok: false,
       blocked: 'create_action_not_found',
@@ -128,6 +134,10 @@ export async function createAppPassword(page, wait, appName) {
       textPreview: preview(text),
     };
   }
-  await clickByText(page, /^Done$/i, 'close generated app password');
+  await clickByText(
+    page,
+    'the button that closes the dialog showing the generated app password',
+    'close generated app password',
+  );
   return { ok: true, password };
 }

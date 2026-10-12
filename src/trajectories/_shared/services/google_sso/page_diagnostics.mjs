@@ -78,30 +78,15 @@ export async function logGooglePageDiag(page, label) {
   }
 }
 
+// The ways to verify Google lists: each entry carries its challenge type.
 export async function collectGoogleAuthMethods(page) {
-  return await page.evaluate(() => {
-    const norm = (value) =>
-      String(value || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    return Array.from(
-      document.querySelectorAll(
-        'li, div[role="button"], div[role="option"], button, a, [data-challengetype]',
-      ),
-    )
-      .map((el) => ({
-        tag: (el.tagName || '').toLowerCase(),
-        role: el.getAttribute('role'),
-        challengeType: el.getAttribute('data-challengetype'),
-        text: norm(el.innerText),
-        aria: el.getAttribute('aria-label'),
-      }))
-      .filter((item) =>
-        /try another way|passkey|authenticator|backup code|verification code|phone|text|call|security key|gmail|prompt|password/i.test(
-          [item.text, item.aria, item.challengeType]
-            .filter((part) => part !== null)
-            .join(' '),
-        ),
-      );
-  });
+  return await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-challengetype]')).map((el) => ({
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role'),
+      challengeType: el.getAttribute('data-challengetype'),
+      text: el.innerText.replace(/\s+/g, ' ').trim(),
+      aria: el.getAttribute('aria-label'),
+    })),
+  );
 }

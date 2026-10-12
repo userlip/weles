@@ -6,6 +6,7 @@ import { WSession } from '../../../dist/session/wsession.js';
 import { patchEffectiveBalance } from '../_shared/services/proxy_probe.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { submitLoginForm } from '../_shared/services/native_login/submit.mjs';
+import { readShownBalance } from '../_shared/services/google_sso.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
@@ -13,17 +14,6 @@ import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 const LOGIN_URL = 'https://app.packetstream.io/login';
 const DASH_URL = 'https://app.packetstream.io';
 const DISPLAY_NAME = 'PacketStream';
-
-function parseBalanceFromText(text) {
-  if (!text) return null;
-  const labeled = text.match(
-    /(?:balance|credit[s]?|account|wallet|funds)[^\n$]{0,40}\$([0-9]+(?:\.[0-9]{1,2})?)/i,
-  );
-  if (labeled) return Number(labeled[1]);
-  const dollar = text.match(/\$([0-9]+\.[0-9]{2})\b/);
-  if (dollar) return Number(dollar[1]);
-  return null;
-}
 
 const login = await getServiceLogin(DISPLAY_NAME);
 if (!login) {
@@ -86,7 +76,7 @@ try {
   }
 
   const text = await s.page.evaluate(() => document.body.innerText);
-  const balance = parseBalanceFromText(text);
+  const balance = await readShownBalance(s.page);
   if (balance == null) {
     const dir = runRecordingsDir('packetstream_balance');
     mkdirSync(dir, { recursive: true });

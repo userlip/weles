@@ -9,6 +9,7 @@
 import { humanFill } from '../../../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../../../dist/human/mouse.js';
 import { pageSettled, submitAnswered } from '../../../page/settled.mjs';
+import { clickDescribed, pageShows } from '../../../page/judged/seen.mjs';
 import { logGooglePageDiag } from '../page_diagnostics.mjs';
 
 // A click on a Google sign-in control either moves the page to another URL or
@@ -66,40 +67,44 @@ export async function reachGooglePasswordStep(page, creds) {
       const beforeUrl = page.url();
       await humanClickLocator(page, accountOption);
       await googleAnswered(page, beforeUrl);
-    } else {
-      // The declared account is not on the list. "Use another account" leads to
-      // the identifier step; without it, the chooser offers no fresh entry.
-      const another = page
-        .getByText(/use another account/i)
-        .filter({ visible: true })
-        .first();
-      if (await another.isVisible()) {
-        console.log(
-          '[google_sso] account not listed on the chooser; choosing another account',
-        );
-        const beforeUrl = page.url();
-        await humanClickLocator(page, another);
-        await googleAnswered(page, beforeUrl);
-      }
+    } else if (
+      await pageShows(
+        page,
+        'Does the account chooser offer using another account?',
+      )
+    ) {
+      // The declared account is not on the list; using another account leads
+      // to the identifier step.
+      console.log(
+        '[google_sso] account not listed on the chooser; choosing another account',
+      );
+      const beforeUrl = page.url();
+      await clickDescribed(
+        page,
+        'the entry of the account chooser that uses another account',
+      );
+      await googleAnswered(page, beforeUrl);
     }
   }
   if (!/accounts\.google\.com/.test(page.url())) {
     console.log(`[google_sso] known account returned to ${page.url()}`);
     return { at: 'caller_site' };
   }
-  if (/\/signin\/oauth\/(consent|id)/.test(page.url())) {
-    const continueButton = page
-      .getByRole('button', { name: /^(Continue|Allow)$/i })
-      .filter({ visible: true })
-      .first();
-    if (await continueButton.isVisible()) {
-      const beforeUrl = page.url();
-      await humanClickLocator(page, continueButton);
-      await googleAnswered(page, beforeUrl);
-      if (!/accounts\.google\.com/.test(page.url())) {
-        console.log(`[google_sso] consent returned to ${page.url()}`);
-        return { at: 'caller_site' };
-      }
+  const { pathname } = new URL(page.url());
+  if (
+    ['/signin/oauth/consent', '/signin/oauth/id'].some((route) =>
+      pathname.includes(route),
+    )
+  ) {
+    const beforeUrl = page.url();
+    await clickDescribed(
+      page,
+      'the button on the Google consent screen that allows the sign-in and continues',
+    );
+    await googleAnswered(page, beforeUrl);
+    if (!/accounts\.google\.com/.test(page.url())) {
+      console.log(`[google_sso] consent returned to ${page.url()}`);
+      return { at: 'caller_site' };
     }
   }
 

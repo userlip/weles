@@ -1,25 +1,24 @@
 // The service account behind a Google-SSO balance run: which stored identity
-// signs in, and what the dashboard's own wording says the balance is.
+// signs in, and what balance the dashboard shows.
 //
 // Both answers are refusable. An identity that does not match the account the
-// caller asked for is an error, not a substitution; a page with no labelled
+// caller asked for is an error, not a substitution; a page that shows no
 // balance returns nothing rather than the first price it happened to show.
 import { readScopedLogin } from '../../../../_shared/scoped-secrets.mjs';
+import { shownAmount } from '../../page/judged/seen.mjs';
 import {
   findWelesRecordId,
   updateWelesRecord,
 } from '../../skarbiec/accounts.mjs';
 
-export function parseBalanceFromText(text) {
-  // Require a "Balance:" / "Credits:" / "Wallet:" / "Funds:" labelled
-  // match. An unlabelled service price is not an account balance. Return null
-  // when no labelled balance is found rather than persisting a misleading value.
-  if (!text) return null;
-  const labeled = text.match(
-    /(?:balance|credit[s]?|wallet|funds)[^\n$€£]{0,40}\$([0-9]+(?:\.[0-9]{1,4})?)/i,
+// The account's balance or remaining credit as the vision model reads the
+// dashboard, in whatever words and language it labels it; a service price is
+// not a balance, and a page showing none answers null.
+export function readShownBalance(page) {
+  return shownAmount(
+    page,
+    "account balance, wallet funds or remaining credit (not a plan's price)",
   );
-  if (labeled) return Number(labeled[1]);
-  return null;
 }
 
 // Resolve the shared Google SSO identity through its exact Skarbiec consumer.

@@ -16,7 +16,7 @@ export { generateTotp } from './google_sso/totp_secret.mjs';
 export {
   getGoogleSsoCreds,
   getScopedGoogleLogin,
-  parseBalanceFromText,
+  readShownBalance,
   patchServiceBalance,
 } from './google_sso/service_account.mjs';
 

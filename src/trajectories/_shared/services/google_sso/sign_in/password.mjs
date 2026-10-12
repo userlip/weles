@@ -7,6 +7,7 @@
 import { humanFill } from '../../../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../../../dist/human/mouse.js';
 import { pageSettled } from '../../../page/settled.mjs';
+import { clickDescribed } from '../../../page/judged/seen.mjs';
 import { logGooglePageDiag } from '../page_diagnostics.mjs';
 import { clickTryAnotherWay } from '../authenticator_challenge.mjs';
 import { readAcrossNavigation } from '../../../page/navigation/read.mjs';
@@ -28,70 +29,22 @@ export async function submitGooglePassword(page, creds, passwordFieldCount) {
     if (pwInVisible > 0) break;
 
     // Google's "Welcome" / challenge selection page lists sign-in methods.
-    // Explicitly pick "Enter your password" / "Use your password" instead of
-    // looping on "Try another way". The option may be a listitem, div, or
-    // button, and Playwright's visible filter can be flaky on the listitem
-    // itself, so ask by semantic role first, then by text, then by the nearest
-    // clickable ancestor of that text.
+    // The password option is picked explicitly instead of looping on the
+    // other-ways control; the vision model finds it in Google's language.
+    const { pathname } = new URL(page.url());
     if (
       !usedPasswordChoice &&
-      /signin\/challenge\/(selection|pk\/presend)/.test(page.url())
+      ['/challenge/selection', '/challenge/pk/presend'].some((route) =>
+        pathname.includes(route),
+      )
     ) {
       usedPasswordChoice = true;
-
-      const pwOptionNames = [/Enter your password/i, /Use your password/i];
-      let clickedChoice = false;
-      for (const nameRe of pwOptionNames) {
-        const semantic = page
-          .getByRole('button', { name: nameRe, exact: false })
-          .or(page.getByRole('link', { name: nameRe, exact: false }))
-          .filter({ visible: true })
-          .first();
-        if (await semantic.isVisible().catch(() => false)) {
-          console.log(
-            `[google_sso] clicking password option via role (${nameRe.source})`,
-          );
-          await semantic
-            .click({ force: true })
-            .catch(() => humanClickLocator(page, semantic));
-          clickedChoice = true;
-          break;
-        }
-        const textual = page
-          .locator('li, div[role="option"], div[role="button"], button, a')
-          .filter({ hasText: nameRe })
-          .filter({ visible: true })
-          .first();
-        if (await textual.isVisible().catch(() => false)) {
-          console.log(
-            `[google_sso] clicking password option via text (${nameRe.source})`,
-          );
-          await textual
-            .click({ force: true })
-            .catch(() => humanClickLocator(page, textual));
-          clickedChoice = true;
-          break;
-        }
-        // Last resort: find the text node and click its nearest clickable ancestor.
-        const nearestClickable = page
-          .locator(
-            'button, [role="button"], a, [role="link"], li, [role="option"]',
-          )
-          .filter({ hasText: nameRe })
-          .filter({ visible: true })
-          .first();
-        const foundByJs = await humanClickLocator(page, nearestClickable)
-          .then(() => true)
-          .catch(() => false);
-        if (foundByJs) {
-          console.log(
-            `[google_sso] clicked password option via JS ancestor (${nameRe.source})`,
-          );
-          clickedChoice = true;
-          break;
-        }
-      }
-      if (clickedChoice) continue;
+      console.log('[google_sso] choosing the password sign-in method');
+      await clickDescribed(
+        page,
+        'the option to sign in by entering the account password',
+      );
+      continue;
     }
 
     if (!usedTryAnotherWay) {
@@ -120,60 +73,27 @@ export async function submitGooglePassword(page, creds, passwordFieldCount) {
   // attempts to click the Next button hung because the button locator matched
   // a non-actionable / overlay element.
   console.log('[google_sso] pressing Enter to submit password');
-  await page.keyboard.press('Enter');
+  await pwIn.press('Enter');
   await pageSettled(page);
 
-  if (
-    /challenge\/pwd/.test(page.url()) &&
-    (await pwIn.isVisible().catch(() => false))
-  ) {
+  // A password page still showing after Enter is sent with its own Next
+  // control, which Google renders inside #passwordNext.
+  if (/challenge\/pwd/.test(page.url()) && (await pwIn.isVisible())) {
     console.log(
       '[google_sso] password page still visible after Enter; clicking Next',
     );
-    const currentPasswordLength = await pwIn.evaluate(
-      (el) => String(el.value || '').length,
-    );
-    if (currentPasswordLength === 0) {
+    if (!(await pwIn.inputValue())) {
       console.log(
         '[google_sso] password input was cleared before the Next click; refilling',
       );
       await humanFill(page, pwIn, creds.password);
     }
-    const nextByRole = page
-      .getByRole('button', { name: 'Next', exact: true })
-      .filter({ visible: true })
-      .last();
-    const nextByText = page
-      .locator('button, [role="button"]')
-      .filter({ hasText: /^\s*Next\s*$/i })
-      .filter({ visible: true })
-      .last();
-    const passwordNextLegacy = page
+    const passwordNext = page
       .locator('#passwordNext button')
       .filter({ visible: true })
       .first();
-    const genericNext = page
-      .getByRole('button', { name: /^(Next|Sign in|Continue)$/i })
-      .filter({ visible: true })
-      .last();
-    let nextBtn = null;
-    for (const candidate of [
-      nextByRole,
-      nextByText,
-      passwordNextLegacy,
-      genericNext,
-    ]) {
-      if (await candidate.isVisible().catch(() => false)) {
-        nextBtn = candidate;
-        break;
-      }
-    }
-    if (nextBtn) {
-      await humanClickLocator(page, nextBtn).catch(async () => {
-        console.log('[google_sso] native click failed, trying human click');
-        await humanClickLocator(page, nextBtn);
-      });
-    }
+    if (await passwordNext.isVisible())
+      await humanClickLocator(page, passwordNext);
     await pageSettled(page);
   }
 

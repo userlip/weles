@@ -3,7 +3,7 @@
 import { WSession } from '../../../dist/session/wsession.js';
 import {
   googleSso,
-  parseBalanceFromText,
+  readShownBalance,
   patchServiceBalance,
   getGoogleSsoCreds,
 } from '../_shared/services/google_sso.mjs';
@@ -95,7 +95,7 @@ try {
     /Available\s+credits[^0-9]*([0-9]+)\s*\/\s*([0-9]+)/i,
   );
   let balance = credMatch ? Number(credMatch[1]) : null;
-  if (balance == null) balance = parseBalanceFromText(text); // fall-through for $ plans (legacy)
+  if (balance == null) balance = await readShownBalance(s.page);
   if (balance == null) {
     // Forensic dump on regex miss — full innerText, DOM, screenshot. Reusable
     // shape for any other balance trajectory whose regex stops matching.

@@ -1,8 +1,8 @@
 // A Google device prompt is a live challenge, not a missing authenticator.
 // Select an offered phone method once, ask the account owner for approval,
 // and observe Google's response without sending page contents to alert channels.
-import { humanClickLocator } from '../../../../../../../dist/human/mouse.js';
-import { pageCondition, pageSettled } from '../../../../page/settled.mjs';
+import { pageSettled } from '../../../../page/settled.mjs';
+import { clickDescribed, pageShows } from '../../../../page/judged/seen.mjs';
 import {
   closeOperatorRequest,
   noteOperatorRequest,
@@ -27,31 +27,28 @@ function isDevicePrompt(page) {
 /**
  * Google's phone method on the current challenge, without sending anything:
  * `{ shown: true }` when Google already shows its device prompt (it sent it on
- * its own), `{ option }` for the method a click would send, or null when
- * Google offers no phone prompt. "Try another way" only lists the methods.
+ * its own), `{ option: true }` when choosing the method would send it, or null
+ * when Google offers no phone prompt. The other-ways control only lists the
+ * methods, and the vision model reads which are offered.
  */
 async function offeredPhonePrompt(page) {
   const url = location(page);
   if (url.hostname !== GOOGLE_HOST || !CHALLENGE_PATH.test(url.pathname))
     return null;
   if (isDevicePrompt(page)) return { shown: true };
-  const alternate = page
-    .getByRole('button', { name: /^Try another way$/i })
-    .or(page.getByRole('link', { name: /^Try another way$/i }))
-    .filter({ visible: true })
-    .first();
-  if (await alternate.isVisible()) {
-    await humanClickLocator(page, alternate);
-    await pageSettled(page);
+  if (
+    await pageShows(
+      page,
+      'Does the page offer a control that shows other ways to verify?',
+    )
+  ) {
+    await clickDescribed(page, 'the control that shows other ways to verify');
   }
-  const option = page
-    .locator('li, div[role="option"], div[role="button"], button, a')
-    .filter({
-      hasText: /Tap Yes on your phone or tablet|Gmail app|phone or tablet/i,
-    })
-    .filter({ visible: true })
-    .first();
-  return (await option.isVisible()) ? { option } : null;
+  const offered = await pageShows(
+    page,
+    'Does the page offer approving the sign-in with a prompt on the phone or tablet?',
+  );
+  return offered ? { option: true } : null;
 }
 
 /** Whether Google offers a phone prompt here; nothing is sent to the phone. */
@@ -59,22 +56,14 @@ export async function googlePhonePromptOffered(page) {
   return Boolean(await offeredPhonePrompt(page));
 }
 
-/** The number Google asks the phone to match, as a sentence, or ''. */
+/** The number Google asks the phone to match, as a sentence, or ''. The
+ * device prompt shows it as the page's one standalone number. */
 async function numberToMatch(page) {
   const text = await page.locator('body').innerText();
-  const [, number] = text.match(/\b(?:tap|choose|select)\s+(\d+)\b/i) ?? [];
-  return number
-    ? ` Choose ${number} if the phone asks you to match the number.`
+  const found = text.match(/(?:^|\s)(?<number>\d+)(?:\s|$)/m);
+  return found
+    ? ` Choose ${found.groups.number} if the phone asks you to match the number.`
     : '';
-}
-
-/** Google's own control for sending the device prompt again. */
-function resendControl(page) {
-  return page
-    .getByRole('button', { name: /^Resend it$/i })
-    .or(page.getByRole('link', { name: /^Resend it$/i }))
-    .filter({ visible: true })
-    .first();
 }
 
 function failure(message, code) {
@@ -118,7 +107,10 @@ export async function completeGooglePhoneApproval(page, account, run) {
   try {
     if (offered.option) {
       seen = await untilReady(page, request, seen);
-      await humanClickLocator(page, offered.option);
+      await clickDescribed(
+        page,
+        'the option to approve the sign-in with a prompt on the phone or tablet',
+      );
       await pageSettled(page);
       if (!isDevicePrompt(page)) {
         throw failure(
@@ -245,14 +237,21 @@ export async function completeGooglePhoneApproval(page, account, run) {
         continue;
       }
       if (said.answer === 'not_received') {
-        const resend = resendControl(page);
-        if (!(await resend.isVisible())) {
+        if (
+          !(await pageShows(
+            page,
+            'Does the page offer sending the sign-in prompt to the phone again?',
+          ))
+        ) {
           throw failure(
-            `the operator received no Google prompt, and Google offers no "Resend it" on ${page.url()}`,
+            `the operator received no Google prompt, and Google offers no way to send it again on ${page.url()}`,
             'google_prompt_not_received',
           );
         }
-        await humanClickLocator(page, resend);
+        await clickDescribed(
+          page,
+          'the control that sends the sign-in prompt to the phone again',
+        );
         noteOperatorRequest(
           request.id,
           'The operator asked for a new prompt; the run pressed Google\'s "Resend it" and waits again',

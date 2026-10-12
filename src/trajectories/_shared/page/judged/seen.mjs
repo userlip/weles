@@ -11,6 +11,7 @@
 // typed, are refused with the description and the page.
 
 import {
+  askPage,
   checkPage,
   findClickTarget,
 } from '../../../../../dist/vision/analyze.js';
@@ -40,6 +41,32 @@ export async function clickDescribed(page, description) {
   await humanClick(page, target.x, target.y);
   await pageSettled(page);
   return target;
+}
+
+/**
+ * Clicks the control `description` names when the settled page shows one, and
+ * says whether it did; a page without it is an answer, not a failure.
+ */
+export async function clickOffered(page, description) {
+  if (!(await pageShows(page, `Does the page show ${description}?`)))
+    return false;
+  await clickDescribed(page, description);
+  return true;
+}
+
+/**
+ * The dollar amount the settled page shows for `what` (an account balance, a
+ * remaining credit), as the vision model reads it; null when the model says
+ * the page shows none.
+ */
+export async function shownAmount(page, what) {
+  await pageSettled(page);
+  const answer = await askPage(
+    page,
+    `What ${what} does the page show, in US dollars? Answer with the number alone, or NONE when the page shows none.`,
+  );
+  const found = answer.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  return found ? Number(found.shift()) : null;
 }
 
 /**

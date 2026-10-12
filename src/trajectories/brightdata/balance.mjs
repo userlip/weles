@@ -6,7 +6,7 @@ import { getScopedGoogleLogin } from '../_shared/services/google_sso.mjs';
 import { WSession } from '../../../dist/session/wsession.js';
 import {
   googleSso,
-  parseBalanceFromText,
+  readShownBalance,
 } from '../_shared/services/google_sso.mjs';
 import { patchEffectiveBalance } from '../_shared/services/proxy_probe.mjs';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
@@ -68,7 +68,7 @@ try {
 
   const text = await s.page.evaluate(() => document.body.innerText);
   console.log(`[trajectory] dashboard text length=${text.length}`);
-  const balance = parseBalanceFromText(text);
+  const balance = await readShownBalance(s.page);
   if (balance == null) {
     const dir = runRecordingsDir('brightdata_balance');
     mkdirSync(dir, { recursive: true });

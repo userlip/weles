@@ -3,7 +3,7 @@
 import { WSession } from '../../../dist/session/wsession.js';
 import {
   googleSso,
-  parseBalanceFromText,
+  readShownBalance,
   getScopedGoogleLogin,
 } from '../_shared/services/google_sso.mjs';
 import { patchEffectiveBalance } from '../_shared/services/proxy_probe.mjs';
@@ -104,7 +104,7 @@ try {
       break;
     }
   }
-  if (balance == null) balance = parseBalanceFromText(text);
+  if (balance == null) balance = await readShownBalance(s.page);
   if (balance == null) {
     // Forensic dump on miss — same pattern as nopecha/balance.mjs. Writes
     // full innerText, rendered HTML, screenshot to the per-run recordings dir

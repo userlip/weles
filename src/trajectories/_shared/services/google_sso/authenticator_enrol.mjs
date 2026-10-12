@@ -8,22 +8,19 @@
 // Every step is one attempt: a page that does not show what the step needs is
 // reported with what it showed instead, never clicked at again, and a browser
 // error is the caller's to see.
-import { humanClickLocator } from '../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../dist/human/keyboard.js';
+import { clickOffered, pageShows } from '../../page/judged/seen.mjs';
 import { generateTotp } from './totp_secret.mjs';
 
-const CLICKABLE =
-  'button, [role="button"], a, [role="link"], li, div[role="option"]';
-
-/** The authenticator settings page, by its direct address.
- *
- * `hl=en` is load-bearing, not decoration: every step below recognises the
- * page by its English labels, and Google renders this page in the account's
- * own language: an account answering in Polish shows "Skonfiguruj aplikację"
- * where this module looks for "Set up authenticator", so a run that signed
- * in correctly still refuses with `setup_action_not_found`. */
+/** The authenticator settings page, by its direct address. Every step reads
+ * the page by its route, its fields and the vision model, in whatever
+ * language the account uses; `hl=en` only keeps the refusal previews in one
+ * language for whoever reads them. */
 export const AUTHENTICATOR_SETUP_URL =
   'https://myaccount.google.com/two-step-verification/authenticator?hl=en';
+
+/** Google's own route for the authenticator settings page. */
+const AUTHENTICATOR_ROUTE = '/two-step-verification/authenticator';
 
 export async function bodyText(page) {
   return await page.evaluate(() => document.body?.innerText || '');
@@ -34,28 +31,12 @@ function preview(text) {
   return redactKeys(text);
 }
 
-export async function clickByText(page, pattern, label) {
-  const role = page
-    .getByRole('button', { name: pattern, exact: false })
-    .or(page.getByRole('link', { name: pattern, exact: false }))
-    .filter({ visible: true })
-    .first();
-  if (await role.isVisible()) {
-    console.log(`[google-authenticator-enrol] clicking ${label} via role`);
-    await humanClickLocator(page, role);
-    return true;
-  }
-  const textual = page
-    .locator(CLICKABLE)
-    .filter({ hasText: pattern })
-    .filter({ visible: true })
-    .first();
-  if (await textual.isVisible()) {
-    console.log(`[google-authenticator-enrol] clicking ${label} via text`);
-    await humanClickLocator(page, textual);
-    return true;
-  }
-  return false;
+/** Clicks the control `description` names when the page offers it; false
+ * when it does not. */
+export async function clickByText(page, description, label) {
+  const clicked = await clickOffered(page, description);
+  if (clicked) console.log(`[google-authenticator-enrol] clicked ${label}`);
+  return clicked;
 }
 
 /** Whether the page is a Google sign-in or challenge rather than the account. */
@@ -78,15 +59,10 @@ export async function openAuthenticatorSetup(page, wait) {
       url,
       textPreview: '',
     };
-  const text = await bodyText(page);
-  if (
-    /two-step-verification\/authenticator/i.test(url) ||
-    /Authenticator app|Set up authenticator|Change authenticator app|Your authenticator/i.test(
-      text,
-    )
-  ) {
+  if (new URL(url).pathname.includes(AUTHENTICATOR_ROUTE)) {
     return { ok: true, url };
   }
+  const text = await bodyText(page);
   return {
     ok: false,
     blocked: 'authenticator_setup_page_not_reached',
@@ -103,7 +79,12 @@ export async function openAuthenticatorSetup(page, wait) {
  */
 export async function revealSetupKey(page, wait) {
   const textBefore = await bodyText(page);
-  if (/Remove anyway/i.test(textBefore)) {
+  if (
+    await pageShows(
+      page,
+      'Does the page ask to confirm removing or replacing an existing authenticator?',
+    )
+  ) {
     return {
       ok: false,
       blocked: 'authenticator_replacement_requires_consent',
@@ -114,20 +95,29 @@ export async function revealSetupKey(page, wait) {
   // just because its seed is unavailable to Weles.
   const started = await clickByText(
     page,
-    /Set up authenticator|Add authenticator/i,
+    'a control that sets up or adds an authenticator app (not one that changes an existing one)',
     'set up authenticator',
   );
   if (!started) {
     return {
       ok: false,
-      blocked: /Change authenticator app/i.test(textBefore)
+      blocked: (await pageShows(
+        page,
+        'Does the page offer only changing an authenticator app that is already set up?',
+      ))
         ? 'authenticator_replacement_requires_consent'
         : 'setup_action_not_found',
       textPreview: preview(textBefore),
     };
   }
   await wait();
-  if (!(await clickByText(page, /Can.?t scan it/i, "Can't scan it?"))) {
+  if (
+    !(await clickByText(
+      page,
+      'the control that shows the setup key as text instead of a QR code',
+      'show setup key',
+    ))
+  ) {
     return {
       ok: false,
       blocked: 'setup_key_reveal_not_found',
@@ -186,7 +176,13 @@ export async function confirmSetupCode(page, wait, secret) {
   // already shown, skipped the Next that reveals it, and refused with
   // `setup_code_input_not_found` while Google was still showing the setup key.
   if (!(await input.isVisible())) {
-    if (!(await clickByText(page, /^Next$/i, 'next'))) {
+    if (
+      !(await clickByText(
+        page,
+        'the Next button of the authenticator setup dialog',
+        'next',
+      ))
+    ) {
       return {
         ok: false,
         blocked: 'setup_code_input_not_found',
@@ -198,25 +194,15 @@ export async function confirmSetupCode(page, wait, secret) {
   await input.waitFor({ state: 'visible' });
   const code = freshCode(secret);
   await humanFill(page, input, code);
-  if (
-    !(await clickByText(
-      page,
-      /^(Next|Verify|Turn on|Done)$/i,
-      'submit setup code',
-    ))
-  ) {
-    return {
-      ok: false,
-      blocked: 'setup_code_submit_not_found',
-      textPreview: preview(await bodyText(page)),
-    };
-  }
+  await input.press('Enter');
   await wait();
   const text = await bodyText(page);
   if (
-    /Wrong code|Try again|Invalid code|Couldn't verify|Enter the code/i.test(
-      text,
-    )
+    (await input.isVisible()) &&
+    (await pageShows(
+      page,
+      'Does the setup dialog say the code is wrong or could not be verified?',
+    ))
   ) {
     return {
       ok: false,
@@ -224,17 +210,15 @@ export async function confirmSetupCode(page, wait, secret) {
       textPreview: preview(text),
     };
   }
-  const completed = page
-    .getByRole('button', { name: /Change authenticator app/i })
-    .or(page.getByRole('link', { name: /Change authenticator app/i }))
-    .filter({ visible: true })
-    .first();
   const url = new URL(page.url());
   if (
     url.hostname !== 'myaccount.google.com' ||
-    !/two-step-verification\/authenticator/.test(url.pathname) ||
+    !url.pathname.includes(AUTHENTICATOR_ROUTE) ||
     (await input.isVisible()) ||
-    !(await completed.isVisible())
+    !(await pageShows(
+      page,
+      'Does the page show that an authenticator app is now set up for the account?',
+    ))
   ) {
     return {
       ok: false,

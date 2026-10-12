@@ -3,7 +3,7 @@
 import { getServiceLogin } from '../../../dist/utils/credentials.js';
 import { WSession } from '../../../dist/session/wsession.js';
 import {
-  parseBalanceFromText,
+  readShownBalance,
   patchServiceBalance,
 } from '../_shared/services/google_sso.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
@@ -74,7 +74,7 @@ try {
   }
 
   const text = await s.page.evaluate(() => document.body.innerText);
-  const balance = parseBalanceFromText(text);
+  const balance = await readShownBalance(s.page);
   if (balance == null) {
     const dir = runRecordingsDir('sadcaptcha_balance');
     mkdirSync(dir, { recursive: true });

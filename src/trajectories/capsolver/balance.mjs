@@ -2,7 +2,7 @@
 import { WSession } from '../../../dist/session/wsession.js';
 import {
   googleSso,
-  parseBalanceFromText,
+  readShownBalance,
   patchServiceBalance,
   getGoogleSsoCreds,
 } from '../_shared/services/google_sso.mjs';
@@ -64,7 +64,7 @@ try {
   await pageSettled(s.page);
   const text = await s.page.evaluate(() => document.body.innerText);
   console.log(`[trajectory] dashboard text length=${text.length}`);
-  const balance = parseBalanceFromText(text);
+  const balance = await readShownBalance(s.page);
   if (balance == null) {
     const dir = runRecordingsDir('capsolver_balance');
     mkdirSync(dir, { recursive: true });
