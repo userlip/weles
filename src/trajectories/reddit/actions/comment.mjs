@@ -4,6 +4,7 @@ import {
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { detectRedditBanSignals } from '../../../../dist/platforms/reddit/ban_signals.js';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { humanType } from '../../../../dist/human/keyboard.js';
 import {
   humanIdlePause,
@@ -175,9 +176,7 @@ try {
   // JSON and confirm the comment is in the public tree.
   const found = await readLocalPost();
   const postedCommentId = found && found !== 'POSTED_NO_ID' ? found : false;
-  banSignal = await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-    () => false,
-  );
+  banSignal = await banSignalOf(detectRedditBanSignals, s, 'after submitting the comment');
   if (!found)
     throw new Error(
       `submit did not confirm — body did not appear in page text`,
@@ -206,9 +205,7 @@ try {
 } catch (e) {
   if (e.banSignal) banSignal = e.banSignal;
   if (!banSignal)
-    banSignal = await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-      () => false,
-    );
+    banSignal = await banSignalOf(detectRedditBanSignals, s, 'after the failure');
   if (banSignal) console.log(`[ban-signal] ${banSignal.signal}`);
   console.log('FAIL:', e.message);
   process.exitCode = 1;
