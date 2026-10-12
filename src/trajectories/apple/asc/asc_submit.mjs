@@ -13,7 +13,8 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 //   VERSION_STRING (optional) marketing version to create if none is editable
 //   WHATS_NEW      (optional) release notes for this version
 //   BUILD_NUMBER   (optional) specific build to attach; else newest selectable
-//   SUBMIT         (optional) "0" stages everything but stops before submit
+//   SUBMIT         (optional) "1" makes the terminal Submit for Review click;
+//                  anything else stages everything and stops before it
 //   PROXY_URL      (optional) override proxy
 //
 // Run apple/login.mjs first to seed the session cookie jar.
@@ -34,7 +35,9 @@ const IPA_PATH = process.env.IPA_PATH;
 const VERSION_STRING = process.env.VERSION_STRING;
 const WHATS_NEW = process.env.WHATS_NEW;
 const BUILD_NUMBER = process.env.BUILD_NUMBER;
-const SUBMIT = process.env.SUBMIT !== '0';
+// A submission sends the build to Apple's review, so it happens only when
+// asked for — the convention every publishing trajectory uses.
+const SUBMIT = process.env.SUBMIT === '1';
 const DIST_URL = `https://appstoreconnect.apple.com/apps/${APP_ID}/distribution`;
 
 const acct = await getSocialAccount('apple');
