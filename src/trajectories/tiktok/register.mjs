@@ -355,14 +355,14 @@ const PROBE = `(() => { const t = document.body.innerText || ''; const i = []; i
         id.username = await runUsernameStep(s, id, humanClickLocator);
       }
 
-      // Success: anywhere post-signup that looks logged-in
-      const finalUrl = s.page.url?.() ?? '';
-      const hasSessionId = await s.page
-        .evaluate('document.cookie.includes("sessionid")')
-        .catch(() => false);
-      const signedIn =
-        hasSessionId ||
-        /foryou|\/@|\/home|onboarding|interests|create-username/.test(finalUrl);
+      // Signed in is TikTok's own session cookie on the context: it is
+      // HttpOnly, so the page's document.cookie never showed it, and a
+      // /foryou or /@ URL is shown to signed-out visitors too.
+      const finalUrl = s.page.url();
+      const hasSessionId = (await s.ctx.cookies('https://www.tiktok.com')).some(
+        (cookie) => cookie.name === 'sessionid' && cookie.value,
+      );
+      const signedIn = hasSessionId;
       if (signedIn) {
         await s.saveAccount('tiktok', {
           username: id.username,
