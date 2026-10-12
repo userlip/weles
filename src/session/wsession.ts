@@ -61,10 +61,10 @@ import {
   wsFillIdentity,
 } from './wsession-helpers/finalize.js';
 import {
-  isSkarbiecCredentialTask,
   wsAutoStoreCredential,
   wsStoreCredential,
-} from './wsession-helpers/credential-store.js';
+} from './wsession-helpers/credential/store.js';
+import { isSkarbiecCredentialTask } from './wsession-helpers/credential/task.js';
 import type { CapabilityRef } from '../utils/capability.js';
 import { assertNonCredentialInput } from '../utils/capability.js';
 import { installBrowserEvidencePolicy } from '../agent/browser-evidence-policy.js';

@@ -1,96 +1,37 @@
 import { constants, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runRecordingsDir } from '../run-recordings.js';
-import type { WSession } from '../wsession.js';
+import { runRecordingsDir } from '../../run-recordings.js';
+import type { WSession } from '../../wsession.js';
 import {
   acquiredSecretContract,
   isWelesAcquiredSecretValue,
   isWelesAcquiredSourceOrigin,
   writeWelesAcquiredSecret,
   type WelesAcquiredSecret,
-} from '../../secrets/scoped-service.js';
+} from '../../../secrets/scoped-service.js';
+import type { CredentialLocator, CredentialPage } from './page.js';
+import {
+  credentialConstraintsText,
+  isSkarbiecCredentialTask,
+  type CredentialFieldClass,
+  type StoreConstraints,
+} from './task.js';
 
-type CredentialFieldClass = 'token' | 'api-key' | 'password';
-
-type StoreConstraints = {
-  secretName: WelesAcquiredSecret;
-  itemId: string;
-  field: string;
-  fieldClass: CredentialFieldClass;
-  // Non-empty exactly when Skarbiec recorded a signup origin for this operation:
-  // the managed write must then echo that string back, and must not send one when
-  // the operation declared none.
-  declaredOrigin: string;
-  sourceOrigin: string;
-  tenantId: string | null;
-  accountEmail: string;
-  requestId: string;
-  operation: string;
+/** The operations a credential storage request may name. */
+const STORE_OPERATIONS: Readonly<Record<string, true>> = {
+  acquire: true,
+  rotate: true,
+  verify: true,
 };
-
-type CredentialLocator = {
-  count: () => Promise<number>;
-  nth: (index: number) => {
-    evaluate: <Value>(
-      pageFunction: (element: Element) => Value,
-    ) => Promise<Value>;
-  };
-};
-
-type CredentialFrame = {
-  url: () => string;
-  locator: (selector: string) => CredentialLocator;
-  getByLabel: (text: string, options: { exact: boolean }) => CredentialLocator;
-  getByRole: (role: string, options: { name: RegExp }) => CredentialLocator;
-};
-
-type CredentialPage = {
-  url: () => string;
-  frames: () => CredentialFrame[];
-  context?: () => { pages: () => CredentialPage[] };
-};
-
-function credentialConstraintsText(): string {
-  const configured = [
-    process.env.GENERIC_TASK_CONSTRAINTS,
-    process.env.WELES_CREDENTIAL_CONSTRAINTS,
-  ].filter(
-    (value): value is string => typeof value === 'string' && value.length > 0,
-  );
-  if (configured.length > 1) {
-    throw new Error('multiple credential constraint sources are not allowed');
-  }
-  return configured[0] ?? '{}';
-}
-
-export function isSkarbiecCredentialTask(): boolean {
-  if (
-    typeof process.env.WELES_CREDENTIAL_CONSTRAINTS === 'string' &&
-    process.env.WELES_CREDENTIAL_CONSTRAINTS.length > 0
-  ) {
-    return true;
-  }
-  try {
-    const constraints: unknown = JSON.parse(credentialConstraintsText());
-    return Boolean(
-      constraints &&
-        typeof constraints === 'object' &&
-        !Array.isArray(constraints) &&
-        'store_secret_target' in constraints &&
-        constraints.store_secret_target === 'skarbiec',
-    );
-  } catch {
-    return (
-      typeof process.env.GENERIC_TASK_CONSTRAINTS === 'string' &&
-      process.env.GENERIC_TASK_CONSTRAINTS.length > 0
-    );
-  }
-}
 
 function storeConstraints(): StoreConstraints {
+  const text = credentialConstraintsText();
+  if (text === null) {
+    throw new Error('credential storage constraints are absent from this task');
+  }
   let raw: unknown;
   try {
-    raw = JSON.parse(credentialConstraintsText());
+    raw = JSON.parse(text);
   } catch {
     throw new Error('credential storage constraints are invalid');
   }
@@ -151,7 +92,7 @@ function storeConstraints(): StoreConstraints {
   }
   if (
     !/^[a-f0-9]{64}$/i.test(requestId) ||
-    !['acquire', 'rotate', 'verify'].includes(operation)
+    !Object.hasOwn(STORE_OPERATIONS, operation)
   ) {
     throw new Error(
       'credential storage requires an exact request id and operation',

@@ -37,7 +37,7 @@ import {
 } from '../placement/operator-cdp.js';
 import { enforceWelesServicePlacement } from '../placement/service-placement.js';
 import { runRecordingsDir, runRecordingsRoot } from '../run-recordings.js';
-import { isSkarbiecCredentialTask } from '../wsession-helpers/credential-store.js';
+import { isSkarbiecCredentialTask } from '../wsession-helpers/credential/task.js';
 import { startInstrumentation } from '../wsession-helpers/net_record.js';
 import {
   accountProfileDirectory,
@@ -51,6 +51,11 @@ import {
   writePrelaunchSessionMeta,
   writeRealizedSessionMeta,
 } from './run-provenance.js';
+
+/** A proxy request that names no proxy at all. */
+const NO_PROXY = 'none';
+/** A proxy request for the host's own egress. */
+const DIRECT_EGRESS = 'direct';
 
 function recordingsDir(label?: string): string {
   return label ? runRecordingsDir(label) : runRecordingsRoot();
@@ -115,9 +120,11 @@ export async function openSessionBrowser(
   );
   if (label && !secureCredentialTask) process.env.WELES_LABEL = label;
   if (operatorCdp) return await adoptOperatorBrowser(operatorCdp, label);
+  const requestedProxy = String(opts.proxy).toLowerCase();
   const proxyRequested =
     !!opts.proxy &&
-    !['none', 'direct'].includes(String(opts.proxy).toLowerCase());
+    requestedProxy !== NO_PROXY &&
+    requestedProxy !== DIRECT_EGRESS;
   // WELES_FORCE_BROWSER pins the persona's browser engine globally (e.g. on a
   // host that only has the patched Chromium installed, not Firefox). Explicit
   // opts.browser still wins; unset rolls naturally (60/40 chromium/firefox).
