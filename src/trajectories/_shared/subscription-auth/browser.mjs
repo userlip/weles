@@ -1,4 +1,9 @@
 import { pageCondition, pageSettled } from '../page/settled.mjs';
+import {
+  clickDescribed,
+  clickOffered,
+  pageShows,
+} from '../page/judged/seen.mjs';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { humanFill, humanType } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
@@ -110,50 +115,35 @@ async function approveDevice(session, transaction, login, mark) {
         await page.keyboard.press('Enter');
         await pageSettled(page);
       }
-      const google = page
-        .getByRole('button', {
-          name: /continue with google|sign in with google|^google$/i,
-        })
-        .filter({ visible: true })
-        .first();
       if (
-        (await google.isVisible()) &&
-        googleDispatches.get(page) !== page.url()
+        googleDispatches.get(page) !== page.url() &&
+        (await pageShows(page, 'Does the page offer to continue with Google?'))
       ) {
-        if (!(await google.isEnabled())) {
-          throw new AuthenticationFailure(
-            'gis_control_unavailable',
-            'device_google_handoff',
-            `The offered Google sign-in control is disabled on ${page.url()}`,
-          );
-        }
         const dispatchedFrom = page.url();
-        await humanClickLocator(page, google);
+        await clickDescribed(page, 'the button to continue with Google');
         googleDispatches.set(page, dispatchedFrom);
-        await pageSettled(page);
         continue;
       }
-      const approve = page
-        .getByRole('button', {
-          name: /^(current login|continue|allow|authorize|approve|confirm)$/i,
-        })
-        .filter({ visible: true })
-        .first();
-      if ((await approve.isVisible()) && (await approve.isEnabled())) {
+      if (
+        await clickOffered(
+          page,
+          'the button that approves this sign-in or continues with the current login',
+        )
+      ) {
         mark('provider_consent');
-        await humanClickLocator(page, approve);
         return;
       }
-      const text = await page.locator('body').innerText();
       if (
-        /successfully|you may close|you can close|authorized|authorization successful/i.test(
-          text,
+        await pageShows(
+          page,
+          'Does the page say the authorization succeeded or that the window can be closed?',
         )
       )
         return;
       if (
-        /too many failed|account.*locked|incorrect.*code|invalid.*code|code.*expired|expired.*code/i.test(
-          text,
+        await pageShows(
+          page,
+          'Does the page say the sign-in was refused (an account locked, too many attempts, or a wrong or expired code)?',
         )
       ) {
         throw new AuthenticationFailure(

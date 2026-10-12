@@ -3,8 +3,8 @@
 // on an inbound domain Weles reads.
 
 import { humanFill } from '../../../../dist/human/keyboard.js';
-import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../page/settled.mjs';
+import { clickDescribed } from '../page/judged/seen.mjs';
 import { AuthenticationFailure } from './oauth.mjs';
 
 /**
@@ -18,7 +18,9 @@ export async function waitForMailedCode(session, email, sender, mark) {
   for (;;) {
     const answer = await session.checkEmail(email, sender);
     if (/^\d+$/.test(answer)) return answer;
-    if (/^error|without numeric code/.test(answer))
+    // Skrzynka answers "no email ... yet" until the mail arrives; any other
+    // answer is a mail that carries no code or a mailbox that failed.
+    if (!answer.startsWith('no email'))
       throw new AuthenticationFailure(
         'email_code_unreadable',
         'email_code',
@@ -56,11 +58,9 @@ export async function emailCodeSignIn(session, login, sender, mark) {
 
 /** Grant the authorization the provider's consent page asks for. */
 export async function grantConsent(page, mark) {
-  const grant = page
-    .getByRole('button', { name: /^(authorize|allow|approve)\b/i })
-    .first();
-  await grant.waitFor({ state: 'visible' });
   mark('oauth_consent');
-  await humanClickLocator(page, grant);
-  await pageSettled(page);
+  await clickDescribed(
+    page,
+    'the button that grants the authorization the page asks for',
+  );
 }
