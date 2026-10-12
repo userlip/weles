@@ -1,0 +1,172 @@
+{
+  "why": "What each platform's own structure says about a run's account, read by ban_signals_base.ts: the routes its site sends a blocked, challenged or signed-out session to, the named fields its API answers carry when the account is challenged or blocked, and the API endpoints whose failure is suspicious. Patterns are regular-expression sources matched without regard to case. What a page says in words is not listed here: the vision model judges the page against the account states, in any language and wording.",
+  "platforms": {
+    "instagram": {
+      "routes": {
+        "checkpoint": [
+          "/challenge/",
+          "/auth_platform/",
+          "/accounts/disabled",
+          "/accounts/login",
+          "/accounts/onetap",
+          "/accounts/emailsignup"
+        ],
+        "suspended": ["/accounts/suspended", "/error/help"]
+      },
+      "apiAnswers": [
+        {
+          "signal": "checkpoint",
+          "endpoint": "/api/",
+          "answer": "\"checkpoint_required\":\\s*true|feedback_required"
+        },
+        {
+          "signal": "suspended",
+          "endpoint": "/api/",
+          "answer": "\"is_disabled\":\\s*true"
+        }
+      ],
+      "suspiciousEndpoints": "/api/[^/]+/(media|friendships|users|web)"
+    },
+    "twitter": {
+      "routes": {
+        "suspended": [
+          "/account/access",
+          "/suspended",
+          "/i/flow/account_compromised"
+        ],
+        "checkpoint": [
+          "/i/flow/login_challenge",
+          "/i/flow/login(\\?|$|/)",
+          "/i/flow/verify",
+          "/account/verify",
+          "/login(\\?|$|/)",
+          "/i/flow/signup"
+        ]
+      },
+      "apiAnswers": [],
+      "suspiciousEndpoints": "/api/[^/]+/(favorites|statuses|friendships|users)"
+    },
+    "tiktok": {
+      "routes": {
+        "suspended": ["/account/penalty", "/banned", "/account/login\\?error"],
+        "checkpoint": ["/captcha-verify", "/login/redirect"]
+      },
+      "apiAnswers": [],
+      "suspiciousEndpoints": "/aweme/[^/]+/(commit|create|post|favorite|follow)"
+    },
+    "linkedin": {
+      "routes": {
+        "checkpoint": ["/checkpoint/", "/check/manage-account"],
+        "suspended": ["/help/linkedin/answer.*restrict", "/restrict"]
+      },
+      "apiAnswers": [
+        {
+          "signal": "checkpoint",
+          "endpoint": "/voyager/api/",
+          "answer": "CHALLENGE|SECURITY_CHECKPOINT"
+        },
+        {
+          "signal": "rate_limited",
+          "endpoint": "/voyager/api/",
+          "answer": "TOO_MANY_REQUESTS"
+        }
+      ],
+      "suspiciousEndpoints": "/voyager/api/(invitation|messaging|growth|relationships)"
+    },
+    "discord": {
+      "routes": {
+        "suspended": ["/disabled", "/banned"],
+        "checkpoint": [
+          "/verify",
+          "/captcha",
+          "discord\\.com/login(\\?|$|/)",
+          "discord\\.com/register(\\?|$|/)"
+        ]
+      },
+      "apiAnswers": [
+        {
+          "signal": "captcha_challenge",
+          "endpoint": "/api/v\\d+/auth/",
+          "answer": "captcha_key|CAPTCHA_REQUIRED|CAPTCHA_INVALID"
+        },
+        {
+          "signal": "rate_limited",
+          "endpoint": "/api/v\\d+/",
+          "answer": "\"retry_after\":\\s*\\d"
+        },
+        {
+          "signal": "suspended",
+          "endpoint": "/api/v\\d+/",
+          "answer": "ACCOUNT_DISABLED"
+        }
+      ],
+      "suspiciousEndpoints": "/api/v\\d+/(channels|guilds|users/@me/relationships)"
+    },
+    "github": {
+      "routes": {
+        "checkpoint": [
+          "/sessions/two-factor",
+          "/sessions/verified-device",
+          "/account_verifications",
+          "/login(\\?|$|/)",
+          "/login/oauth/authorize"
+        ],
+        "suspended": ["/flagged"]
+      },
+      "apiAnswers": [
+        {
+          "signal": "rate_limited",
+          "endpoint": "/api/",
+          "answer": "abuse_rate_limit|secondary_rate_limit"
+        }
+      ],
+      "suspiciousEndpoints": "/api/(v\\d+/|graphql)"
+    },
+    "pangram": {
+      "routes": {
+        "checkpoint": ["/(login|signin|sign-in|auth|session|sso)(\\?|$|/)"],
+        "suspended": ["/(suspended|disabled|banned)(\\?|$|/)"]
+      },
+      "apiAnswers": [],
+      "suspiciousEndpoints": "/api/"
+    },
+    "producthunt": {
+      "routes": {
+        "checkpoint": ["/users/sign_in", "/verify"],
+        "suspended": ["/suspended", "/banned"]
+      },
+      "apiAnswers": [
+        {
+          "signal": "rate_limited",
+          "endpoint": "/api/",
+          "answer": "rate_limit|too_many_requests"
+        }
+      ],
+      "suspiciousEndpoints": "/api/"
+    },
+    "reddit": {
+      "routes": {
+        "suspended": ["/suspended", "/banned", "/account-activity", "/blocked"],
+        "checkpoint": ["/verification", "verify[-_]?email", "checkpoint"]
+      },
+      "apiAnswers": [
+        {
+          "signal": "suspended",
+          "endpoint": "reddit\\.com",
+          "answer": "\"is_suspended\"\\s*:\\s*true"
+        },
+        {
+          "signal": "rate_limited",
+          "endpoint": "/api/(vote|comment|submit)",
+          "answer": "SUBREDDIT_RATELIMIT|RATELIMIT|QUOTA_FILLED|THREAD_LOCKED"
+        },
+        {
+          "signal": "checkpoint",
+          "endpoint": "/api/",
+          "answer": "USER_REQUIRED|AUTHENTICATION_REQUIRED|LOGIN_REQUIRED"
+        }
+      ],
+      "suspiciousEndpoints": "/api/(vote|comment|submit|me|login)"
+    }
+  }
+}

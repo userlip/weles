@@ -1,36 +1,14 @@
 import type { Page } from 'playwright';
 import {
-  detectFromConfig,
+  detectDeclared,
   type BanSignal,
+  type ObservedResponse,
 } from '../_shared/ban_signals_base.js';
 
+/** Product Hunt's account state, from its structure in signals.json and the judged page. */
 export async function detectProductHuntBanSignals(
   page: Page,
-  responses: Array<{
-    url: string;
-    status: number;
-    headers?: Record<string, string>;
-    body?: string;
-  }> = [],
+  responses?: ObservedResponse[],
 ): Promise<BanSignal> {
-  return detectFromConfig(page, responses, {
-    url: {
-      checkpoint: [/\/users\/sign_in/, /\/verify/],
-      suspended: [/\/suspended/, /\/banned/],
-    },
-    text: {
-      suspended: [/account has been suspended/i, /account is banned/i],
-      rate_limited: [/too many requests/i, /rate limit/i],
-      checkpoint: [/please verify/i, /sign in to continue/i],
-    },
-    responseBody: [
-      {
-        signal: 'rate_limited',
-        urlMatch: /\/api\//,
-        bodyMatch: /rate_limit|too_many_requests/i,
-      },
-    ],
-    captchaFrameMatch: /recaptcha|hcaptcha|cloudflare.*challenge/i,
-    suspiciousApiEndpoints: /\/api\//,
-  });
+  return detectDeclared('producthunt', page, responses);
 }
