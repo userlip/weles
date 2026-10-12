@@ -30,9 +30,10 @@ for (const b of d.network_api || []) {
     process.stderr.write(
       `  src ${id}: type=${t} keys=${Object.keys(src).join(',')} ptsLen=${(src.points || []).length}\n`,
     );
-    if (!/Trend|Line|Wedge|Tri/i.test(t)) continue;
-    // Try multiple point locations
-    // points are nested 2-deep: src.state.points
+    // Every drawing TradingView saves carries its anchor points; a source
+    // without points is not a drawing. The type is kept as TradingView names
+    // it, not filtered by words in it. Points are nested 2-deep:
+    // src.state.points.
     const pts = src.state?.points || src.points || [];
     process.stderr.write(`    state type=${t}, pts=${pts.length}\n`);
     if (pts.length === 0) {

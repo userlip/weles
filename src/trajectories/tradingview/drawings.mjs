@@ -222,20 +222,6 @@ try {
     responses: respCount,
     tv_responses: apiResponses.length,
   };
-  // Deep probe: look for initial state in scripts
-  const scan = await s.page.evaluate(`(() => {
-    const scripts = Array.from(document.querySelectorAll('script'));
-    const hits = [];
-    for (const sc of scripts) {
-      const txt = sc.textContent || '';
-      if (/linetool|line_tool|shapes|drawings_points|chart_layout/i.test(txt)) {
-        hits.push({ snippet: txt, len: txt.length });
-      }
-    }
-    const body = document.body ? document.body.outerHTML.length : 0;
-    return { script_hits: hits, body_len: body };
-  })()`);
-  extracted.script_probe = scan;
   FS.writeFileSync(OUT_FILE, JSON.stringify(extracted, null, 2));
   process.stderr.write(
     `\n[tv_draw] dumped drawing candidates to ${OUT_FILE}\n`,
