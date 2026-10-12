@@ -64,11 +64,14 @@ async function fillCodeBoxes(boxes, code, refusal) {
       : s.page.mainFrame();
     if (!frame) throw new Error('no_signup_frame');
 
-    // 1. Country (Apple defaults to GeoIP — pin US for predictable downstream)
+    // 1. Country (Apple defaults to GeoIP — pin US for predictable downstream).
+    // A select that refuses the value fails the run: an account registered in
+    // the GeoIP country, or with another birth date, is not the identity
+    // generated for it.
     const country = frame
       .locator('select[name="countryCode"], select[id*="country" i]')
       .first();
-    if (await country.count()) await country.selectOption('US').catch(() => {});
+    if (await country.count()) await country.selectOption('US');
 
     // 2. First / Last name
     const firstIn = frame
@@ -108,11 +111,10 @@ async function fillCodeBoxes(boxes, code, refusal) {
     if (await monthIn.count()) {
       const tag = await monthIn.evaluate((el) => el.tagName).catch(() => '');
       if (tag === 'SELECT') {
-        await monthIn.selectOption(String(id.birthMonth)).catch(() => {});
-        if (await dayIn.count())
-          await dayIn.selectOption(String(id.birthDay)).catch(() => {});
+        await monthIn.selectOption(String(id.birthMonth));
+        if (await dayIn.count()) await dayIn.selectOption(String(id.birthDay));
         if (await yearIn.count())
-          await yearIn.selectOption(String(id.birthYear)).catch(() => {});
+          await yearIn.selectOption(String(id.birthYear));
       } else {
         await humanClickLocator(s.page, monthIn);
         await humanType(s.page, String(id.birthMonth).padStart(2, '0'));
