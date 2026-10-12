@@ -37,8 +37,12 @@ if (typeof QUERY !== 'string' || !QUERY.trim()) {
 }
 const OPEN_BODIES = process.env.GM_OPEN !== '0';
 const MAX_OPEN = parseInt(process.env.GM_MAX || '6', 10);
+// The stated credential service is read as given; the scoped-secret catalog
+// refuses one it does not declare. A run that states none reads Gmail's.
 const CREDENTIAL_SERVICE =
-  process.env.GM_CREDENTIAL_SERVICE === 'googleSso' ? 'googleSso' : 'gmail';
+  process.env.GM_CREDENTIAL_SERVICE === undefined
+    ? 'gmail'
+    : process.env.GM_CREDENTIAL_SERVICE;
 function gmailUrl(email, fragment) {
   return (
     'https://mail.google.com/mail/u/0/?tab=rm&ogbl&authuser=' +

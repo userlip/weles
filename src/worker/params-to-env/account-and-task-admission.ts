@@ -213,13 +213,13 @@ export function applyAccountAndTaskAdmission(
       );
     }
     env.GM_QUERY = query;
+    // The scoped-secret catalog decides which services exist: the trajectory's
+    // read of an undeclared one is refused by name there.
     const credentialService = params.credential_service;
-    if (credentialService === 'gmail' || credentialService === 'googleSso') {
+    if (typeof credentialService === 'string' && credentialService.trim())
       env.GM_CREDENTIAL_SERVICE = credentialService;
-    }
-    const max = params.max;
-    if (typeof max === 'number' || typeof max === 'string')
-      env.GM_MAX = String(max);
+    const max = countText(params.max);
+    if (max !== undefined) env.GM_MAX = max;
     if (params.open === false || params.open === 0 || params.open === '0')
       env.GM_OPEN = '0';
     else env.GM_OPEN = '1';
@@ -241,9 +241,8 @@ export function applyAccountAndTaskAdmission(
     const sourceActionLogId = params.source_action_log_id;
     if (typeof sourceActionLogId === 'string')
       env.SOURCE_ACTION_LOG_ID = sourceActionLogId;
-    const attempt = params.attempt;
-    if (typeof attempt === 'number' || typeof attempt === 'string')
-      env.ATTEMPT = String(attempt);
+    const attempt = countText(params.attempt);
+    if (attempt !== undefined) env.ATTEMPT = attempt;
     env.SEMANTIC_SCHOLAR_TENANT_ID =
       typeof params.tenant_id === 'string' ? params.tenant_id : '';
   }
@@ -266,10 +265,10 @@ export function applyAccountAndTaskAdmission(
     if (typeof mainTex === 'string') env.OVERLEAF_MAIN_TEX = mainTex;
     const authLabel = params.auth_label ?? params.overleaf_auth_label;
     if (typeof authLabel === 'string') env.OVERLEAF_AUTH_LABEL = authLabel;
-    const maxClicks =
-      params.max_history_clicks ?? params.overleaf_history_max_clicks;
-    if (typeof maxClicks === 'number' || typeof maxClicks === 'string')
-      env.OVERLEAF_HISTORY_MAX_CLICKS = String(maxClicks);
+    const maxClicks = countText(
+      params.max_history_clicks ?? params.overleaf_history_max_clicks,
+    );
+    if (maxClicks !== undefined) env.OVERLEAF_HISTORY_MAX_CLICKS = maxClicks;
     if (
       params.persistent_profile === false ||
       params.persistent_profile === '0'
@@ -294,4 +293,15 @@ export function applyAccountAndTaskAdmission(
     env.HEADLESS =
       params.headless === false || params.headless === '0' ? '0' : '1';
   }
+}
+
+/**
+ * A count a caller gave as an integer or as its decimal text, as the text the
+ * trajectory's environment carries; anything that is not an integer is no
+ * count and leaves the variable unset.
+ */
+function countText(value: unknown): string | undefined {
+  const count =
+    typeof value === 'string' && value.trim() ? Number(value) : value;
+  return Number.isInteger(count) ? String(count) : undefined;
 }

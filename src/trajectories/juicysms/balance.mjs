@@ -69,10 +69,9 @@ try {
   // MyAccount formats auth.user.balance from EUR using currency.rates.
   // The service record stores USD; never relabel another currency as dollars.
   const raw = account.auth.user.balance;
-  const eur =
-    typeof raw === 'number' || (typeof raw === 'string' && raw.trim())
-      ? Number(raw)
-      : NaN;
+  // Decimal text is read as its number; Number.isFinite below accepts only a
+  // finite number, so anything else is the unavailable-balance refusal.
+  const eur = typeof raw === 'string' && raw.trim() ? Number(raw) : raw;
   const usdRate = account.currency?.rates?.USD;
   if (!Number.isFinite(eur)) {
     throw Object.assign(
