@@ -41,6 +41,7 @@ import {
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
+import { clickOffered, pageShows } from '../_shared/page/judged/seen.mjs';
 import { pageSettled, popupOrNavigation } from '../_shared/page/settled.mjs';
 import { humanType } from '../../../dist/human/keyboard.js';
 
@@ -147,27 +148,25 @@ try {
   // Finish OAuth here: click the account tile / Continue / Allow on whichever
   // page is live until we are genuinely on dashboard.decodo.com and NOT on
   // /login. No false PASS — hard-fail if the session never establishes.
-  // The SPA can render a login form at the dashboard URL. Require authenticated
-  // page content and the absence of a visible password input.
+  // The SPA can render a login form at the dashboard URL, so the dashboard
+  // counts as signed in only off its /login route and without a visible
+  // password field.
   const authed = async () => {
-    if (!/dashboard\.decodo\.com/.test(s.page.url())) return false;
-    if (
-      (await s.page
-        .locator('input[type="password"]')
-        .filter({ visible: true })
-        .count()) > 0
-    )
-      return false;
-    const t = await s.page.evaluate(() => document.body.innerText); // allow-raw-playwright: read-only innerText
-    return (
-      /Residential|Datacenter|Web Scraping|Dashboard|Proxies/i.test(t) &&
-      !/Welcome back/i.test(t)
-    );
+    const here = new URL(s.page.url());
+    if (here.hostname !== 'dashboard.decodo.com') return false;
+    if (here.pathname.startsWith('/login')) return false;
+    return !(await s.page
+      .locator('input[type="password"]')
+      .filter({ visible: true })
+      .count());
   };
-  const CONSENT =
-    'div[data-identifier]|div[role="link"][data-email]|div[data-authuser]|button:has-text("Continue")|button:has-text("Allow")'.split(
-      '|',
-    );
+  // Google's account tiles are found by their markup; the consent screen's
+  // allow control by the vision model.
+  const ACCOUNT_TILES = [
+    'div[data-identifier]',
+    'div[role="link"][data-email]',
+    'div[data-authuser]',
+  ];
   // Each consent control and the GSI re-trigger is used at most once; a settled
   // page that offers none of them and is not the authenticated dashboard ends
   // the walk with the named failure below.
@@ -182,7 +181,7 @@ try {
       break;
     }
     let acted = false;
-    for (const sel of CONSENT) {
+    for (const sel of ACCOUNT_TILES) {
       if (used.has(sel)) continue;
       const b = dpg.locator(sel).filter({ visible: true }).first();
       if (await present(b)) {
@@ -191,6 +190,13 @@ try {
         acted = true;
         break;
       }
+    }
+    if (!acted && !used.has('consent')) {
+      acted = await clickOffered(
+        dpg,
+        'the button on the Google consent screen that allows the sign-in and continues',
+      );
+      if (acted) used.add('consent');
     }
     // If OAuth bounced back to Decodo's own login form, re-trigger the
     // Google button (the GSI iframe re-renders in place).
@@ -210,16 +216,7 @@ try {
         );
         acted = true;
       } else {
-        const reBtn = s.page
-          .locator(
-            'button:has-text("Sign in with Google"), a:has-text("Sign in with Google")',
-          )
-          .filter({ visible: true })
-          .first();
-        if (await present(reBtn)) {
-          await humanClickLocator(s.page, reBtn);
-          acted = true;
-        }
+        acted = await clickOffered(s.page, 'the Sign in with Google button');
       }
     }
     if (!acted) break;
@@ -242,10 +239,7 @@ try {
   await pageSettled(s.page);
   console.log(`[decodo] isp pricing url=${s.page.url()}`);
   await shot(s, '03_isp_pricing');
-  const ispText = await dump(s, '03_isp_pricing');
-  console.log(
-    `[decodo] page static/ISP=${/static|ISP/i.test(ispText)} dedicated=${/dedicated/i.test(ispText)}`,
-  );
+  await dump(s, '03_isp_pricing');
 
   if (!CONFIRM) {
     console.log(
@@ -256,46 +250,45 @@ try {
   }
 
   // Pick USA where a country control exists, then walk buy -> checkout.
-  const usOpt = s.page
-    .locator(
-      'button:has-text("United States"), label:has-text("United States"), [role="option"]:has-text("United States")',
+  if (
+    await clickOffered(
+      s.page,
+      'the United States option of the country selector',
     )
-    .filter({ visible: true })
-    .first();
-  if (await present(usOpt)) {
-    await humanClickLocator(s.page, usOpt);
+  ) {
     await pageSettled(s.page);
     await shot(s, '04_us_selected');
   }
 
-  const buyBtn = s.page
-    .locator(
-      'button:has-text("Buy"), a:has-text("Buy"), button:has-text("Get"), button:has-text("Subscribe"), button:has-text("Checkout")',
-    )
-    .filter({ visible: true })
-    .first();
-  if (!(await present(buyBtn))) {
+  await shot(s, '05_before_buy');
+  if (
+    !(await clickOffered(
+      s.page,
+      'the button that buys, subscribes to or checks out the dedicated static residential (ISP) plan',
+    ))
+  ) {
     await shot(s, '04b_no_buy');
     console.log('FAIL: no buy/checkout control on ISP page');
     process.exit(1);
   }
-  await shot(s, '05_before_buy');
-  await humanClickLocator(s.page, buyBtn);
   await pageSettled(s.page);
   await shot(s, '06_after_buy');
   console.log(`[decodo] after buy url=${s.page.url()}`);
 
-  // However many checkout steps Decodo shows are walked; it ends on a success
-  // address or a page with no committal control, which the log names.
-  const COMMIT = 'Subscribe|Pay|Place order|Complete|Confirm|Continue'.split(
-    '|',
-  );
+  // However many checkout steps Decodo shows are walked; it ends on a page
+  // that confirms the order or one with no committal control, which the log
+  // names.
   for (let step = 0; ; step++) {
     await pageSettled(s.page);
     const url = s.page.url();
     await shot(s, `07_checkout_${step}`);
     console.log(`[decodo] checkout step ${step}: ${url}`);
-    if (/success|thank|confirmation|complete|active/i.test(url)) {
+    if (
+      await pageShows(
+        s.page,
+        'Does the page confirm that the order or subscription succeeded?',
+      )
+    ) {
       await shot(s, '08_success');
       console.log(`[decodo] success: ${url}`);
       break;
@@ -305,18 +298,16 @@ try {
       'input[maxlength="1"], input[inputmode="numeric"]',
     );
     if ((await otpCells.count()) >= 6) {
-      const noLink = s.page
-        .locator(
-          'button:has-text("Pay without Link"), a:has-text("Pay without Link")',
-        )
-        .filter({ visible: true })
-        .first();
-      if (!(await present(noLink))) {
+      if (
+        !(await clickOffered(
+          s.page,
+          'the control that pays without Stripe Link',
+        ))
+      ) {
         await shot(s, 'no_pay_without_link');
         console.log('FAIL: Stripe Link OTP, no "Pay without Link"');
         process.exit(2);
       }
-      await humanClickLocator(s.page, noLink);
       await pageSettled(s.page);
       await shot(s, 'after_pay_without_link');
     }
@@ -326,7 +317,11 @@ try {
       .first();
     const stripeFrame = s.page
       .frames()
-      .some((f) => /stripe|checkout/i.test(f.url()));
+      .some(
+        (f) =>
+          URL.canParse(f.url()) &&
+          new URL(f.url()).hostname.endsWith('stripe.com'),
+      );
     if (stripeFrame || (await cardNum.count()) > 0) {
       const filled = await fillStripeElements(s.page);
       console.log(`[decodo] fillStripeElements: ${JSON.stringify(filled)}`);
@@ -350,21 +345,11 @@ try {
       await shot(s, 'after_card_fill');
     }
 
-    let clicked = false;
-    for (const label of COMMIT) {
-      const b = s.page
-        .locator(`button:has-text("${label}")`)
-        .filter({ visible: true })
-        .last();
-      if (!(await present(b))) continue;
-      const txt = (await b.textContent()) || '';
-      if (/without\s+link/i.test(txt)) continue;
-      await shot(s, `before_commit_${label.replace(/\W+/g, '_')}_${step}`);
-      console.log(`[decodo] clicking "${txt.trim()}"`);
-      await humanClickLocator(s.page, b);
-      clicked = true;
-      break;
-    }
+    await shot(s, `before_commit_${step}`);
+    const clicked = await clickOffered(
+      s.page,
+      'the button that pays or moves the checkout forward (not one that pays with Stripe Link)',
+    );
     if (!clicked) {
       console.log(`[decodo] no committal button at step ${step}`);
       break;
@@ -379,13 +364,12 @@ try {
   await pageSettled(s.page);
   await shot(s, '09_isp_overview');
   let ispOut = await dump(s, '09_isp_overview');
-  const setupTab = s.page
-    .locator(
-      'a:has-text("Authentication"), a:has-text("Setup"), a:has-text("Endpoint")',
+  if (
+    await clickOffered(
+      s.page,
+      'the tab that shows the proxy authentication or endpoint setup',
     )
-    .first();
-  if (await present(setupTab)) {
-    await humanClickLocator(s.page, setupTab);
+  ) {
     await pageSettled(s.page);
     await shot(s, '10_isp_auth');
     ispOut += '\n' + (await dump(s, '10_isp_auth'));
