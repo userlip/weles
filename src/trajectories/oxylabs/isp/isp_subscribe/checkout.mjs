@@ -67,7 +67,7 @@ export async function completeCheckout(s) {
         await shot(s, 'no_pay_without_link');
         process.exit(2);
       }
-      await noLinkBtn.click({ force: true }).catch(() => {});
+      await noLinkBtn.click({ force: true });
       await pageSettled(s.page);
       await shot(s, 'after_pay_without_link');
 
@@ -83,19 +83,29 @@ export async function completeCheckout(s) {
       }
       await humanIdlePause('deliberate');
 
-      // The Cleverbridge subscribe form also requires Cardholder name +
-      // billing address fields beyond what fillStripeElements covers. Fill
-      // name from TOPUP_CARD_NAME (GCP secret), address from
-      // TOPUP_CARD_STREET (env, fallback to Stripe Link's saved address).
-      const name = process.env.TOPUP_CARD_NAME || '';
-      const street = process.env.TOPUP_CARD_STREET || '621 Stockton Street';
-      const city = process.env.TOPUP_CARD_CITY || 'New York';
+      // The Cleverbridge subscribe form also requires the cardholder name and
+      // billing address beyond what fillStripeElements covers. They come from
+      // the card's own TOPUP_CARD_NAME, TOPUP_CARD_STREET and TOPUP_CARD_CITY:
+      // an address written here would bill the card at a street that is not
+      // its owner's, which the issuer can decline or flag.
+      const billing = {
+        name: process.env.TOPUP_CARD_NAME,
+        street: process.env.TOPUP_CARD_STREET,
+        city: process.env.TOPUP_CARD_CITY,
+      };
+      const missing = Object.entries(billing)
+        .filter(([, value]) => !value)
+        .map(([field]) => `TOPUP_CARD_${field.toUpperCase()}`);
+      if (missing.length)
+        throw new Error(
+          `the card's billing details are not set (${missing.join(', ')}), so the subscription was not submitted`,
+        );
+      const { name, street, city } = billing;
       const fillExtra = async (selector, value) => {
-        if (!value) return false;
         const loc = s.page.locator(selector).filter({ visible: true }).first();
-        if (!(await loc.isVisible().catch(() => false))) return false;
-        await loc.click({ force: true }).catch(() => {});
-        await loc.fill('').catch(() => {});
+        if (!(await loc.isVisible())) return false;
+        await loc.click({ force: true });
+        await loc.fill('');
         await humanType(s.page, value);
         return true;
       };
@@ -128,7 +138,7 @@ export async function completeCheckout(s) {
       }
       await shot(s, 'before_final_subscribe');
       console.log('[trajectory] clicking final Subscribe…');
-      await subBtn.click({ force: true }).catch(() => {});
+      await subBtn.click({ force: true });
       await pageSettled(s.page);
       await shot(s, 'after_final_subscribe');
       continue;
@@ -161,7 +171,7 @@ export async function completeCheckout(s) {
           `before_click_${(txt || '').trim().slice(0, 16).replace(/\W+/g, '_')}_step${step}`,
         );
         console.log(`[trajectory] clicking "${(txt || '').trim()}"…`);
-        await btn.click({ force: true }).catch(() => {});
+        await btn.click({ force: true });
         clicked = true;
         break;
       }
