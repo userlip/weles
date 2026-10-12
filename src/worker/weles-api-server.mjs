@@ -127,7 +127,7 @@ const { publicTaskChildEnvironment, readPublicServiceIdentity } = await import(
   './weles-api-server/public-admission.mjs'
 );
 const { createTrajectoryRunner } = await import(
-  './weles-api-server/run/trajectory-process.mjs'
+  './weles-api-server/run/process/trajectory-process.mjs'
 );
 const { createApiRequestHandler } = await import(
   './weles-api-server/routes/api-request-router.mjs'

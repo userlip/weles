@@ -18,11 +18,8 @@ import { constants as http } from 'node:http2';
 import { BRAMA_REAUTH_TOKEN } from '../../configuration.mjs';
 import { json, readBody, reauthAuthorized } from '../../http-exchange.mjs';
 import { coalesceRun, runAdmissionKey } from '../../run/run-outcome.mjs';
-import {
-  providersWith,
-  runReauth,
-  trajectoryPath,
-} from '../../run/reauth-process.mjs';
+import { providersWith, trajectoryPath } from '../../run/process/placement.mjs';
+import { runReauth } from '../../run/process/reauth-process.mjs';
 import { RUN_RELEASE_IDENTITY } from '../../release-identity.mjs';
 import { REAUTH_PROGRESS_CONTENT_TYPE } from '../trajectory-routes.mjs';
 import { AUTHORIZE_PAGES } from '../../../../trajectories/_shared/subscription-auth/oauth.mjs';

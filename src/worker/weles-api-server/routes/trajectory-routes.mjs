@@ -36,7 +36,7 @@ import {
   requireTokenAuthorization,
 } from '../http-exchange.mjs';
 import { coalesceRun, runAdmissionKey } from '../run/run-outcome.mjs';
-import { REAUTH_PROVIDERS, runReauth } from '../run/reauth-process.mjs';
+import { REAUTH_PROVIDERS, runReauth } from '../run/process/reauth-process.mjs';
 import { RUN_RELEASE_IDENTITY } from '../release-identity.mjs';
 
 /// The dispatch name of the trajectory that enrols a Google Authenticator for

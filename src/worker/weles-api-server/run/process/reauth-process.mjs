@@ -1,26 +1,26 @@
 // The provider runs Brama orders for one account -- reauth, acquire and
 // authorize -- started on this host. A run takes the vault row it must sign
 // in and reaches its trajectory through the display-name selector every
-// login trajectory already honours; placement, group kill and the recorded
-// outcome are the ordinary trajectory run's, in ./trajectory-process.mjs.
+// login trajectory already honours; placement, group kill and the child's
+// identity are ./placement.mjs.
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readdirSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { join } from 'node:path';
 
-import { RUN_RESULTS_DIR } from '../configuration.mjs';
-import { REPO, RUN_RELEASE_IDENTITY } from '../release-identity.mjs';
-import { lastJsonLine, persistRunResult } from './run-outcome.mjs';
-import { credentialFailure } from './credential-outcome.mjs';
-import { registerRunningRun } from './running-runs.mjs';
+import { RUN_RESULTS_DIR } from '../../configuration.mjs';
+import { REPO, RUN_RELEASE_IDENTITY } from '../../release-identity.mjs';
+import { lastJsonLine, persistRunResult } from '../run-outcome.mjs';
+import { credentialFailure } from '../credential-outcome.mjs';
+import { registerRunningRun } from '../running-runs.mjs';
 import {
   liveOutput,
   runChildIdentity,
   signalRunProcess,
+  trajectoryPath,
   trajectoryProcess,
-} from './trajectory-process.mjs';
+} from './placement.mjs';
 
 // Providers whose reauth trajectory can run on the host on demand. This is the
 // "call Weles on the host to authenticate" step: the broker decides WHICH
@@ -29,27 +29,6 @@ import {
 export const REAUTH_PROVIDERS = new Set(
   Object.keys({ codex: true, claude: true, kimi: true }),
 );
-
-// The file src/trajectories/<provider>/<trajectory>.mjs, or null when the
-// provider is not one plain path segment (it could otherwise leave
-// src/trajectories) or has no such trajectory.
-export function trajectoryPath(provider, trajectory) {
-  if (!provider || basename(provider) !== provider || provider.startsWith('.'))
-    return null;
-  const path = resolve(REPO, 'src/trajectories', provider, `${trajectory}.mjs`);
-  return existsSync(path) ? path : null;
-}
-
-// Every provider with a `trajectory` of its own, in name order: what a route
-// that runs that trajectory serves.
-export function providersWith(trajectory) {
-  return readdirSync(resolve(REPO, 'src/trajectories'), { withFileTypes: true })
-    .filter(
-      (entry) => entry.isDirectory() && trajectoryPath(entry.name, trajectory),
-    )
-    .map((entry) => entry.name)
-    .sort();
-}
 
 // `account` is the row this run must sign in, already resolved from the caller's
 // login_item. It reaches the trajectory as <PROVIDER>_DISPLAY_NAME, which is the
