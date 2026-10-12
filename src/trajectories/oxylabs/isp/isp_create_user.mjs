@@ -185,12 +185,12 @@ try {
     await shot(s, 'no_user_input');
     process.exit(2);
   }
-  await userIn.click({ force: true }).catch(() => {});
-  await userIn.fill('').catch(() => {});
+  await userIn.click({ force: true });
+  await userIn.fill('');
   await humanType(s.page, ISP_USERNAME);
   if (await passIn.isVisible().catch(() => false)) {
-    await passIn.click({ force: true }).catch(() => {});
-    await passIn.fill('').catch(() => {});
+    await passIn.click({ force: true });
+    await passIn.fill('');
     await humanType(s.page, ISP_PASSWORD);
   }
   await humanIdlePause('short');
@@ -204,18 +204,21 @@ try {
     console.log('FAIL: no Create user button');
     process.exit(2);
   }
-  await createUserBtn.click({ force: true }).catch(() => {});
+  await createUserBtn.click({ force: true });
   await humanIdlePause('long');
 
   // Read the FULL username from the field (Oxylabs auto-appends a suffix
   // like "_qs6VR" so the real username is e.g. "wisentispxxxxx_qs6VR").
-  const fullUsername = await s.page
-    .evaluate(() => {
-      const inp = document.querySelector('input[name="subuser_name"]');
-      return inp ? inp.value : null;
-    })
-    .catch(() => null);
-  const finalUsername = fullUsername || ISP_USERNAME;
+  // The requested name is not the account's name, so storing it would save a
+  // credential the proxy refuses: the created name has to be read back.
+  const finalUsername = await s.page.evaluate(() => {
+    const inp = document.querySelector('input[name="subuser_name"]');
+    return inp ? inp.value : null;
+  });
+  if (!finalUsername)
+    throw new Error(
+      `oxylabs_isp_username_unread: no subuser_name field holds the created user at ${s.page.url()}, so the credential was not stored`,
+    );
 
   writeScopedSecretItem('oxylabsIsp', {
     username: finalUsername,
@@ -240,10 +243,17 @@ try {
     ],
     { encoding: 'utf8' },
   );
+  if (probe.error)
+    throw new Error(
+      `oxylabs_isp_probe_failed: curl could not run to check the stored credential: ${probe.error.message}`,
+    );
   console.log(
-    `[trajectory] probe :8001 stdout="${probe.stdout || ''}" status=${probe.status}`,
+    `[trajectory] probe :8001 stdout="${probe.stdout}" status=${probe.status}`,
   );
-
+  if (probe.status || !probe.stdout)
+    throw new Error(
+      `oxylabs_isp_probe_failed: curl through isp.oxylabs.io:8001 with the stored credential exited ${probe.status}: ${probe.stderr.trim()}`,
+    );
   console.log('[trajectory] done');
 } catch (e) {
   console.log(`FAIL: ${e.message}`);
