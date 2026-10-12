@@ -20,6 +20,7 @@ import {
   ensureLinkedinSignupForm,
 } from '../../_shared/linkedin/signup/register_guard.mjs';
 import { fillPostRegisterOnboarding } from '../../_shared/linkedin/onboarding/work_school.mjs';
+import { ONBOARDING_PROFILE } from './run_request.mjs';
 import { confirmLinkedinEmail } from '../../_shared/linkedin/checkpoint.mjs';
 import { autoBindCharacter } from '../../lib/character-bind.mjs';
 import {
@@ -415,7 +416,10 @@ export async function createLinkedinAccount(ctx) {
   let authState = await settleAuthenticatedSession(ctx);
   // Fill "add a role/school" onboarding gate so stooge can view other profiles.
   try {
-    const ob = await fillPostRegisterOnboarding(session.page);
+    const ob = await fillPostRegisterOnboarding(
+      session.page,
+      ONBOARDING_PROFILE,
+    );
     console.log(`[register] onboarding: ${JSON.stringify(ob)}`);
   } catch (obErr) {
     console.log(`[register] onboarding err: ${obErr.message}`);

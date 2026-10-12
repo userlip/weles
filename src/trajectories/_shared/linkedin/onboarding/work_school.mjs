@@ -13,10 +13,29 @@ import { humanFill } from '../../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../../dist/human/mouse.js';
 import { pageSettled } from '../../page/settled.mjs';
 import { clickOffered, pageShows } from '../../page/judged/seen.mjs';
-import { ROLE_TITLES, ROLE_COMPANIES } from './stooge_data.mjs';
+import { statedText } from '../../inputs/stated.mjs';
 
-function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+/**
+ * The role and school the new profile shows, as the run's caller states them.
+ * They are facts about the person the account belongs to, so none is made
+ * up: each missing one is refused by name before the signup starts.
+ */
+export function statedOnboardingProfile() {
+  const stated = (name, what) =>
+    statedText([name], what, 'LINKEDIN_ONBOARDING_PROFILE_REQUIRED');
+  return {
+    title: stated('LINKEDIN_ROLE_TITLE', 'the job title the new profile shows'),
+    company: stated(
+      'LINKEDIN_ROLE_COMPANY',
+      'the company the new profile names for that role',
+    ),
+    school: stated('LINKEDIN_SCHOOL', 'the school the new profile names'),
+    degree: stated('LINKEDIN_DEGREE', 'the degree earned at that school'),
+    fieldOfStudy: stated(
+      'LINKEDIN_FIELD_OF_STUDY',
+      'the field studied at that school',
+    ),
+  };
 }
 
 async function clickIfVisible(page, locator) {
@@ -49,13 +68,12 @@ async function fillIfVisible(page, locator, value) {
  * Fill the inline "Add a role" / "Add a school" widget that LinkedIn presents
  * after register. Returns { roleAdded, schoolAdded, viewable }.
  */
-export async function fillPostRegisterOnboarding(page) {
+export async function fillPostRegisterOnboarding(page, profile) {
   console.log('[onboarding] post-register profile-build attempt');
   await pageSettled(page);
 
   let roleAdded = false;
-  const title = pick(ROLE_TITLES);
-  const company = pick(ROLE_COMPANIES);
+  const { title, company } = profile;
   try {
     await page.goto('https://www.linkedin.com/in/me/edit/position/new/', {
       waitUntil: 'domcontentloaded',
@@ -117,7 +135,7 @@ export async function fillPostRegisterOnboarding(page) {
           'input[id*="school-typeahead" i], input[id*="school" i], input[aria-label*="School" i]',
         )
         .first(),
-      'Stanford University',
+      profile.school,
     );
     await pageSettled(page);
     await clickIfVisible(
@@ -130,7 +148,7 @@ export async function fillPostRegisterOnboarding(page) {
       page
         .locator('input[id*="degree" i], input[aria-label*="Degree" i]')
         .first(),
-      'Bachelor of Science (BS)',
+      profile.degree,
     );
     await pageSettled(page);
     await fillIfVisible(
@@ -140,7 +158,7 @@ export async function fillPostRegisterOnboarding(page) {
           'input[id*="fieldOfStudy" i], input[aria-label*="Field of study" i], input[id*="field" i]',
         )
         .first(),
-      'Computer Science',
+      profile.fieldOfStudy,
     );
     await pageSettled(page);
     const saved = await clickOffered(
@@ -149,7 +167,7 @@ export async function fillPostRegisterOnboarding(page) {
     );
     if (schoolFilled && saved) {
       schoolAdded = true;
-      console.log('[onboarding] school added: Stanford University');
+      console.log(`[onboarding] school added: ${profile.school}`);
     } else {
       console.log(
         `[onboarding] school fill incomplete school=${schoolFilled} saved=${saved}`,

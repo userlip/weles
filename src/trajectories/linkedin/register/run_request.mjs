@@ -18,9 +18,13 @@ import {
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { writeSubmitDiagnostics } from './diagnostics.mjs';
 import { statedNumber } from '../../_shared/inputs/stated.mjs';
+import { statedOnboardingProfile } from '../../_shared/linkedin/onboarding/work_school.mjs';
 
 export const SIGNUP_URL = 'https://www.linkedin.com/signup';
 export const DEFAULT_ENTRY_URL = SIGNUP_URL;
+// The role and school the new account's profile shows: read with the request,
+// so a run missing one is refused before any browser or account is spent.
+export const ONBOARDING_PROFILE = statedOnboardingProfile();
 // The risk score at which the early fingerprint check quits before LinkedIn
 // sees the account is the caller's to state: it trades a burned account
 // against a skipped run, and only the operator weighs that.
