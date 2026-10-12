@@ -151,91 +151,12 @@ function getEnforcementFrame(page) {
     .find((f) => /arkoselabs\.com.*enforcement.*\.html/.test(f.url()));
 }
 
-// Shadow-DOM + nested same-origin iframe button search. Arkose wraps in shadow
-// roots AND in a game_core iframe; walks both. Returns coords only — caller
-// must humanClick, since match.click() inside evaluate emits isTrusted=false.
-const SHADOW_BTN_QUERY = `(needle => {
-  const out = [];
-  const walk = (root) => {
-    if (!root?.querySelectorAll) return;
-    const cands = root.querySelectorAll('button, [role="button"], a, [aria-label], [data-test], [data-testid]');
-    for (const n of cands) out.push(n);
-    for (const n of root.querySelectorAll('*')) {
-      if (n.shadowRoot) walk(n.shadowRoot);
-      if (n.contentDocument) walk(n.contentDocument);
-    }
-  };
-  walk(document);
-  const str = (v) => (typeof v === 'string' ? v : '');
-  const sig = (b) => {
-    const vis = b.offsetParent !== null || (b.getClientRects && b.getClientRects().length);
-    return {
-      n: b.nodeName.toLowerCase(),
-      cls: str(String(b.className?.baseVal ?? b.className)),
-      txt: str(b.innerText || b.textContent).trim(),
-      aria: str(b.getAttribute?.('aria-label')),
-      title: str(b.getAttribute?.('title')),
-      dt: str(b.getAttribute?.('data-test') ?? b.getAttribute?.('data-testid')),
-      vis: !!vis,
-    };
-  };
-  const haystack = (b) => {
-    const s = sig(b);
-    return (s.txt + ' ' + s.aria + ' ' + s.title + ' ' + s.dt + ' ' + s.cls).toLowerCase();
-  };
-  const match = out.find(b => haystack(b).includes(needle) && (b.offsetParent !== null || (b.getClientRects && b.getClientRects().length)));
-  if (!match) return { ok: false, count: out.length, texts: out.map(sig) };
-  match.scrollIntoView?.({ block: 'center' });
-  const r = match.getBoundingClientRect();
-  return { ok: true, sig: sig(match), x: r.x + r.width / 2, y: r.y + r.height / 2 };
-})`;
-
-async function clickInEnforcement(page, needles) {
-  const frame = getEnforcementFrame(page);
-  if (!frame) return { ok: false, reason: 'no-frame' };
-  // Accept either a single string or a prioritized array of substrings.
-  const arr = Array.isArray(needles) ? needles : [needles];
-  for (const n of arr) {
-    const r = await frame
-      .evaluate(`${SHADOW_BTN_QUERY}(${JSON.stringify(n.toLowerCase())})`)
-      .catch((e) => ({ err: e.message }));
-    if (r?.ok) return r;
-  }
-  // Return info from last attempt so caller can log button inventory.
-  return await frame
-    .evaluate(
-      `${SHADOW_BTN_QUERY}(${JSON.stringify(arr[arr.length - 1].toLowerCase())})`,
-    )
-    .catch((e) => ({ err: e.message }));
-}
-
-async function clickVisualPuzzleInEnforcement(page) {
-  // Arkose labels this button as "Visual challenge" in some renders and "Visual puzzle"
-  // in others — match either substring, on the settled puzzle frame.
-  await pageSettled(getEnforcementFrame(page) ?? page);
-  const r = await clickInEnforcement(page, [
-    'visual puzzle',
-    'visual challenge',
-    'visual',
-  ]);
-  if (r?.ok) {
-    console.log(
-      `[coords] clicked Visual puzzle in enforcement: "${r.text}" at (${Math.round(r.x)},${Math.round(r.y)})`,
-    );
-    return true;
-  }
-  console.log(
-    `[coords] no Visual puzzle button (count=${r?.count ?? '?'} sample=${JSON.stringify(r?.texts ?? [])})`,
-  );
-  return false;
-}
-
 export async function solveRotationViaCoords(page, { maxRounds = 80 } = {}) {
   const twoKey = process.env.TWOCAPTCHA_API_KEY;
   requireStadoModelRouterConfig();
-  // Step 0: click "Visual puzzle" button inside the enforcement iframe to dismiss the
-  // puzzle-type chooser screen. Without this, every screenshot is the chooser.
-  await clickVisualPuzzleInEnforcement(page);
+  // The puzzle-type chooser is a screen like any other: the model router reads
+  // it from the round's image and names where to click, as it does for every
+  // later screen. No button is looked up by the words it carries.
   const waited = await waitForCaptchaUI(page);
   if (!waited) {
     console.log('[coords] captcha iframe never rendered');
@@ -329,10 +250,12 @@ export async function solveRotationViaCoords(page, { maxRounds = 80 } = {}) {
         const submitNow =
           g.action === 'submit' ||
           (g.score >= threshold && g.score >= bestScore);
-        const needles = submitNow
-          ? ['submit']
-          : ['navigate to next', 'next', 'arrow'];
-        const domResult = await clickInEnforcement(page, needles);
+        // The model router names the control to press on this screen; its
+        // coordinates are the click, not a lookup of the control's words.
+        const domResult =
+          g.x && g.y
+            ? { ok: true, x: g.x, y: g.y, sig: { txt: g.action } }
+            : null;
         if (domResult?.ok) {
           await humanClick(
             page,
@@ -369,11 +292,10 @@ export async function solveRotationViaCoords(page, { maxRounds = 80 } = {}) {
         // puzzle starts at max threshold instead of inheriting a low one.
         navCount = 0;
         bestScore = 0;
-        const r = await clickInEnforcement(page, [
-          'try again',
-          'reload',
-          'restart',
-        ]);
+        const r =
+          g.x && g.y
+            ? { ok: true, x: g.x, y: g.y, sig: { txt: g.action } }
+            : null;
         if (r?.ok) {
           await humanClick(
             page,
