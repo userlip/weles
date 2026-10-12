@@ -3,17 +3,19 @@
 //
 // A word list answers for one language and one copy of a page: Ads Manager in
 // Polish, a renamed button or a reworded banner and the list is silently
-// wrong. These two questions go to the vision model through Jeden's Brama
-// route instead (`src/vision/analyze.ts`): whether the settled page shows what
-// the caller describes, and where the control the caller describes is, which
-// is then clicked the way a person clicks. A control the model cannot find is
-// refused with the description and the page it was looked for on.
+// wrong. These questions go to the vision model through Jeden's Brama route
+// instead (`src/vision/analyze.ts`): whether the settled page shows what the
+// caller describes, and where the control or field the caller describes is,
+// which is then clicked - and typed into - the way a person does it. A
+// control the model cannot find, and a field that does not hold what was
+// typed, are refused with the description and the page.
 
 import {
   checkPage,
   findClickTarget,
 } from '../../../../../dist/vision/analyze.js';
 import { humanClick } from '../../../../../dist/human/mouse.js';
+import { humanType } from '../../../../../dist/human/keyboard.js';
 import { pageSettled } from '../settled.mjs';
 
 /** Whether the settled page shows what `question` describes (a yes/no question). */
@@ -38,4 +40,24 @@ export async function clickDescribed(page, description) {
   await humanClick(page, target.x, target.y);
   await pageSettled(page);
   return target;
+}
+
+/**
+ * Types `value` into the field `description` names, replacing what it held,
+ * and confirms the focused field then holds exactly `value`.
+ */
+export async function fillDescribed(page, description, value) {
+  await clickDescribed(page, description);
+  await page.keyboard.press('ControlOrMeta+A');
+  await humanType(page, String(value));
+  await pageSettled(page);
+  const held = await page.evaluate(() => {
+    const field = document.activeElement;
+    return typeof field.value === 'string' ? field.value : field.innerText;
+  });
+  if (held.trim() !== String(value).trim()) {
+    throw new Error(
+      `the field "${description}" on ${page.url()} holds ${JSON.stringify(held)} after ${JSON.stringify(String(value))} was typed`,
+    );
+  }
 }

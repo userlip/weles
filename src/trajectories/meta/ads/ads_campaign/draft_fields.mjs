@@ -1,4 +1,9 @@
 import { pageSettled } from '../../../_shared/page/settled.mjs';
+import {
+  clickDescribed,
+  fillDescribed,
+  pageShows,
+} from '../../../_shared/page/judged/seen.mjs';
 // The fields the draft carries, and the proof they are in it.
 //
 // One pass down the campaign, ad set and ad steps: names, budget, the Facebook
@@ -22,235 +27,77 @@ import {
   PRIMARY_TEXT,
   URL_PARAMS,
 } from './campaign_request.mjs';
-import {
-  clickAny,
-  clickNext,
-  fillAny,
-  fillAnyReliable,
-  pageText,
-} from './panel_controls.mjs';
+import { pageText } from './panel_controls.mjs';
 
 async function selectFacebookPage(s) {
   if (!FACEBOOK_PAGE_NAME && !FACEBOOK_PAGE_ID) return false;
-  const opened = await clickAny(
-    s,
-    [
-      'div[role="combobox"]:has-text("Wybierz stronę")',
-      'div[role="combobox"]:has-text("Select a Page")',
-      'div[role="combobox"]:has-text("Select Page")',
-    ],
-    'Facebook Page selector',
-  );
-  if (!opened) {
-    const text = await pageText(s);
-    if (FACEBOOK_PAGE_NAME && text.includes(FACEBOOK_PAGE_NAME)) {
-      console.log(
-        `[meta-ads] Facebook Page already selected: ${FACEBOOK_PAGE_NAME}`,
-      );
-      return true;
-    }
-    return false;
+  const page = FACEBOOK_PAGE_NAME
+    ? `the Facebook Page named "${FACEBOOK_PAGE_NAME}"`
+    : `the Facebook Page with ID ${FACEBOOK_PAGE_ID}`;
+  if (
+    await pageShows(
+      s.page,
+      `Is ${page} already selected as this ad's identity?`,
+    )
+  ) {
+    console.log(`[meta-ads] Facebook Page already selected: ${page}`);
+    return true;
   }
-  await pageSettled(s.page);
-  const target = await s.page.evaluate(
-    ({ name, id }) => {
-      const norm = (s) =>
-        String(s || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-      const els = Array.from(
-        document.querySelectorAll(
-          '[role="menuitem"], [role="option"], div, span',
-        ),
-      );
-      for (const el of els) {
-        const text = norm(el.innerText || el.textContent || '');
-        if (!text) continue;
-        if (id && text.includes(id)) {
-          const r = el.getBoundingClientRect();
-          if (r.width && r.height)
-            return {
-              x: r.left + r.width / 2,
-              y: r.top + Math.min(r.height / 2, 18),
-              text,
-            };
-        }
-        if (
-          name &&
-          (text === name ||
-            text.startsWith(`${name} Identyfikator:`) ||
-            text.startsWith(`${name} Identifier:`))
-        ) {
-          const r = el.getBoundingClientRect();
-          if (r.width && r.height)
-            return {
-              x: r.left + r.width / 2,
-              y: r.top + Math.min(r.height / 2, 18),
-              text,
-            };
-        }
-      }
-      return null;
-    },
-    { name: FACEBOOK_PAGE_NAME, id: FACEBOOK_PAGE_ID },
-  );
-  if (!target) {
-    console.log(
-      `[meta-ads] WARN: Facebook Page option not found: name=${FACEBOOK_PAGE_NAME || ''} id=${FACEBOOK_PAGE_ID || ''}`,
-    );
-    return false;
-  }
-  await s.page.mouse.click(target.x, target.y);
-  console.log(`[meta-ads] selected Facebook Page: ${target.text}`);
-  await pageSettled(s.page);
+  await clickDescribed(s.page, "the selector of the ad's Facebook Page");
+  await clickDescribed(s.page, `the option for ${page} in the open list`);
+  console.log(`[meta-ads] selected ${page}`);
   return true;
 }
 
+/** Fills the field `description` names with `value` when the run states one. */
+async function fillStated(s, description, value) {
+  if (!value) return false;
+  await fillDescribed(s.page, description, value);
+  console.log(`[meta-ads] filled: ${description}`);
+  return true;
+}
+
+async function nextStep(s) {
+  await clickDescribed(
+    s.page,
+    'the enabled Next button that moves the campaign editor to its next step',
+  );
+  await pageSettled(s.page);
+}
+
 async function fillCampaignFields(s) {
+  const steps = [
+    [['the campaign name field', CAMPAIGN_NAME]],
+    [
+      ['the ad set name field', AD_SET_NAME],
+      ['the daily budget field of the ad set', DAILY_BUDGET_USD],
+    ],
+    [
+      ['the ad name field', AD_NAME],
+      ['the website URL field of the ad destination', DESTINATION_URL],
+      ['the display link field of the ad', DISPLAY_LINK],
+      ['the URL parameters field of the ad', URL_PARAMS],
+      ['the primary text field of the ad creative', PRIMARY_TEXT],
+      ['the headline field of the ad creative', HEADLINE],
+      ['the description field of the ad creative', DESCRIPTION],
+    ],
+  ];
   let filledCount = 0;
-  if (
-    await fillAnyReliable(
-      s,
-      [
-        'input[aria-label*="Campaign name" i]',
-        'input[placeholder*="Campaign name" i]',
-        'input[placeholder="Wprowadź tutaj nazwę kampanii..."]',
-        'label:has-text("Campaign name") input',
-      ],
-      CAMPAIGN_NAME,
-      'campaign name',
-    )
-  )
-    filledCount += 1;
-  if (await clickNext(s)) await pageSettled(s.page);
-  if (
-    await fillAnyReliable(
-      s,
-      [
-        'input[aria-label*="Ad set name" i]',
-        'input[placeholder*="Ad set name" i]',
-        'input[placeholder="Wprowadź tutaj nazwę zestawu reklam..."]',
-      ],
-      AD_SET_NAME,
-      'ad set name',
-    )
-  )
-    filledCount += 1;
-  if (
-    await fillAny(
-      s,
-      [
-        'input[aria-label*="Budget" i]',
-        'input[placeholder*="Budget" i]',
-        'label:has-text("Daily budget") input',
-      ],
-      DAILY_BUDGET_USD,
-      'daily budget',
-    )
-  )
-    filledCount += 1;
-  if (await clickNext(s)) await pageSettled(s.page);
-  if (
-    await fillAnyReliable(
-      s,
-      [
-        'input[aria-label*="Ad name" i]',
-        'input[placeholder*="Ad name" i]',
-        'input[placeholder="Wprowadź tutaj nazwę reklamy..."]',
-      ],
-      AD_NAME,
-      'ad name',
-    )
-  )
-    filledCount += 1;
+  for (const [index, fields] of steps.entries()) {
+    if (index) await nextStep(s);
+    for (const [description, value] of fields) {
+      if (await fillStated(s, description, value)) filledCount += 1;
+    }
+  }
   if (await selectFacebookPage(s)) filledCount += 1;
-  if (
-    await fillAnyReliable(
-      s,
-      [
-        'input[aria-label*="Website URL" i]',
-        'input[placeholder*="Website URL" i]',
-        'input[placeholder="http://www.przyklad.com/strona"]',
-        'input[aria-label*="URL" i]',
-      ],
-      DESTINATION_URL,
-      'destination URL',
-    )
-  )
-    filledCount += 1;
-  if (
-    await fillAnyReliable(
-      s,
-      [
-        'input[aria-label*="Display link" i]',
-        'input[placeholder*="Display link" i]',
-        'input[placeholder="Wprowadź link, który ma być wyświetlany w reklamie"]',
-      ],
-      DISPLAY_LINK,
-      'display link',
-    )
-  )
-    filledCount += 1;
-  if (
-    await fillAnyReliable(
-      s,
-      [
-        'input[aria-label*="URL parameters" i]',
-        'input[placeholder*="URL parameters" i]',
-        'input[placeholder="klucz1=wartość1&klucz2=wartość2"]',
-      ],
-      URL_PARAMS,
-      'URL params',
-    )
-  )
-    filledCount += 1;
-  if (
-    await fillAnyReliable(
-      s,
-      [
-        'textarea[aria-label*="Primary text" i]',
-        'div[contenteditable="true"][aria-label*="Primary text" i]',
-        'textarea',
-      ],
-      PRIMARY_TEXT,
-      'primary text',
-    )
-  )
-    filledCount += 1;
-  if (
-    await fillAnyReliable(
-      s,
-      ['input[aria-label*="Headline" i]', 'textarea[aria-label*="Headline" i]'],
-      HEADLINE,
-      'headline',
-    )
-  )
-    filledCount += 1;
-  if (
-    await fillAnyReliable(
-      s,
-      [
-        'input[aria-label*="Description" i]',
-        'textarea[aria-label*="Description" i]',
-      ],
-      DESCRIPTION,
-      'description',
-    )
-  )
-    filledCount += 1;
   return filledCount;
 }
 
 async function verifyConfiguredDraft(s) {
-  await clickAny(
-    s,
-    [
-      'div[role="tab"]:has-text("Sprawdź")',
-      'div[role="tab"]:has-text("Review")',
-    ],
-    'Review/Sprawdź tab',
+  await clickDescribed(
+    s.page,
+    'the Review tab of the campaign editor, which summarises the draft',
   );
-  await pageSettled(s.page);
   const text = await pageText(s);
   const checks = [
     [CAMPAIGN_NAME, 'campaign name'],
@@ -268,11 +115,21 @@ async function verifyConfiguredDraft(s) {
     );
     process.exit(1);
   }
-  if (!/Wersja robocza|Draft/i.test(text)) {
+  if (
+    !(await pageShows(
+      s.page,
+      'Does the page show this campaign as an unpublished draft?',
+    ))
+  ) {
     console.log('FAIL: Meta Ads draft verification did not find draft state');
     process.exit(1);
   }
-  if (!/Wszystkie zmiany zapisane|All changes saved/i.test(text)) {
+  if (
+    !(await pageShows(
+      s.page,
+      'Does the page say that all changes to the draft are saved?',
+    ))
+  ) {
     console.log(
       '[meta-ads] WARN: draft configured but save confirmation not visible',
     );

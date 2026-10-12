@@ -45,11 +45,8 @@ import {
   targetUrl,
 } from './ads_campaign/campaign_request.mjs';
 import { WSession } from '../../../../dist/session/wsession.js';
-import {
-  clickAny,
-  closeObstructingPanels,
-  pageText,
-} from './ads_campaign/panel_controls.mjs';
+import { closeObstructingPanels } from './ads_campaign/panel_controls.mjs';
+import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
 import {
   bringBrowserToFront,
   ensureAdAccount,
@@ -97,19 +94,17 @@ try {
   }
   await closeObstructingPanels(s);
 
-  await clickAny(
-    s,
-    [
-      'button:has-text("I Accept")',
-      'button:has-text("Accept")',
-      'button:has-text("Akceptuję")',
-      'button:has-text("Zgadzam się")',
-      'div[role="button"]:has-text("I Accept")',
-      'div[role="button"]:has-text("Akceptuję")',
-    ],
-    'policy modal accept',
-  );
-  await pageSettled(s.page);
+  if (
+    await pageShows(
+      s.page,
+      'Is a Meta advertising policy dialog open that asks to be accepted before continuing?',
+    )
+  ) {
+    await clickDescribed(
+      s.page,
+      'the button that accepts the open advertising policy dialog',
+    );
+  }
 
   const createClicked = await openCampaignCreation(s);
   await chooseObjectiveAndContinue(s);
@@ -128,22 +123,14 @@ try {
     process.exit(0);
   }
 
-  const published = await clickAny(
-    s,
-    [
-      'div[role="button"]:has-text("Publish")',
-      'button:has-text("Publish")',
-      'div[role="button"]:has-text("Confirm")',
-    ],
-    'Publish',
+  await clickDescribed(
+    s.page,
+    'the enabled button that publishes the campaign (or confirms its publication in an open dialog)',
   );
-  if (!published) {
-    console.log('FAIL: Publish button not found');
-    process.exit(1);
-  }
-  await pageSettled(s.page);
-  const finalText = await pageText(s);
-  const status = /published|processing|in review|successfully/i.test(finalText)
+  const status = (await pageShows(
+    s.page,
+    'Does the page say the campaign was published, is processing, or is in review?',
+  ))
     ? 'confirmed'
     : 'clicked';
   console.log(

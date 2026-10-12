@@ -151,45 +151,33 @@ try {
     console.log(`FAIL: Meta Ads browser session is not logged in (${current})`);
     exitCode = 2;
   } else {
-    const details = await s.page
-      .evaluate(() => {
-        const bodyText = document.body?.innerText || '';
-        const visibleAccount = bodyText.match(/([^\n]*\((\d{6,})\))/);
-        const rows = Array.from(document.querySelectorAll('[role="row"], tr'))
-          .map((row) =>
-            (row.innerText || row.textContent || '')
-              .replace(/\s+/g, ' ')
-              .trim(),
-          )
-          .filter(Boolean);
-        const headings = Array.from(
-          document.querySelectorAll('h1, h2, [role="heading"]'),
+    const details = await s.page.evaluate(() => {
+      const bodyText = document.body?.innerText || '';
+      const visibleAccount = bodyText.match(/([^\n]*\((\d{6,})\))/);
+      const rows = Array.from(document.querySelectorAll('[role="row"], tr'))
+        .map((row) =>
+          (row.innerText || row.textContent || '').replace(/\s+/g, ' ').trim(),
         )
-          .map((node) =>
-            (node.innerText || node.textContent || '')
-              .replace(/\s+/g, ' ')
-              .trim(),
-          )
-          .filter(Boolean);
-        return {
-          title: document.title || null,
-          headings,
-          rows,
-          empty: /Brak wyników|No results|Nie utworzono|No campaigns/i.test(
-            bodyText,
-          ),
-          visibleAccountLabel: visibleAccount?.[1]?.trim() || null,
-          visibleAccountId: visibleAccount?.[2] || null,
-        };
-      })
-      .catch(() => ({
-        title: null,
-        headings: [],
-        rows: [],
-        empty: false,
-        visibleAccountLabel: null,
-        visibleAccountId: null,
-      }));
+        .filter(Boolean);
+      const headings = Array.from(
+        document.querySelectorAll('h1, h2, [role="heading"]'),
+      )
+        .map((node) =>
+          (node.innerText || node.textContent || '')
+            .replace(/\s+/g, ' ')
+            .trim(),
+        )
+        .filter(Boolean);
+      // An empty account is read from the rows themselves, not guessed from
+      // the wording of an empty-state banner.
+      return {
+        title: document.title,
+        headings,
+        rows,
+        visibleAccountLabel: visibleAccount?.[1]?.trim() || null,
+        visibleAccountId: visibleAccount?.[2] || null,
+      };
+    });
 
     if (
       AD_ACCOUNT_ID &&

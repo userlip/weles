@@ -55,9 +55,10 @@ async function passLoginGate(s) {
     await s.goto(targetUrl);
     await pageSettled(s.page);
   }
+  // Meta's security and two-factor steps live at their own addresses.
   if (
     /business\.facebook\.com\/security|two_factor|checkpoint/i.test(
-      await pageText(s),
+      s.page.url(),
     )
   ) {
     console.log('FAIL: Meta account requires security verification');

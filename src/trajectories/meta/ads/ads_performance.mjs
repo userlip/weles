@@ -116,11 +116,12 @@ async function browserPerformance() {
   try {
     await s.goto(url);
     await pageSettled(s.page);
-    const current = s.page.url?.() ?? '';
-    const text = await s.page
-      .evaluate(() => document.body?.innerText || '')
-      .catch(() => '');
-    if (/login|checkpoint|security/i.test(current)) {
+    const current = s.page.url();
+    const text = await s.page.evaluate(() => document.body.innerText);
+    // A session that is not signed in is sent away from Ads Manager (to the
+    // login, checkpoint or security pages), so staying on its route is the
+    // signed-in answer.
+    if (!new URL(current).pathname.startsWith('/adsmanager/')) {
       console.log(
         `FAIL: Meta Ads browser session is not logged in (${current})`,
       );
@@ -148,28 +149,14 @@ async function browserPerformance() {
       );
       process.exit(1);
     }
-    const rows = await s.page
-      .evaluate(() =>
-        Array.from(document.querySelectorAll('[role="row"], tr'))
-          .map((row) =>
-            (row.innerText || row.textContent || '')
-              .replace(/\s+/g, ' ')
-              .trim(),
-          )
-          .filter(Boolean),
-      )
-      .catch(() => []);
-    console.log(
-      JSON.stringify(
-        {
-          account: visibleLabel,
-          rows,
-          empty: /Brak wyników|No results|Nie utworzono/i.test(text),
-        },
-        null,
-        2,
-      ),
+    const rows = await s.page.evaluate(() =>
+      Array.from(document.querySelectorAll('[role="row"], tr'))
+        .map((row) => row.innerText.replace(/\s+/g, ' ').trim())
+        .filter(Boolean),
     );
+    // An empty account is read from the rows themselves, not guessed from the
+    // wording of an empty-state banner.
+    console.log(JSON.stringify({ account: visibleLabel, rows }, null, '  '));
     console.log('PASS: Meta Ads performance read completed (browser)');
   } finally {
     await s
