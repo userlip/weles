@@ -65,6 +65,45 @@ const PROXY_PROVIDERS = new Set([
   'fivesim',
 ]);
 
+/**
+ * The platforms whose register is not at `<platform>/register.mjs`.
+ * youtube_register and google_register both run the canonical Gmail signup
+ * flow at google/register.mjs (Material-Design comboboxes, SMS already wired,
+ * QR-recovery path), persisting as platform='google'; cross_login's
+ * PROVIDER_TO_ACCOUNT_PLATFORM is aligned to that. Meta's platforms keep
+ * their flows under meta/.
+ */
+const REGISTER_SCRIPTS: Record<string, string> = {
+  youtube: 'src/trajectories/google/register.mjs',
+  google: 'src/trajectories/google/register.mjs',
+  apple: 'src/trajectories/apple/register/run.mjs',
+  facebook: 'src/trajectories/meta/facebook_register.mjs',
+  threads: 'src/trajectories/meta/threads_register.mjs',
+};
+
+/** Meta's platforms, whose login lives under meta/<platform>_login.mjs. */
+const META_PLATFORMS: Record<string, true> = { facebook: true, threads: true };
+
+/**
+ * The platforms whose edit_profile is under <platform>/content/ (github's
+ * actions/ folder is at the 5-file cap); every other one is under actions/.
+ */
+const CONTENT_EDIT_PROFILE: Record<string, true> = {
+  github: true,
+  reddit: true,
+};
+
+/**
+ * The platforms with an on-demand ticker scrape: wisent-app inserts an
+ * account_action_logs row with action='<platform>_scrape' and
+ * params={ticker, page}; the worker spawns that platform's scrape script.
+ */
+const SCRAPERS: Record<string, true> = {
+  unusualwhales: true,
+  volumeleaders: true,
+  tradingview: true,
+};
+
 const ROUTES: Record<string, (p: string) => string | null> = {
   browser_task: (p) =>
     p === 'generic' ? 'src/trajectories/generic/browser_task.mjs' : null,
@@ -342,28 +381,19 @@ const ROUTES: Record<string, (p: string) => string | null> = {
   provision_user_token: (p) =>
     p === 'slack' ? 'src/trajectories/slack/provision_user_token.mjs' : null,
   shadowban_check: (p) => `src/trajectories/${p}/shadowban_check.mjs`,
-  register: (p) => {
-    // youtube_register and google_register both run the canonical Gmail
-    // signup flow at google/register.mjs (Material-Design comboboxes, SMS
-    // already wired, QR-recovery path). Persists as platform='google' —
-    // cross_login's PROVIDER_TO_ACCOUNT_PLATFORM is aligned to that.
-    if (p === 'youtube' || p === 'google')
-      return 'src/trajectories/google/register.mjs';
-    if (p === 'apple') return 'src/trajectories/apple/register/run.mjs';
-    if (p === 'facebook' || p === 'threads')
-      return `src/trajectories/meta/${p}_register.mjs`;
-    return `src/trajectories/${p}/register.mjs`;
-  },
+  register: (p) =>
+    Object.hasOwn(REGISTER_SCRIPTS, p)
+      ? REGISTER_SCRIPTS[p]
+      : `src/trajectories/${p}/register.mjs`,
   // Every platform keeps its login beside its register, in its own directory.
   // The flat `<plat>_login.mjs` layout this replaced had left codex, claude
   // and kimi unreachable once: the reauth path declines to log in on a burnt
   // tick by design, so a dispatcher that cannot reach the login left no
   // automatic way back at all.
-  login: (p) => {
-    if (p === 'facebook' || p === 'threads')
-      return `src/trajectories/meta/${p}_login.mjs`;
-    return `src/trajectories/${p}/login.mjs`;
-  },
+  login: (p) =>
+    Object.hasOwn(META_PLATFORMS, p)
+      ? `src/trajectories/meta/${p}_login.mjs`
+      : `src/trajectories/${p}/login.mjs`,
   create_developer_id: (p) =>
     p === 'apple' ? 'src/trajectories/apple/create_developer_id.mjs' : null,
   login_search: (p) =>
@@ -381,7 +411,7 @@ const ROUTES: Record<string, (p: string) => string | null> = {
   // <platform>/content/ because github/actions/ is at the 5-file cap;
   // every other platform follows the actions/ convention.
   edit_profile: (p) =>
-    p === 'github' || p === 'reddit'
+    Object.hasOwn(CONTENT_EDIT_PROFILE, p)
       ? `src/trajectories/${p}/content/edit_profile.mjs`
       : `src/trajectories/${p}/actions/edit_profile.mjs`,
   create_repo: (p) => `src/trajectories/${p}/content/create_repo.mjs`,
@@ -432,9 +462,7 @@ const ROUTES: Record<string, (p: string) => string | null> = {
   // with action='unusualwhales_scrape' or 'volumeleaders_scrape' and
   // params={ticker, page}; the worker spawns the existing scrape script.
   scrape: (p) =>
-    p === 'unusualwhales' || p === 'volumeleaders' || p === 'tradingview'
-      ? `src/trajectories/${p}/scrape.mjs`
-      : null,
+    Object.hasOwn(SCRAPERS, p) ? `src/trajectories/${p}/scrape.mjs` : null,
   // google_authenticator_enrol: enrol a Google Authenticator for one
   // Skarbiec login item and store its seed there (params.login_item).
   authenticator_enrol: (p) =>
