@@ -8,6 +8,10 @@ import {
 } from '../../../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../../../dist/human/keyboard.js';
 import { assertFits } from '../../../../form-input.mjs';
+import {
+  chooseDeleteInRowMenu,
+  confirmDeletion,
+} from '../../../../../_shared/ncbr/row_menu.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const SECTION_URL = (await import('#ncbr-settings')).sectionUrl('1_3');
@@ -133,19 +137,8 @@ async function deleteRowsContaining(needle) {
       element.removeAttribute('data-weles-human-target'),
     );
     await humanIdlePause('deliberate');
-    const del = page
-      .locator('[role="menuitem"], .MuiMenuItem-root')
-      .filter({ hasText: /Usuń|Usun|Delete/ })
-      .first();
-    if ((await del.count()) === 0)
-      throw new Error(`delete menu item not found for ${needle}`);
-    await del.dispatchEvent('click'); // allow-raw-playwright: delete stale visible contact row
-    await humanIdlePause('deliberate');
-    const confirm = page
-      .locator('button')
-      .filter({ hasText: /Usuń|Usun|Potwierdź|Tak|Delete/ })
-      .last();
-    if ((await confirm.count()) > 0) await confirm.dispatchEvent('click'); // allow-raw-playwright: confirm visible delete dialog
+    await chooseDeleteInRowMenu(page);
+    await confirmDeletion(page);
     await humanIdlePause('long');
     deleted.push(needle);
   }

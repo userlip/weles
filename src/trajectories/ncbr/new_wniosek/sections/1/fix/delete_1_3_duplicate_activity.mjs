@@ -7,6 +7,10 @@ import {
   humanIdlePause,
 } from '../../../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../../../dist/human/keyboard.js';
+import {
+  chooseDeleteInRowMenu,
+  confirmDeletion,
+} from '../../../../../_shared/ncbr/row_menu.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const SECTION_URL = (await import('#ncbr-settings')).sectionUrl('1_3');
@@ -60,18 +64,8 @@ await humanClickLocator(
 );
 await humanIdlePause('deliberate');
 
-const deleteItem = page
-  .locator('[role="menuitem"], .MuiMenuItem-root')
-  .filter({ hasText: /usuń|usun/i })
-  .first();
-await humanClickLocator(page, deleteItem);
-await humanIdlePause('deliberate');
-
-const confirmDelete = page
-  .getByRole('button', { name: /usuń|usun|tak|potwierdź|potwierdz/i })
-  .filter({ visible: true })
-  .last();
-await humanClickLocator(page, confirmDelete);
+await chooseDeleteInRowMenu(page);
+await confirmDeletion(page);
 await humanIdlePause('long');
 
 console.log(

@@ -8,6 +8,10 @@ import {
 } from '../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../dist/human/keyboard.js';
 import { openNewRow, openRowEditor } from '../../forms/row-editor.mjs';
+import {
+  chooseDeleteInRowMenu,
+  confirmDeletion,
+} from '../../../_shared/ncbr/row_menu.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const SECTION_URL = (await import('#ncbr-settings')).sectionUrl('6_3');
@@ -324,19 +328,8 @@ if (process.env.DELETE_OBSOLETE) {
       .first()
       .dispatchEvent('click'); // allow-raw-playwright: open obsolete cost row menu
     await humanIdlePause('deliberate');
-    const item = page
-      .locator('[role="menuitem"], .MuiMenuItem-root')
-      .filter({ hasText: /Usuń|Usun|Delete/i })
-      .first();
-    if ((await item.count()) === 0)
-      throw new Error(`delete menu item not found for ${target}`);
-    await item.dispatchEvent('click'); // allow-raw-playwright: choose delete for obsolete cost row
-    await humanIdlePause('deliberate');
-    const confirm = page
-      .locator('button')
-      .filter({ hasText: /Usuń|Usun|Potwierdź|Tak|Delete/i })
-      .last();
-    if ((await confirm.count()) > 0) await confirm.dispatchEvent('click'); // allow-raw-playwright: confirm deletion dialog
+    await chooseDeleteInRowMenu(page);
+    await confirmDeletion(page);
     await humanIdlePause('long');
     deleted.push({ target, status: 'deleted' });
   }

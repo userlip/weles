@@ -6,6 +6,10 @@ import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../../../dist/human/mouse.js';
+import {
+  chooseDeleteInRowMenu,
+  confirmDeletion,
+} from '../../../_shared/ncbr/row_menu.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const PROJ = (await import('#ncbr-settings')).sectionBase();
@@ -73,16 +77,8 @@ if (process.env.DIAG) {
 const deleted = [];
 while ((await rowCount()) > 0) {
   await openFirstRowMenu();
-  const item = page.getByRole('menuitem', { name: /usuń|usun/i }).first();
-  const clicked = (await item.count()) > 0;
-  if (clicked) await humanClickLocator(page, item);
-  if (!clicked) throw new Error('delete menu item not found');
-  await humanIdlePause('deliberate');
-  const buttons = page
-    .getByRole('button', { name: /^(usuń|usun|tak|potwierdź|potwierdz)$/i })
-    .filter({ visible: true });
-  const count = await buttons.count();
-  if (count > 0) await humanClickLocator(page, buttons.nth(count - 1));
+  await chooseDeleteInRowMenu(page);
+  await confirmDeletion(page);
   await humanIdlePause('long');
   deleted.push(SECTION);
 }

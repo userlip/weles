@@ -4,6 +4,10 @@ import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../../../../dist/human/mouse.js';
+import {
+  chooseDeleteInRowMenu,
+  confirmDeletion,
+} from '../../../../_shared/ncbr/row_menu.mjs';
 
 export function legalActsTable({ page }) {
   async function tableState() {
@@ -157,39 +161,10 @@ export function legalActsTable({ page }) {
   async function deleteRowByNeedle(needles) {
     const opened = await openMenuByNeedle(needles);
     if (!opened.opened) return { skipped: opened };
-    const labels = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('[role="menuitem"], li, button'))
-        .map((el) => (el.textContent || '').trim())
-        .filter(Boolean),
-    ); // allow-raw-playwright: read visible menu labels
-    const del = page.getByRole('menuitem', { name: /usuń|usun/i }).first();
-    if ((await del.count()) === 0)
-      return {
-        opened,
-        error: `delete menu item not found: ${labels.join(' | ')}`,
-      };
-    await humanClickLocator(page, del);
-    await humanIdlePause('deliberate');
-    const buttons = page
-      .getByRole('button', { name: /^(Usuń|Usun|Tak|Potwierdź|Potwierdz)$/i })
-      .filter({ visible: true });
-    const count = await buttons.count();
-    const confirmed =
-      count > 0
-        ? {
-            confirmed: true,
-            label: (await buttons.nth(count - 1).innerText()).trim(),
-          }
-        : {
-            confirmed: false,
-            labels: await page
-              .locator('button')
-              .filter({ visible: true })
-              .allTextContents(),
-          };
-    if (count > 0) await humanClickLocator(page, buttons.nth(count - 1));
+    await chooseDeleteInRowMenu(page);
+    const confirmed = await confirmDeletion(page);
     await humanIdlePause('long');
-    return { opened, labels, confirmed };
+    return { opened, confirmed };
   }
 
   async function clickAdd() {

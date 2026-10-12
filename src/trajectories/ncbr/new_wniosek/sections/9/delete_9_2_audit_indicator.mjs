@@ -6,14 +6,15 @@ import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../../../../dist/human/mouse.js';
+import {
+  chooseDeleteInRowMenu,
+  confirmDeletion,
+} from '../../../../_shared/ncbr/row_menu.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const SECTION_URL = (await import('#ncbr-settings')).sectionUrl('9_2');
-const NEEDLES = [
-  'Kompletność strukturalnego raportu audytowego',
-  'procent kompletności',
-  'strukturalnego raportu audytowego decyzji modelu RNM',
-];
+// The indicator's own name, as the application states it.
+const NEEDLE = 'Kompletność strukturalnego raportu audytowego';
 
 const browser = await chromium.connectOverCDP(endpoint);
 const page = browser.contexts()[0]?.pages()[0];
@@ -42,9 +43,7 @@ async function rows() {
 }
 
 const before = await rows();
-const targetBefore = before.find((row) =>
-  NEEDLES.some((needle) => row.includes(needle)),
-);
+const targetBefore = before.find((row) => row.includes(NEEDLE));
 if (!targetBefore) {
   console.log(
     JSON.stringify(
@@ -63,13 +62,7 @@ if (!targetBefore) {
 const targetRow = page
   .locator('table tbody tr')
   .filter({ has: page.locator('button[aria-label="overflow-options"]') })
-  .filter({
-    hasText: new RegExp(
-      NEEDLES.map((needle) =>
-        needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-      ).join('|'),
-    ),
-  })
+  .filter({ hasText: NEEDLE })
   .first();
 if ((await targetRow.count()) === 0)
   throw new Error('target audit indicator row not found');
@@ -79,30 +72,13 @@ await humanClickLocator(
 );
 await humanIdlePause('deliberate');
 
-const deleteItem = page
-  .locator('[role="menuitem"], .MuiMenuItem-root')
-  .filter({ hasText: /usuń|usun/i })
-  .filter({ visible: true })
-  .first();
-if ((await deleteItem.count()) === 0)
-  throw new Error('delete menu item not found');
-await humanClickLocator(page, deleteItem);
-await humanIdlePause('deliberate');
-
-const confirm = page
-  .locator('button:not([disabled])')
-  .filter({ hasText: /usuń|usun|tak|potwierdź|potwierdz/i })
-  .filter({ visible: true })
-  .last();
-if ((await confirm.count()) === 0)
+await chooseDeleteInRowMenu(page);
+if (!(await confirmDeletion(page)))
   throw new Error('delete confirmation button not found');
-await humanClickLocator(page, confirm);
 await humanIdlePause('long');
 
 const after = await rows();
-const stillPresent = after.some((row) =>
-  NEEDLES.some((needle) => row.includes(needle)),
-);
+const stillPresent = after.some((row) => row.includes(NEEDLE));
 console.log(
   JSON.stringify(
     {

@@ -8,6 +8,7 @@ import {
 } from '../../../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../../../dist/human/keyboard.js';
 import { cdpEndpoint, sectionUrl } from '#ncbr-settings';
+import { chooseEditInRowMenu } from '../../../../../_shared/ncbr/row_menu.mjs';
 
 const endpoint = cdpEndpoint();
 // The section id differs per application, so it is declared beside the project id.
@@ -78,32 +79,9 @@ async function openEntityEdit() {
   await humanClickLocator(page, button);
   await humanIdlePause('deliberate');
 
-  const edit = page
-    .locator('[role="menuitem"], li, button')
-    .filter({ visible: true })
-    .filter({ hasText: /edytuj|edycja|zmień|zobacz|szczegóły/i })
-    .first();
-  let menuClicked = null;
-  if ((await edit.count()) > 0) {
-    menuClicked = (
-      (await edit.textContent()) ||
-      (await edit.getAttribute('aria-label')) ||
-      ''
-    ).trim();
-    await humanClickLocator(page, edit);
-    await humanIdlePause('long');
-  }
-
-  if ((await page.locator('textarea[name="nazwa"]').count()) === 0) {
-    const direct = page
-      .locator('button[aria-label*="Edytuj"], button:has-text("Edytuj")')
-      .first();
-    if ((await direct.count()) > 0) {
-      await humanClickLocator(page, direct);
-      await humanIdlePause('long');
-    }
-  }
-  return { result, menuClicked };
+  await chooseEditInRowMenu(page);
+  await humanIdlePause('long');
+  return { result, menuClicked: true };
 }
 
 const open = await openEntityEdit();

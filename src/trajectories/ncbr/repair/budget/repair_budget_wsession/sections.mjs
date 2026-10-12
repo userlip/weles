@@ -11,6 +11,11 @@ import {
   OBSOLETE_ROWS,
 } from './rows.mjs';
 import { openRowEditor } from '../../../forms/row-editor.mjs';
+import {
+  chooseDeleteInRowMenu,
+  chooseEditInRowMenu,
+  confirmDeletion,
+} from '../../../../_shared/ncbr/row_menu.mjs';
 
 export function budgetSections({
   page,
@@ -59,12 +64,8 @@ export function budgetSections({
         continue;
       }
       await openRowMenu(target);
-      await clickMenu(/Usuń|Usun|Delete/i);
-      const confirm = page
-        .locator('button')
-        .filter({ hasText: /Usuń|Usun|Potwierdź|Tak|Delete/i })
-        .last();
-      if ((await confirm.count()) > 0) await confirm.dispatchEvent('click'); // allow-raw-playwright: confirm visible delete dialog
+      await chooseDeleteInRowMenu(page);
+      await confirmDeletion(page);
       await humanIdlePause('long');
       deleted.push({ target, status: 'deleted' });
     }
@@ -274,7 +275,7 @@ export function budgetSections({
       .locator('table')
       .first()
       .locator('tbody tr')
-      .filter({ hasText: /Wisent Polska|WISENT POLSKA/i })
+      .filter({ hasText: /Wisent Polska/i })
       .first();
     if ((await existingRow.count()) > 0) {
       await existingRow
@@ -282,7 +283,7 @@ export function budgetSections({
         .first()
         .dispatchEvent('click'); // allow-raw-playwright: open visible section 8 row menu
       await humanIdlePause('deliberate');
-      await clickMenu(/Edytuj/i);
+      await chooseEditInRowMenu(page);
     } else {
       await clickVisibleButton('Dodaj');
       await setApplicantIfPresent();

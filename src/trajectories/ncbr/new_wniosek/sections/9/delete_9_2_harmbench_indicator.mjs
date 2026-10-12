@@ -6,10 +6,15 @@ import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../../../../dist/human/mouse.js';
+import {
+  chooseDeleteInRowMenu,
+  confirmDeletion,
+} from '../../../../_shared/ncbr/row_menu.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const SECTION_URL = (await import('#ncbr-settings')).sectionUrl('9_2');
-const NEEDLES = ['Redukcja attack success rate na HarmBench'];
+// The indicator's own name, as the application states it.
+const NEEDLE = 'Redukcja attack success rate na HarmBench';
 
 const browser = await chromium.connectOverCDP(endpoint);
 const page = browser.contexts()[0]?.pages()[0];
@@ -38,9 +43,7 @@ async function rows() {
 }
 
 const before = await rows();
-const targetBefore = before.find((row) =>
-  NEEDLES.some((needle) => row.startsWith(needle)),
-);
+const targetBefore = before.find((row) => row.startsWith(NEEDLE));
 if (!targetBefore) {
   console.log(
     JSON.stringify(
@@ -58,7 +61,7 @@ if (!targetBefore) {
 
 const targetRow = page
   .locator('table tbody tr')
-  .filter({ hasText: NEEDLES[0] })
+  .filter({ hasText: NEEDLE })
   .first();
 const overflowButton = targetRow
   .locator('button[aria-label="overflow-options"]')
@@ -80,26 +83,13 @@ if (process.env.DIAG_MENU) {
   process.exit(0);
 }
 
-const deleteItem = page
-  .locator('[role="menuitem"], .MuiMenuItem-root')
-  .filter({ hasText: /usuń|usun/i })
-  .first();
-if (!(await deleteItem.count())) throw new Error('delete menu item not found');
-await humanClickLocator(page, deleteItem);
-await humanIdlePause('deliberate');
-
-const confirmButtons = page
-  .getByRole('button', { name: /usuń|usun|tak|potwierdź|potwierdz/i })
-  .filter({ visible: true });
-const confirmCount = await confirmButtons.count();
-if (!confirmCount) throw new Error('delete confirmation button not found');
-await humanClickLocator(page, confirmButtons.nth(confirmCount - 1));
+await chooseDeleteInRowMenu(page);
+if (!(await confirmDeletion(page)))
+  throw new Error('delete confirmation button not found');
 await humanIdlePause('long');
 
 const after = await rows();
-const stillPresent = after.some((row) =>
-  NEEDLES.some((needle) => row.startsWith(needle)),
-);
+const stillPresent = after.some((row) => row.startsWith(NEEDLE));
 console.log(
   JSON.stringify(
     {

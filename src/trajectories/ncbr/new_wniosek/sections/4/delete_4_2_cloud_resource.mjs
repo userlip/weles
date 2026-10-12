@@ -6,6 +6,10 @@ import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../../../../dist/human/mouse.js';
+import {
+  chooseDeleteInRowMenu,
+  confirmDeletion,
+} from '../../../../_shared/ncbr/row_menu.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const SECTION_URL = (await import('#ncbr-settings')).sectionUrl('4_2');
@@ -61,21 +65,9 @@ await humanClickLocator(
 );
 await humanIdlePause('deliberate');
 
-const deleteItem = page
-  .locator('[role="menuitem"], .MuiMenuItem-root')
-  .filter({ hasText: /usuń|usun/i })
-  .first();
-if ((await deleteItem.count()) === 0)
-  throw new Error('delete menu item not found');
-await humanClickLocator(page, deleteItem);
-await humanIdlePause('deliberate');
-
-const confirmations = page
-  .getByRole('button', { name: /usuń|usun|tak|potwierdź|potwierdz/i })
-  .filter({ visible: true });
-if ((await confirmations.count()) === 0)
+await chooseDeleteInRowMenu(page);
+if (!(await confirmDeletion(page)))
   throw new Error('delete confirmation button not found');
-await humanClickLocator(page, confirmations.last());
 await humanIdlePause('long');
 
 console.log(
