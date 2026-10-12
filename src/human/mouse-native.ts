@@ -40,37 +40,50 @@ export function assertCliclickAvailable(): void {
   nativeAvailable = true;
 }
 
+// The parent of process `pid` as `ps` reports it; 0 above the first process.
+function parentOf(pid: number): number {
+  return Number(
+    execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    }).trim(),
+  );
+}
+
 function assertNativeInputTargetIsFrontmost(): void {
   // Native input is global OS input. If another app is frontmost, cliclick will
   // drive that app, not the intended Weles window. Fail closed unless the
-  // foreground process is explicitly allowed.
+  // foreground process is a browser this run launched: a descendant of this
+  // process, whatever the browser's application is called.
   const allowAny = process.env.WELES_NATIVE_INPUT_ALLOW_ANY_FRONTMOST === '1';
   if (allowAny) return;
 
-  let frontmost = '';
+  let frontmost: { name: string; pid: number };
   try {
-    frontmost = execFileSync(
+    const answer = execFileSync(
       'osascript',
       [
         '-e',
-        'tell application "System Events" to get name of first application process whose frontmost is true',
+        'tell application "System Events" to get {name, unix id} of first application process whose frontmost is true',
       ],
       { encoding: 'utf8', stdio: 'pipe' },
     ).trim();
+    const read = /^(?<name>.*),\s*(?<pid>\d+)$/.exec(answer);
+    if (!read?.groups)
+      throw new Error(`System Events answered ${JSON.stringify(answer)}`);
+    frontmost = { name: read.groups.name, pid: Number(read.groups.pid) };
   } catch (error) {
     throw new Error(
       `native input blocked: cannot verify frontmost application: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
-  const allowed =
-    process.env.WELES_NATIVE_INPUT_FRONTMOST_RE ??
-    '^(Chromium|Google Chrome|Weles)$';
-  if (!new RegExp(allowed).test(frontmost)) {
-    throw new Error(
-      `native input blocked: frontmost application is "${frontmost}", expected ${allowed}`,
-    );
+  for (let pid = frontmost.pid; pid; pid = parentOf(pid)) {
+    if (pid === process.pid) return;
   }
+  throw new Error(
+    `native input blocked: frontmost application is "${frontmost.name}" (pid ${frontmost.pid}), which this run (pid ${process.pid}) did not launch; bring its browser window to the front`,
+  );
 }
 
 // Get the browser window's screen position + chrome (title+url+tabs) height
