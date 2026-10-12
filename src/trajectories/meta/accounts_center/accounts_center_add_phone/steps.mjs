@@ -92,6 +92,28 @@ export async function waitAndClickFirst(page, label, allow, deny) {
   return clickFirst(page, label, allow, deny);
 }
 
+/** The digits of `text`; Meta formats a phone field as it is typed. */
+function digits(text) {
+  return String(text).replace(/\D/g, '');
+}
+
+/** Type `text` into `input` and confirm the field holds it. A click, select
+ * or keystroke that failed used to be dropped, and the step logged the field
+ * as filled while it held nothing or the old value. */
+async function typeInto(page, input, text, stage) {
+  await humanClickLocator(page, input);
+  await page.keyboard.press('ControlOrMeta+A');
+  await humanType(page, text);
+  await pageSettled(page);
+  const held = await input.inputValue();
+  if (!digits(held).endsWith(digits(text)))
+    throw new Error(
+      `${stage}: the field holds ${digits(held).length} digits, not the ${digits(text).length} typed`,
+    );
+  console.log(JSON.stringify({ stage, redacted: true }));
+  return true;
+}
+
 export async function fillPhone(page) {
   const input = await page
     .locator(
@@ -99,29 +121,15 @@ export async function fillPhone(page) {
     )
     .filter({ visible: true })
     .last();
-  if (!(await input.isVisible().catch(() => false))) return false;
-  await humanClickLocator(page, input).catch(() => {});
-  await page.keyboard.press('ControlOrMeta+A').catch(() => {});
-  await humanType(page, VERIFY_PHONE).catch(async () => {
-    await page.keyboard.insertText(VERIFY_PHONE).catch(() => {});
-  });
-  await pageSettled(page);
-  console.log(JSON.stringify({ stage: 'filled_phone', redacted: true }));
-  return true;
+  if (!(await input.isVisible())) return false;
+  return typeInto(page, input, VERIFY_PHONE, 'filled_phone');
 }
 
 export async function fillCode(page) {
   if (!VERIFY_CODE) return false;
   const input = page.locator('input').filter({ visible: true }).last();
-  if (!(await input.isVisible().catch(() => false))) return false;
-  await humanClickLocator(page, input).catch(() => {});
-  await page.keyboard.press('ControlOrMeta+A').catch(() => {});
-  await humanType(page, VERIFY_CODE).catch(async () => {
-    await page.keyboard.insertText(VERIFY_CODE).catch(() => {});
-  });
-  await pageSettled(page);
-  console.log(JSON.stringify({ stage: 'filled_code', redacted: true }));
-  return true;
+  if (!(await input.isVisible())) return false;
+  return typeInto(page, input, VERIFY_CODE, 'filled_code');
 }
 
 export async function selectPhoneAssociationAccount(page) {
@@ -152,6 +160,8 @@ export async function selectPhoneAssociationAccount(page) {
           return {
             text: textOf(el),
             role: el.getAttribute('role') || el.tagName.toLowerCase(),
+            // A grouped account row is preferred over the parts inside it.
+            group: el.matches('[role="group"]'),
             disabled:
               el.disabled === true ||
               el.getAttribute('aria-disabled') === 'true',
@@ -166,11 +176,7 @@ export async function selectPhoneAssociationAccount(page) {
             item.y > 500 &&
             !item.disabled,
         )
-        .sort((a, b) => {
-          if (a.role === 'group' && b.role !== 'group') return -1;
-          if (b.role === 'group' && a.role !== 'group') return 1;
-          return a.area - b.area;
-        });
+        .sort((a, b) => Number(b.group) - Number(a.group) || a.area - b.area);
       return candidates[0] || null;
     })
     .catch(() => null);
