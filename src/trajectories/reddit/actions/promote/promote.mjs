@@ -80,7 +80,7 @@ try {
   const cookies = (acct.metadata?.cookies ?? []).filter((c) =>
     (c.domain ?? '').includes('reddit.com'),
   );
-  if (cookies.length) await s.ctx.addCookies(cookies).catch(() => {});
+  if (cookies.length) await s.ctx.addCookies(cookies);
   let postUrl = null,
     postTitle = '',
     postBody = '';

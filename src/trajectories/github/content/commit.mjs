@@ -48,7 +48,7 @@ try {
   const cookies = (acct.metadata?.cookies ?? []).filter((c) =>
     (c.domain ?? '').includes('github.com'),
   );
-  if (cookies.length) await s.ctx.addCookies(cookies).catch(() => {});
+  if (cookies.length) await s.ctx.addCookies(cookies);
   await s.goto(`${repoBase}/edit/main/${FILE_PATH}`);
   checkReachable(s, 'github');
   await pageSettled(s.page);

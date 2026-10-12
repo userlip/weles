@@ -42,7 +42,7 @@ try {
   const cookies = (acct.metadata?.cookies ?? []).filter((c) =>
     (c.domain ?? '').includes('github.com'),
   );
-  if (cookies.length) await s.ctx.addCookies(cookies).catch(() => {});
+  if (cookies.length) await s.ctx.addCookies(cookies);
   await s.goto(`${upstream}/fork`);
   checkReachable(s, 'github');
   await pageSettled(s.page);
@@ -61,7 +61,11 @@ try {
   }, acct.username);
   if (alreadyForked) {
     console.log('[fork] already forked this repo — skipping with success');
-    ban = await banSignalOf(detectGitHubBanSignals, s, 'after finding the fork');
+    ban = await banSignalOf(
+      detectGitHubBanSignals,
+      s,
+      'after finding the fork',
+    );
     console.log(
       `[ban-signal] ${ban?.signal}  PASS: already_forked ${upstreamPath}`,
     );

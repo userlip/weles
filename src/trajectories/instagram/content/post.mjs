@@ -86,7 +86,7 @@ try {
   const cookies = (acct.metadata?.cookies ?? []).filter((c) =>
     (c.domain ?? '').includes('instagram.com'),
   );
-  if (cookies.length) await s.ctx.addCookies(cookies).catch(() => {});
+  if (cookies.length) await s.ctx.addCookies(cookies);
   await s.goto('https://www.instagram.com/');
   checkReachable(s, 'instagram');
   await pageSettled(s.page);

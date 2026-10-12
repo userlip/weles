@@ -48,7 +48,7 @@ try {
   const cookies = (acct.metadata?.cookies ?? []).filter((c) =>
     (c.domain ?? '').includes('github.com'),
   );
-  if (cookies.length) await s.ctx.addCookies(cookies).catch(() => {});
+  if (cookies.length) await s.ctx.addCookies(cookies);
   await s.goto('https://github.com/new');
   checkReachable(s, 'github');
   await pageSettled(s.page);
@@ -94,7 +94,11 @@ try {
   ) {
     throw new Error(`repo_not_created: final url=${finalUrl}`);
   }
-  ban = await banSignalOf(detectGitHubBanSignals, s, 'after creating the repository');
+  ban = await banSignalOf(
+    detectGitHubBanSignals,
+    s,
+    'after creating the repository',
+  );
   console.log(
     `[ban-signal] ${ban?.signal}  PASS: created ${acct.username}/${REPO_NAME}`,
   );

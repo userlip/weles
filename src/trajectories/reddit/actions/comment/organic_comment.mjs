@@ -78,7 +78,7 @@ try {
   const cookies = (acct.metadata?.cookies ?? []).filter((c) =>
     (c.domain ?? '').includes('reddit.com'),
   );
-  if (cookies.length) await s.ctx.addCookies(cookies).catch(() => {});
+  if (cookies.length) await s.ctx.addCookies(cookies);
   // Capture the listing body via page.evaluate fetch (not capturedResponses,
   // which truncates to 8KB and breaks JSON.parse on listing payloads).
   const sortPath = `/r/${SUBREDDIT}`;
