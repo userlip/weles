@@ -15,12 +15,11 @@ import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
 //   PACKAGE_NAME     (required unless PLAY_RELEASE_URL given) e.g. com.foo.bar
 //   PLAY_RELEASE_URL (optional) full Play Console URL of the track's release
 //                    page; when set, navigation by package is skipped
-//   TRACK            (optional) internal | closed | open | production
-//                    (default internal)
+//   TRACK            (required) internal | closed | open | production
 //   RELEASE_NAME     (optional) release name shown in the console
 //   RELEASE_NOTES    (optional) "What's new" notes for the default language
-//   SUBMIT           (optional) "0" stages the release but stops before the
-//                    terminal rollout/send-for-review click. Otherwise sends.
+//   SUBMIT           (optional) "1" makes the terminal rollout/send-for-review
+//                    click; anything else stages the release and stops there.
 //   PROXY_URL        (optional) override proxy
 //
 // Requires a logged-in Google session for an account with Play Console access
@@ -31,14 +30,20 @@ import { getSocialAccount } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
 const BUNDLE_PATH = process.env.BUNDLE_PATH;
 const PACKAGE_NAME = process.env.PACKAGE_NAME;
 const PLAY_RELEASE_URL = process.env.PLAY_RELEASE_URL;
-const TRACK = (process.env.TRACK || 'internal').toLowerCase();
+// Which track a release goes to is the caller's; none is chosen here.
+const TRACK = statedText(
+  ['TRACK'],
+  'the Play track the release goes to: internal, closed, open or production',
+).toLowerCase();
 const RELEASE_NAME = process.env.RELEASE_NAME;
 const RELEASE_NOTES = process.env.RELEASE_NOTES;
-const SUBMIT = process.env.SUBMIT !== '0';
+// A rollout reaches real users, so it happens only when asked for.
+const SUBMIT = process.env.SUBMIT === '1';
 
 if (!BUNDLE_PATH || !existsSync(BUNDLE_PATH)) {
   console.log(
@@ -57,13 +62,11 @@ const trackNav = {
   open: 'Open testing',
   production: 'Production',
 };
-const navLabel = trackNav[TRACK];
-if (!navLabel) {
-  console.log(
-    `FAIL: TRACK must be one of internal|closed|open|production (got: ${TRACK})`,
+if (!Object.hasOwn(trackNav, TRACK))
+  throw new Error(
+    `TRACK is "${TRACK}", not one of ${Object.keys(trackNav).join(', ')}; nothing was uploaded`,
   );
-  process.exit(1);
-}
+const navLabel = trackNav[TRACK];
 
 const acct = await getSocialAccount('google');
 if (!acct) {
