@@ -172,7 +172,7 @@ export const BROWSER_TOOLS: readonly FunctionTool[] = [
   ),
   browserTool(
     'fill_credential',
-    'Fill an authorized credential field using its supplied opaque capability. Describe the actual field, including its class. Never request or provide plaintext credentials.',
+    'Fill an authorized credential field using its supplied opaque capability. Point the target at the actual field; its own markup must declare the class (a password, token or API key only into a masked input). Never request or provide plaintext credentials.',
     {
       target: TARGET,
       field_class: {

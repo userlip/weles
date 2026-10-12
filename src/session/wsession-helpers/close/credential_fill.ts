@@ -10,10 +10,7 @@ import type { WSession } from '../../wsession.js';
 import type { ElementHandle, Page } from 'playwright';
 import { fillPage } from './page_fill.js';
 import { humanFill } from '../../../human/keyboard.js';
-import {
-  describeInputTarget,
-  resolveObservedControl,
-} from '../../observation/controls.js';
+import { resolveObservedControl } from '../../observation/controls.js';
 
 type CredentialFieldClass =
   | 'password'
@@ -31,13 +28,98 @@ type IdentityField =
   | 'birth_day'
   | 'birth_year';
 
-const CREDENTIAL_FIELD_HINTS: Record<CredentialFieldClass, RegExp> = {
-  password: /password|passcode|secret/,
-  email: /email|e-mail/,
-  username: /username|user name|login/,
-  token: /token|verification code|one-time code|otp/,
-  'api-key': /api.?key|access key/,
+/**
+ * What a field's own markup must declare to receive each credential class:
+ * its input type, or a WHATWG autocomplete field name
+ * (https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill).
+ * The page states what a field takes in its markup, whatever language its
+ * label is in. A secret goes only into a field that masks it; email and
+ * username are not secret, so any plain text input may take them too.
+ */
+interface DeclaredControl {
+  types: Record<string, true>;
+  autocomplete: Record<string, true>;
+  plainText: boolean;
+}
+
+const CREDENTIAL_CONTROLS: Record<CredentialFieldClass, DeclaredControl> = {
+  password: { types: { password: true }, autocomplete: {}, plainText: false },
+  email: {
+    types: { email: true },
+    autocomplete: { email: true, username: true },
+    plainText: true,
+  },
+  username: {
+    types: {},
+    autocomplete: { username: true, nickname: true, email: true },
+    plainText: true,
+  },
+  token: {
+    types: { password: true },
+    autocomplete: { 'one-time-code': true },
+    plainText: false,
+  },
+  'api-key': { types: { password: true }, autocomplete: {}, plainText: false },
 };
+
+/** The run identity fields that are secrets, and the class whose field they need. */
+const IDENTITY_SECRETS: Partial<Record<IdentityField, CredentialFieldClass>> = {
+  password: 'password',
+};
+
+/** Page protocols a credential may be typed into. */
+const WEB_PROTOCOLS: Record<string, true> = { 'https:': true, 'http:': true };
+
+function webOrigin(page: Page): string {
+  const pageUrl = new URL(page.url());
+  if (!Object.hasOwn(WEB_PROTOCOLS, pageUrl.protocol))
+    throw new Error(
+      `credential fill requires an HTTP(S) origin; the page is ${pageUrl.protocol} (${pageUrl.origin})`,
+    );
+  return pageUrl.origin;
+}
+
+/** The selectors that find a field declaring this class. */
+function declaredSelectors(fieldClass: CredentialFieldClass): string[] {
+  const declared = CREDENTIAL_CONTROLS[fieldClass];
+  return [
+    ...Object.keys(declared.types).map((type) => `input[type="${type}"]`),
+    ...Object.keys(declared.autocomplete).map(
+      (name) => `input[autocomplete~="${name}" i]`,
+    ),
+  ];
+}
+
+/**
+ * Refuses, before any capability is redeemed, a bound field whose own markup
+ * does not declare the class, naming what the field does declare.
+ */
+async function assertDeclaredControl(
+  control: ElementHandle,
+  fieldClass: CredentialFieldClass,
+  target: string,
+): Promise<void> {
+  const seen = await control.evaluate((element) => ({
+    type:
+      element instanceof HTMLInputElement
+        ? element.type
+        : element.tagName.toLowerCase(),
+    autocomplete: element.hasAttribute('autocomplete')
+      ? String(element.getAttribute('autocomplete')).toLowerCase().split(/\s+/)
+      : [],
+  }));
+  const declared = CREDENTIAL_CONTROLS[fieldClass];
+  const fits =
+    Object.hasOwn(declared.types, seen.type) ||
+    seen.autocomplete.some((name) =>
+      Object.hasOwn(declared.autocomplete, name),
+    ) ||
+    (declared.plainText && seen.type === 'text');
+  if (!fits)
+    throw new Error(
+      `[credential_target_mismatch] ${JSON.stringify(target)} is a ${seen.type} control with autocomplete ${JSON.stringify(seen.autocomplete)}; a ${fieldClass} goes only into a field whose markup declares input type ${JSON.stringify(Object.keys(declared.types))} or autocomplete ${JSON.stringify(Object.keys(declared.autocomplete))}${declared.plainText ? ' or into a plain text input' : ''}. The capability was not consumed`,
+    );
+}
 
 export class CredentialFillError extends Error {
   readonly code = 'CREDENTIAL_FILL_FAILED';
@@ -47,28 +129,6 @@ export class CredentialFillError extends Error {
       `credential fill at ${origin} for ${JSON.stringify(target)}: ${state}; the capability must not be retried`,
     );
     this.name = this.code;
-  }
-}
-
-async function fillProtectedValue(
-  s: WSession,
-  target: string,
-  value: string,
-  expectedHint: RegExp,
-): Promise<string> {
-  const pageUrl = new URL(s.page.url());
-  const origin = pageUrl.origin;
-  if (!['https:', 'http:'].includes(pageUrl.protocol))
-    throw new Error('credential fill requires an HTTP(S) origin');
-  if (!expectedHint.test(target.toLowerCase()))
-    throw new Error(
-      `[credential_target_description_mismatch] Target ${JSON.stringify(target)} lacks the required field description (${expectedHint.source}); no input was sent`,
-    );
-  try {
-    const result = await fillPage(s, target, value, origin, true);
-    return result.startsWith('filled') ? `credential ${result}` : result;
-  } catch {
-    throw new Error('credential fill failed');
   }
 }
 
@@ -86,6 +146,7 @@ async function credentialField(
   page: Page,
   target: string,
   allowedOrigin: string,
+  fieldClass: CredentialFieldClass,
 ): Promise<ElementHandle | null> {
   const observed = await resolveObservedControl(page, target, allowedOrigin);
   if (observed) return observed;
@@ -100,21 +161,16 @@ async function credentialField(
     .replace(/[^a-z0-9\s]/g, '')
     .split(/\s+/)
     .filter((w) => w.length > 2);
-  const sels = kws.flatMap((k) =>
-    ['input', 'textarea', '[contenteditable]'].flatMap((t) => [
-      `${t}[name*="${k}"]`,
-      `${t}[placeholder*="${k}" i]`,
-      `${t}[aria-label*="${k}" i]`,
-    ]),
-  );
-  if (/\b(email|e-mail)\b/i.test(target))
-    sels.unshift(
-      'input[type="email"], input[name*="mail" i], input[autocomplete*="email" i]',
-    );
-  if (/password|passcode|secret/i.test(target))
-    sels.unshift(
-      'input[type="password"], input[name*="password" i], input[autocomplete*="current-password" i]',
-    );
+  const sels = [
+    ...declaredSelectors(fieldClass),
+    ...kws.flatMap((k) =>
+      ['input', 'textarea', '[contenteditable]'].flatMap((t) => [
+        `${t}[name*="${k}"]`,
+        `${t}[placeholder*="${k}" i]`,
+        `${t}[aria-label*="${k}" i]`,
+      ]),
+    ),
+  ];
   const frames = page
     .frames()
     .filter((frame) => new URL(frame.url()).origin === allowedOrigin);
@@ -206,39 +262,26 @@ export async function wsFillCredential(
   fieldClass: CredentialFieldClass,
   capability: CapabilityRef,
 ): Promise<string> {
-  // Validate the origin, the field class and the field's EXISTENCE before
+  // Validate the origin, the field and the field's EXISTENCE before
   // withCapability: redeeming burns a one-shot capability and materializes the
-  // plaintext secret. A bad target, a non-HTTP(S) page, or a field that is not
-  // on this page must be refused while no secret exists.
+  // plaintext secret. A non-HTTP(S) page, a field that is not on this page, or
+  // a field whose markup does not declare the class must be refused while no
+  // secret exists.
   //
   // The existence check is not fussiness. Google's sign-in puts the password on
   // a second page, so prefilling both at load spent the password capability on
   // a field that could not exist yet, and the agent that reached the password
   // page was then denied for a capability it had never used.
   const page: Page = s.page;
-  const pageUrl = new URL(page.url());
-  const origin = pageUrl.origin;
-  if (!['https:', 'http:'].includes(pageUrl.protocol))
-    throw new Error('credential fill requires an HTTP(S) origin');
-  const expectedHint = CREDENTIAL_FIELD_HINTS[fieldClass];
-  if (!expectedHint.test(target.toLowerCase()))
-    throw new Error(
-      `[credential_target_description_mismatch] fill_credential field_class=${fieldClass} requires a target description matching ${expectedHint.source}; received ${JSON.stringify(target)}. The field was not inspected and the capability was not consumed`,
-    );
-  const control = await credentialField(page, target, origin);
+  const origin = webOrigin(page);
+  const control = await credentialField(page, target, origin, fieldClass);
   if (!control) return CREDENTIAL_FIELD_ABSENT;
   try {
-    if (
-      !(await control.isVisible()) ||
-      !(await control.isEditable()) ||
-      !expectedHint.test(
-        (await control.evaluate(describeInputTarget)).toLowerCase(),
-      )
-    ) {
+    if (!(await control.isVisible()) || !(await control.isEditable()))
       throw new Error(
-        `[credential_target_description_mismatch] The bound field does not match ${fieldClass}; capability not consumed`,
+        `[credential_target_unusable] ${JSON.stringify(target)} is not a visible editable field; capability not consumed`,
       );
-    }
+    await assertDeclaredControl(control, fieldClass, target);
     const expected = {
       purpose: 'weles.browser.fill' as const,
       resource: `origin:${origin}/${fieldClass}`,
@@ -251,21 +294,40 @@ export async function wsFillCredential(
   }
 }
 
+/**
+ * Fills one field from the run's generated identity. A secret identity field
+ * (the password) goes through the same declared-markup check as a credential;
+ * the others are the persona's own details and are filled by description,
+ * never logged.
+ */
 export async function wsFillIdentity(
   s: WSession,
   target: string,
   field: IdentityField,
   value: string,
 ): Promise<string> {
-  const expectedHints: Record<IdentityField, RegExp> = {
-    email: /email|e-mail/,
-    password: /password|passcode|secret/,
-    username: /username|user name|login/,
-    first_name: /first.?name|given.?name/,
-    last_name: /last.?name|family.?name|surname/,
-    birth_month: /birth.*month|month/,
-    birth_day: /birth.*day|day/,
-    birth_year: /birth.*year|year/,
-  };
-  return fillProtectedValue(s, target, value, expectedHints[field]);
+  const page: Page = s.page;
+  const origin = webOrigin(page);
+  const secretClass = IDENTITY_SECRETS[field];
+  if (secretClass !== undefined) {
+    const control = await credentialField(page, target, origin, secretClass);
+    if (!control) return CREDENTIAL_FIELD_ABSENT;
+    try {
+      await assertDeclaredControl(control, secretClass, target);
+      return await fillCredentialNode(page, control, target, origin, value);
+    } finally {
+      await control.dispose();
+    }
+  }
+  try {
+    const result = await fillPage(s, target, value, origin, true);
+    return result.startsWith('filled') ? `identity ${result}` : result;
+  } catch (error) {
+    // The fill error may carry the typed value; only its class leaves here.
+    throw new CredentialFillError(
+      `identity ${field} input failed (${error instanceof Error ? error.name : typeof error})`,
+      origin,
+      target,
+    );
+  }
 }
