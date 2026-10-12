@@ -4,52 +4,52 @@
 // truncation. Both utf8 and base64 forms of bodies are recorded so binary
 // payloads (gzip-encoded, compressed images, protobufs) survive intact.
 // Split out of net_record.ts, which wires it and writes the merged dump.
+//
+// A request body may carry what a person typed into a masked field. The page
+// itself says which fields those are (input type=password), so the body is
+// kept only after the values of its frame's masked fields are removed from
+// it, in every spelling a body can carry them; until that read lands, or when
+// it cannot be made, the body is withheld and says why.
 
-import type { BrowserContext } from 'playwright';
+import type { BrowserContext, Frame } from 'playwright';
 
-function redactRequestBody(
-  url: string,
+const MASKED = '<redacted-masked-field>';
+const EMAIL = /[\w.%+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]+/g;
+const WITHHELD =
+  '[request body withheld until the masked fields of its page were read]';
+
+/** The non-empty values of the frame's masked inputs, as the page holds them. */
+function maskedValues(frame: Frame): Promise<string[]> {
+  return frame.evaluate(() =>
+    Array.from(
+      document.querySelectorAll('input[type="password"]'),
+      (input) => (input as HTMLInputElement).value,
+    ).filter((value) => value !== ''),
+  );
+}
+
+/** Every spelling a typed value takes in a body: as typed, URL-encoded, form-encoded and JSON-escaped. */
+function spellings(value: string): string[] {
+  return [
+    value,
+    encodeURIComponent(value),
+    new URLSearchParams([['', value]]).toString().replace(/^=/, ''),
+    JSON.stringify(value).replace(/^"|"$/g, ''),
+  ];
+}
+
+function redactBody(
   body: string,
+  masked: string[],
 ): { body: string; redacted: boolean } {
-  if (!body) return { body, redacted: false };
-  const sensitiveUrl =
-    /linkedin\.com\/signup\/api|linkedin\.com\/checkpoint|\/auth\/|\/login|\/register/i.test(
-      url,
-    );
-  const sensitiveBody =
-    /password|passwd|pwd|email|mail|phone|csrf|token|secret/i.test(body);
-  if (!sensitiveUrl && !sensitiveBody) return { body, redacted: false };
-  const sensitiveKeys =
-    /^(password|passwd|pwd|passcode|secret|token|csrf|csrfToken|loginCsrfParam|email|emailAddress|mail|phone|username|session_key|session_password)$/i;
-  try {
-    const parsed = JSON.parse(body);
-    const scrub = (value: unknown): unknown => {
-      if (Array.isArray(value)) return value.map(scrub);
-      if (value && typeof value === 'object') {
-        return Object.fromEntries(
-          Object.entries(value as Record<string, unknown>).map(([k, v]) => [
-            k,
-            sensitiveKeys.test(k)
-              ? String(k).toLowerCase().includes('email')
-                ? '<redacted-email>'
-                : '<redacted>'
-              : scrub(v),
-          ]),
-        );
-      }
-      return value;
-    };
-    return { body: JSON.stringify(scrub(parsed)), redacted: true };
-  } catch {}
-  let redacted = body
-    .replace(
-      /(["']?(?:password|passwd|pwd|passcode|secret|token|csrfToken|loginCsrfParam|email|emailAddress|mail|phone|username|session_key|session_password)["']?\s*[:=]\s*)["']?([^&;,\s"'}]+)["']?/gi,
-      '$1"<redacted>"',
-    )
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '<redacted-email>');
-  if (redacted === body && (sensitiveUrl || sensitiveBody))
-    redacted = '<redacted-sensitive-body>';
-  return { body: redacted, redacted: redacted !== body };
+  let kept = body;
+  for (const value of masked) {
+    for (const spelling of new Set(spellings(value))) {
+      kept = kept.split(spelling).join(MASKED);
+    }
+  }
+  kept = kept.replace(EMAIL, '<redacted-email>');
+  return { body: kept, redacted: kept !== body };
 }
 
 export function attachCompleteNetRecord(
@@ -71,31 +71,54 @@ export function attachCompleteNetRecord(
       // A body that could not be read is not an empty body: the entry says so.
       let postDataError: string | undefined;
       try {
-        post = req.postData() ?? '';
+        const sent = req.postData();
+        if (sent !== null) post = sent;
       } catch (readError) {
         postDataError = `postData: ${readError instanceof Error ? readError.message : String(readError)}`;
       }
-      const redactedPost = redactRequestBody(req.url(), post);
       let postBytes = '';
       try {
         const b = (req as any).postDataBuffer?.();
-        if (b && !redactedPost.redacted)
-          postBytes = Buffer.from(b).toString('base64');
+        if (b) postBytes = Buffer.from(b).toString('base64');
       } catch (readError) {
         postDataError = `postDataBuffer: ${readError instanceof Error ? readError.message : String(readError)}`;
       }
-      reqs.push({
+      const entry: Record<string, unknown> = {
         t: Date.now(),
         phase: 'req',
         method: req.method(),
         url: req.url(),
         resourceType: (req as any).resourceType?.(),
         headers: req.headers(),
-        postData: redactedPost.body,
-        postDataRedacted: redactedPost.redacted,
-        postDataBase64: postBytes,
+        postData: post === '' ? post : WITHHELD,
+        postDataRedacted: false,
+        postDataBase64: '',
         postDataError,
-      });
+      };
+      reqs.push(entry);
+      if (post === '') return;
+      // The frame that sent the request holds the masked fields its body
+      // could carry; a request no frame sent (a service worker's) has none.
+      let frame: Frame | null;
+      try {
+        frame = req.frame();
+      } catch {
+        frame = null;
+      }
+      const masked: Promise<string[]> =
+        frame === null ? Promise.resolve([]) : maskedValues(frame);
+      masked.then(
+        (values) => {
+          const kept = redactBody(post, values);
+          entry.postData = kept.body;
+          entry.postDataRedacted = kept.redacted;
+          // Raw bytes are kept only when nothing had to be removed from them.
+          if (!kept.redacted) entry.postDataBase64 = postBytes;
+        },
+        (error: unknown) => {
+          entry.postData = `[request body withheld: the masked fields of its page could not be read, so a typed password could not be removed: ${error instanceof Error ? error.message : String(error)}]`;
+        },
+      );
     } catch (captureError) {
       // A request that could not be described still happened: keep its trace.
       reqs.push({
