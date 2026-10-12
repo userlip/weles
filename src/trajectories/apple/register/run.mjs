@@ -238,7 +238,9 @@ async function fillCodeBoxes(boxes, code, refusal) {
     process.exit(0);
   } catch (e) {
     console.log(`FAIL: ${e.message}`);
-    await s.close().catch(() => {});
+    await s
+      .close()
+      .catch((e) => console.log(`[session] close failed: ${e.message}`));
     process.exit(1);
   }
 }

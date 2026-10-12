@@ -232,7 +232,9 @@ try {
   exitCode = 1;
   console.log(`FAIL: ${error.message || String(error)}`);
 } finally {
-  await s.close().catch(() => {});
+  await s
+    .close()
+    .catch((e) => console.log(`[session] close failed: ${e.message}`));
 }
 
 if (exitCode) process.exit(exitCode);

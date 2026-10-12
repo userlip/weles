@@ -252,7 +252,9 @@ try {
     }
   }
 } finally {
-  await s.close().catch(() => {});
+  await s
+    .close()
+    .catch((e) => console.log(`[session] close failed: ${e.message}`));
   preparedProfile.cleanup();
 }
 

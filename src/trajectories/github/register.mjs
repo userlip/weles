@@ -354,7 +354,9 @@ try {
     console.log(
       `IP_FLAGGED: captcha blocked — saved status=captcha_blocked: ${id.username} — rotate and retry`,
     );
-    await s.close().catch(() => {});
+    await s
+      .close()
+      .catch((e) => console.log(`[session] close failed: ${e.message}`));
     process.exit(42);
   }
 

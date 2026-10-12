@@ -152,7 +152,9 @@ export async function gotoLoginRotating({ session, persona, restartFn }) {
           `no_unflagged_sticky_found: LINKEDIN_PROXY_EXIT_BUDGET spent after ${rotations} rotations: ${e.message}`,
         );
       remaining -= fresh.attempts;
-      await s.close().catch(() => {});
+      await s
+        .close()
+        .catch((e) => console.log(`[session] close failed: ${e.message}`));
       s = await restartFn(fresh.url, persona);
       activeProxy = fresh.url;
     }

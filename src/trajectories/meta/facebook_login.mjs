@@ -120,5 +120,7 @@ try {
   console.log('FAIL:', e.message);
   process.exitCode = 1;
 } finally {
-  await s.close().catch(() => {});
+  await s
+    .close()
+    .catch((e) => console.log(`[session] close failed: ${e.message}`));
 }

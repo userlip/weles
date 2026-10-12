@@ -56,7 +56,9 @@ try {
     if (jarErr instanceof CookieJarStaleError) {
       console.log(`FAIL: ${jarErr.message}`);
       await markCookiesStale(acct.id);
-      await s.close().catch(() => {});
+      await s
+        .close()
+        .catch((e) => console.log(`[session] close failed: ${e.message}`));
       process.exit(1);
     }
     throw jarErr;

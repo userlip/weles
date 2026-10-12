@@ -172,7 +172,9 @@ async function browserPerformance() {
     );
     console.log('PASS: Meta Ads performance read completed (browser)');
   } finally {
-    await s.close().catch(() => {});
+    await s
+      .close()
+      .catch((e) => console.log(`[session] close failed: ${e.message}`));
   }
 }
 

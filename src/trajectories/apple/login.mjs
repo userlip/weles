@@ -366,5 +366,8 @@ try {
     console.log('[apple-login] cleanup:', failure);
   process.exitCode = 1;
 } finally {
-  if (!sessionClosed && s) await s.close().catch(() => {});
+  if (!sessionClosed && s)
+    await s
+      .close()
+      .catch((e) => console.log(`[session] close failed: ${e.message}`));
 }
