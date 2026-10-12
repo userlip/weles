@@ -41,7 +41,15 @@ async function signup(s) {
   console.log(
     `[ph] using twitter account: ${twUsername} status=${twStatus} (${twCookies.length} cookies)`,
   );
-  if (twCookies.length < 2) throw new Error('twitter_account_missing_cookies');
+  // Product Hunt is signed into through X, so the account is recorded with
+  // X's email and password. Without them no Product Hunt account is created:
+  // one created first would be recorded with an invented address and
+  // password, or not at all.
+  if (!twEmail || !twPassword)
+    throw new Error(
+      `twitter_account_incomplete: X account ${twUsername} carries no ${twEmail ? 'password' : 'email'} in Skarbiec to record the Product Hunt account with; nothing was created`,
+    );
+  if (!twCookies.length) throw new Error('twitter_account_missing_cookies');
 
   const injected = await injectProviderCookies(s.ctx, 'twitter', twCookies);
   console.log(
@@ -92,9 +100,8 @@ async function signup(s) {
     (t2.includes('sign in') || t2.includes('log in') || t2.includes('password'))
   ) {
     console.log('[ph] re-authenticating with twitter credentials');
-    if (!twPassword) throw new Error('twitter_cookies_expired_no_password');
     await s.fill('username', twUsername).catch(() => {});
-    await s.fill('email', twEmail ?? twUsername).catch(() => {});
+    await s.fill('email', twEmail).catch(() => {});
     await pageSettled(s.page);
     await s.click('Next').catch(() => {});
     await pageSettled(s.page);
@@ -168,18 +175,18 @@ async function signup(s) {
           ta.dispatchEvent(new Event('change', { bubbles: true }));
           ta.dispatchEvent(new Event('input', { bubbles: true }));
         });
-        // Walk ___grecaptcha_cfg.clients until every function-valued "callback"
-        // has fired; the seen set ends cycles, so no depth is chosen here.
+        // Walk ___grecaptcha_cfg.clients and fire every function held in a
+        // "callback" field; the seen set ends cycles, so no depth is chosen.
         var cbCount = 0;
         var seen = new Set();
         function walk(o) {
           if (!o || typeof o !== 'object' || seen.has(o)) return;
           seen.add(o);
+          if (typeof o.callback === 'function') { o.callback(token); cbCount++; }
           for (var k in o) {
             try {
               var v = o[k];
-              if (k === 'callback' && typeof v === 'function') { v(token); cbCount++; }
-              else if (v && typeof v === 'object') walk(v);
+              if (v && typeof v === 'object') walk(v);
             } catch (e) {}
           }
         }
@@ -282,7 +289,7 @@ async function signup(s) {
         c.name.includes('session') ||
         c.name.includes('auth')),
   );
-  if (phAuth.length < 1) {
+  if (!phAuth.length) {
     console.log(
       `[ph] no producthunt auth cookies. all: ${cookies
         .filter((c) => c.domain?.includes('producthunt.com'))
@@ -316,17 +323,15 @@ async function signup(s) {
   // Logic moved to _session.mjs#extractPhHandle: bounces between
   // homepage and /my/notifications because PH's homepage often serves
   // the SSR logged-out shell right after OAuth.
-  const phHandle = await extractPhHandle(s);
-  const phUsername = phHandle ?? twUsername;
-  if (phHandle && phHandle !== twUsername) {
-    console.log(
-      `[ph] platform_handle="${phHandle}" differs from twitter_username="${twUsername}" — using platform_handle`,
+  const phUsername = await extractPhHandle(s);
+  if (!phUsername)
+    throw new Error(
+      `ph_handle_unreadable: Product Hunt shows no handle for the account signed in through X ${twUsername}; the account was not recorded under a guessed name`,
     );
-  } else if (!phHandle) {
+  if (phUsername !== twUsername)
     console.log(
-      `[ph] could not extract platform_handle from topbar — falling back to twitter_username="${twUsername}"`,
+      `[ph] platform_handle="${phUsername}" differs from twitter_username="${twUsername}" — using platform_handle`,
     );
-  }
 
   // Idempotency guard: if a PH row already exists with this username
   // (because the Twitter SSO source was already linked previously), skip
@@ -344,16 +349,16 @@ async function signup(s) {
 
   const result = await s.saveAccount('producthunt', {
     username: phUsername,
-    email: twEmail ?? `${twUsername}@wisentmedia.com`,
-    password: twPassword ?? 'linked_to_twitter',
+    email: twEmail,
+    password: twPassword,
   });
   console.log(`[ph] ${result}`);
-  await stampLinkedTwitter(phUsername, twUsername).catch((e) =>
-    console.log(`[ph] stamp err: ${e.message}`),
+  // The link to X and the character binding are part of the account this
+  // run reports; a failure of either fails the run instead of a log line.
+  await stampLinkedTwitter(phUsername, twUsername);
+  console.log(
+    `[bind] ${JSON.stringify(await autoBindCharacter(phUsername, 'producthunt'))}`,
   );
-  await autoBindCharacter(phUsername, 'producthunt')
-    .then((r) => console.log(`[bind] ${JSON.stringify(r)}`))
-    .catch((e) => console.log(`[bind] err: ${e.message}`));
   return phUsername;
 }
 

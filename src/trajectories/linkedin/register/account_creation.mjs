@@ -121,12 +121,16 @@ async function submitObserved(
   }
 }
 
+// saveAccount throws when the account could not be saved; the refusal
+// classifier names that failure by this prefix.
 async function saveVerifiedLinkedinAccount(session, account) {
-  const result = await session.saveAccount('linkedin', account);
-  if (!String(result).startsWith('account saved:')) {
-    throw new Error(`ACCOUNT_PERSIST_FAILED: ${String(result)}`);
+  try {
+    return await session.saveAccount('linkedin', account);
+  } catch (error) {
+    throw new Error(`ACCOUNT_PERSIST_FAILED: ${error.message}`, {
+      cause: error,
+    });
   }
-  return result;
 }
 
 // The PIN form posts and LinkedIn moves the page off the verification step,

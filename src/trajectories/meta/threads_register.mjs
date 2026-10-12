@@ -58,6 +58,14 @@ async function signup(s) {
   console.log(
     `[threads] using instagram account: ${igUsername} (${igCookies.length} cookies)`,
   );
+  // Threads is signed into through Instagram, so the account is recorded with
+  // Instagram's email and password. Without them no Threads profile is
+  // created: one created first would be recorded with an invented address
+  // and password.
+  if (!igEmail || !igPassword)
+    throw new Error(
+      `instagram_account_incomplete: Instagram account ${igUsername} carries no ${igEmail ? 'password' : 'email'} in Skarbiec to record the Threads account with; nothing was created`,
+    );
 
   const injected = await injectProviderCookies(s.ctx, 'instagram', igCookies, {
     extraMirrorDomains: ['.threads.net'],
@@ -175,17 +183,18 @@ async function signup(s) {
     );
   }
 
-  // Success is the Threads session cookie, not what the page says.
+  // Success is the Threads session cookie, not what the page says; the
+  // device and CSRF cookies are set for signed-out visitors too.
   const cookies = await s.ctx.cookies();
   const threadsAuth = cookies.filter(
     (c) =>
       (c.domain?.includes('threads.net') ||
         c.domain?.includes('threads.com')) &&
-      (c.name === 'sessionid' || c.name === 'ig_did' || c.name === 'csrftoken'),
+      c.name === 'sessionid',
   );
-  if (threadsAuth.length < 1) {
+  if (!threadsAuth.length) {
     console.log(
-      `[threads] no threads auth cookies. all cookies: ${cookies.map((c) => `${c.name}@${c.domain}`).join(', ')}`,
+      `[threads] no threads session cookie. all cookies: ${cookies.map((c) => `${c.name}@${c.domain}`).join(', ')}`,
     );
     throw new Error('no_threads_auth_cookies');
   }
@@ -195,8 +204,8 @@ async function signup(s) {
 
   const result = await s.saveAccount('threads', {
     username: igUsername,
-    email: igEmail ?? `${igUsername}@wisentmedia.com`,
-    password: igPassword ?? 'linked_to_instagram',
+    email: igEmail,
+    password: igPassword,
   });
   console.log(`[threads] ${result}`);
   return igUsername;

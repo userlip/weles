@@ -76,15 +76,16 @@ export async function wsSaveAccount(
     status?: string;
   },
 ): Promise<string> {
-  // The account item is the durable result of this trajectory.
+  // The account item is the durable result of this trajectory. A platform
+  // account that was created but not saved is lost, so an item that could not
+  // be written, or a session whose cookies could not be read, throws instead
+  // of answering a string the caller may not read.
   const username = s.resolveEnv(data.username);
   const email = s.resolveEnv(data.email);
   const password = s.resolveEnv(data.password);
   const name = data.name ? s.resolveEnv(data.name) : undefined;
-  const storageState = await s.ctx
-    .storageState()
-    .catch(() => ({ cookies: [] as any[], origins: [] as any[] }));
-  const cookies = (storageState as any).cookies ?? [];
+  const storageState = await s.ctx.storageState();
+  const cookies = storageState.cookies;
   const metadata = {
     email,
     status: data.status ?? 'created',
@@ -99,27 +100,23 @@ export async function wsSaveAccount(
     persona: (s as any).personaConfig ?? null,
     profile_url: profileUrl(platform, username, name),
   };
+  const item = putAccount({
+    platform,
+    username,
+    password,
+    metadata,
+    displayName: name,
+  });
+  writeFileSync(
+    join(recordingsDir(s.label || undefined), 'account.json'),
+    JSON.stringify({ item, platform, username }, null, 2),
+  );
+  // The account is saved either way; a signup-success mark that failed is
+  // said in the step's answer, not dropped.
   try {
-    const item = putAccount({
-      platform,
-      username,
-      password,
-      metadata,
-      displayName: name,
-    });
-    writeFileSync(
-      join(recordingsDir(s.label || undefined), 'account.json'),
-      JSON.stringify({ item, platform, username }, null, 2),
-    );
-    // The account is saved either way; a signup-success mark that failed is
-    // said in the step's answer, not dropped.
-    try {
-      await markSignupSuccess(email, platform);
-    } catch (error) {
-      return `account saved: ${item}; signup success not marked for ${email}: ${error instanceof Error ? error.message : String(error)}`;
-    }
-    return `account saved: ${item}`;
+    await markSignupSuccess(email, platform);
   } catch (error) {
-    return `error: ${error instanceof Error ? error.message : String(error)}`;
+    return `account saved: ${item}; signup success not marked for ${email}: ${error instanceof Error ? error.message : String(error)}`;
   }
+  return `account saved: ${item}`;
 }
