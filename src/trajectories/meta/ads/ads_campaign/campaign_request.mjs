@@ -1,8 +1,8 @@
 // What this run was asked to do.
 //
 // The campaign parameters come from the environment, the browser profile is
-// the one this trajectory reuses between runs, the objective labels are the
-// words Meta shows for the requested objective in both interface languages,
+// the one this trajectory reuses between runs, the objective label is the one
+// the request states, as the account's Ads Manager shows it in its language,
 // and the target URL is the Ads Manager address the run opens. The same
 // module carries the catalog of parameters this trajectory can honour and the
 // refusal it prints when the request names something it cannot configure.
@@ -78,26 +78,11 @@ const profilePersona =
     ? session.persona
     : stableProfilePersona();
 
-const OBJECTIVE_ALIASES = {
-  traffic: ['Traffic', 'Ruch'],
-  ruch: ['Ruch', 'Traffic'],
-  leads: ['Leads', 'Potencjalni klienci'],
-  lead: ['Leads', 'Potencjalni klienci'],
-  sales: ['Sales', 'Sprzedaż'],
-  sprzedaż: ['Sprzedaż', 'Sales'],
-  engagement: ['Engagement', 'Aktywność'],
-  awareness: ['Awareness', 'Świadomość'],
-  app: ['App promotion', 'Promocja aplikacji'],
-  app_promotion: ['App promotion', 'Promocja aplikacji'],
-};
-const objectiveKey = CAMPAIGN_OBJECTIVE.toLowerCase().replace(/\s+/g, '_');
-const objectiveLabels = Array.from(
-  new Set(
-    [CAMPAIGN_OBJECTIVE, ...(OBJECTIVE_ALIASES[objectiveKey] || [])].filter(
-      Boolean,
-    ),
-  ),
-);
+// The objective is picked by the label the request states. Ads Manager speaks
+// the account's language, so the request names the objective as that account
+// shows it; a label the page does not show is refused by the selection step
+// with the controls the page does show.
+const objectiveLabels = [CAMPAIGN_OBJECTIVE];
 
 const targetUrl =
   ADS_URL ||
@@ -141,7 +126,7 @@ const CAPABILITIES = {
     'DESCRIPTION',
     'SUBMIT',
   ],
-  objectiveLabelsAcceptedForSelection: Object.values(OBJECTIVE_ALIASES).flat(),
+  objectiveLabelSelectedAsStated: 'CAMPAIGN_OBJECTIVE',
   unsupportedWithoutCustomExtension: [
     'catalog/product-set campaigns',
     'app install / app event setup',
@@ -184,11 +169,6 @@ function guardUnsupportedParams() {
   }
   if (CAMPAIGN_DESTINATION !== 'website')
     unsupported.push(`CAMPAIGN_DESTINATION=${CAMPAIGN_DESTINATION}`);
-  const knownObjective =
-    OBJECTIVE_ALIASES[objectiveKey] ||
-    /^(traffic|ruch)$/i.test(CAMPAIGN_OBJECTIVE);
-  if (!knownObjective)
-    unsupported.push(`CAMPAIGN_OBJECTIVE=${CAMPAIGN_OBJECTIVE}`);
   if (!unsupported.length) return;
   const msg = `unsupported/unverified Meta campaign params: ${unsupported.join(', ')}. Supported verified destination is website traffic draft/configuration.`;
   if (!ALLOW_UNVERIFIED_META_PARAMS) {
