@@ -8,6 +8,7 @@ import { pageSettled } from '../_shared/page/settled.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 
 // Redirect all console.log to stderr so stdout is pure JSON output.
 console.log = (...a) => process.stderr.write(a.map(String).join(' ') + '\n');
@@ -123,19 +124,13 @@ async function doLogin(sess) {
   const inputs = await sess.page.evaluate(
     `(() => Array.from(document.querySelectorAll('input')).map((i, idx) => ({ idx, name: i.name, type: i.type, id: i.id, ph: i.placeholder })))()`,
   );
-  const emailIn = inputs.find(
-    (i) =>
-      i.type === 'email' ||
-      i.name === 'email' ||
-      /email|address/i.test(i.ph || ''),
-  );
-  const passIn = inputs.find(
-    (i) => i.type === 'password' || i.name === 'password',
-  );
-  if (!emailIn || !passIn) {
-    console.error(`FAIL: login inputs not found: ${JSON.stringify(inputs)}`);
-    process.exit(1);
-  }
+  // The fields are told apart by what they declare (type, name, placeholder),
+  // not by a list of words; a form without both refuses the login.
+  const declared = (i) => `${i.type} ${i.name} ${i.ph}`;
+  const emailIn = inputs.find((i) => /email|address/i.test(declared(i)));
+  const passIn = inputs.find((i) => /password/i.test(declared(i)));
+  if (!emailIn || !passIn)
+    throw new Error(`login inputs not found: ${JSON.stringify(inputs)}`);
   const sel = (i) =>
     i.name
       ? `input[name="${i.name}"]`
@@ -239,7 +234,7 @@ async function scrapeOnePage(sess, tk, pg, ssPath) {
         for (const el of document.querySelectorAll('*')) {
           const st = getComputedStyle(el);
           if (
-            (st.overflowY === 'auto' || st.overflowY === 'scroll') &&
+            /^(auto|scroll)$/.test(st.overflowY) &&
             el.scrollHeight > el.clientHeight
           )
             h = Math.max(h, el.scrollHeight);
@@ -369,10 +364,9 @@ try {
   process.stdout.write(
     JSON.stringify({ ticker, pages: allPages, results }) + '\n',
   );
-  process.exit(0);
 } catch (e) {
   console.error(`FAIL: ${e.message}`);
-  process.exit(1);
+  process.exitCode = exitStatusFor(e);
 } finally {
   await (global._s || s).close().catch(() => {});
 }
