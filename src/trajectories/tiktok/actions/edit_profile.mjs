@@ -12,7 +12,7 @@ import {
   markCookiesStale,
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
-import { humanType } from '../../../../dist/human/keyboard.js';
+import { confirmedFill } from '../../_shared/page/confirmed-fill.mjs';
 import {
   humanClickLocator,
   humanIdlePause,
@@ -51,7 +51,9 @@ const avatarUrl =
 
 // The bio goes up whole; the field's own maxlength decides whether it fits.
 const targetBio = character.bio;
-const targetName = character.name || '';
+// A character without a name leaves the profile's name as it is; an empty
+// one typed in would erase it.
+const targetName = character.name;
 
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({
@@ -137,26 +139,18 @@ try {
     .first();
 
   const writes = [];
-  if (await nameIn.count()) {
-    const cur = await nameIn.inputValue().catch(() => '');
+  if (targetName && (await nameIn.count())) {
+    const cur = await nameIn.inputValue();
     if (cur.trim() !== targetName.trim()) {
-      await humanClickLocator(s.page, nameIn);
-      await s.page.keyboard.press('Meta+A').catch(() => {});
-      await s.page.keyboard.press('Control+A').catch(() => {});
-      await s.page.keyboard.press('Backspace').catch(() => {});
-      await humanType(s.page, targetName);
+      await confirmedFill(s.page, nameIn, targetName, 'the TikTok name field');
       writes.push(`name "${cur}" -> "${targetName}"`);
     }
   }
   if (targetBio && (await bioIn.count())) {
-    const cur = await bioIn.inputValue().catch(() => '');
+    const cur = await bioIn.inputValue();
     if (cur.trim() !== targetBio.trim()) {
       await fitsField(bioIn, targetBio, 'the TikTok bio');
-      await humanClickLocator(s.page, bioIn);
-      await s.page.keyboard.press('Meta+A').catch(() => {});
-      await s.page.keyboard.press('Control+A').catch(() => {});
-      await s.page.keyboard.press('Backspace').catch(() => {});
-      await humanType(s.page, targetBio);
+      await confirmedFill(s.page, bioIn, targetBio, 'the TikTok bio field');
       writes.push(`bio (${cur.length} -> ${targetBio.length} chars)`);
     }
   }
@@ -164,47 +158,38 @@ try {
   // Avatar upload — tiktok /setting exposes an avatar zone. Hovering shows
   // a "Change photo" button that opens a dialog with an inline upload
   // <input type="file" accept="image/*">. After upload, an "Apply" button
-  // commits the crop.
+  // commits the crop. A requested avatar that could not be read, placed or
+  // applied fails the run: a PASS would claim a picture the profile lacks.
   if (avatarUrl) {
     const tmpAvatar = await loadAvatarFile(avatarUrl);
-    if (tmpAvatar) {
-      try {
-        const changeBtn = s.page
-          .locator(
-            '[data-e2e*="avatar" i], button:has-text("Change photo"), div[role="button"]:has-text("Change photo")',
-          )
-          .filter({ visible: true })
-          .first();
-        if (await changeBtn.isVisible().catch(() => false)) {
-          await humanClickLocator(s.page, changeBtn);
-          await humanIdlePause('deliberate');
-        }
-        const fileIn = s.page
-          .locator('input[type="file"][accept*="image"]')
-          .first();
-        if (await fileIn.count()) {
-          await fileIn.setInputFiles(tmpAvatar);
-          const applyBtn = s.page
-            .locator(
-              'button:has-text("Apply"), button:has-text("Confirm"), button:has-text("Save")',
-            )
-            .filter({ visible: true })
-            .first();
-          try {
-            await applyBtn.waitFor({ state: 'visible' });
-            await humanClickLocator(s.page, applyBtn);
-            writes.push('avatar uploaded');
-            await humanIdlePause('deliberate');
-          } catch {
-            console.log('[tt-profile] avatar apply not visible');
-          }
-        } else {
-          console.log('[tt-profile] no image file input on /setting');
-        }
-      } catch (e) {
-        console.log(`[tt-profile] avatar err: ${e.message}`);
-      }
+    const changeBtn = s.page
+      .locator(
+        '[data-e2e*="avatar" i], button:has-text("Change photo"), div[role="button"]:has-text("Change photo")',
+      )
+      .filter({ visible: true })
+      .first();
+    if (await changeBtn.isVisible()) {
+      await humanClickLocator(s.page, changeBtn);
+      await humanIdlePause('deliberate');
     }
+    const fileIn = s.page
+      .locator('input[type="file"][accept*="image"]')
+      .first();
+    if (!(await fileIn.count()))
+      throw new Error(
+        'the TikTok profile settings offer no image file input; the requested avatar was not uploaded',
+      );
+    await fileIn.setInputFiles(tmpAvatar);
+    const applyBtn = s.page
+      .locator(
+        'button:has-text("Apply"), button:has-text("Confirm"), button:has-text("Save")',
+      )
+      .filter({ visible: true })
+      .first();
+    await applyBtn.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, applyBtn);
+    writes.push('avatar uploaded');
+    await humanIdlePause('deliberate');
   }
 
   // The account record says the profile carries the character's name; it is

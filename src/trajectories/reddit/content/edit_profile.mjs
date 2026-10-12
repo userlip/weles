@@ -8,7 +8,7 @@ import {
   markCookiesStale,
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
-import { humanType } from '../../../../dist/human/keyboard.js';
+import { confirmedFill } from '../../_shared/page/confirmed-fill.mjs';
 import {
   humanClickLocator,
   humanIdlePause,
@@ -118,26 +118,23 @@ try {
 
   const writes = [];
   if (targetName && (await nameIn.count())) {
-    const cur = await nameIn.inputValue().catch(() => '');
+    const cur = await nameIn.inputValue();
     if (cur.trim() !== targetName.trim()) {
       await fitsField(nameIn, targetName, 'the Reddit display name');
-      await humanClickLocator(s.page, nameIn);
-      await s.page.keyboard.press('Meta+A').catch(() => {});
-      await s.page.keyboard.press('Control+A').catch(() => {});
-      await s.page.keyboard.press('Backspace').catch(() => {});
-      await humanType(s.page, targetName);
+      await confirmedFill(
+        s.page,
+        nameIn,
+        targetName,
+        'the Reddit display name field',
+      );
       writes.push(`name "${cur}" -> "${targetName}"`);
     }
   }
   if (targetBio && (await bioIn.count())) {
-    const cur = await bioIn.inputValue().catch(() => '');
+    const cur = await bioIn.inputValue();
     if (cur.trim() !== targetBio.trim()) {
       await fitsField(bioIn, targetBio, 'the Reddit about text');
-      await humanClickLocator(s.page, bioIn);
-      await s.page.keyboard.press('Meta+A').catch(() => {});
-      await s.page.keyboard.press('Control+A').catch(() => {});
-      await s.page.keyboard.press('Backspace').catch(() => {});
-      await humanType(s.page, targetBio);
+      await confirmedFill(s.page, bioIn, targetBio, 'the Reddit about field');
       writes.push(`bio (${cur.length} -> ${targetBio.length} chars)`);
     }
   }
@@ -155,65 +152,57 @@ try {
   // mutation needs the u_<username> subreddit to exist. Brand-new accounts
   // that have never posted see "Unable to resolve profile" — make a
   // throwaway post first if your account is fresh.
+  //
+  // A requested avatar that could not be read, selected or saved fails the
+  // run: a PASS would claim a picture the profile lacks.
   if (avatarUrl) {
     const tmpAvatar = await loadAvatarFile(avatarUrl);
-    if (tmpAvatar) {
-      try {
-        await s.page.goto(`https://www.reddit.com/user/${acct.username}/`, {
-          waitUntil: 'domcontentloaded',
-        });
-        await humanIdlePause('long');
-        const editAvatarBtn = s.page
-          .locator(
-            'button[aria-label="Edit profile avatar"], [aria-label="Edit profile avatar"]',
-          )
-          .first();
-        if (await editAvatarBtn.count()) {
-          await humanClickLocator(s.page, editAvatarBtn);
-          await humanIdlePause('deliberate');
-          const selectBtn = s.page
-            .locator('button:has-text("Select a new image")')
-            .first();
-          if (await selectBtn.count()) {
-            const fcPromise = s.page.waitForEvent('filechooser');
-            await humanClickLocator(s.page, selectBtn);
-            const fc = await fcPromise;
-            await fc.setFiles(tmpAvatar);
-            await humanIdlePause('long');
-            // Save lives in shadow DOM; Playwright locators pierce open shadow roots.
-            const saveCandidates = s.page
-              .getByRole('button', { name: 'Save', exact: true })
-              .filter({ visible: true });
-            let saved = false;
-            for (
-              let index = 0;
-              index < (await saveCandidates.count());
-              index += 1
-            ) {
-              const candidate = saveCandidates.nth(index);
-              if (!(await candidate.isEnabled().catch(() => false))) continue;
-              await humanClickLocator(s.page, candidate);
-              saved = true;
-              break;
-            }
-            if (saved) {
-              await humanIdlePause('long');
-              writes.push('avatar uploaded');
-            } else {
-              console.log('[rd-profile] no enabled Save after setFiles');
-            }
-          } else {
-            console.log(
-              '[rd-profile] no Select-a-new-image after Edit-avatar click',
-            );
-          }
-        } else {
-          console.log('[rd-profile] Edit-profile-avatar button not visible');
-        }
-      } catch (e) {
-        console.log(`[rd-profile] avatar err: ${e.message}`);
+    await s.page.goto(`https://www.reddit.com/user/${acct.username}/`, {
+      waitUntil: 'domcontentloaded',
+    });
+    await humanIdlePause('long');
+    const editAvatarBtn = s.page
+      .locator(
+        'button[aria-label="Edit profile avatar"], [aria-label="Edit profile avatar"]',
+      )
+      .first();
+    if (!(await editAvatarBtn.count()))
+      throw new Error(
+        'the Reddit profile page shows no Edit profile avatar control; the requested avatar was not uploaded',
+      );
+    await humanClickLocator(s.page, editAvatarBtn);
+    await humanIdlePause('deliberate');
+    const selectBtn = s.page
+      .locator('button:has-text("Select a new image")')
+      .first();
+    if (!(await selectBtn.count()))
+      throw new Error(
+        'the Reddit avatar dialog offers no Select a new image control; the requested avatar was not uploaded',
+      );
+    const fcPromise = s.page.waitForEvent('filechooser');
+    await humanClickLocator(s.page, selectBtn);
+    const fc = await fcPromise;
+    await fc.setFiles(tmpAvatar);
+    await humanIdlePause('long');
+    // Save lives in shadow DOM; Playwright locators pierce open shadow roots.
+    const saveCandidates = await s.page
+      .getByRole('button', { name: 'Save', exact: true })
+      .filter({ visible: true })
+      .all();
+    let saveBtn = null;
+    for (const candidate of saveCandidates) {
+      if (await candidate.isEnabled()) {
+        saveBtn = candidate;
+        break;
       }
     }
+    if (!saveBtn)
+      throw new Error(
+        `the Reddit avatar dialog shows ${saveCandidates.length} Save button(s), none enabled after the image was chosen; the requested avatar was not saved`,
+      );
+    await humanClickLocator(s.page, saveBtn);
+    await humanIdlePause('long');
+    writes.push('avatar uploaded');
   }
 
   // The account record says the profile carries the character's name; it is

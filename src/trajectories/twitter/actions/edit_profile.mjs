@@ -9,7 +9,7 @@ import {
   markCookiesStale,
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
-import { humanType } from '../../../../dist/human/keyboard.js';
+import { confirmedFill } from '../../_shared/page/confirmed-fill.mjs';
 import {
   humanClickLocator,
   humanIdlePause,
@@ -46,7 +46,9 @@ const avatarUrl =
     ? character.training_images[0]
     : null);
 
-const targetName = character.name || '';
+// A character without a name leaves the profile's name as it is; an empty
+// one typed in would erase it.
+const targetName = character.name;
 // The bio goes up whole; the field's own maxlength decides whether it fits.
 const targetBio = character.bio;
 
@@ -138,26 +140,18 @@ try {
     .first();
 
   const writes = [];
-  if (await nameIn.count()) {
-    const cur = await nameIn.inputValue().catch(() => '');
+  if (targetName && (await nameIn.count())) {
+    const cur = await nameIn.inputValue();
     if (cur.trim() !== targetName.trim()) {
-      await humanClickLocator(s.page, nameIn);
-      await s.page.keyboard.press('Meta+A').catch(() => {});
-      await s.page.keyboard.press('Control+A').catch(() => {});
-      await s.page.keyboard.press('Backspace').catch(() => {});
-      await humanType(s.page, targetName);
+      await confirmedFill(s.page, nameIn, targetName, 'the X name field');
       writes.push(`name "${cur}" -> "${targetName}"`);
     }
   }
   if (targetBio && (await bioIn.count())) {
-    const cur = await bioIn.inputValue().catch(() => '');
+    const cur = await bioIn.inputValue();
     if (cur.trim() !== targetBio.trim()) {
       await fitsField(bioIn, targetBio, 'the X bio');
-      await humanClickLocator(s.page, bioIn);
-      await s.page.keyboard.press('Meta+A').catch(() => {});
-      await s.page.keyboard.press('Control+A').catch(() => {});
-      await s.page.keyboard.press('Backspace').catch(() => {});
-      await humanType(s.page, targetBio);
+      await confirmedFill(s.page, bioIn, targetBio, 'the X bio field');
       writes.push(`bio (${cur.length} -> ${targetBio.length} chars)`);
     }
   }
@@ -173,36 +167,27 @@ try {
     });
 
   // Avatar upload — both Edit and Set-up flows expose
-  // input[data-testid="fileInput"]. Twitter's
-  // crop modal shows "Apply" once the file is loaded.
+  // input[data-testid="fileInput"]. Twitter's crop modal shows "Apply" once
+  // the file is loaded. A requested avatar that could not be read, placed or
+  // applied fails the run: a PASS would claim a picture the profile lacks.
   if (avatarUrl) {
     const tmpAvatar = await loadAvatarFile(avatarUrl);
-    if (tmpAvatar) {
-      try {
-        const fileIn = s.page.locator('input[data-testid="fileInput"]').first();
-        if (await fileIn.count()) {
-          await fileIn.setInputFiles(tmpAvatar);
-          const applyBtn = s.page
-            .locator(
-              'button[data-testid="applyButton"], div[role="button"]:has-text("Apply"), button:has-text("Apply")',
-            )
-            .filter({ visible: true })
-            .first();
-          try {
-            await applyBtn.waitFor({ state: 'visible' });
-            await humanClickLocator(s.page, applyBtn);
-            writes.push('avatar uploaded');
-            await humanIdlePause('deliberate');
-          } catch {
-            console.log('[tw-profile] avatar apply btn never appeared');
-          }
-        } else {
-          console.log('[tw-profile] fileInput not in DOM — twitter UI variant');
-        }
-      } catch (e) {
-        console.log(`[tw-profile] avatar err: ${e.message}`);
-      }
-    }
+    const fileIn = s.page.locator('input[data-testid="fileInput"]').first();
+    if (!(await fileIn.count()))
+      throw new Error(
+        'the X profile editor has no avatar file input; the requested avatar was not uploaded',
+      );
+    await fileIn.setInputFiles(tmpAvatar);
+    const applyBtn = s.page
+      .locator(
+        'button[data-testid="applyButton"], div[role="button"]:has-text("Apply"), button:has-text("Apply")',
+      )
+      .filter({ visible: true })
+      .first();
+    await applyBtn.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, applyBtn);
+    writes.push('avatar uploaded');
+    await humanIdlePause('deliberate');
   }
 
   if (!writes.length) {

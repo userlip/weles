@@ -14,7 +14,7 @@ import {
   markCookiesStale,
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
-import { humanType } from '../../../../dist/human/keyboard.js';
+import { confirmedFill } from '../../_shared/page/confirmed-fill.mjs';
 import {
   humanClickLocator,
   humanIdlePause,
@@ -53,7 +53,9 @@ const avatarUrl =
 
 // The bio goes up whole; the field's own maxlength decides whether it fits.
 const targetBio = character.bio;
-const targetName = character.name || '';
+// A character without a name leaves the profile's name as it is; an empty
+// one typed in would erase it.
+const targetName = character.name;
 
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({
@@ -122,26 +124,23 @@ try {
     .first();
 
   const writes = [];
-  if (await nameIn.count()) {
-    const cur = await nameIn.inputValue().catch(() => '');
+  if (targetName && (await nameIn.count())) {
+    const cur = await nameIn.inputValue();
     if (cur.trim() !== targetName.trim()) {
-      await humanClickLocator(s.page, nameIn);
-      await s.page.keyboard.press('Meta+A').catch(() => {});
-      await s.page.keyboard.press('Control+A').catch(() => {});
-      await s.page.keyboard.press('Backspace').catch(() => {});
-      await humanType(s.page, targetName);
+      await confirmedFill(
+        s.page,
+        nameIn,
+        targetName,
+        'the Instagram name field',
+      );
       writes.push(`name "${cur}" -> "${targetName}"`);
     }
   }
   if (targetBio && (await bioIn.count())) {
-    const cur = await bioIn.inputValue().catch(() => '');
+    const cur = await bioIn.inputValue();
     if (cur.trim() !== targetBio.trim()) {
       await fitsField(bioIn, targetBio, 'the Instagram bio');
-      await humanClickLocator(s.page, bioIn);
-      await s.page.keyboard.press('Meta+A').catch(() => {});
-      await s.page.keyboard.press('Control+A').catch(() => {});
-      await s.page.keyboard.press('Backspace').catch(() => {});
-      await humanType(s.page, targetBio);
+      await confirmedFill(s.page, bioIn, targetBio, 'the Instagram bio field');
       writes.push(`bio (${cur.length} -> ${targetBio.length} chars)`);
     }
   }
@@ -150,54 +149,46 @@ try {
   // photo" overlay that opens a dialog with an Upload Photo button bound
   // to a hidden input[type="file"][accept*="image"]. The Upload-Photo
   // button binding fires a filechooser; we also accept direct setInputFiles
-  // on the hidden input when the binding is missing.
+  // on the hidden input when the binding is missing. A requested avatar that
+  // could not be read or placed fails the run: a PASS would claim a picture
+  // the profile lacks.
   if (avatarUrl) {
     const tmpAvatar = await loadAvatarFile(avatarUrl);
-    if (tmpAvatar) {
-      try {
-        const changeBtn = s.page
-          .locator(
-            'button:has-text("Change profile photo"), div[role="button"]:has-text("Change profile photo")',
-          )
-          .filter({ visible: true })
-          .first();
-        if (await changeBtn.isVisible().catch(() => false)) {
-          await humanClickLocator(s.page, changeBtn);
-          await humanIdlePause('deliberate');
-          const upload = s.page
-            .locator(
-              'button:has-text("Upload Photo"), button:has-text("Upload photo")',
-            )
-            .filter({ visible: true })
-            .first();
-          if (await upload.isVisible().catch(() => false)) {
-            const fileChooserPromise = s.page.waitForEvent('filechooser');
-            await humanClickLocator(s.page, upload);
-            const fc = await fileChooserPromise;
-            await fc.setFiles(tmpAvatar);
-            await humanIdlePause('deliberate');
-            writes.push('avatar uploaded');
-          } else {
-            const fileIn = s.page
-              .locator('input[type="file"][accept*="image"]')
-              .first();
-            if (await fileIn.count()) {
-              await fileIn.setInputFiles(tmpAvatar);
-              await humanIdlePause('deliberate');
-              writes.push('avatar uploaded');
-            } else {
-              console.log(
-                '[ig-profile] no upload affordance after Change clicked',
-              );
-            }
-          }
-        } else {
-          console.log('[ig-profile] Change profile photo button not visible');
-        }
-      } catch (e) {
-        console.log(`[ig-profile] avatar err: ${e.message}`);
-      }
+    const changeBtn = s.page
+      .locator(
+        'button:has-text("Change profile photo"), div[role="button"]:has-text("Change profile photo")',
+      )
+      .filter({ visible: true })
+      .first();
+    if (!(await changeBtn.isVisible()))
+      throw new Error(
+        'the Instagram profile editor shows no Change profile photo control; the requested avatar was not uploaded',
+      );
+    await humanClickLocator(s.page, changeBtn);
+    await humanIdlePause('deliberate');
+    const upload = s.page
+      .locator(
+        'button:has-text("Upload Photo"), button:has-text("Upload photo")',
+      )
+      .filter({ visible: true })
+      .first();
+    if (await upload.isVisible()) {
+      const fileChooserPromise = s.page.waitForEvent('filechooser');
+      await humanClickLocator(s.page, upload);
+      const fc = await fileChooserPromise;
+      await fc.setFiles(tmpAvatar);
+    } else {
+      const fileIn = s.page
+        .locator('input[type="file"][accept*="image"]')
+        .first();
+      if (!(await fileIn.count()))
+        throw new Error(
+          'the Instagram photo dialog offers no upload control; the requested avatar was not uploaded',
+        );
+      await fileIn.setInputFiles(tmpAvatar);
     }
+    await humanIdlePause('deliberate');
+    writes.push('avatar uploaded');
   }
 
   // The account record says the profile carries the character's name; it is

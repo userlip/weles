@@ -5,6 +5,7 @@ import {
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { humanType } from '../../../../dist/human/keyboard.js';
+import { confirmedFill } from '../../_shared/page/confirmed-fill.mjs';
 import {
   humanClickLocator,
   humanIdlePause,
@@ -104,14 +105,11 @@ try {
     .filter({ visible: true })
     .first();
   await toIn.waitFor({ state: 'visible' });
-  const currentTo = await toIn.inputValue().catch(() => '');
-  if (!currentTo || currentTo.toLowerCase() !== RECIPIENT.toLowerCase()) {
-    await humanClickLocator(s.page, toIn);
-    await s.page.keyboard.press('Meta+A').catch(() => {});
-    await s.page.keyboard.press('Control+A').catch(() => {});
-    await s.page.keyboard.press('Backspace').catch(() => {});
-    await humanType(s.page, RECIPIENT);
-  }
+  const currentTo = await toIn.inputValue();
+  // A recipient field still holding another name would send the message to
+  // them; the field is read back before anything else is typed.
+  if (currentTo.toLowerCase() !== RECIPIENT.toLowerCase())
+    await confirmedFill(s.page, toIn, RECIPIENT, 'the Reddit recipient field');
 
   const subjectIn = s.page
     .locator('input#subject, input[name="subject"]')

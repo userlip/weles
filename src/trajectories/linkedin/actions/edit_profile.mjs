@@ -9,6 +9,7 @@ import {
   markCookiesStale,
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
+import { confirmedFill } from '../../_shared/page/confirmed-fill.mjs';
 import { humanType } from '../../../../dist/human/keyboard.js';
 import {
   humanClickLocator,
@@ -353,20 +354,15 @@ try {
       .filter({ visible: true })
       .first();
     if (await aboutIn.count()) {
-      const cur = await aboutIn.inputValue().catch(() => '');
+      const cur = await aboutIn.inputValue();
       if (cur.trim() !== targetAbout.trim()) {
         await fitsField(aboutIn, targetAbout, 'the LinkedIn about text');
-        await humanClickLocator(s.page, aboutIn);
-        await s.page.keyboard.press('ControlOrMeta+A');
-        await s.page.keyboard.press('Backspace');
-        await humanType(s.page, targetAbout);
-        // A select-all that did not take leaves the old About with the new
-        // text appended, which Save would publish as the profile's About.
-        const typed = await aboutIn.inputValue();
-        if (typed.trim() !== targetAbout.trim())
-          throw new Error(
-            `the LinkedIn about field holds ${typed.length} characters, not the ${targetAbout.length} typed; nothing was saved`,
-          );
+        await confirmedFill(
+          s.page,
+          aboutIn,
+          targetAbout,
+          'the LinkedIn about field',
+        );
         const saveBtn = s.page
           .locator('button:has-text("Save")')
           .filter({ visible: true })
