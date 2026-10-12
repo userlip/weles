@@ -177,10 +177,7 @@ try {
         .filter((e) => e.offsetParent)
         .map((e) => (e.textContent || '').trim());
       const captcha = Array.from(document.querySelectorAll('iframe'))
-        .filter(
-          (i) =>
-            /captcha|hcaptcha|recaptcha/i.test(i.src || '') && i.offsetParent,
-        )
+        .filter((i) => /captcha/i.test(i.src) && i.offsetParent)
         .map((i) => i.src);
       return { errs, captcha };
     });

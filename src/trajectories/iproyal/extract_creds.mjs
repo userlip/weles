@@ -87,30 +87,16 @@ try {
         `[extract] dumped ${url} (textlen=${text.length}, final=${s.page.url()})`,
       );
 
-      const fields = await s.page.evaluate(() => {
-        // allow-raw-playwright: read-only field/value scrape, no click/scroll/submit
-        const out = {};
-        for (const inp of Array.from(document.querySelectorAll('input'))) {
-          const k = (
-            inp.name ||
-            inp.id ||
-            inp.getAttribute('aria-label') ||
-            inp.placeholder ||
-            ''
-          ).toLowerCase();
-          const v = inp.value || '';
-          if (!v) continue;
-          if (/user|login/.test(k)) out.username = v;
-          else if (/pass/.test(k)) out.password = v;
-          else if (/host|endpoint|server/.test(k)) out.host = v;
-          else if (/port/.test(k)) out.port = v;
-        }
-        return out;
-      });
-      Object.assign(
-        found,
-        Object.fromEntries(Object.entries(fields).filter(([, v]) => v)),
-      );
+      // The dashboard's password field is its password input; the rest of the
+      // credentials come from the connection string the dashboard prints.
+      const password = await s.page
+        .locator('input[type="password"]')
+        .filter({ visible: true })
+        .first();
+      if (await password.count()) {
+        const value = await password.inputValue();
+        if (value) found.password = value;
+      }
 
       // Common dashboard pattern: a "user:pass@host:port" connection string
       // or labelled "Username <x>" / "Password <y>" lines in body text.

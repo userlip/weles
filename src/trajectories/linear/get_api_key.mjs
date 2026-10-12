@@ -244,9 +244,7 @@ try {
     const heads = Array.from(
       document.querySelectorAll('h1, h2, h3, h4, [role="heading"]'),
     );
-    const h = heads.find((el) =>
-      /personal api key|api key/i.test((el.innerText || '').trim()),
-    );
+    const h = heads.find((el) => /api key/i.test(el.innerText.trim()));
     if (!h)
       return {
         found: false,
