@@ -6,6 +6,7 @@ import {
 import { WSession } from '../../../../dist/session/wsession.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { detectRedditBanSignals } from '../../../../dist/platforms/reddit/ban_signals.js';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
@@ -70,9 +71,7 @@ try {
       .isVisible()
       .catch(() => false)
   ) {
-    ban = await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    );
+    ban = await banSignalOf(detectRedditBanSignals, s, 'after finding it joined');
     console.log(
       `[ban-signal] ${ban?.signal}  PASS: already joined r/${SUBREDDIT}`,
     );
@@ -85,17 +84,13 @@ try {
     // gains 'hidden' (or similar), <a.remove> gains 'active'. Wait for the
     // remove option to become active.
     await s.page.locator(leaveSelector).first().waitFor({ state: 'visible' });
-    ban = await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    );
+    ban = await banSignalOf(detectRedditBanSignals, s, 'after joining');
     console.log(`[ban-signal] ${ban?.signal}  PASS: joined r/${SUBREDDIT}`);
   }
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectRedditBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
   process.exitCode = 1;
 } finally {
