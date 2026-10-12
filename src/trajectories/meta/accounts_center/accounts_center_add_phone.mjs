@@ -34,11 +34,12 @@ const s = await WSession.start({
 let exitCode = 0;
 try {
   await bringBrowserToFront(s);
-  await s.page
-    .goto('https://accountscenter.facebook.com/youraccount/contact_points/', {
+  await s.page.goto(
+    'https://accountscenter.facebook.com/youraccount/contact_points/',
+    {
       waitUntil: 'domcontentloaded',
-    })
-    .catch(() => {});
+    },
+  );
   const initial = await snapshot(s.page, 'contact_points_initial');
   if (CODE_ONLY) {
     if (!VERIFY_CODE)

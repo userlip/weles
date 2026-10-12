@@ -231,12 +231,10 @@ const s = await WSession.start({
 
 let exitCode = 0;
 try {
-  await s.page
-    .goto(
-      `https://business.facebook.com/latest/settings/apps?business_id=${encodeURIComponent(BUSINESS_ID)}`,
-      { waitUntil: 'domcontentloaded' },
-    )
-    .catch(() => {});
+  await s.page.goto(
+    `https://business.facebook.com/latest/settings/apps?business_id=${encodeURIComponent(BUSINESS_ID)}`,
+    { waitUntil: 'domcontentloaded' },
+  );
   await snapshot(s.page, 'apps_initial');
   const add = await clickFirst(s.page, 'add', /^add$|^dodaj$/i);
   if (!add) throw new Error('No enabled Add/Dodaj control found on Apps page');

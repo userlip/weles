@@ -112,11 +112,12 @@ export async function selectCountryForPhone(page, phone) {
 }
 
 export async function loadAccountPhone(page, preferredCountry) {
-  await page
-    .goto('https://accountscenter.facebook.com/youraccount/contact_points/', {
+  await page.goto(
+    'https://accountscenter.facebook.com/youraccount/contact_points/',
+    {
       waitUntil: 'domcontentloaded',
-    })
-    .catch(() => {});
+    },
+  );
   await pageSettled(page);
   const rawPhones = await page.evaluate(() => {
     const textOf = (el) =>

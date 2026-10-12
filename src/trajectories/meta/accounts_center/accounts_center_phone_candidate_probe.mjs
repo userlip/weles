@@ -48,11 +48,12 @@ const s = await WSession.start({
 
 let exitCode = 0;
 try {
-  await s.page
-    .goto('https://accountscenter.facebook.com/youraccount/contact_points/', {
+  await s.page.goto(
+    'https://accountscenter.facebook.com/youraccount/contact_points/',
+    {
       waitUntil: 'domcontentloaded',
-    })
-    .catch(() => {});
+    },
+  );
   await pageSettled(s.page);
   const rawPhones = await s.page.evaluate(() => {
     const textOf = (el) =>

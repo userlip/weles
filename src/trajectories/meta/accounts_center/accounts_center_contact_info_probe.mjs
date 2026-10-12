@@ -247,11 +247,9 @@ const s = await WSession.start({
 let exitCode = 0;
 try {
   await bringBrowserToFront(s);
-  await s.page
-    .goto('https://accountscenter.facebook.com/', {
-      waitUntil: 'domcontentloaded',
-    })
-    .catch(() => {});
+  await s.page.goto('https://accountscenter.facebook.com/', {
+    waitUntil: 'domcontentloaded',
+  });
   await snapshot(s.page, 'accounts_center_initial');
   await clickFirst(
     s.page,

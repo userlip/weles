@@ -46,12 +46,10 @@ try {
       (await loadAccountPhone(s.page, VERIFY_PHONE_FROM_ACCOUNT_COUNTRY)) || '',
     );
   }
-  await s.page
-    .goto(
-      'https://developers.facebook.com/async/developer/account/verification/',
-      { waitUntil: 'domcontentloaded' },
-    )
-    .catch(() => {});
+  await s.page.goto(
+    'https://developers.facebook.com/async/developer/account/verification/',
+    { waitUntil: 'domcontentloaded' },
+  );
   const initial = await snapshot(s.page, 'initial');
   if (initial.statusHints.initialTerms && !initial.statusHints.phoneStep) {
     throw new Error(
