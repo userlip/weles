@@ -267,8 +267,8 @@ for (let i = 0; i < sections.length; i += 1) {
         label: labelFor(el),
         role: el.getAttribute('role'),
         max: el.getAttribute('maxlength'),
-        checked:
-          type === 'radio' || type === 'checkbox' ? Boolean(el.checked) : null,
+        // The CSS :checked state: true only for a checked checkbox or radio.
+        checked: el.matches(':checked'),
         value,
         valueLength: value.length,
         ariaInvalid: el.getAttribute('aria-invalid'),

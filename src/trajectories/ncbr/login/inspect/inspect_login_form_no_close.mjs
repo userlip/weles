@@ -19,10 +19,8 @@ const result = await page.evaluate(() => {
     type: el.getAttribute('type'),
     name: el.getAttribute('name'),
     id: el.id || null,
-    checked:
-      el instanceof HTMLInputElement && ['checkbox', 'radio'].includes(el.type)
-        ? el.checked
-        : undefined,
+    // The CSS :checked state: true only for a checked checkbox or radio.
+    checked: el.matches(':checked'),
     valueLength: 'value' in el ? String(el.value || '').length : null,
     disabled: el.disabled === true,
     ariaInvalid: el.getAttribute('aria-invalid'),

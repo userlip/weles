@@ -142,12 +142,13 @@ export async function wsJsClick(
             });
             return found;
           };
+          // A control the click toggled off is put back: this action checks,
+          // it never unchecks. Whether the click toggled anything is read from
+          // the control's state, not from a list of input types.
           const fire = (el: any) => {
+            const wasChecked = el instanceof HTMLInputElement && el.checked;
             el.click();
-            if (
-              el instanceof HTMLInputElement &&
-              (el.type === 'checkbox' || el.type === 'radio')
-            ) {
+            if (el instanceof HTMLInputElement && wasChecked && !el.checked) {
               el.checked = true;
               el.dispatchEvent(new Event('input', { bubbles: true }));
               el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -314,8 +315,10 @@ export async function wsSetControl(
                 }
                 if (!matched && value != null) select.value = String(value);
                 fire();
-              } else if (input.type === 'checkbox' || input.type === 'radio') {
-                input.checked = typeof checked === 'boolean' ? checked : true;
+              } else if (typeof checked === 'boolean') {
+                // The caller asked for a checked state, so the control's
+                // checked state is what is set.
+                input.checked = checked;
                 fire();
               } else {
                 const v = String(value ?? '');

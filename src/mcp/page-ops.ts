@@ -56,9 +56,9 @@ async function queryElement(args: Record<string, unknown>) {
       element instanceof HTMLInputElement ||
       element instanceof HTMLTextAreaElement ||
       element instanceof HTMLSelectElement,
-    checkable:
-      element instanceof HTMLInputElement &&
-      (element.type === 'checkbox' || element.type === 'radio'),
+    // The CSS :checked state, which only a checked checkbox, radio or option
+    // can hold; no list of input types decides it.
+    checked: element.matches(':checked'),
   }));
   const state: Record<string, unknown> = {
     count,
@@ -67,7 +67,7 @@ async function queryElement(args: Record<string, unknown>) {
     text: kind.html ? await first.innerText() : await first.textContent(),
     attributes: attributeValues,
   };
-  if (kind.checkable) state.checked = await first.isChecked();
+  state.checked = kind.checked;
   if (kind.editable) state.value = await first.inputValue();
   return state;
 }
