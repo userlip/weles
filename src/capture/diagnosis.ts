@@ -11,20 +11,24 @@ const EMAIL_PATTERN = new RegExp(
   '\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b',
   'gi',
 );
+// A credential after an auth scheme word (Bearer, Basic, Token, …): the
+// scheme stays readable and the long token after it is hidden.
 const AUTH_PATTERN = new RegExp(
-  '\\b(Bearer|Basic)\\s+[A-Za-z0-9._~+/=-]+',
-  'gi',
+  '\\b([A-Z][A-Za-z]+)\\s+[A-Za-z0-9._~+/=-]{16,}',
+  'g',
 );
 const JWT_PATTERN = new RegExp(
   '\\beyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\b',
   'g',
 );
+// Every query value and every quoted or assigned value is hidden before the
+// evidence reaches the model, so no secret survives under a name nobody listed.
 const QUERY_SECRET_PATTERN = new RegExp(
-  '([?&](?:access_token|auth|code|key|secret|session|token)=)[^&#\\s"\\x27]*',
+  '([?&][^=&#\\s"\\x27]+=)[^&#\\s"\\x27]*',
   'gi',
 );
 const NAMED_SECRET_PATTERN = new RegExp(
-  '(["\\x27]?(?:api[_-]?key|authorization|cookie|csrf|email|password|phone|secret|session|token|username)["\\x27]?\\s*[:=]\\s*)("[^"]*"|\\x27[^\\x27]*\\x27|[^,;\\s}<]+)',
+  '(["\\x27]?[A-Za-z_][\\w-]*["\\x27]?\\s*[:=]\\s*)("[^"]*"|\\x27[^\\x27]*\\x27)',
   'gi',
 );
 const OPAQUE_SECRET_PATTERN = new RegExp(
