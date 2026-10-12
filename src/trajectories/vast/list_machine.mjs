@@ -5,10 +5,22 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readScopedLogin } from '../../_shared/scoped-secrets.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
+import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 
 const VAST_LOGIN = readScopedLogin('vastDashboard');
 const EMAIL = VAST_LOGIN.email;
-const PRICE_GPU = process.env.PRICE_GPU || '0.80';
+// The machine is rented out at this price, under this team; both are the
+// owner's to set.
+const PRICE_GPU = statedText(
+  ['PRICE_GPU'],
+  'the hourly price per GPU the machine is listed at, in US dollars',
+);
+const TEAM_NAME = statedText(
+  ['VAST_TEAM_NAME'],
+  'the Vast team whose context the machine is listed under',
+);
 const profile = findProfileByEmail(EMAIL);
 if (!profile) {
   console.log('FAIL: no chrome profile');
@@ -132,18 +144,27 @@ try {
     }
   }
 
-  await page.evaluate(`(async () => {
-    var r = await fetch('/api/v0/auth/apikeys/', { credentials: 'include' });
-    var keys = await r.json();
-    var team = (keys.apikeys || []).find(k => k.key_type === 'team' && k.team_name === 'Wisent');
-    if (team) {
-      await fetch('/api/v0/users/save-context/', {
-        method: 'PUT', credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ context_key_id: team.id }),
-      });
-    }
-  })()`);
+  const teamSwitched = await page.evaluate(async (teamName) => {
+    const r = await fetch('/api/v0/auth/apikeys/', { credentials: 'include' });
+    const keys = await r.json();
+    const team = keys.apikeys.find(
+      (k) => k.key_type === 'team' && k.team_name === teamName,
+    );
+    if (!team) return false;
+    const saved = await fetch('/api/v0/users/save-context/', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ context_key_id: team.id }),
+    });
+    return saved.ok;
+  }, TEAM_NAME);
+  // A machine listed in the personal context would rent out under the wrong
+  // owner.
+  if (!teamSwitched)
+    throw new Error(
+      `the Vast context could not be switched to team ${TEAM_NAME}; nothing was listed`,
+    );
 
   await page.goto('https://cloud.vast.ai/host/machines/', {
     waitUntil: 'domcontentloaded',
@@ -166,47 +187,48 @@ try {
     .locator('button, [role="button"]')
     .filter({ hasText: /^SETTINGS$/ });
   const clicked = (await settingsLoc.count()) > 0;
-  if (clicked)
-    await settingsLoc
-      .first()
-      .click()
-      .catch(() => {});
-  console.log('settings_clicked ->', clicked);
+  if (!clicked)
+    throw new Error(
+      'the Vast machines page shows no SETTINGS control; nothing was listed',
+    );
+  await settingsLoc.first().click();
   await wait();
 
-  // Fill the first empty input inside the dialog. On-Demand Price is the
-  // first price field rendered.
+  // The On-Demand price is the first empty text or number input the dialog
+  // renders; it is read back before LIST, and a dialog without one refuses.
   const filled = await page.evaluate((p) => {
     const setter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype,
       'value',
     ).set;
-    const dialog =
-      Array.from(
-        document.querySelectorAll(
-          '[role="dialog"], [class*="odal"], [class*="ialog"]',
-        ),
-      ).find((el) => el.offsetParent !== null) || document.body;
-    const inputs = Array.from(dialog.querySelectorAll('input')).filter(
-      (el) => el.offsetParent !== null,
-    );
-    const first = inputs.find(
-      (el) =>
-        !el.value && (el.type === 'number' || el.type === 'text' || !el.type),
-    );
-    if (first) {
-      setter.call(first, p);
-      first.dispatchEvent(new Event('input', { bubbles: true }));
-      first.dispatchEvent(new Event('change', { bubbles: true }));
-      first.blur();
+    const dialog = Array.from(
+      document.querySelectorAll(
+        '[role="dialog"], [class*="odal"], [class*="ialog"]',
+      ),
+    ).find((el) => el.offsetParent !== null);
+    if (!dialog) return { filled: false, reason: 'no visible dialog' };
+    const inputs = Array.from(
+      dialog.querySelectorAll(
+        'input[type="number"], input[type="text"], input:not([type])',
+      ),
+    ).filter((el) => el.offsetParent !== null);
+    const first = inputs.find((el) => !el.value);
+    if (!first)
       return {
-        filled: true,
-        label: first.placeholder || first.name || 'unknown',
+        filled: false,
+        reason: `no empty price input among ${inputs.length}`,
       };
-    }
-    return { filled: false, inputs_count: inputs.length };
+    setter.call(first, p);
+    first.dispatchEvent(new Event('input', { bubbles: true }));
+    first.dispatchEvent(new Event('change', { bubbles: true }));
+    first.blur();
+    return { filled: true, held: first.value, label: first.placeholder };
   }, PRICE_GPU);
   console.log('fill_price ->', JSON.stringify(filled));
+  if (!filled.filled || filled.held !== PRICE_GPU)
+    throw new Error(
+      `the listing price was not set to ${PRICE_GPU}: ${JSON.stringify(filled)}; nothing was listed`,
+    );
   await wait();
   const listLoc = page
     .locator(
@@ -214,20 +236,14 @@ try {
     )
     .filter({ hasText: /^LIST$/ })
     .first();
-  const list_exists = (await listLoc.count()) > 0;
-  const list_disabled = list_exists
-    ? await listLoc.isDisabled().catch(() => null)
-    : null;
-  let clicked_list = false;
-  if (list_exists && list_disabled === false) {
-    await listLoc.click().catch(() => {});
-    clicked_list = true;
-  }
-  const result = { list_exists, list_disabled, clicked_list };
-  console.log('list_click ->', JSON.stringify(result));
+  if (!(await listLoc.count()) || (await listLoc.isDisabled()))
+    throw new Error(
+      `the LIST button is missing or disabled after the price ${PRICE_GPU} was set; nothing was listed`,
+    );
+  await listLoc.click();
   await wait();
   const toast = await page.evaluate(() => {
-    const m = (document.body?.innerText || '').match(
+    const m = document.body.innerText.match(
       /[^\n]*(listed|success|error|fail|invalid)[^\n]*/i,
     );
     return m ? m[0] : null;
@@ -235,14 +251,18 @@ try {
   console.log('toast ->', toast);
   for (const t of uiTrace) console.log('net:', t);
 
-  await page
-    .screenshot({ path: '/tmp/vast_list_result.png', fullPage: true })
-    .catch(() => {});
-  console.log('screenshot -> /tmp/vast_list_result.png');
+  const shotPath = join(
+    runRecordingsDir('vast_list_machine'),
+    'list_result.png',
+  );
+  await page.screenshot({ path: shotPath, fullPage: true });
+  console.log(`screenshot -> ${shotPath}`);
+  console.log(
+    `PASS: LIST clicked at $${PRICE_GPU}/GPU-hour under ${TEAM_NAME}`,
+  );
   await release();
-  process.exit(0);
 } catch (e) {
   console.log(`FAIL: ${e.message}`);
   await release();
-  process.exit(1);
+  process.exitCode = exitStatusFor(e);
 }
