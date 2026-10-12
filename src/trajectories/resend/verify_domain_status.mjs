@@ -24,7 +24,7 @@
 import { runOutputPath } from '#run-output';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { promises as dnsp } from 'node:dns';
+import dns, { promises as dnsp } from 'node:dns';
 import { submitWelesRun } from '../../../dist/worker/run-submit/index.js';
 import {
   readDomainProbes,
@@ -120,13 +120,14 @@ function updateRow(domain, status) {
 // API can clear it; a human must verify the registrant contact at the registrar.
 // The resolver's answers that a name has no records, as opposed to a lookup
 // that failed, which is rethrown with its own code instead of being read as
-// a domain without nameservers or MX.
-const NO_RECORDS = { ENOTFOUND: {}, NXDOMAIN: {}, ENODATA: {}, SERVFAIL: {} };
+// a domain without nameservers or MX. The codes are the ones node:dns
+// declares for those two answers; a server failure is a failed lookup.
+const NO_RECORDS = new Set([dns.NOTFOUND, dns.NODATA]);
 async function records(lookup) {
   try {
     return await lookup();
   } catch (e) {
-    if (Object.hasOwn(NO_RECORDS, e.code)) return null;
+    if (NO_RECORDS.has(e.code)) return null;
     throw e;
   }
 }
