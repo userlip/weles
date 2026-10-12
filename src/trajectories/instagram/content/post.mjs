@@ -16,6 +16,11 @@ import { WSession } from '../../../../dist/session/wsession.js';
 import { humanType } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import {
+  clickDescribed,
+  clickOffered,
+  pageShows,
+} from '../../_shared/page/judged/seen.mjs';
 import { detectInstagramBanSignals } from '../../../../dist/platforms/instagram/ban_signals.js';
 import { generatePost } from '../../_shared/content/llm.mjs';
 import { generateImageFile } from '../../_shared/content/media.mjs';
@@ -113,34 +118,21 @@ try {
   // 1. Click "Create" in left sidebar (svg aria-label="New post").
   const createBtn = s.page
     .locator(
-      'a[href="#"]:has(svg[aria-label="New post"]), div[role="button"]:has(svg[aria-label="New post"]), a:has-text("Create"):has(svg)',
+      'a[href="#"]:has(svg[aria-label="New post"]), div[role="button"]:has(svg[aria-label="New post"])',
     )
     .filter({ visible: true })
     .first();
   await createBtn.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, createBtn);
   await pageSettled(s.page);
-  // Some IG variants split into "Post / Reel / Story" submenu.
-  const postSubmenu = s.page
-    .locator(
-      'a:has-text("Post"), div[role="menuitem"]:has-text("Post"), span:has-text("Post")',
-    )
-    .filter({ visible: true })
-    .first();
-  if (await postSubmenu.isVisible()) {
-    await humanClickLocator(s.page, postSubmenu);
-    await pageSettled(s.page);
-  }
-  // 2. Click "Select from computer" inside the Create modal — triggers
-  //    filechooser, our hook above attaches the image path.
-  const selectBtn = s.page
-    .locator(
-      'div[role="dialog"] button:has-text("Select from computer"), [role="dialog"] button:has-text("Select from device")',
-    )
-    .filter({ visible: true })
-    .first();
-  await selectBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, selectBtn);
+  // Some IG variants split creation into a Post / Reel / Story submenu.
+  await clickOffered(s.page, 'the Post option of the create menu');
+  // 2. The create dialog's file selection triggers the filechooser, which
+  //    the hook above answers with the image path.
+  await clickDescribed(
+    s.page,
+    'the button in the create dialog that selects a file from the computer',
+  );
   // Wait for crop/preview step — image rendered in modal.
   await s.page
     .locator(
@@ -158,39 +150,22 @@ try {
     .filter({ visible: true })
     .first();
   while (!(await captionBox.isVisible())) {
-    const next = s.page
-      .locator(
-        'div[role="dialog"] button:has-text("Next"), div[role="dialog"] [role="button"]:has-text("Next"), div[role="dialog"] div[role="button"]:has-text("Next")',
-      )
-      .filter({ visible: true })
-      .first();
-    await next.waitFor({ state: 'visible' });
-    await humanClickLocator(s.page, next);
+    await clickDescribed(
+      s.page,
+      'the button that goes to the next step of the create dialog',
+    );
     await pageSettled(s.page);
   }
   // 5. Fill caption textarea.
   await humanClickLocator(s.page, captionBox);
   await humanType(s.page, caption);
   await pageSettled(s.page);
-  // 6. Share.
-  const shareBtn = s.page
-    .locator(
-      'div[role="dialog"] button:has-text("Share"), div[role="dialog"] [role="button"]:has-text("Share"), div[role="dialog"] div[role="button"]:has-text("Share")',
-    )
-    .filter({ visible: true })
-    .first();
-  await shareBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, shareBtn);
-  // Wait for the share to complete — modal closes and "Your post has been shared" appears or modal is gone.
-  await s.page.waitForFunction(
-    () =>
-      /Your post has been shared/i.test(document.body.innerText) ||
-      !Array.from(
-        document.querySelectorAll(
-          'div[role="dialog"] button, div[role="dialog"] [role="button"]',
-        ),
-      ).some((el) => /^\s*Share\s*$/i.test(el.textContent || '')),
-  );
+  // 6. Share, then confirm Instagram reports the post as shared.
+  await clickDescribed(s.page, 'the button that shares the new post');
+  if (!(await pageShows(s.page, 'Does the page say the post has been shared?')))
+    throw new Error(
+      `Instagram did not report the post as shared on ${s.page.url()}`,
+    );
   await pageSettled(s.page);
   banSignal = await detectInstagramBanSignals(
     s.page,

@@ -10,11 +10,9 @@ import {
   googleSso,
   getGoogleSsoCreds,
 } from '../_shared/services/google_sso.mjs';
-import {
-  humanIdlePause,
-  humanClickLocator,
-} from '../../../dist/human/mouse.js';
+import { humanIdlePause } from '../../../dist/human/mouse.js';
 import { urlMatching } from '../_shared/page/settled.mjs';
+import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -38,13 +36,7 @@ try {
   await humanIdlePause('deliberate');
 
   const popupPromise = s.page.waitForEvent('popup');
-  const gBtn = s.page
-    .locator(
-      'button:has-text("Login with Google"), button:has-text("Continue with Google")',
-    )
-    .filter({ visible: true })
-    .first();
-  await humanClickLocator(s.page, gBtn);
+  await clickDescribed(s.page, 'the button to log in with Google');
   const popup = await popupPromise;
   await popup.waitForLoadState('domcontentloaded');
 

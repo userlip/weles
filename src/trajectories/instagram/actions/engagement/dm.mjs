@@ -19,6 +19,10 @@ import {
 } from '../../../_shared/auth/cookie-freshness.mjs';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
 import { textShownOutsideEditors } from '../../../_shared/page/shows.mjs';
+import {
+  clickDescribed,
+  clickOffered,
+} from '../../../_shared/page/judged/seen.mjs';
 
 const RECIPIENT = statedText(
   ['RECIPIENT_HANDLE'],
@@ -81,21 +85,13 @@ try {
     throw probeErr;
   }
 
-  // Some IG cohorts show a Notifications/Updates upsell modal; dismiss
-  // opportunistically without blocking if absent.
+  // Some IG cohorts show a Notifications/Updates upsell modal; it is
+  // dismissed when shown and absence does not block.
   await humanIdlePause('short');
-  const notNowSel =
-    'div[role="dialog"] button:has-text("Not Now"), div[role="dialog"] button:has-text("Not now")';
-  const notNowCount = await s.page
-    .locator(notNowSel)
-    .filter({ visible: true })
-    .count()
-    .catch(() => 0);
-  if (notNowCount > 0)
-    await humanClickLocator(
-      s.page,
-      s.page.locator(notNowSel).filter({ visible: true }).first(),
-    );
+  await clickOffered(
+    s.page,
+    'the button that dismisses the notifications prompt without turning them on',
+  );
 
   // Recipient picker — input[name="queryBox"] (legacy) or aria/placeholder
   // search input inside the dialog.
@@ -118,14 +114,10 @@ try {
   await userRow.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, userRow);
 
-  const chatBtn = s.page
-    .locator(
-      'div[role="dialog"] button:enabled:not([aria-disabled="true"]):has-text("Chat"), div[role="dialog"] button:enabled:not([aria-disabled="true"]):has-text("Next"), div[role="dialog"] [role="button"]:not([disabled]):not([aria-disabled="true"]):has-text("Chat")',
-    )
-    .filter({ visible: true })
-    .first();
-  await chatBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, chatBtn);
+  await clickDescribed(
+    s.page,
+    'the button in the dialog that opens the chat with the chosen person',
+  );
 
   // Composer is contenteditable div, aria-label="Message". Per
   // feedback_focus_before_type: humanClick the editable BEFORE humanType.
@@ -140,21 +132,8 @@ try {
   await humanType(s.page, MESSAGE);
   await humanIdlePause('short');
 
-  const sendSel =
-    'div[role="button"]:has(svg[aria-label="Send"]), div[role="button"]:has-text("Send"), button:has-text("Send")';
-  const sendCount = await s.page
-    .locator(sendSel)
-    .filter({ visible: true })
-    .count()
-    .catch(() => 0);
-  if (sendCount > 0) {
-    await humanClickLocator(
-      s.page,
-      s.page.locator(sendSel).filter({ visible: true }).first(),
-    );
-  } else {
-    await s.page.keyboard.press('Enter');
-  }
+  // The focused composer sends its message on Enter.
+  await s.page.keyboard.press('Enter');
   await humanIdlePause('deliberate');
 
   if (!(await textShownOutsideEditors(s.page, MESSAGE)))

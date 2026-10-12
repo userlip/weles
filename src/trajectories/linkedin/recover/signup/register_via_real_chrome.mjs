@@ -146,14 +146,7 @@ try {
   }
 
   // Click Agree & Join
-  await humanClickLocator(
-    page,
-    page
-      .locator(
-        'button:has-text("Agree & Join"), button:has-text("Continue"), button[type="submit"]',
-      )
-      .first(),
-  );
+  await humanClickLocator(page, page.locator('button[type="submit"]').first());
   await pageSettled(page);
   console.log(`[reg-real] post-join url=${page.url()}`);
 
@@ -192,9 +185,7 @@ try {
     }
     await humanClickLocator(
       page,
-      page
-        .locator('button:has-text("Continue"), button[type="submit"]')
-        .first(),
+      page.locator('button[type="submit"]').first(),
     );
     await pageSettled(page);
     console.log(`[reg-real] post-name url=${page.url()}`);
@@ -357,11 +348,7 @@ try {
       try {
         await humanClickLocator(
           page,
-          page
-            .locator(
-              'button:has-text("Verify"), button:has-text("Continue"), button:has-text("Submit"), button[type="submit"]',
-            )
-            .last(),
+          page.locator('button[type="submit"]').last(),
         );
       } catch {
         /* submit button may be missing */

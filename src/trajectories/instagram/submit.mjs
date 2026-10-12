@@ -40,16 +40,8 @@ export async function instagramSubmitComment(s, text) {
   // Older IG hides the textarea inside an "Add a comment" placeholder div
   // that becomes a textarea on focus — humanClick already focused, so type.
   await humanType(s.page, text);
-  // Post button — Instagram shows a <button type="submit"> with text "Post"
-  // (or aria-label "Post comment"). It activates only when text is present.
-  const post = s.page
-    .locator(
-      'form button[type="submit"]:has-text("Post"), button:has-text("Post"):not([disabled]), button[aria-label="Post comment"]:not([disabled])',
-    )
-    .filter({ visible: true })
-    .first();
-  await post.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, post);
+  // The focused comment box posts its text on Enter.
+  await s.page.keyboard.press('Enter');
   // Verify state flip — textarea cleared after successful post.
   await s.page.waitForFunction(() => {
     const t = document.querySelector(

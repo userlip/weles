@@ -43,9 +43,7 @@ const URL = 'https://signup.live.com';
     await humanClickLocator(
       s.page,
       s.page
-        .locator(
-          'input[type="submit"], button[type="submit"], button:has-text("Next")',
-        )
+        .locator('input[type="submit"], button[type="submit"]')
         .filter({ visible: true })
         .first(),
     );
@@ -64,9 +62,7 @@ const URL = 'https://signup.live.com';
     await humanClickLocator(
       s.page,
       s.page
-        .locator(
-          'input[type="submit"], button[type="submit"], button:has-text("Next")',
-        )
+        .locator('input[type="submit"], button[type="submit"]')
         .filter({ visible: true })
         .first(),
     );
@@ -95,9 +91,7 @@ const URL = 'https://signup.live.com';
       await humanClickLocator(
         s.page,
         s.page
-          .locator(
-            'input[type="submit"], button[type="submit"], button:has-text("Next")',
-          )
+          .locator('input[type="submit"], button[type="submit"]')
           .filter({ visible: true })
           .first(),
       );
@@ -130,9 +124,7 @@ const URL = 'https://signup.live.com';
     await humanClickLocator(
       s.page,
       s.page
-        .locator(
-          'input[type="submit"], button[type="submit"], button:has-text("Next")',
-        )
+        .locator('input[type="submit"], button[type="submit"]')
         .filter({ visible: true })
         .first(),
     );
@@ -181,9 +173,7 @@ const URL = 'https://signup.live.com';
       await humanClickLocator(
         s.page,
         s.page
-          .locator(
-            'input[type="submit"], button[type="submit"], button:has-text("Send code"), button:has-text("Next")',
-          )
+          .locator('input[type="submit"], button[type="submit"]')
           .filter({ visible: true })
           .first(),
       );
@@ -204,9 +194,7 @@ const URL = 'https://signup.live.com';
       await humanClickLocator(
         s.page,
         s.page
-          .locator(
-            'input[type="submit"], button[type="submit"], button:has-text("Next"), button:has-text("Verify")',
-          )
+          .locator('input[type="submit"], button[type="submit"]')
           .filter({ visible: true })
           .first(),
       );

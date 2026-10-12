@@ -29,6 +29,7 @@ import {
   reviewUntilClosed,
 } from '../../_shared/page/settled.mjs';
 import { fitsField } from '../../_shared/page/fits.mjs';
+import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
 
 const acct = await getSocialAccount('linkedin');
 if (!acct) {
@@ -407,37 +408,18 @@ try {
       await humanClickLocator(s.page, addPhotoBtn);
       await humanIdlePause('deliberate');
     }
-    const upBtn = s.page
-      .locator(
-        'button:has-text("Upload photo"), label:has-text("Upload photo")',
-      )
-      .filter({ visible: true })
-      .first();
-    if (await upBtn.count()) {
-      // The chooser is awaited from before the click so it cannot be missed.
-      const chooser = s.page.waitForEvent('filechooser');
-      await humanClickLocator(s.page, upBtn);
-      await (await chooser).setFiles(tmpAvatar);
-    } else {
-      const fIn = s.page.locator('input[type="file"]').first();
-      if (!(await fIn.count()))
-        throw new Error(
-          'the LinkedIn photo dialog offers neither an Upload photo button nor a file input; the requested avatar was not uploaded',
-        );
-      await fIn.setInputFiles(tmpAvatar);
-    }
-    await humanIdlePause('deliberate');
-    const applyBtn = s.page
-      .locator(
-        'button:has-text("Save photo"), button:has-text("Apply"), button:has-text("Save")',
-      )
-      .filter({ visible: true })
-      .first();
-    if (!(await applyBtn.count()))
+    // The photo dialog carries a file input whatever its upload button says.
+    const fIn = s.page.locator('input[type="file"]').first();
+    if (!(await fIn.count()))
       throw new Error(
-        'the LinkedIn photo dialog shows no Save photo, Apply or Save button after the image was placed; the requested avatar was not saved',
+        'the LinkedIn photo dialog has no file input; the requested avatar was not uploaded',
       );
-    await humanClickLocator(s.page, applyBtn);
+    await fIn.setInputFiles(tmpAvatar);
+    await humanIdlePause('deliberate');
+    await clickDescribed(
+      s.page,
+      'the button in the photo dialog that saves or applies the new profile photo',
+    );
     writes.push('avatar uploaded');
     await humanIdlePause('deliberate');
   }

@@ -96,9 +96,7 @@ async function submitPhoneForm(page, frame, phoneInput, country, phone) {
   await humanFill(page, phoneInput, phoneDigitsForInput(phone, country));
   await pageSettled(page);
   const submit = frame
-    .locator(
-      'button[type="submit"], button#register-verification-submit, button:has-text("Submit"), button:has-text("Continue"), button:has-text("Send code")',
-    )
+    .locator('button[type="submit"], button#register-verification-submit')
     .filter({ visible: true })
     .first();
   if (!(await submit.count()))
@@ -117,9 +115,7 @@ async function submitCodeForm(page, frame, code) {
   await humanType(page, code);
   await pageSettled(page);
   const submit = frame
-    .locator(
-      'button[type="submit"], button#register-verification-pin-submit, button:has-text("Submit"), button:has-text("Continue"), button:has-text("Verify")',
-    )
+    .locator('button[type="submit"], button#register-verification-pin-submit')
     .filter({ visible: true })
     .first();
   if (!(await submit.count()))

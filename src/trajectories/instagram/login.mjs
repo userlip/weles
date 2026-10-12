@@ -10,8 +10,12 @@ import { join } from 'node:path';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
+import { navigationRefusal } from '../_shared/page/navigation/refused.mjs';
 
-const URL = 'https://www.instagram.com/accounts/login/';
+const LOGIN_URL = 'https://www.instagram.com/accounts/login/';
+// Where Instagram sends an account it wants to verify, and one it has banned.
+const CHECKPOINT_ROUTES = ['/challenge', '/checkpoint', '/two_factor'];
+const SUSPENDED_ROUTES = ['/accounts/suspended', '/accounts/disabled'];
 
 const acct = await getSocialAccount('instagram');
 if (!acct) {
@@ -48,7 +52,7 @@ try {
   // injected sessionid is device-mismatched. Login always means form login
   // now; action trajectories use assertAuthed() to verify before acting.
   // Direct Playwright form login. Instagram inputs use name=username/password.
-  await s.page.goto(URL, { waitUntil: 'domcontentloaded' });
+  await s.page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' });
   await pageSettled(s.page);
   // Instagram's actual selector names: email (not username) + pass (not
   // password). Earlier 'username'/'password' selectors never matched and
@@ -111,9 +115,10 @@ try {
   if (err.length) throw new Error(`login form refused: ${err.join(' | ')}`);
   if (/\/accounts\/login/.test(finalUrl))
     throw new Error('login form did not submit / no redirect');
-  if (/challenge|checkpoint|two_factor/.test(finalUrl))
+  const finalPath = new URL(finalUrl).pathname;
+  if (CHECKPOINT_ROUTES.some((route) => finalPath.startsWith(route)))
     throw new Error(`checkpoint at ${finalUrl}`);
-  if (/accounts\/suspended|accounts\/disabled/.test(finalUrl))
+  if (SUSPENDED_ROUTES.some((route) => finalPath.startsWith(route)))
     throw new Error(`suspended: ${finalUrl}`);
   console.log(`PASS: logged in — ${finalUrl}`);
   await captureCookies();
@@ -140,28 +145,19 @@ try {
     // The signal is read from the address the page ended on and the
     // browser's error code; a page's prose is not classified by its words.
     let sig;
-    if (/\/accounts\/suspended|\/accounts\/disabled/.test(finalUrl))
+    const finalPath = URL.canParse(finalUrl)
+      ? new URL(finalUrl).pathname
+      : finalUrl;
+    const refusal = navigationRefusal(msg, finalUrl);
+    if (SUSPENDED_ROUTES.some((route) => finalPath.startsWith(route)))
       sig = 'suspended';
-    else if (/\/checkpoint|\/challenge|\/two_factor/.test(finalUrl))
+    else if (CHECKPOINT_ROUTES.some((route) => finalPath.startsWith(route)))
       sig = 'checkpoint';
-    else if (
-      /ERR_HTTP_RESPONSE_CODE_FAILURE|ERR_BLOCKED_BY_RESPONSE|ERR_BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_ADMINISTRATOR/.test(
-        msg,
-      )
-    )
-      sig = 'ip_blocked';
-    else if (
-      /ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED/.test(msg)
-    )
-      sig = 'proxy_failed';
-    else if (finalUrl.startsWith('chrome-error://')) sig = 'proxy_failed';
-    // Login form rendered but the trajectory threw before redirect (locator
-    // timeout, no form inputs, submit blocked). Still on instagram.com/login
-    // means cookies-stale: retrying the same path will hit the same wall.
-    else if (
-      /instagram\.com\/(accounts\/login|$)/.test(finalUrl) ||
-      /locator.*Timeout|net::ERR_TIMED_OUT/.test(msg)
-    )
+    else if (refusal !== 'reached') sig = refusal;
+    // Login form rendered but the trajectory threw before redirect (no form
+    // inputs, submit blocked). Still on Instagram's login page means
+    // cookies-stale: retrying the same path will hit the same wall.
+    else if (finalPath.startsWith('/accounts/login') || finalPath === '/')
       sig = 'checkpoint';
     else sig = 'action_failed';
     writeFileSync(

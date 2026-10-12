@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { markCookiesStale } from '../../../../dist/utils/credentials.js';
+import { navigationRefusal } from '../../_shared/page/navigation/refused.mjs';
 
 export const CHECKPOINT_RE = /\/(checkpoint|uas\/login|login\/recovery)/;
 
@@ -43,30 +44,14 @@ export async function markStaleAndFail(
   if (acct.id) await markCookiesStale(acct.id);
 }
 
-// Chromium's network error codes, by what they say about the route to LinkedIn.
-const EDGE_REFUSALS = [
-  'ERR_HTTP_RESPONSE_CODE_FAILURE',
-  'ERR_BLOCKED_BY_RESPONSE',
-  'ERR_BLOCKED_BY_CLIENT',
-  'ERR_BLOCKED_BY_ADMINISTRATOR',
-];
-const PROXY_FAILURES = [
-  'ERR_TUNNEL_CONNECTION_FAILED',
-  'ERR_PROXY_CONNECTION_FAILED',
-  'ERR_TIMED_OUT',
-];
-
 /**
- * Classify a thrown login error. ERR_HTTP_RESPONSE_CODE_FAILURE = LinkedIn
- * 4xx/5xx at edge (fingerprint or IP blocked), which must read as ip_blocked
- * so worker-pool auto-markBurned fires. ERR_TUNNEL_CONNECTION_FAILED = real
- * proxy CONNECT failure.
+ * Classify a thrown login error. An edge refusal must read as ip_blocked so
+ * worker-pool auto-markBurned fires; a proxy that never carried the request
+ * is proxy_failed; a page that ended on a checkpoint route is checkpoint.
  */
 export function classifyLoginError(message, finalUrl) {
-  if (EDGE_REFUSALS.some((code) => message.includes(code))) return 'ip_blocked';
-  if (PROXY_FAILURES.some((code) => message.includes(code)))
-    return 'proxy_failed';
-  if (finalUrl.startsWith('chrome-error://')) return 'proxy_failed';
+  const refusal = navigationRefusal(message, finalUrl);
+  if (refusal !== 'reached') return refusal;
   if (CHECKPOINT_RE.test(finalUrl)) return 'checkpoint';
   return 'unknown_error';
 }

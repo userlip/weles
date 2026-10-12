@@ -64,9 +64,7 @@ try {
   await humanClickLocator(
     s.page,
     s.page
-      .locator(
-        'input[type="submit"]#idSIButton9, button[type="submit"]:has-text("Next"), input[type="submit"]:has-text("Next")',
-      )
+      .locator('input[type="submit"]#idSIButton9, button[type="submit"]')
       .filter({ visible: true })
       .first(),
   );
@@ -83,9 +81,7 @@ try {
   await humanClickLocator(
     s.page,
     s.page
-      .locator(
-        'input[type="submit"]#idSIButton9, button[type="submit"]:has-text("Sign in"), input[type="submit"]:has-text("Sign in")',
-      )
+      .locator('input[type="submit"]#idSIButton9, button[type="submit"]')
       .filter({ visible: true })
       .first(),
   );
@@ -93,7 +89,7 @@ try {
 
   // 3. "Stay signed in?" prompt — click Yes for sticky session.
   const ksiOk = s.page
-    .locator('input#idSIButton9, button:has-text("Yes")')
+    .locator('input#idSIButton9')
     .filter({ visible: true })
     .first();
   if (await ksiOk.isVisible().catch(() => false)) {

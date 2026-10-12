@@ -57,9 +57,7 @@ export async function submitSignupCandidate(session) {
   await humanClickLocator(
     session.page,
     session.page
-      .locator(
-        'button[type="submit"]:has-text("Agree"), button[type="submit"]:has-text("Continue"), button#join-form-submit',
-      )
+      .locator('button#join-form-submit, button[type="submit"]')
       .first(),
   );
   await humanIdlePause('deliberate');
@@ -107,9 +105,7 @@ export async function submitSignupCandidate(session) {
   await humanClickLocator(
     session.page,
     session.page
-      .locator(
-        'button[type="submit"]:has-text("Continue"), button#join-form-submit',
-      )
+      .locator('button#join-form-submit, button[type="submit"]')
       .first(),
   );
   const [cReq, cRes] = await Promise.all([createReq, createRes]);

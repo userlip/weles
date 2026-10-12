@@ -50,9 +50,7 @@ export async function linkedinSubmitComment(s, text) {
   await humanType(s.page, text);
   // Post submit button — once text is entered, button[disabled] flips.
   const postBtn = s.page
-    .locator(
-      'button.comments-comment-box__submit-button:not([disabled]), [data-testid*="comment"][role="button"]:not([disabled]):has-text("Post"), button:has-text("Post"):not([disabled])',
-    )
+    .locator('button.comments-comment-box__submit-button:not([disabled])')
     .filter({ visible: true })
     .first();
   await postBtn.waitFor({ state: 'visible' });
@@ -71,9 +69,7 @@ export async function linkedinSubmitPost(s, text) {
   await humanIdlePause('deliberate');
   // Open the feed's post composer through its accessible label.
   const startPost = s.page
-    .locator(
-      '[aria-label="Start a post"], button.share-box-feed-entry__trigger, button:has-text("Start a post")',
-    )
+    .locator('button.share-box-feed-entry__trigger')
     .filter({ visible: true })
     .first();
   await startPost.waitFor({ state: 'visible' });
@@ -92,7 +88,7 @@ export async function linkedinSubmitPost(s, text) {
   await humanType(s.page, text);
   const postBtn = s.page
     .locator(
-      'button.share-actions__primary-action:not([disabled]), [data-testid*="post"][role="button"]:not([disabled]), button:has-text("Post"):not([disabled])',
+      'button.share-actions__primary-action:not([disabled]), [data-testid*="post"][role="button"]:not([disabled])',
     )
     .filter({ visible: true })
     .first();

@@ -172,7 +172,7 @@ async function submitEmailAndPassword({
     {
       button: session.page
         .locator(
-          'button[type="submit"]:has-text("Agree"), button[type="submit"]:has-text("Continue"), button#join-form-submit, button[data-tracking-control-name*="signup"]',
+          'button#join-form-submit, button[data-tracking-control-name*="signup"]',
         )
         .first(),
       pattern: SIGNUP_API,
@@ -243,9 +243,7 @@ async function submitNames({ session, identity, recordStage, proxyWatch }) {
     { session, recordStage },
     {
       button: session.page
-        .locator(
-          'button[type="submit"]:has-text("Continue"), button#join-form-submit',
-        )
+        .locator('button#join-form-submit, button[type="submit"]')
         .first(),
       pattern: CREATE_ACCOUNT_API,
       stage: 'create_account_submitted',
@@ -396,9 +394,7 @@ async function settleAuthenticatedSession({
   await humanClickLocator(
     session.page,
     session.page
-      .locator(
-        'button[type="submit"]:has-text("Submit"), button:has-text("Verify"), button[type="submit"]:has-text("Agree"), button#email-pin-submit-button',
-      )
+      .locator('button#email-pin-submit-button, button[type="submit"]')
       .first(),
   );
   await waitPastEmailVerification(session.page);

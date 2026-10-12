@@ -1,9 +1,9 @@
 // Mint a Linear personal API key.
 //
 // Drives Google Workspace SSO into linear.app (same path as login.mjs),
-// navigates to /settings/api, clicks "Create new" / "New API key",
-// enters a label (default: "oko"), and scrapes the lin_api_… token
-// from the post-create reveal dialog.
+// opens the security & access settings, has the vision model find the
+// control that creates a personal API key, names it (default: "oko"), and
+// scrapes the lin_api_… token from the post-create reveal dialog.
 //
 // On success:
 //   - writes the key to ~/.linear/token (chmod 600)
@@ -21,6 +21,11 @@ import {
   humanClickLocator,
 } from '../../../dist/human/mouse.js';
 import { humanFill } from '../../../dist/human/keyboard.js';
+import {
+  clickDescribed,
+  clickOffered,
+  fillDescribed,
+} from '../_shared/page/judged/seen.mjs';
 import { mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -115,35 +120,16 @@ try {
     // "Use your password". Single-shot — if Google's challenge is sticky, the
     // password input still won't be visible after these clicks and the run
     // surfaces a clear FAIL with the current URL.
-    const tryOther = s.page
-      .getByRole('button', { name: /try another way|another way to sign in/i })
-      .or(
-        s.page.getByRole('link', {
-          name: /try another way|another way to sign in/i,
-        }),
-      );
     if (
-      await tryOther
-        .first()
-        .isVisible()
-        .catch(() => false)
+      await clickOffered(s.page, 'the control to try another way to sign in')
     ) {
-      console.log('[linear-key] clicking "Try another way"');
-      await humanClickLocator(s.page, tryOther.first());
+      console.log('[linear-key] chose another way to sign in');
       await humanIdlePause('long');
     }
-    const usePwd = s.page
-      .getByRole('button', { name: /(use|enter) your password/i })
-      .or(s.page.getByRole('link', { name: /(use|enter) your password/i }))
-      .or(s.page.getByText(/(use|enter) your password/i));
     if (
-      await usePwd
-        .first()
-        .isVisible()
-        .catch(() => false)
+      await clickOffered(s.page, 'the option to sign in with your password')
     ) {
-      console.log('[linear-key] clicking "Use your password"');
-      await humanClickLocator(s.page, usePwd.first());
+      console.log('[linear-key] chose the password sign-in');
       await humanIdlePause('long');
     }
 
@@ -238,99 +224,19 @@ try {
     }
   }
 
-  // Now on the security-and-access page: probe for the personal-API-keys
-  // section and find the create button beside it.
-  const personalProbe = await s.page.evaluate(() => {
-    const heads = Array.from(
-      document.querySelectorAll('h1, h2, h3, h4, [role="heading"]'),
-    );
-    const h = heads.find((el) => /api key/i.test(el.innerText.trim()));
-    if (!h)
-      return {
-        found: false,
-        reason: 'no personal API keys heading on security page',
-      };
-    h.scrollIntoView({ block: 'center' });
-    const section = h.closest('section, div, article') || h.parentElement;
-    const buttons = Array.from(
-      section.querySelectorAll('button, a[role="button"], a'),
-    )
-      .filter((b) => b.offsetParent !== null)
-      .map((b) => ({
-        tag: b.tagName.toLowerCase(),
-        text: (b.innerText || b.textContent || '').trim(),
-        aria: b.getAttribute('aria-label'),
-      }));
-    return { found: true, headingText: (h.innerText || '').trim(), buttons };
-  });
-  console.log(
-    `[linear-key] personal-key probe: ${JSON.stringify(personalProbe)}`,
+  // Now on the security-and-access page: create a personal API key, name it
+  // and confirm the name with Enter.
+  await clickDescribed(
+    s.page,
+    'the button that creates a new personal API key',
   );
   await humanIdlePause('short');
-
-  // Click "New API key" / "Create new" / "Create key" inside the personal
-  // keys section.
-  const createBtn = s.page
-    .locator(
-      'button:has-text("New API key"), button:has-text("Create key"), button:has-text("Create new"), button:has-text("Personal API key"), button[aria-label*="create" i][aria-label*="key" i], button[aria-label*="new" i][aria-label*="key" i]',
-    )
-    .filter({ visible: true })
-    .first();
-  if (!(await createBtn.isVisible().catch(() => false))) {
-    // Dump page state for diagnosis.
-    const dump = await s.page.evaluate(() => {
-      const buttons = Array.from(
-        document.querySelectorAll('button, a[role="button"]'),
-      )
-        .filter((b) => b.offsetParent !== null)
-        .map((b) => (b.innerText || b.textContent || '').trim())
-        .filter((t) => t.length);
-      const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
-        .map((h) => (h.innerText || '').trim())
-        .filter((t) => t.length);
-      return {
-        url: location.href,
-        title: document.title,
-        headings,
-        buttons: buttons,
-      };
-    });
-    console.log(`[diagnostic] url=${dump.url} title="${dump.title}"`);
-    console.log(`[diagnostic] headings: ${dump.headings.join(' | ')}`);
-    console.log(
-      `[diagnostic] visible buttons (first 40): ${dump.buttons.join(' | ')}`,
-    );
-    throw new Error(`"Create new" button not visible on /settings/api`);
-  }
-  await humanClickLocator(s.page, createBtn);
-  await humanIdlePause('short');
-
-  // Fill the label in the create dialog.
-  const labelInput = s.page
-    .locator(
-      'input[placeholder*="Label" i], input[placeholder*="Name" i], input[placeholder*="key name" i]',
-    )
-    .filter({ visible: true })
-    .first();
-  if (await labelInput.isVisible().catch(() => false)) {
-    await humanFill(s.page, labelInput, LABEL);
-    await humanIdlePause('short');
-  } else {
-    console.log(
-      '[linear-key] WARN: label input not visible — proceeding anyway',
-    );
-  }
-
-  // Confirm.
-  const confirmBtn = s.page
-    .locator(
-      'button:has-text("Create"):not(:has-text("Create new")), button:has-text("Generate"), button[type="submit"]',
-    )
-    .filter({ visible: true })
-    .last();
-  if (await confirmBtn.isVisible().catch(() => false)) {
-    await humanClickLocator(s.page, confirmBtn);
-  }
+  await fillDescribed(
+    s.page,
+    'the name or label field of the new API key',
+    LABEL,
+  );
+  await s.page.keyboard.press('Enter');
   await humanIdlePause('long');
 
   // Scrape the lin_api_… key from the reveal dialog.

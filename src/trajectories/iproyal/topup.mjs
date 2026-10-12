@@ -7,6 +7,7 @@ import {
 import { topupOpts } from '../_shared/services/topup_common.mjs';
 import { humanIdlePause } from '../../../dist/human/mouse.js';
 import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
+import { clickDescribed, clickOffered } from '../_shared/page/judged/seen.mjs';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 
 const { usd } = topupOpts();
@@ -21,11 +22,7 @@ try {
   await s.goto('https://dashboard.iproyal.com/login');
   await humanIdlePause('deliberate');
   const popupPromise = s.page.waitForEvent('popup').catch(() => null);
-  await s.page
-    .locator('button:has-text("Login with Google")')
-    .filter({ visible: true })
-    .first()
-    .click();
+  await clickDescribed(s.page, 'the button to log in with Google');
   const popup = await popupPromise; // allow-raw-playwright: the popup the click produced
   if (!popup) throw new Error('popup did not open');
   await popup.waitForLoadState('domcontentloaded').catch(() => {});
@@ -47,17 +44,8 @@ try {
     waitUntil: 'domcontentloaded',
   });
   await humanIdlePause('deliberate');
-  const addFundsBtn = s.page
-    .locator('button:has-text("Add funds"), a:has-text("Add funds")')
-    .filter({ visible: true })
-    .first();
-  if (await addFundsBtn.isVisible().catch(() => false)) {
-    await addFundsBtn.click();
-    console.log('[trajectory] clicked "Add funds" topbar button');
-    await humanIdlePause('deliberate');
-  } else {
-    throw new Error('"Add funds" button not visible on dashboard home');
-  }
+  await clickDescribed(s.page, 'the button that adds funds to the balance');
+  console.log('[trajectory] clicked the add-funds control');
 
   const amtIn = s.page
     .locator(
@@ -71,24 +59,16 @@ try {
     console.log(`[trajectory] amount filled: $${usd}`);
   }
 
-  // Select Credit/debit card through the styled payment-method button rather
-  // than expecting a radio input. Its text is "Credit or debit card". Clicking
-  // it surfaces Stripe Elements card-number / expiry / cvc / postal frames.
-  const cardOption = s.page
-    .locator(
-      'button:has-text("Credit or debit card"), [role="button"]:has-text("Credit or debit card"), div:has-text("Credit or debit card")',
-    )
-    .filter({ visible: true })
-    .first();
-  if (await cardOption.isVisible().catch(() => false)) {
-    await cardOption.click({ force: true }).catch(() => {});
-    console.log('[trajectory] selected Credit/debit card method');
-    await humanIdlePause('deliberate');
-  } else {
+  // The card payment method is a styled button, not a radio input; choosing
+  // it surfaces the Stripe Elements card-number / expiry / cvc / postal frames.
+  if (
+    await clickOffered(s.page, 'the payment method for a credit or debit card')
+  )
+    console.log('[trajectory] selected the card payment method');
+  else
     console.log(
-      '[trajectory] Credit/debit card option not found — proceeding with current selection',
+      '[trajectory] no card payment method offered — proceeding with current selection',
     );
-  }
 
   // Probe: walk into each Stripe frame and list all inputs inside.
   try {
@@ -138,14 +118,6 @@ try {
       `stripe elements not fully filled: ${JSON.stringify(fill)}`,
     );
 
-  // The actual charge button on iproyal is labelled "Deposit", not "Pay".
-  const depositBtn = s.page
-    .locator('button:has-text("Deposit"), button:has-text("Complete deposit")')
-    .filter({ visible: true })
-    .first();
-  if (!(await depositBtn.isVisible().catch(() => false)))
-    throw new Error('Deposit button not visible');
-
   // Watch for Stripe payment_intents POST to confirm the charge actually fires.
   let stripeChargeFired = false;
   s.ctx.on('request', (req) => {
@@ -157,8 +129,8 @@ try {
       stripeChargeFired = true;
   });
 
-  console.log('[trajectory] clicking Deposit button');
-  await depositBtn.click();
+  console.log('[trajectory] clicking the deposit button');
+  await clickDescribed(s.page, 'the button that pays the deposit');
   await pageSettled(s.page);
   await s.page
     .screenshot({

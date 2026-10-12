@@ -34,6 +34,7 @@ import { loadAvatarFile } from '../../_shared/runner/avatar-loader.mjs';
 import { updateAccountMetadata } from '../../_shared/skarbiec/accounts.mjs';
 import { fitsField } from '../../_shared/page/fits.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
 
 const acct = await getSocialAccount('instagram');
 if (!acct) {
@@ -142,48 +143,23 @@ try {
     }
   }
 
-  // Avatar upload — instagram /accounts/edit/ exposes a "Change profile
-  // photo" overlay that opens a dialog with an Upload Photo button bound
-  // to a hidden input[type="file"][accept*="image"]. The Upload-Photo
-  // button binding fires a filechooser; we also accept direct setInputFiles
-  // on the hidden input when the binding is missing. A requested avatar that
-  // could not be read or placed fails the run: a PASS would claim a picture
-  // the profile lacks.
+  // Avatar upload — /accounts/edit/ opens a photo dialog bound to a hidden
+  // input[type="file"][accept*="image"]; the image is placed on that input
+  // whatever the dialog's buttons say. A requested avatar that could not be
+  // read or placed fails the run: a PASS would claim a picture the profile
+  // lacks.
   if (avatarUrl) {
     const tmpAvatar = await loadAvatarFile(avatarUrl);
-    const changeBtn = s.page
-      .locator(
-        'button:has-text("Change profile photo"), div[role="button"]:has-text("Change profile photo")',
-      )
-      .filter({ visible: true })
-      .first();
-    if (!(await changeBtn.isVisible()))
-      throw new Error(
-        'the Instagram profile editor shows no Change profile photo control; the requested avatar was not uploaded',
-      );
-    await humanClickLocator(s.page, changeBtn);
+    await clickDescribed(s.page, 'the control that changes the profile photo');
     await humanIdlePause('deliberate');
-    const upload = s.page
-      .locator(
-        'button:has-text("Upload Photo"), button:has-text("Upload photo")',
-      )
-      .filter({ visible: true })
+    const fileIn = s.page
+      .locator('input[type="file"][accept*="image"]')
       .first();
-    if (await upload.isVisible()) {
-      const fileChooserPromise = s.page.waitForEvent('filechooser');
-      await humanClickLocator(s.page, upload);
-      const fc = await fileChooserPromise;
-      await fc.setFiles(tmpAvatar);
-    } else {
-      const fileIn = s.page
-        .locator('input[type="file"][accept*="image"]')
-        .first();
-      if (!(await fileIn.count()))
-        throw new Error(
-          'the Instagram photo dialog offers no upload control; the requested avatar was not uploaded',
-        );
-      await fileIn.setInputFiles(tmpAvatar);
-    }
+    if (!(await fileIn.count()))
+      throw new Error(
+        'the Instagram photo dialog has no image file input; the requested avatar was not uploaded',
+      );
+    await fileIn.setInputFiles(tmpAvatar);
     await humanIdlePause('deliberate');
     writes.push('avatar uploaded');
   }
@@ -207,16 +183,9 @@ try {
   } else {
     console.log(`[ig-profile] writes: ${writes.join('; ')}`);
 
-    // Submit. Instagram's submit on this page is a <div role="button"> reading
-    // "Submit" or sometimes a localized variant.
-    const submitBtn = s.page
-      .locator(
-        'div[role="button"]:has-text("Submit"), button[type="submit"]:has-text("Submit")',
-      )
-      .filter({ visible: true })
-      .first();
-    await submitBtn.waitFor({ state: 'visible' });
-    await humanClickLocator(s.page, submitBtn);
+    // Submit through the form's own submit control, found by the vision model
+    // in whatever language Instagram renders it.
+    await clickDescribed(s.page, 'the button that submits the profile form');
     await humanIdlePause('deliberate');
 
     // What Instagram kept is read from a reloaded form: the fields of the
