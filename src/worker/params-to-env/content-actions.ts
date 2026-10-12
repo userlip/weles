@@ -79,7 +79,8 @@ export function applyContentActionParams(
     env.NCBR_CORRECTION_MODE =
       action === 'ncbr_apply_correction' ? 'apply' : 'verify';
   }
-  // slack_post_message params: message body + where (default channel 'jakub').
+  // slack_post_message params: message body + where (slack_channel; nobody is
+  // messaged by default).
   // Inline `message` is machine-independent (survives cross-host enqueue);
   // `message_file` is a path, only valid on the enqueuing machine.
   if (typeof params.message === 'string') env.MESSAGE_TEXT = params.message;
