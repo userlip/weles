@@ -4,6 +4,8 @@
 // Both strategies consume the same iframe screenshot and emit a pixel center.
 
 import { writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { humanClick } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import {
@@ -281,12 +283,20 @@ export async function solveRotationViaCoords(page, { maxRounds = 80 } = {}) {
       return false;
     }
     const b64 = buf.toString('base64');
+    // Each round's image is kept with the run's recordings; one that cannot
+    // be written is said, and the log names a file only when it was written.
+    let roundShot = 'not kept';
     try {
-      mkdirSync('/tmp/gh_shots', { recursive: true });
-      writeFileSync(`/tmp/gh_shots/round_${round}.png`, buf);
-    } catch {}
+      const dir = runRecordingsDir('github_captcha');
+      mkdirSync(dir, { recursive: true });
+      const shot = join(dir, `round_${round}.png`);
+      writeFileSync(shot, buf);
+      roundShot = shot;
+    } catch (e) {
+      console.log(`[coords] R${round}: round image not written: ${e.message}`);
+    }
     console.log(
-      `[coords] R${round}: ${Math.round(buf.length / 1024)}KB image (${Math.round(box.width)}x${Math.round(box.height)}) -> /tmp/gh_shots/round_${round}.png`,
+      `[coords] R${round}: ${Math.round(buf.length / 1024)}KB image (${Math.round(box.width)}x${Math.round(box.height)}) -> ${roundShot}`,
     );
     let clickXY = null;
     // Tier 1: Stado's authenticated model router classifies the screen.
