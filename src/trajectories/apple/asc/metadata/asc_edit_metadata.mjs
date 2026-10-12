@@ -45,14 +45,18 @@ try {
     process.exit(2);
   }
 
+  const updated = [];
+  const missing = [];
   for (const [field, value] of toUpdate) {
     // ASC uses textareas keyed by data-test-id or name
     const sel = `textarea[name="${field}"], textarea[data-test-id*="${field}"], textarea[aria-label*="${field}" i]`;
     const el = s.page.locator(sel).first();
     if (await el.isVisible().catch(() => false)) {
       await el.fill(value);
+      updated.push(field);
       console.log(`[asc-edit] ${field} set (${value.length} chars)`);
     } else {
+      missing.push(field);
       console.log(`[asc-edit] WARN: ${field} field not found on page`);
     }
   }
@@ -64,9 +68,14 @@ try {
     .click();
   await pageSettled(s.page);
 
-  console.log(
-    `PASS: updated ${toUpdate.map(([k]) => k).join(', ')} for app ${APP_ID}`,
-  );
+  // A field the page did not show was not changed; the run says which,
+  // rather than listing every requested field as updated.
+  if (missing.length) {
+    throw new Error(
+      `not updated for app ${APP_ID}: ${missing.join(', ')} (no such field on the page); saved: ${updated.join(', ')}`,
+    );
+  }
+  console.log(`PASS: updated ${updated.join(', ')} for app ${APP_ID}`);
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exit(1);
