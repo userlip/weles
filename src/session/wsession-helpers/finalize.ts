@@ -1,14 +1,9 @@
 /**
- * WSession close, persistence and I/O helpers.
- * Proxy attribution prefers the declared provider because a resolved IP hides
- * its original hostname. An unavailable byte counter is not zero traffic.
- * Final CDP diagnostics finish before their protocol session is detached.
+ * WSession click, fill and persistence helpers. Closing a session lives in
+ * ./close/session_close.ts.
  */
 
 import type { Frame, Locator } from 'playwright';
-import { writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { costTracker } from '../../utils/runtime/cost.js';
 import { assertNonCredentialInput } from '../../utils/capability.js';
 import { humanClick, humanClickLocator } from '../../human/mouse.js';
 import { humanFill, humanType } from '../../human/keyboard.js';
@@ -17,11 +12,6 @@ import {
   type ScreenshottablePage,
 } from '../../vision/analyze.js';
 import type { WSession } from '../wsession.js';
-import { runRecordingsDir } from '../run-recordings.js';
-import {
-  recordingsDir,
-  wsCaptureFingerprint,
-} from './close/fingerprint_capture.js';
 import {
   clickObservedControl,
   clickSelectorControl,
@@ -35,6 +25,7 @@ export {
   wsFillIdentity,
 } from './close/credential_fill.js';
 export { wsCheckEmail, wsSaveAccount } from './close/account_record.js';
+export { wsClose } from './close/session_close.js';
 
 const asV = (p: any) => p as unknown as ScreenshottablePage;
 
@@ -300,7 +291,9 @@ export async function fillPage(
       `(()=>{var t=${tgt};for(var el of document.querySelectorAll('*')){var r=el.getBoundingClientRect();var ph=(el.getAttribute('placeholder')||'').toLowerCase();if(r.width>50&&r.height>10&&r.x>0&&ph&&ph.indexOf(t)>=0)return{x:r.x+r.width/2,y:r.y+r.height/2}}return null})()`,
     )
     .catch((error) => {
-      throw new Error(`could not search the page for a ${target} placeholder: ${error}`);
+      throw new Error(
+        `could not search the page for a ${target} placeholder: ${error}`,
+      );
     });
   const point = byPlaceholder ?? (await findClickTarget(asV(s.page), target));
   if (!point) return 'no-field-found';
@@ -329,141 +322,4 @@ export async function wsFill(
   return s.runStep(`fill_${target}`, () =>
     fillPage(s, target, literal, pageUrl.origin),
   );
-}
-
-export async function wsClose(s: WSession): Promise<void> {
-  const counterError: string | null = (s as any)._cdpAttachError;
-  const proxyBytes: number | null = counterError
-    ? null
-    : (s as any)._proxyBytes;
-  console.log(
-    `[wsession] close() label=${s.label} proxy_bytes=${proxyBytes ?? 'unavailable'}${counterError ? ` counter_error=${counterError}` : ''}`,
-  );
-  if (proxyBytes !== null && proxyBytes > 0) {
-    try {
-      const cfg = s.proxyConfig;
-      const server = cfg?.server;
-      if (server) {
-        const host = new URL(server).hostname.toLowerCase();
-        const isMobile =
-          /mobile/.test(host) ||
-          (cfg as any)?.platform?.toLowerCase().includes('mobile') === true;
-        // Prefer the .provider field set by resolveProxy at config.ts:127,293.
-        // host.includes(...) is a safety net for proxyConfig values that never
-        // went through resolveProxy and lack .provider (custom PROXY_URL).
-        const provider =
-          (cfg as any)?.provider ||
-          (host.includes('packetstream')
-            ? 'packetstream'
-            : host.includes('oxylabs')
-              ? 'oxylabs'
-              : host.includes('pingproxies') || host.includes('pingproxy')
-                ? 'pingproxies'
-                : host.includes('iproyal')
-                  ? 'iproyal'
-                  : host.includes('brd.superproxy') ||
-                      host.includes('brightdata')
-                    ? 'brightdata'
-                    : 'other');
-        costTracker.recordProxyBytes(provider, proxyBytes, isMobile);
-      } else {
-        costTracker.recordProxyBytes('other', proxyBytes);
-      }
-    } catch (e: any) {
-      console.log(`[wsession] proxy-bytes record err: ${e.message}`);
-    }
-  }
-  await (s as any)._cap
-    .save('session', s.page)
-    .catch((e: any) =>
-      console.log(`[wsession] session capture err: ${e.message}`),
-    );
-  try {
-    writeFileSync(
-      join(recordingsDir(s.label || undefined), 'network.ndjson'),
-      s.capturedResponses.map((r) => JSON.stringify(r)).join('\n'),
-    );
-  } catch (error) {
-    console.log(
-      `[wsession] network.ndjson write err: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  // Final merged dump — fires the close-time flush of every frame's
-  // property-trap log + writes the same {accesses, requests, console,
-  // pageerrors, persona, proxy, versions} shape the interval writer uses,
-  // overwriting the in-flight file with the freshest state. Output lives at
-  // recordings/<label>/<label>_<iso>.inst.json so uploadArtifacts picks it up.
-  try {
-    const { finalDump } = await import('./net_record.js');
-    await finalDump(s);
-  } catch (error) {
-    console.log(
-      `[wsession] finalDump err: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  try {
-    await (s as any)._cdp?.detach?.();
-  } catch (error) {
-    console.error(
-      `[wsession] CDP detach err: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  // G18: capture a fingerprint + detection-vector report at close so failed
-  // runs carry an automatic diagnosis of why they may have been flagged.
-  await wsCaptureFingerprint(s);
-  const video = s.page.video?.();
-  const dest = join(
-    recordingsDir(s.label || undefined),
-    `${s.label || 'session'}_${new Date().toISOString().replace(/[:.]/g, '-')}.webm`,
-  );
-  console.log(`[wsession] close() video=${!!video} dest=${dest}`);
-  await s.page
-    .close()
-    .catch((e: any) =>
-      console.log(`[wsession] page.close error: ${e.message}`),
-    );
-  if (video) {
-    await video.saveAs(dest).catch((e: any) => {
-      console.log(`[wsession] video.saveAs error: ${e.message}`);
-      try {
-        const src = video.path?.() as string | undefined;
-        if (src) {
-          copyFileSync(src, dest);
-          console.log(`[wsession] video copied from ${src}`);
-        } else {
-          console.log(
-            `[wsession] no local video file to copy to ${dest}, the run has no recording`,
-          );
-        }
-      } catch (copyError: any) {
-        console.log(
-          `[wsession] video copy to ${dest} failed too, the run has no recording: ${copyError.message}`,
-        );
-      }
-    });
-  }
-  await s.ctx
-    .close()
-    .catch((e: any) => console.log(`[wsession] ctx.close error: ${e.message}`));
-  // G8: persist the per-run captcha event log (challenge_faced + the full
-  // attempt/marker sequence) for storage backup + worker import. Always written
-  // so a no-captcha run is recorded as {challenge_faced:false, events:[]},
-  // distinguishable from a missing file.
-  if (s.label) {
-    try {
-      const { captchaSnapshot } = await import('../../captcha/events.js');
-      writeFileSync(
-        join(recordingsDir(s.label), 'captcha_events.json'),
-        JSON.stringify(captchaSnapshot(), null, 2),
-      );
-    } catch (error) {
-      console.log(
-        `[wsession] captcha_events write err: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  await costTracker
-    .flush()
-    .catch((e: any) => console.log(`[wsession] cost flush err: ${e.message}`));
-  console.log(`[wsession] close() done`);
 }
