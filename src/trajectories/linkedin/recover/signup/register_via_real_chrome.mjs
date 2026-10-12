@@ -2,7 +2,7 @@
 //
 // Usage:
 //   AGENT_DOMAIN="$DOMAIN" node src/trajectories/linkedin/recover/signup/register_via_real_chrome.mjs
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registrationPassword } from '../../../../../dist/utils/identity/password.js';
@@ -433,7 +433,18 @@ const liAt = cookies.find((c) => c.name === 'li_at' && c.value);
 console.log(
   `[reg-real] captured ${Object.keys(lsItems).length} PX keys, ${cookies.length} cookies, li_at=${!!liAt}`,
 );
-await browser.close().catch(() => {});
+await browser
+  .close()
+  .catch((e) => console.error(`[reg-real] browser close err: ${e.message}`));
+// The profile holds the new account's signed-in session; it is not left in
+// the shared temp directory. A removal that failed is named.
+try {
+  rmSync(userDataDir, { recursive: true, force: true });
+} catch (e) {
+  console.error(
+    `[reg-real] signed-in profile ${userDataDir} not removed: ${e.message}`,
+  );
+}
 
 if (!liAt) {
   console.error('FAIL: no li_at cookie — registration did not complete');
