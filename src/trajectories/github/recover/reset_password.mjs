@@ -189,7 +189,9 @@ try {
   const finalUrl = s.page.url?.() ?? '';
   const onSuccess =
     !finalUrl.includes('/password_reset') ||
-    /changed|success|signin/i.test(finalUrl);
+    ['/changed', '/success', '/signin'].some((route) =>
+      finalUrl.includes(route),
+    );
   // Still on the reset form means GitHub did not take the password, whether
   // or not it showed an error: storing it would replace the account's working
   // password in Skarbiec with one GitHub never set.

@@ -1,4 +1,5 @@
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { clickOffered, pageShows } from '../../_shared/page/judged/seen.mjs';
 import { completeMultimodal } from './stado_model_router.mjs';
 // In-browser Arkose audio puzzle solver for GitHub FunCaptcha.
 // Ports the core flow from account-api-build/skills/creators/_github_audio.py.
@@ -103,29 +104,18 @@ export async function solveAudioPuzzle(page, { maxRounds = 10 } = {}) {
   console.log(`[audio] Game frame: ${frame.url()}`);
   await frame.evaluate(AUDIO_HOOK_SCRIPT).catch(() => {});
 
-  // The puzzle UI renders its buttons in the game frame; read them once the
-  // frame has settled.
+  // The puzzle UI renders its buttons in the game frame; the audio variant's
+  // control is found by the vision model on the settled page.
   await pageSettled(frame);
-  const inventory = await frame.evaluate(`(() => {
-    const btns = Array.from(document.querySelectorAll('button, [role="button"], a')).filter(b => b.offsetParent !== null);
-    return btns.map(b => ({ text: b.innerText?.trim(), aria: b.getAttribute('aria-label'), cls: b.className }));
-  })()`);
-  const audioMatch = inventory.find((b) =>
-    /audio|sound|accessibility/i.test((b.text || '') + ' ' + (b.aria || '')),
-  );
-  if (!audioMatch) {
-    console.log(
-      `[audio] No Audio button on the settled puzzle — buttons(${inventory.length}): ${JSON.stringify(inventory)}`,
-    );
+  if (
+    !(await clickOffered(
+      page,
+      'the button of the puzzle that switches it to the audio challenge',
+    ))
+  ) {
+    console.log('[audio] No audio challenge control on the settled puzzle');
     return false;
   }
-  console.log(`[audio] Found audio-like button: ${JSON.stringify(audioMatch)}`);
-  const audioBtn = frame
-    .locator(
-      `button:has-text("${audioMatch.text}"), [aria-label="${audioMatch.aria}"]`,
-    )
-    .first();
-  await audioBtn.click();
   console.log('[audio] Clicked Audio puzzle');
   await pageSettled(frame);
 
@@ -144,11 +134,21 @@ export async function solveAudioPuzzle(page, { maxRounds = 10 } = {}) {
     }
     console.log(`[audio] R${round}: ${info.text.replace(/\n/g, ' ')}`);
 
-    if (/complete|success|solved|verified/i.test(info.text)) {
+    if (
+      await pageShows(
+        page,
+        'Does the puzzle say it is completed, solved or verified?',
+      )
+    ) {
       console.log('[audio] Success text detected');
       return true;
     }
-    if (/blocked|try again|failed/i.test(info.text)) {
+    if (
+      await pageShows(
+        page,
+        'Does the puzzle say it is blocked or failed, or ask to try again?',
+      )
+    ) {
       console.log('[audio] Blocked');
       return false;
     }

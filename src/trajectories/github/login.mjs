@@ -236,24 +236,23 @@ try {
       console.log('[cookie-capture] err:', e.message);
     }
   } else {
-    // Classify the failure so operators can triage. GitHub returns distinct
-    // signals for bad credentials vs anti-abuse vs device-verification gates,
-    // but they all funnel through /login eventually.
-    const diag = await s.page
-      .evaluate(
-        `(() => {
-      const flash = document.querySelector('.flash-error,[role="alert"]')?.innerText?.trim() || '';
-      const body = document.body ? document.body.innerText : '';
-      let reason = 'unknown';
-      if (/Incorrect username or password|incorrect email|Incorrect password/i.test(flash + body)) reason = 'invalid_credentials';
-      else if (/suspended|flagged|abuse/i.test(flash + body)) reason = 'account_suspended';
-      else if (/unusual activity|verify your device|verification code/i.test(flash + body)) reason = 'device_verification_required';
-      else if (/too many|try again later|rate limit/i.test(flash + body)) reason = 'rate_limited';
-      else if (/captcha|are you human|puzzle/i.test(flash + body)) reason = 'captcha_required';
-      return { reason, flash, title: document.title };
-    })()`,
-      )
-      .catch(() => ({ reason: 'unknown', flash: '', title: '' }));
+    // GitHub's anti-abuse and device gates have their own routes; a refusal
+    // on the login page itself is stated in GitHub's flash, quoted as it is
+    // instead of being sorted by its wording.
+    const { pathname } = new URL(finalUrl);
+    const gate = [
+      '/sessions/verified-device',
+      '/sessions/two-factor',
+      '/account_lockout',
+      '/account_recovery',
+    ].find((route) => pathname.startsWith(route));
+    const diag = await s.page.evaluate(() => ({
+      flash: document
+        .querySelector('.flash-error,[role="alert"]')
+        ?.innerText.trim(),
+      title: document.title,
+    }));
+    diag.reason = gate ? `gate ${gate}` : 'login_refused';
     console.error(
       `FAIL: not logged in at ${finalUrl} — reason=${diag.reason} flash=${JSON.stringify(diag.flash)} title=${JSON.stringify(diag.title)}`,
     );

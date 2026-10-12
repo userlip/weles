@@ -60,9 +60,15 @@ function jaccard(a, b) {
   return uni === 0 ? 0 : inter / uni;
 }
 
+// The generator's sign-in pages, by their routes.
+const LOGIN_ROUTES = ['/login', '/auth', '/signin', '/logowanie'];
+
+function onLoginRoute(url) {
+  return LOGIN_ROUTES.some((route) => url.includes(route));
+}
+
 async function isOnLoginPage(s) {
-  const url = await s.page.url();
-  return /\/login|\/auth|\/signin|logowanie/.test(url);
+  return onLoginRoute(s.page.url());
 }
 
 async function dumpFromDom(s) {
@@ -206,11 +212,7 @@ async function main() {
         s,
         'feng-selector-login',
         'Zaloguj się do generatora PARP w tej sesji Weles i otwórz wniosek do odczytu pól. Automat wznowi odczyt, gdy strona opuści logowanie.',
-        () =>
-          urlMatching(
-            s.page,
-            (url) => !/\/login|\/auth|\/signin|logowanie/.test(url),
-          ),
+        () => urlMatching(s.page, (url) => !onLoginRoute(url)),
         'The browser left its login route; this does not independently verify the signed-in account or selected application.',
       );
     }
