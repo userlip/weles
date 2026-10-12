@@ -19,6 +19,8 @@
 // account it is not entitled to, or a provider Weles does not run on the host,
 // is answered before any child is spawned.
 
+import { constants as http } from 'node:http2';
+
 import {
   ALLOW_RAW_CREDS,
   ALLOW_UNAUTH,
@@ -34,7 +36,7 @@ import {
   requireTokenAuthorization,
 } from '../http-exchange.mjs';
 import { coalesceRun, runAdmissionKey } from '../run/run-outcome.mjs';
-import { REAUTH_PROVIDERS, runReauth } from '../run/trajectory-process.mjs';
+import { REAUTH_PROVIDERS, runReauth } from '../run/reauth-process.mjs';
 import { RUN_RELEASE_IDENTITY } from '../release-identity.mjs';
 
 /// The dispatch name of the trajectory that enrols a Google Authenticator for
@@ -109,7 +111,10 @@ export async function respondToReauth(
   const provider =
     typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
   if (!REAUTH_PROVIDERS.has(provider)) {
-    json(res, 400, { ok: false, error: 'provider must be codex|claude|kimi' });
+    json(res, http.HTTP_STATUS_BAD_REQUEST, {
+      ok: false,
+      error: `provider must be one of ${[...REAUTH_PROVIDERS].join('|')}`,
+    });
     return;
   }
   const subscriptionId =
