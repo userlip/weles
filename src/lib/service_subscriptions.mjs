@@ -57,6 +57,18 @@ export async function listSubscriptions({
 }
 
 export async function upsertSubscription(row) {
+  // A record says when the subscription was last seen and in what state; a
+  // write without them would claim a verification that never happened.
+  const missing = Object.entries({
+    status: row.status,
+    last_verified_at: row.last_verified_at,
+  })
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+  if (missing.length)
+    throw new Error(
+      `subscription record for ${row.service_name}/${row.account_identifier} has no ${missing.join(', ')}: what was observed, and when, is the collector's to state; nothing was written`,
+    );
   const existing = (
     await listSubscriptions({
       service: row.service_name,
@@ -88,8 +100,6 @@ export async function upsertSubscription(row) {
     subscription: {
       ...row,
       id,
-      status: row.status ?? 'unknown',
-      last_verified_at: row.last_verified_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
     },
   };
