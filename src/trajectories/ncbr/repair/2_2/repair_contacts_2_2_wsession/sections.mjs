@@ -23,7 +23,9 @@ export function contactRepairs({
     progress('section:1.3');
     await page.goto(URLS['1.3'], { waitUntil: 'domcontentloaded' }); // allow-raw-playwright: section 1.3 navigation
     await humanIdlePause('long');
-    await openFirstRowEdit('Wisent Polska');
+    await openFirstRowEdit(
+      (await import('#ncbr-settings')).applicantShortName(),
+    );
     const edoreczenia = await fillEdoreczeniaIfPresent();
     const edited = [];
     const hasZuzanna = await page.evaluate(() =>
@@ -172,7 +174,9 @@ export function contactRepairs({
   async function diag13Edit() {
     await page.goto(URLS['1.3'], { waitUntil: 'domcontentloaded' }); // allow-raw-playwright: section 1.3 diagnostic navigation
     await humanIdlePause('long');
-    await openFirstRowEdit('Wisent Polska');
+    await openFirstRowEdit(
+      (await import('#ncbr-settings')).applicantShortName(),
+    );
     const before = await page.evaluate(() => ({
       fields: Array.from(document.querySelectorAll('input, textarea'))
         .map((el) => {
@@ -213,7 +217,9 @@ export function contactRepairs({
     for (let i = 0; i < nestedAddCount; i += 1) {
       await page.goto(URLS['1.3'], { waitUntil: 'domcontentloaded' }); // allow-raw-playwright: reset 1.3 edit diagnostic
       await humanIdlePause('long');
-      await openFirstRowEdit('Wisent Polska');
+      await openFirstRowEdit(
+        (await import('#ncbr-settings')).applicantShortName(),
+      );
       const buttons = page
         .locator('button:visible:not([disabled])')
         .filter({ hasText: /^Dodaj kolejny$/ });
@@ -255,7 +261,9 @@ export function contactRepairs({
   async function diag13ContactEdit() {
     await page.goto(URLS['1.3'], { waitUntil: 'domcontentloaded' }); // allow-raw-playwright: section 1.3 contact diagnostic navigation
     await humanIdlePause('long');
-    await openFirstRowEdit('Wisent Polska');
+    await openFirstRowEdit(
+      (await import('#ncbr-settings')).applicantShortName(),
+    );
     const row = page
       .locator('table tbody tr')
       .filter({ hasText: 'Weronika Pernak' })

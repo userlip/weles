@@ -11,7 +11,7 @@ import {
 
 const CRITERION_LABEL =
   'Załączniki potwierdzające spełnienie warunku określonego w kryterium nr 1';
-export const APPLICANT = 'Wisent Polska';
+export const APPLICANT = (await import('#ncbr-settings')).applicantShortName();
 const READY_MARK = 'svg[data-testid="CheckCircleIcon"]';
 
 export function fileLabel(page, name) {

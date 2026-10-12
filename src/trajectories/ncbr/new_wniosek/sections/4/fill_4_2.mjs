@@ -68,7 +68,10 @@ async function setApplicant() {
     await humanClickLocator(page, applicantSelect);
   await humanIdlePause('deliberate');
   const opt = page
-    .getByRole('option', { name: 'Wisent Polska', exact: true })
+    .getByRole('option', {
+      name: (await import('#ncbr-settings')).applicantShortName(),
+      exact: true,
+    })
     .first();
   if ((await opt.count()) > 0) await opt.dispatchEvent('click'); // allow-raw-playwright: select applicant
   await humanIdlePause('short');

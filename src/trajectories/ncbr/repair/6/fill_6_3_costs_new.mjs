@@ -441,7 +441,7 @@ for (const r of selectedRows) {
   try {
     await pickSelect(
       'nazwa_skrocona_wnioskodawcy_samodzielnego_lidera_konsorcjum_konsorcjanta',
-      'Wisent Polska',
+      (await import('#ncbr-settings')).applicantShortName(),
     );
   } catch (e) {
     /* sometimes auto */

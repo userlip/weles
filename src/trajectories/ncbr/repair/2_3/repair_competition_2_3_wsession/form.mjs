@@ -165,7 +165,11 @@ export function lsiForm({ page, session, email, password, progress }) {
       .locator('input[name*="nazwa_skrocona_wnioskodawcy"]')
       .first();
     if ((await input.count()) === 0) return 'absent';
-    if (/Wisent Polska/.test(await input.inputValue().catch(() => '')))
+    if (
+      (await input.inputValue()).includes(
+        (await import('#ncbr-settings')).applicantShortName(),
+      )
+    )
       return 'already';
     const opener = input
       .locator(
@@ -179,7 +183,10 @@ export function lsiForm({ page, session, email, password, progress }) {
     if (state !== 'opened') return state;
     await humanIdlePause('deliberate');
     const opt = page
-      .getByRole('option', { name: 'Wisent Polska', exact: true })
+      .getByRole('option', {
+        name: (await import('#ncbr-settings')).applicantShortName(),
+        exact: true,
+      })
       .first();
     if ((await opt.count()) > 0) await opt.dispatchEvent('click'); // allow-raw-playwright: select visible applicant option
     await humanIdlePause('short');

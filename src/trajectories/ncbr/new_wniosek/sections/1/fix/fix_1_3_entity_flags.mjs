@@ -59,9 +59,10 @@ async function openEntityEdit() {
     .locator('table')
     .first()
     .locator('tbody tr')
-    .filter({ hasText: 'Wisent Polska' })
+    .filter({ hasText: (await import('#ncbr-settings')).applicantShortName() })
     .first();
-  if ((await row.count()) === 0) throw new Error('Wisent Polska row not found');
+  if ((await row.count()) === 0)
+    throw new Error("the applicant's row was not found in the entity table");
   const buttons = row.locator('button').filter({ visible: true });
   const buttonCount = await buttons.count();
   if (!buttonCount) throw new Error('no action buttons in entity row');
@@ -162,15 +163,18 @@ try {
   saveResult = `NOT SAVED: ${String(e?.message || e)}`;
 }
 
-const after = await page.evaluate(() => ({
-  bodyHasWisent: (document.body.innerText || '').includes('Wisent Polska'),
-  tables: Array.from(document.querySelectorAll('table'))
-    .map((t) => ({
-      rows: t.querySelectorAll('tbody tr').length,
-      text: t.innerText.replace(/\s+/g, ' ').trim(),
-    }))
-    .slice(0, 4),
-}));
+const after = await page.evaluate(
+  (applicant) => ({
+    listsApplicant: document.body.innerText.includes(applicant),
+    tables: Array.from(document.querySelectorAll('table'))
+      .map((t) => ({
+        rows: t.querySelectorAll('tbody tr').length,
+        text: t.innerText.replace(/\s+/g, ' ').trim(),
+      }))
+      .slice(0, 4),
+  }),
+  (await import('#ncbr-settings')).applicantShortName(),
+);
 
 console.log(JSON.stringify({ open, saveResult, before, after }, null, 2));
 process.exit(0);

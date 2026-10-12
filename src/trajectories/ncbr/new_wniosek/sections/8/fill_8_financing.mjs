@@ -1,4 +1,4 @@
-// Section 8 (Zrodla finansowania wydatkow) — one Wisent Polska row.
+// Section 8 (Zrodla finansowania wydatkow) — one row for the declared applicant.
 // UI-only. Never closes the page and never submits.
 
 import { chromium } from 'playwright';
@@ -61,7 +61,10 @@ async function setApplicant() {
     await humanClickLocator(page, applicantSelect);
   await humanIdlePause('deliberate');
   const opt = page
-    .getByRole('option', { name: 'Wisent Polska', exact: true })
+    .getByRole('option', {
+      name: (await import('#ncbr-settings')).applicantShortName(),
+      exact: true,
+    })
     .first();
   if ((await opt.count()) > 0) await humanClickLocator(page, opt); // allow-raw-playwright: select Wisent applicant
   await humanIdlePause('short');
@@ -131,7 +134,7 @@ async function editExistingWisentRow() {
     .locator('table')
     .first()
     .locator('tbody tr')
-    .filter({ hasText: 'Wisent Polska' })
+    .filter({ hasText: (await import('#ncbr-settings')).applicantShortName() })
     .first();
   if ((await row.count()) === 0) return false;
   await openRowEditor(
@@ -145,8 +148,9 @@ async function editExistingWisentRow() {
 }
 
 if (
-  !(await page.evaluate(() =>
-    (document.body.innerText || '').includes('Wisent Polska'),
+  !(await page.evaluate(
+    (applicant) => document.body.innerText.includes(applicant),
+    (await import('#ncbr-settings')).applicantShortName(),
   ))
 ) {
   await clickDodaj();
@@ -220,7 +224,7 @@ if (
 } else if (process.env.REWRITE) {
   const opened = await editExistingWisentRow();
   if (!opened)
-    throw new Error('existing Wisent Polska section 8 row not found');
+    throw new Error("the applicant's existing section 8 row was not found");
   const filled = await fillFinancingFields();
   await saveForm();
   console.log(JSON.stringify({ rewritten: true, filled }, null, 2));

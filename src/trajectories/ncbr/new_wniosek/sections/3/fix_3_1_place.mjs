@@ -25,7 +25,7 @@ await (await import('#ncbr-cookie-notice')).dismissCookieNotice(page); // allow-
 async function editExistingRow() {
   const row = page
     .locator('table tbody tr')
-    .filter({ hasText: 'Wisent Polska' })
+    .filter({ hasText: (await import('#ncbr-settings')).applicantShortName() })
     .first();
   await openRowEditor(
     page,

@@ -79,11 +79,17 @@ export function tasksForm({ page, SECTION_URL }) {
     }
     await humanIdlePause('deliberate');
     const opt = page
-      .getByRole('option', { name: 'Wisent Polska', exact: true })
+      .getByRole('option', {
+        name: (await import('#ncbr-settings')).applicantShortName(),
+        exact: true,
+      })
       .first();
     if ((await opt.count()) > 0)
       await humanClickLocator(page, opt); // allow-raw-playwright: select applicant
-    else throw new Error('Wisent Polska applicant option not found');
+    else
+      throw new Error(
+        `the applicant list offers no option named ${(await import('#ncbr-settings')).applicantShortName()}`,
+      );
     await humanIdlePause('short');
   }
 

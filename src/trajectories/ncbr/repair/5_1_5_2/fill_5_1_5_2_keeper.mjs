@@ -90,7 +90,10 @@ for (const [label, id] of SECTIONS) {
     const applicant = openApplicant();
     idle('deliberate');
     const appClick = action(
-      { action: 'click', selector: 'text="Wisent Polska"' },
+      {
+        action: 'click',
+        selector: `text=${JSON.stringify((await import('#ncbr-settings')).applicantShortName())}`,
+      },
       true,
     );
     idle('short');

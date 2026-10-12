@@ -46,7 +46,10 @@ async function setApplicant() {
     .first();
   if ((await applicant.count()) > 0) await humanClickLocator(page, applicant);
   const opt = page
-    .getByRole('option', { name: 'Wisent Polska', exact: true })
+    .getByRole('option', {
+      name: (await import('#ncbr-settings')).applicantShortName(),
+      exact: true,
+    })
     .first();
   await opt.waitFor({ state: 'visible' });
   await humanClickLocator(page, opt);

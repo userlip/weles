@@ -91,7 +91,10 @@ async function setApplicant() {
     throw new Error('applicant select not found');
   await humanClickLocator(page, select);
   const opt = page
-    .getByRole('option', { name: 'Wisent Polska', exact: true })
+    .getByRole('option', {
+      name: (await import('#ncbr-settings')).applicantShortName(),
+      exact: true,
+    })
     .first();
   await opt.waitFor({ state: 'visible' });
   await humanClickLocator(page, opt);

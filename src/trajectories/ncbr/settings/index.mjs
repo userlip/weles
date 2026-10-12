@@ -18,6 +18,14 @@
 //                       the scripts used to name one person's home directory
 //   SESSION             the keeper session a keeper-driven script talks to
 //                       (the scripts used to assume one named ncbr-step-b)
+//   NCBR_CONTACTS_FILE  optional; the applicant record when it is not
+//                       contacts/applicant-contacts.json in the application
+//                       folder. Its `applicant` object carries the registry
+//                       data the forms ask for (nazwa, nazwa_skrocona, nip,
+//                       regon, address, contacts) under the form's own field
+//                       names; the scripts used to carry one company's data.
+
+import { readFileSync } from 'node:fs';
 
 const LSI2_PROJECT_BASE = 'https://lsi2.ncbr.gov.pl/projekt/';
 
@@ -112,4 +120,39 @@ export function keeperSession() {
     'SESSION',
     'name the keeper session (weles keeper) that holds the signed-in NCBR page',
   );
+}
+
+/** The applicant record file: NCBR_CONTACTS_FILE, or the one in the application folder. */
+export function applicantRecordFile() {
+  const declared = process.env.NCBR_CONTACTS_FILE?.trim();
+  return declared
+    ? declared
+    : applicationFile('contacts/applicant-contacts.json');
+}
+
+let applicantRecordRead;
+
+/** The whole applicant record file, parsed once. */
+export function applicantRecord() {
+  if (!applicantRecordRead)
+    applicantRecordRead = JSON.parse(
+      readFileSync(applicantRecordFile(), 'utf8'),
+    );
+  return applicantRecordRead;
+}
+
+/** One field of the applicant, refused by name when the record lacks it. */
+export function applicantField(name) {
+  const applicant = applicantRecord().applicant;
+  const value = applicant?.[name];
+  if (value === undefined || value === null || value === '')
+    throw new Error(
+      `the applicant record ${applicantRecordFile()} has no applicant.${name}; nothing is assumed`,
+    );
+  return value;
+}
+
+/** The applicant's short name, as the application's applicant lists show it. */
+export function applicantShortName() {
+  return applicantField('nazwa_skrocona');
 }

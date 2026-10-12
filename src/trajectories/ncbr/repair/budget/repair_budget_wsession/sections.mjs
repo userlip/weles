@@ -197,7 +197,10 @@ export function budgetSections({
     if (await select.count()) await humanClickLocator(page, select);
     await humanIdlePause('deliberate');
     const opt = page
-      .getByRole('option', { name: 'Wisent Polska', exact: true })
+      .getByRole('option', {
+        name: (await import('#ncbr-settings')).applicantShortName(),
+        exact: true,
+      })
       .first();
     if ((await opt.count()) > 0) await opt.dispatchEvent('click'); // allow-raw-playwright: choose visible applicant option
     await humanIdlePause('short');
@@ -275,7 +278,9 @@ export function budgetSections({
       .locator('table')
       .first()
       .locator('tbody tr')
-      .filter({ hasText: /Wisent Polska/i })
+      .filter({
+        hasText: (await import('#ncbr-settings')).applicantShortName(),
+      })
       .first();
     if ((await existingRow.count()) > 0) {
       await existingRow

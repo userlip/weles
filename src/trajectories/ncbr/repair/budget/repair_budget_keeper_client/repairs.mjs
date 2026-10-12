@@ -164,8 +164,8 @@ export async function repair8() {
   let mode = 'edit_existing';
   try {
     await openEditRow([
-      'Wisent Polska',
-      'WISENT POLSKA',
+      (await import('#ncbr-settings')).applicantShortName(),
+      (await import('#ncbr-settings')).applicantField('nazwa'),
       '3515000',
       '3 515 000',
     ]);

@@ -268,10 +268,15 @@ async function setApplicant() {
     await humanClickLocator(page, applicantSelect);
   await humanIdlePause('deliberate');
   const opt = page
-    .getByRole('option', { name: 'Wisent Polska', exact: true })
+    .getByRole('option', {
+      name: (await import('#ncbr-settings')).applicantShortName(),
+      exact: true,
+    })
     .first();
   if ((await opt.count()) === 0)
-    throw new Error('Wisent Polska option not found');
+    throw new Error(
+      `the applicant list offers no option named ${(await import('#ncbr-settings')).applicantShortName()}`,
+    );
   await opt.dispatchEvent('click'); // allow-raw-playwright: select applicant
   await humanIdlePause('short');
 }

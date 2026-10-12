@@ -6,16 +6,13 @@ export const MD22 = (await import('#ncbr-settings')).applicationFile(
   'wersja_B_2.2_innowacyjnosc_i_zaleznosci.md',
 );
 const md = readFileSync(MD22, 'utf8');
-// People's names, phones and addresses live with the application text in the
+// People's names, phones and addresses live in the applicant record in the
 // private application folder, never in this repository.
-const CONTACTS_FILE =
-  process.env.NCBR_CONTACTS_FILE ||
-  (await import('#ncbr-settings')).applicationFile(
-    'contacts/applicant-contacts.json',
-  );
-const APPLICANT = JSON.parse(readFileSync(CONTACTS_FILE, 'utf8'));
-export const EDORECZENIA = APPLICANT.applicant.e_doreczenie;
-export const CONTACT = APPLICANT.contacts[1];
+export const EDORECZENIA = (await import('#ncbr-settings')).applicantField(
+  'e_doreczenie',
+);
+export const CONTACT = (await import('#ncbr-settings')).applicantRecord()
+  .contacts[1];
 
 function clean(s) {
   return String(s || '')

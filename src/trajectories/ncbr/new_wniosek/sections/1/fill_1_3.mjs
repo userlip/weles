@@ -1,31 +1,28 @@
 // Section 1.3 (Podmioty realizujące projekt) of the NEW NCBR wniosek.
 // Replicates the working Kimi reference cdp_fill_1_3.py. Never closes the page.
 
-import { readFileSync } from 'node:fs';
+import {
+  applicantField,
+  applicantShortName,
+  cdpEndpoint,
+  sectionUrl,
+} from '#ncbr-settings';
 import { chromium } from 'playwright';
 import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../../../dist/human/keyboard.js';
-import { cdpEndpoint, sectionUrl } from '#ncbr-settings';
 import { selectRadio } from '../../../form-input.mjs';
 
 const endpoint = cdpEndpoint();
 // The section id differs per application, so it is declared beside the project id.
 const SECTION_URL = sectionUrl('1_3');
 
-const VAT = 'Nie dotyczy.';
-// The applicant's phone and addresses live with the application text in the
-// private application folder, never in this repository.
-const CONTACTS_FILE =
-  process.env.NCBR_CONTACTS_FILE ||
-  (await import('#ncbr-settings')).applicationFile(
-    'contacts/applicant-contacts.json',
-  );
-const { applicant: APPLICANT } = JSON.parse(
-  readFileSync(CONTACTS_FILE, 'utf8'),
-);
+// The applicant's registry data, phone and addresses live in the applicant
+// record in the private application folder, never in this repository. Each
+// form field reads the record field of the same name.
+const FIELD = applicantField;
 
 const browser = await chromium.connectOverCDP(endpoint);
 const page = browser.contexts()[0]?.pages()[0];
@@ -83,32 +80,41 @@ await page
   .waitFor({ state: 'visible' });
 
 await radio('wnioskodawca_samodzielny');
-await text('nazwa', 'WISENT POLSKA SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ');
-await text('nazwa_skrocona', 'Wisent Polska');
-await text('data_rozpoczecia_dzialalnosci', '27.03.2026');
+await text('nazwa', FIELD('nazwa'));
+await text('nazwa_skrocona', applicantShortName());
+await text(
+  'data_rozpoczecia_dzialalnosci',
+  FIELD('data_rozpoczecia_dzialalnosci'),
+);
 await radio('przedsiebiorstwo');
-await setAuto('forma_prawna', 'spółki z ograniczoną odpowiedzialnością');
-await setAuto('forma_wlasnosci', 'Krajowe osoby fizyczne');
-await setAuto('wielkosc_podmiotu', 'Mikro');
-await radio('Tak'); // spółka celowa
-await text('nip', '9462766155');
-await text('regon', '544396399');
-await text('numer_w_krajowym_rejestrze_sadowym', '0001232991');
+await setAuto('forma_prawna', FIELD('forma_prawna'));
+await setAuto('forma_wlasnosci', FIELD('forma_wlasnosci'));
+await setAuto('wielkosc_podmiotu', FIELD('wielkosc_podmiotu'));
+await radio(FIELD('spolka_celowa'));
+await text('nip', FIELD('nip'));
+await text('regon', FIELD('regon'));
+await text(
+  'numer_w_krajowym_rejestrze_sadowym',
+  FIELD('numer_w_krajowym_rejestrze_sadowym'),
+);
 await radio('pkd_2007');
-await setAuto('pkd_2007', '62.01.Z Działalność związana z oprogramowaniem');
-await setAuto('mozliwosc_odzyskania_vat', 'Tak');
-await text('uzasadnienie_braku_mozliwosci_odzyskania_vat', VAT);
-await setAuto('wojewodztwo_podmiot', 'LUBELSKIE');
-await setAuto('powiat_podmiot', 'Lublin');
-await setAuto('gmina_podmiot', 'Lublin');
-await setAuto('miejscowosc_podmiot', 'Lublin');
-await text('kod_pocztowy_podmiot', '20-209');
-await setAuto('ulica_podmiot', 'Frezerów');
-await text('nr_budynku_podmiot', '3');
-await text('telefon_podmiot', APPLICANT.telefon);
-await text('adres_email_podmiot', APPLICANT.email);
-await text('www_podmiot', 'https://wisent.ai/');
-await text('adres_e_doreczenie_podmiot', APPLICANT.e_doreczenie);
+await setAuto('pkd_2007', FIELD('pkd_2007'));
+await setAuto('mozliwosc_odzyskania_vat', FIELD('mozliwosc_odzyskania_vat'));
+await text(
+  'uzasadnienie_braku_mozliwosci_odzyskania_vat',
+  FIELD('uzasadnienie_braku_mozliwosci_odzyskania_vat'),
+);
+await setAuto('wojewodztwo_podmiot', FIELD('wojewodztwo_podmiot'));
+await setAuto('powiat_podmiot', FIELD('powiat_podmiot'));
+await setAuto('gmina_podmiot', FIELD('gmina_podmiot'));
+await setAuto('miejscowosc_podmiot', FIELD('miejscowosc_podmiot'));
+await text('kod_pocztowy_podmiot', FIELD('kod_pocztowy_podmiot'));
+await setAuto('ulica_podmiot', FIELD('ulica_podmiot'));
+await text('nr_budynku_podmiot', FIELD('nr_budynku_podmiot'));
+await text('telefon_podmiot', FIELD('telefon'));
+await text('adres_email_podmiot', FIELD('email'));
+await text('www_podmiot', FIELD('www_podmiot'));
+await text('adres_e_doreczenie_podmiot', FIELD('e_doreczenie'));
 
 let saveResult = 'saved';
 try {
@@ -117,13 +123,13 @@ try {
   saveResult = `NOT SAVED: ${String(e?.message || e)}`;
 }
 
-const readback = await page.evaluate(() => {
+const readback = await page.evaluate((applicant) => {
   const tbl = document.querySelector('table');
   let rows = -1;
   if (tbl) rows = tbl.querySelectorAll('tbody tr').length;
-  const hasWisent = (document.body.innerText || '').includes('Wisent Polska');
-  return { entityRows: rows, hasWisent };
-});
+  const listsApplicant = document.body.innerText.includes(applicant);
+  return { entityRows: rows, listsApplicant };
+}, applicantShortName());
 
 console.log(JSON.stringify({ saveResult, readback }, null, 2));
 process.exit(0);

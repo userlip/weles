@@ -1,6 +1,5 @@
 // Repair section 1.3 contact-person collection. UI-only; never closes page.
 
-import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 import {
   humanClickLocator,
@@ -15,16 +14,12 @@ import {
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const SECTION_URL = (await import('#ncbr-settings')).sectionUrl('1_3');
-// People's names, phones and addresses live with the application text in the
+// People's names, phones and addresses live in the applicant record in the
 // private application folder, never in this repository.
-const CONTACTS_FILE =
-  process.env.NCBR_CONTACTS_FILE ||
-  (await import('#ncbr-settings')).applicationFile(
-    'contacts/applicant-contacts.json',
-  );
-const APPLICANT = JSON.parse(readFileSync(CONTACTS_FILE, 'utf8'));
-const CONTACTS = APPLICANT.contacts;
-const EDORECZENIA = APPLICANT.applicant.e_doreczenie;
+const CONTACTS = (await import('#ncbr-settings')).applicantRecord().contacts;
+const EDORECZENIA = (await import('#ncbr-settings')).applicantField(
+  'e_doreczenie',
+);
 
 const browser = await chromium.connectOverCDP(endpoint);
 const page = browser.contexts()[0]?.pages()[0];
