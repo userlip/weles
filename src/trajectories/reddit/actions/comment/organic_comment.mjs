@@ -14,6 +14,7 @@ import { WSession } from '../../../../../dist/session/wsession.js';
 import { generateOrganicComment } from '../../../_shared/content/llm.mjs';
 import { checkReachable } from '../../../_shared/action-runner.mjs';
 import { detectRedditBanSignals } from '../../../../../dist/platforms/reddit/ban_signals.js';
+import { banSignalOf } from '../../../_shared/auth/ban-signal.mjs';
 import {
   humanScrollPage,
   humanIdlePause,
@@ -31,19 +32,14 @@ import { runRecordingsDir } from '../../../../../dist/session/run-recordings.js'
 
 // The subreddit the comment goes to is the request's. Nothing is picked here:
 // a built-in list of "newbie-friendly" subs chose where an account spoke
-// without anyone asking, and `popular`/`all` land on mega-threads whose
-// filters remove new comments and read as shadowbans to the verifier — so
-// both are refused rather than silently replaced.
+// without anyone asking. A feed that aggregates other subreddits lands on
+// mega-threads whose filters remove new comments and read as shadowbans to the
+// verifier; it is recognised from the listing itself, whose posts then name
+// other subreddits, not from a list of feed names.
 const SUBREDDIT = (process.env.SUBREDDIT || '').replace(/^r\//, '');
 if (!SUBREDDIT) {
   console.log(
     'FAIL: SUBREDDIT env var required: the subreddit the comment goes to',
-  );
-  process.exit(1);
-}
-if (SUBREDDIT === 'popular' || SUBREDDIT === 'all') {
-  console.log(
-    `FAIL: SUBREDDIT ${SUBREDDIT} is a mega-feed whose filters remove new comments; name one subreddit`,
   );
   process.exit(1);
 }
@@ -99,24 +95,26 @@ try {
       }
     }, listingUrl)
     .catch(() => null);
-  let postUrl = null,
-    postTitle = '',
-    postBody = '';
-  try {
-    const candidates = (data?.data?.children ?? [])
-      .map((c) => c.data)
-      .filter((p) => p && !p.locked && !p.archived && p.num_comments < 2000);
-    const pick =
-      candidates[Math.floor(Math.random() * Math.min(candidates.length, 12))];
-    if (pick) {
-      postUrl = `https://www.reddit.com${pick.permalink}`;
-      postTitle = pick.title || '';
-      postBody = pick.selftext || '';
-    }
-  } catch (e) {
-    console.log('[listing-parse]', e.message);
-  }
-  if (!postUrl) throw new Error('no eligible post found');
+  const listed = data?.data?.children;
+  if (!Array.isArray(listed))
+    throw new Error(`the listing ${listingUrl} answered no posts`);
+  const posts = listed.map((c) => c.data).filter(Boolean);
+  const own = posts.filter(
+    (p) => p.subreddit?.toLowerCase() === SUBREDDIT.toLowerCase(),
+  );
+  if (posts.length && !own.length)
+    throw new Error(
+      `r/${SUBREDDIT} lists only posts of other subreddits, so it is an aggregate feed whose filters remove new comments; name one subreddit`,
+    );
+  const candidates = own.filter(
+    (p) => !p.locked && !p.archived && p.num_comments < 2000,
+  );
+  const pick =
+    candidates[Math.floor(Math.random() * Math.min(candidates.length, 12))];
+  if (!pick) throw new Error('no eligible post found');
+  const postUrl = `https://www.reddit.com${pick.permalink}`;
+  const postTitle = pick.title;
+  const postBody = pick.selftext;
 
   const commentText = await generateOrganicComment({
     persona: {
@@ -181,9 +179,7 @@ try {
     (body) => (document.body?.innerText ?? '').includes(body),
     commentText,
   );
-  banSignal = await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  banSignal = await banSignalOf(detectRedditBanSignals, s, 'after commenting');
   console.log(`[ban-signal] ${banSignal?.signal}`);
   console.log('PASS: commented');
 
@@ -208,9 +204,7 @@ try {
     });
   }
 } catch (e) {
-  banSignal = await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  banSignal = await banSignalOf(detectRedditBanSignals, s, 'after the failure');
   if (banSignal) console.log(`[ban-signal] ${banSignal.signal}`);
   console.log('FAIL:', e.message);
   process.exitCode = 1;
