@@ -80,11 +80,9 @@ try {
         { platform: 'instagram' },
       );
   } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) {
-      console.log(`FAIL: ${jarErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    // Each failure is thrown, so the outer catch prints it and sets the exit
+    // code, and the finally closes the session and keeps its recording.
+    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
     throw jarErr;
   }
   await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
@@ -94,18 +92,13 @@ try {
   });
   await humanIdlePause('long');
   if (/\/accounts\/login/.test(s.page.url())) {
-    console.log(`FAIL: cookies stale, redirected to login (${s.page.url()})`);
     await markCookiesStale(acct.id);
-    process.exit(1);
+    throw new Error(`cookies stale, redirected to login (${s.page.url()})`);
   }
   try {
     await assertAuthed('instagram', s, { label: 'instagram_edit_profile' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      console.log(`FAIL: ${probeErr.message}`);
-      await markCookiesStale(acct.id);
-      process.exit(1);
-    }
+    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
 
@@ -227,16 +220,14 @@ try {
   const verifiedName = await nameIn.inputValue().catch(() => '');
   const verifiedBio = await bioIn.inputValue().catch(() => '');
   if (targetName && verifiedName.trim() !== targetName.trim()) {
-    console.log(
-      `FAIL: name mismatch after submit ("${verifiedName}" != "${targetName}")`,
+    throw new Error(
+      `name mismatch after submit ("${verifiedName}" != "${targetName}")`,
     );
-    process.exit(1);
   }
   if (targetBio && verifiedBio.trim() !== targetBio.trim()) {
-    console.log(
-      `FAIL: bio mismatch after submit ("${verifiedBio}..." != "${targetBio}...")`,
+    throw new Error(
+      `bio mismatch after submit ("${verifiedBio}..." != "${targetBio}...")`,
     );
-    process.exit(1);
   }
   recordProfile();
   console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
