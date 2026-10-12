@@ -1,14 +1,15 @@
 import {
   normalizeArtifactLocators,
+  signedObjectParts,
   ARTIFACT_KINDS,
+  MILLIS_PER_SECOND,
+  OBJECT_PATH,
+  SIGN_PATH,
   type ArtifactKind,
   type ArtifactLocatorSet,
   type SignedArtifactResponse,
 } from './artifact-delivery.js';
 
-const SIGN_PATH = '/v1/artifacts/sign';
-const OBJECT_PATH = '/v1/artifacts/object';
-const HMAC_HEX_LENGTH = 64;
 const MIN_SECRET_BYTES = 32;
 
 export type ArtifactDeliveryClientConfig = {
@@ -95,13 +96,10 @@ function validateSignedResponse(
   ) {
     throw new Error('Weles artifact delivery returned an invalid expiry');
   }
-  const expectedExpiry = String(Math.floor(expiryMilliseconds / 1000));
-  const signed = {
-    screenshots: [],
-    videos: [],
-    dom: [],
-    logs: [],
-  } as ArtifactLocatorSet;
+  const expectedExpiry = String(
+    Math.floor(expiryMilliseconds / MILLIS_PER_SECOND),
+  );
+  const signed: ArtifactLocatorSet = {};
   for (const kind of ARTIFACT_KINDS) {
     const output = value.artifacts[kind];
     if (
@@ -115,19 +113,14 @@ function validateSignedResponse(
     }
     signed[kind] = output.map((entry, index) => {
       const url = new URL(entry as string);
-      const queryKeys = [...url.searchParams.keys()];
+      const parts = signedObjectParts(url);
       if (
         url.origin !== config.publicBaseUrl ||
         Boolean(url.username || url.password || url.hash) ||
         url.pathname !== OBJECT_PATH ||
-        queryKeys.length !== 3 ||
-        !['uri', 'expires', 'signature'].every(
-          (key) => url.searchParams.getAll(key).length === 1,
-        ) ||
-        url.searchParams.get('uri') !== source[kind].at(index) ||
-        url.searchParams.get('expires') !== expectedExpiry ||
-        !/^[a-f\d]+$/.test(url.searchParams.get('signature') ?? '') ||
-        (url.searchParams.get('signature') ?? '').length !== HMAC_HEX_LENGTH
+        !parts ||
+        parts.uri !== source[kind].at(index) ||
+        parts.expires !== expectedExpiry
       ) {
         throw new Error(
           `Weles artifact delivery returned an invalid artifacts.${kind} URL`,

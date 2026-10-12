@@ -23,8 +23,8 @@ export {
   type ArtifactDeliveryConfig,
 } from './delivery-config.js';
 
-const SIGN_PATH = '/v1/artifacts/sign';
-const OBJECT_PATH = '/v1/artifacts/object';
+export const SIGN_PATH = '/v1/artifacts/sign';
+export const OBJECT_PATH = '/v1/artifacts/object';
 const SUBSCRIPTIONS_PATH = '/v1/subscriptions';
 const WELES_ARTIFACT_PREFIX = 'stado://weles/recordings/';
 // The four kinds of artifact a run produces, from `artifact-kinds.json`
@@ -32,8 +32,10 @@ const WELES_ARTIFACT_PREFIX = 'stado://weles/recordings/';
 // its own copy of the same names, so a kind added here was signed by the
 // server and never uploaded by the client.
 export const ARTIFACT_KINDS = declaredKinds.kinds as readonly string[];
-const MILLIS_PER_SECOND = 1000;
-const HMAC_HEX_LENGTH = 64;
+export const MILLIS_PER_SECOND = 1000;
+// A signature is the hex digest of the HMAC's own algorithm, so its length is
+// that digest's, not a number kept beside it.
+const HMAC_HEX_LENGTH = createHash('sha256').digest('hex').length;
 
 /// A kind is whatever the declaration lists; the locator set carries one
 /// list of locators per kind.
@@ -150,19 +152,49 @@ function artifactSignature(
     .digest('hex');
 }
 
+/** What a signed object URL carries in its query, each exactly once. */
+export type SignedObjectParts = {
+  uri: string;
+  expires: string;
+  signature: string;
+};
+
 function signedObjectUrl(
   uri: string,
   expires: string,
   config: ArtifactDeliveryConfig,
 ): string {
+  const parts: SignedObjectParts = {
+    uri,
+    expires,
+    signature: artifactSignature(uri, expires, config.signingSecret),
+  };
   const url = new URL(OBJECT_PATH, config.publicBaseUrl);
-  url.searchParams.set('uri', uri);
-  url.searchParams.set('expires', expires);
-  url.searchParams.set(
-    'signature',
-    artifactSignature(uri, expires, config.signingSecret),
-  );
+  url.search = new URLSearchParams(parts).toString();
   return url.toString();
+}
+
+/**
+ * The parts of a signed object URL's query, or null when it carries another
+ * parameter, one of them twice or not at all, or a signature that is not a
+ * hex digest of the signing HMAC. The server reads a request with it and the
+ * uploading client the URLs it was handed, so both read the one shape
+ * signedObjectUrl writes.
+ */
+export function signedObjectParts(url: URL): SignedObjectParts | null {
+  const entries = [...url.searchParams];
+  const { uri, expires, signature, ...other } = Object.fromEntries(entries);
+  if (
+    entries.length !== Object.keys(Object.fromEntries(entries)).length ||
+    Object.keys(other).length ||
+    uri === undefined ||
+    expires === undefined ||
+    signature === undefined ||
+    !/^[a-f\d]+$/.test(signature) ||
+    signature.length !== HMAC_HEX_LENGTH
+  )
+    return null;
+  return { uri, expires, signature };
 }
 
 export function signArtifactLocators(
@@ -173,17 +205,12 @@ export function signArtifactLocators(
   const artifacts = normalizeArtifactLocators(value);
   const nowSeconds = Math.floor(nowMilliseconds / MILLIS_PER_SECOND);
   const expires = String(nowSeconds + config.ttlSeconds);
-  const signed = {
-    screenshots: [],
-    videos: [],
-    dom: [],
-    logs: [],
-  } as ArtifactLocatorSet;
-  for (const kind of ARTIFACT_KINDS) {
-    signed[kind] = artifacts[kind].map((uri) =>
-      signedObjectUrl(uri, expires, config),
-    );
-  }
+  const signed: ArtifactLocatorSet = Object.fromEntries(
+    ARTIFACT_KINDS.map((kind) => [
+      kind,
+      artifacts[kind].map((uri) => signedObjectUrl(uri, expires, config)),
+    ]),
+  );
   return {
     artifacts: signed,
     expires_at: new Date(Number(expires) * MILLIS_PER_SECOND).toISOString(),
@@ -195,25 +222,12 @@ function verifiedObjectUri(
   config: ArtifactDeliveryConfig,
   nowMilliseconds: number,
 ): string {
-  const keys = [...url.searchParams.keys()];
-  if (
-    keys.length !== 3 ||
-    !['uri', 'expires', 'signature'].every(
-      (key) => url.searchParams.getAll(key).length === 1,
-    )
-  ) {
+  const parts = signedObjectParts(url);
+  if (!parts || !/^\d+$/.test(parts.expires)) {
     throw new RequestFailure(403, 'invalid artifact signature');
   }
-  const uri = canonicalWelesArtifactUri(url.searchParams.get('uri'));
-  const expires = url.searchParams.get('expires') ?? '';
-  const signature = url.searchParams.get('signature') ?? '';
-  if (
-    !/^\d+$/.test(expires) ||
-    !/^[a-f\d]+$/.test(signature) ||
-    signature.length !== HMAC_HEX_LENGTH
-  ) {
-    throw new RequestFailure(403, 'invalid artifact signature');
-  }
+  const uri = canonicalWelesArtifactUri(parts.uri);
+  const { expires, signature } = parts;
   const nowSeconds = Math.floor(nowMilliseconds / MILLIS_PER_SECOND);
   const expirySeconds = Number(expires);
   if (
