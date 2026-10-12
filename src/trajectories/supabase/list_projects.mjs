@@ -165,7 +165,7 @@ try {
   console.log(`PASS: listed ${projects.length} Supabase project(s)`);
 } catch (e) {
   console.log('FAIL:', e.message);
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
   await s.close();
 }

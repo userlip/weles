@@ -282,7 +282,7 @@ try {
   }
 } catch (e) {
   console.error(`FAIL: ${e.message}`);
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
   await s.close().catch(() => {});
 }
