@@ -104,12 +104,13 @@ const URL = 'https://signup.live.com';
       await humanIdlePause('deliberate');
     }
 
-    // 4. Country + DOB
+    // 4. Country + DOB. A country select that refuses US fails the signup, as
+    // the birth-date selects below do: an account registered in another
+    // country is not the identity generated for it.
     const countrySel = s.page
       .locator('select#Country, select[name="Country"]')
       .first();
-    if (await countrySel.count())
-      await countrySel.selectOption('US').catch(() => {});
+    if (await countrySel.count()) await countrySel.selectOption('US');
     const monthSel = s.page
       .locator('select#BirthMonth, select[name="BirthMonth"]')
       .first();
