@@ -24,7 +24,9 @@ function normalizePercent(n) {
 // One window as Pangram labelled it: its offsets in the analysed text, its
 // label, confidence and AI likelihood. The web UI's status answer and the
 // public API name the likelihood differently (`ai_likelihood`,
-// `ai_assistance_score`); the first finite one is the value.
+// `ai_assistance_score`); the first finite one is the value. The label is
+// `label`, or `editlens.prediction_text` in answers that carry the EditLens
+// reading instead (Lem read recorded answers in both shapes).
 function windowOf(window) {
   const start = Number(window?.start_index);
   const end = Number(window?.end_index);
@@ -33,14 +35,17 @@ function windowOf(window) {
   const likelihood = [window.ai_likelihood, window.ai_assistance_score]
     .map(Number)
     .find(Number.isFinite);
+  const label = [window.label, window.editlens?.prediction_text].find(
+    (value) => typeof value === "string",
+  );
   return {
     start_index: start,
     end_index: end,
     text: typeof window.text === "string" ? window.text : null,
-    label: typeof window.label === "string" ? window.label : null,
+    label: label === undefined ? null : label,
     confidence:
       typeof window.confidence === "string" ? window.confidence : null,
-    ai_likelihood: likelihood ?? null,
+    ai_likelihood: likelihood === undefined ? null : likelihood,
   };
 }
 
