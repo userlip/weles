@@ -138,6 +138,7 @@ export type AcquireSecretResult =
   | {
       status: 'unsupported_secret';
       operation?: CredentialOperation;
-      secret: string;
+      /** Absent when the request named neither a secret nor a credentialId. */
+      secret?: string;
       message: string;
     };

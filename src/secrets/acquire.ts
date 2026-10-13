@@ -47,22 +47,33 @@ export type {
   CredentialOperation,
 } from './acquire/request.js';
 
+/**
+ * The refusal for a request no declaration matches, naming what the caller
+ * asked for. A request naming neither a secret nor a credentialId is said to
+ * name nothing: a refusal reading "unknown" hid which fact resolves it.
+ */
+function undeclaredSecret(request: AcquireSecretRequest): AcquireSecretResult {
+  const secret = normalizeSecret(request) || request.credentialId?.trim();
+  if (!secret) {
+    return {
+      status: 'unsupported_secret',
+      message: 'The request names no secret and no credentialId, so no declaration can match it',
+    };
+  }
+  const message =
+    request.provider === 'microsoft' || request.provider === ENTRA_PROVIDER
+      ? `No managed password declaration for ${secret}; configure WELES_MANAGED_PASSWORD_CONTRACTS_FILE on the executor`
+      : `No secret acquisition registry entry for ${secret}`;
+  return { status: 'unsupported_secret', secret, message };
+}
+
 export async function acquireSecret(
   request: AcquireSecretRequest,
   enqueue: typeof queueAction = queueAction,
 ): Promise<AcquireSecretResult> {
   const def = definitionFor(request);
   if (!def) {
-    // Name what the caller asked for. An id that matches no declaration
-    // normalizes to nothing, and a refusal reading "unknown" hides the very fact
-    // that resolves it: which id has no declared contract.
-    const secret =
-      normalizeSecret(request) || request.credentialId?.trim() || 'unknown';
-    const message =
-      request.provider === 'microsoft' || request.provider === ENTRA_PROVIDER
-        ? `No managed password declaration for ${secret}; configure WELES_MANAGED_PASSWORD_CONTRACTS_FILE on the executor`
-        : `No secret acquisition registry entry for ${secret}`;
-    return { status: 'unsupported_secret', secret, message };
+    return undeclaredSecret(request);
   }
   if (request.provider && request.provider !== def.provider) {
     return {
@@ -105,13 +116,7 @@ export function buildSecretAcquisitionPlan(
 ): AcquireSecretResult {
   const def = definitionFor(request);
   if (!def) {
-    const secret =
-      normalizeSecret(request) || request.credentialId?.trim() || 'unknown';
-    const message =
-      request.provider === 'microsoft' || request.provider === ENTRA_PROVIDER
-        ? `No managed password declaration for ${secret}; configure WELES_MANAGED_PASSWORD_CONTRACTS_FILE on the executor`
-        : `No secret acquisition registry entry for ${secret}`;
-    return { status: 'unsupported_secret', secret, message };
+    return undeclaredSecret(request);
   }
   if (request.provider && request.provider !== def.provider) {
     return {
