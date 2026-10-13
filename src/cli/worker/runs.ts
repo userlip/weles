@@ -47,10 +47,15 @@ function waitingState(request: WaitingRequest): string {
   return `${paged}, ${waiting}`;
 }
 
+/** A run field the worker left out, named as such rather than shown as a dash. */
+function named(value: string | null | undefined, what: string): string {
+  return value ? value : `(no ${what})`;
+}
+
 function summarise(run: RunningRun): string {
   const subject =
     run.kind === 'reauth'
-      ? `${run.provider ?? '-'} ${run.login_item ?? '-'} at ${run.stage?.stage ?? 'no stage yet'}`
+      ? `${named(run.provider, 'provider')} ${named(run.login_item, 'login item')} at ${run.stage ? run.stage.stage : 'no stage yet'}`
       : run.action;
   return [
     run.run_id,
@@ -76,7 +81,7 @@ function detail(run: RunningRun): string {
   ];
   if (run.kind === 'reauth') {
     lines.push(
-      `account      ${run.provider ?? '-'} ${run.login_item ?? '-'} (subscription ${run.subscription_id ?? '-'})`,
+      `account      ${named(run.provider, 'provider')} ${named(run.login_item, 'login item')} (subscription ${named(run.subscription_id, 'subscription id')})`,
     );
     lines.push(
       `stage        ${run.stage ? `${run.stage.stage} since ${run.stage.at}` : 'none reached yet'}`,
