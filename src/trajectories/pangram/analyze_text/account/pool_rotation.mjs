@@ -292,34 +292,3 @@ export async function selectPangramAccountForRun() {
     },
   };
 }
-
-export async function injectCookies(
-  s,
-  acct,
-  sessionOpts,
-  preloadedCookies = null,
-) {
-  const cookies =
-    preloadedCookies ||
-    loadFreshCookieJarOrFail(acct, {
-      platform: 'pangram',
-      label: LABEL,
-      currentProxyUrl: sessionOpts.proxyUrl,
-      currentPersona: sessionOpts.persona,
-    });
-  const wanted = cookies.filter((c) =>
-    String(c.domain || '').includes('pangram.com'),
-  );
-  if (!wanted.length)
-    throw new CookieJarStaleError(
-      'cookie_jar_no_domain_match: no pangram.com cookies',
-      {
-        platform: 'pangram',
-        label: LABEL,
-        reason: 'no_domain_match',
-        account_id: acct?.id ?? null,
-      },
-    );
-  await s.ctx.addCookies(wanted);
-  return wanted.length;
-}

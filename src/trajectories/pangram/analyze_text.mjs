@@ -30,8 +30,8 @@ import {
   readVisibleCreditState,
 } from './analyze_text/dashboard/scan_form.mjs';
 import { waitForPublicVerificationIfNeeded } from './analyze_text/dashboard/human_verification.mjs';
+import { injectCookies } from './analyze_text/account/cookies.mjs';
 import {
-  injectCookies,
   markAccountExhausted,
   recordAccountUse,
   selectPangramAccountForRun,
