@@ -209,7 +209,9 @@ async function inspectRow(row) {
     return {
       row,
       editable: false,
-      error: `menu open failed: ${openMenu.error || 'unknown'}`,
+      error: openMenu.ok
+        ? 'the row menu opened but shows no Edytuj item'
+        : `menu open failed: the page answered ${JSON.stringify(openMenu)}`,
     };
   await idle('short');
   const menu = await read(
