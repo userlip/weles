@@ -203,9 +203,10 @@ type BrowserRuntimeReport = {
   ok: boolean;
   components?: Array<{
     name: string;
-    revision: string;
-    expectedPath: string;
+    revision: string | null;
+    expectedPath: string | null;
     present: boolean;
+    error?: string;
   }>;
   error?: string;
 };
@@ -232,12 +233,12 @@ function inspectBrowserRuntime(): BrowserRuntimeReport {
     const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
       browsers?: Array<{ name?: string; revision?: string }>;
     };
-    declared = (parsed.browsers ?? [])
-      .filter(
-        (entry): entry is { name: string; revision: string } =>
-          typeof entry.name === 'string' && typeof entry.revision === 'string',
-      )
-      .map((entry) => ({ name: entry.name, revision: entry.revision }));
+    if (!Array.isArray(parsed.browsers)) {
+      throw new Error(`${manifestPath} carries no browsers list`);
+    }
+    declared = parsed.browsers.flatMap((entry) =>
+      isText(entry.name) && isText(entry.revision) ? [{ name: entry.name, revision: entry.revision }] : [],
+    );
   } catch (error) {
     return {
       ok: false,
@@ -250,21 +251,28 @@ function inspectBrowserRuntime(): BrowserRuntimeReport {
   const cacheRoot = playwrightCacheRoot();
   const components = REQUIRED_PLAYWRIGHT_COMPONENTS.map((name) => {
     const found = declared.find((entry) => entry.name === name);
-    const revision = found?.revision ?? 'unknown';
+    // An undeclared component has no revision and so no path: both are null
+    // and the error names what browsers.json lacks.
+    if (!found) {
+      const error = `playwright-core/browsers.json declares no ${name}, so its revision and install path cannot be named`;
+      return { name, revision: null, expectedPath: null, present: false, error };
+    }
     const expectedPath = join(
       cacheRoot,
-      `${name.replace(/-/g, '_')}-${revision}`,
+      `${name.replace(/-/g, '_')}-${found.revision}`,
       'INSTALLATION_COMPLETE',
     );
     return {
       name,
-      revision,
+      revision: found.revision,
       expectedPath,
-      present: found ? existsSync(expectedPath) : false,
+      present: existsSync(expectedPath),
     };
   });
   return { ok: components.every((component) => component.present), components };
 }
+
+const isText = (value: unknown): value is string => typeof value === 'string';
 
 /// The `browsers.json` beside the resolved `playwright-core`.
 function findPlaywrightManifest(): string {
