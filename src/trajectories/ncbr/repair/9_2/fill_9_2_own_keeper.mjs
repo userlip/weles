@@ -115,7 +115,7 @@ function fieldFill(name, value) {
   })()`;
   const out = read(js);
   if (!out?.ok)
-    throw new Error(`fill failed ${name}: ${out?.error || 'unknown'}`);
+    throw new Error(`fill failed ${name}: the page answered ${JSON.stringify(out)}`);
   return out;
 }
 

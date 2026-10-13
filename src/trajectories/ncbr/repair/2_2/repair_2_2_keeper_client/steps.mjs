@@ -198,7 +198,7 @@ export function saveDrawerForm() {
     return { ok: true };
   })()`);
   if (!out?.ok)
-    throw new Error(`drawer save failed: ${out?.reason || 'unknown'}`);
+    throw new Error(`drawer save failed: the page answered ${JSON.stringify(out)}`);
   action({ action: 'settle' }, true);
   return out;
 }

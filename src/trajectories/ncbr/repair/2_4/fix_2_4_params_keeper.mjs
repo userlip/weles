@@ -111,7 +111,7 @@ function fill(selector, value) {
   })()`;
   const out = read(js);
   if (!out?.ok)
-    throw new Error(`fill failed ${selector}: ${out?.error || 'unknown'}`);
+    throw new Error(`fill failed ${selector}: the page answered ${JSON.stringify(out)}`);
   return out;
 }
 

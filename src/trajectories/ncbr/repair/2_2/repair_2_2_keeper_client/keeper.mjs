@@ -73,7 +73,7 @@ export function fill(selector, value) {
   })()`;
   const out = evalRead(js);
   if (!out?.ok)
-    throw new Error(`fill failed for ${selector}: ${out?.error || 'unknown'}`);
+    throw new Error(`fill failed for ${selector}: the page answered ${JSON.stringify(out)}`);
   return out;
 }
 
