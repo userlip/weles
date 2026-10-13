@@ -224,7 +224,8 @@ export async function resolveAccountSession(
       cfg = refreshed;
       await backfillProxy(acct, cfg);
     } else {
-      const reason = `dead_pinned_proxy:${action}:${cfg.provider ?? 'unknown'}`;
+      // A provider the pinned proxy never recorded is named so, not "unknown".
+      const reason = `dead_pinned_proxy:${action}:${cfg.provider ? cfg.provider : 'provider_not_recorded'}`;
       console.log(
         `[identity] failing over account ${acct.username}: ${reason}`,
       );

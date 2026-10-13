@@ -47,10 +47,13 @@ export async function wsCaptureFingerprint(s: WSession): Promise<void> {
     } catch (e: any) {
       network = { _err: String(e?.message ?? e) };
     }
+    // A session that recorded no browser provenance is written as null: the
+    // fingerprint does not say which browser produced it.
+    const provenance = (s as any)._browserProvenance;
     const payload = {
       capturedAt: new Date().toISOString(),
       source: 'weles-auto',
-      browser: (s as any)._browserProvenance?.browser ?? 'unknown',
+      browser: provenance ? provenance.browser : null,
       js,
       network,
     };
