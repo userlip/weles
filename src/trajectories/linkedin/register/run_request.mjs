@@ -47,7 +47,7 @@ export async function earlyFingerprintCheck(s) {
     const payload = {
       capturedAt: new Date().toISOString(),
       source: 'weles-early',
-      browser: s._browserProvenance?.browser ?? 'unknown',
+      browser: s._browserProvenance ? s._browserProvenance.browser : null,
       js,
       network,
     };

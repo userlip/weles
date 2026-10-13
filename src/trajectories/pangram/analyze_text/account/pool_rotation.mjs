@@ -37,7 +37,7 @@ function accountKey(acct) {
 function accountDomain(acct) {
   const raw = String(acct?.metadata?.email || acct?.username || '');
   const hit = raw.toLowerCase().match(/@([^>\s]+)/);
-  return hit?.[1] || 'unknown';
+  return hit ? hit[1] : null;
 }
 
 // Under the user's home (HOME, else the user database): the working directory
@@ -136,7 +136,7 @@ export function markAccountExhausted(
 function domainSummary(accounts) {
   const counts = {};
   for (const acct of accounts || []) {
-    const domain = accountDomain(acct);
+    const domain = accountDomain(acct) === null ? 'without_email_domain' : accountDomain(acct);
     counts[domain] = (counts[domain] || 0) + 1;
   }
   return counts;
