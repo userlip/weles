@@ -37,7 +37,10 @@ async function signup(s) {
   const twUsername = twAccount.username;
   const twPassword = twAccount.metadata?.password;
   const twEmail = twAccount.metadata?.email;
-  const twStatus = twAccount.metadata?.status ?? 'unknown';
+  const twStatus =
+    twAccount.metadata?.status === undefined
+      ? 'not recorded'
+      : twAccount.metadata.status;
   console.log(
     `[ph] using twitter account: ${twUsername} status=${twStatus} (${twCookies.length} cookies)`,
   );
