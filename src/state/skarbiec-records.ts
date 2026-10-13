@@ -40,7 +40,9 @@ function activeSkarbiecBinary(operation: string): string {
       result.error?.message ||
       String(result.stderr ?? '').trim() ||
       (result.status !== 0
-        ? `resolver exited with status ${result.status ?? 'unknown'}`
+        ? result.status === null
+          ? `resolver was ended by signal ${result.signal}`
+          : `resolver exited with status ${result.status}`
         : binary
           ? 'resolver returned a non-absolute path'
           : 'resolver returned no path');
