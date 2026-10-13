@@ -1,6 +1,8 @@
 // Resolve only a checksum-verified, deployment-selected Weles browser release.
-// The download scripts install the exact Stado coordinate and write a receipt
-// only after the release archive checksum and executable layout are verified.
+// The weles-chromium Stado delivery (weles-chromium release/install.sh)
+// installs the exact coordinate, writes its receipt after verifying the
+// archive checksum and executable layout, and records the release as
+// selected; the Weles launcher exports that selection as the variables below.
 
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';

@@ -159,6 +159,24 @@ version="$("$node_bin" -e '
 ln -sfn "$runtime" "$HOME/weles"
 export WELES_WORKER_RELEASE_VERSION="$version"
 export WELES_WORKER_RELEASE_SHA256="$payload_sha256"
+# The Chromium release Weles launches is the one the weles-chromium delivery
+# last verified and recorded as selected; find_browser reads only these two
+# variables, so without them every browser run is refused.
+chromium_root="$HOME/.local/share/weles-chromium"
+if [ -n "${WELES_CHROMIUM_DIR+x}" ]; then chromium_root="$WELES_CHROMIUM_DIR"; fi
+chromium_selection="$chromium_root/selected"
+if [ -e "$chromium_selection" ]; then
+  chromium_version="$(sed -n 's/^version=//p' "$chromium_selection")"
+  chromium_sha256="$(sed -n 's/^sha256=//p' "$chromium_selection")"
+  if [ -z "$chromium_version" ] || [ -z "$chromium_sha256" ]; then
+    printf 'weles launcher: Chromium selection %s names no version or sha256; browser runs are refused until a weles-chromium delivery rewrites it\n' "$chromium_selection" >/dev/stderr
+  else
+    export WELES_CHROMIUM_RELEASE_VERSION="$chromium_version"
+    export WELES_CHROMIUM_RELEASE_SHA256="$chromium_sha256"
+  fi
+else
+  printf 'weles launcher: no Chromium selection at %s; browser runs are refused until a weles-chromium delivery installs one\n' "$chromium_selection" >/dev/stderr
+fi
 # Recording support belongs to the signed release, not an evictable host cache.
 export PLAYWRIGHT_BROWSERS_PATH="$runtime/browser-runtime"
 # Recordings are runtime state, not release payload. Keeping them under the
