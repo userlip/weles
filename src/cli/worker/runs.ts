@@ -125,6 +125,11 @@ function detail(run: RunningRun): string {
   return lines.join('\n');
 }
 
+/** A record field as text, or nothing when the record left it out. */
+function recordText(value: unknown): string | undefined {
+  return value === undefined || value === null ? undefined : String(value);
+}
+
 function recordDetail(
   runId: string,
   record: Record<string, unknown> | null,
@@ -136,10 +141,10 @@ function recordDetail(
     | undefined;
   const lines = [
     `run          ${runId}`,
-    `action       ${String(record.action ?? '-')}`,
-    `status       ${String(record.status ?? '-')}${record.status === 'running' ? ' (no live child on this worker: the server that ran it stopped)' : ''}`,
-    `started      ${String(record.started_at ?? '-')}`,
-    `completed    ${String(record.completed_at ?? '-')}`,
+    `action       ${named(recordText(record.action), 'action')}`,
+    `status       ${named(recordText(record.status), 'status')}${record.status === 'running' ? ' (no live child on this worker: the server that ran it stopped)' : ''}`,
+    `started      ${named(recordText(record.started_at), 'start time')}`,
+    `completed    ${named(recordText(record.completed_at), 'completion time')}`,
   ];
   if (record.status === 'finished')
     lines.push(`ok           ${String(record.ok)}`);
