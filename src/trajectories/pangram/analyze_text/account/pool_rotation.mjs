@@ -22,8 +22,16 @@ export function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// The ledger key of one account. An account with neither an id nor a
+// username is refused: keyed "unknown", every such account shared one
+// ledger entry, so one exhausted account read as all of them exhausted.
 function accountKey(acct) {
-  return String(acct?.id || acct?.username || 'unknown');
+  const key = acct?.id || acct?.username;
+  if (!key)
+    throw new Error(
+      'pangram_account_unidentified: an account in the pool has neither an id nor a username',
+    );
+  return String(key);
 }
 
 function accountDomain(acct) {
