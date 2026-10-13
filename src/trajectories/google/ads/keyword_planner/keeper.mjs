@@ -58,7 +58,7 @@ async function main() {
       4,
     );
   const steps = [
-    { step: 'sso_creds_resolved', source: creds.source || 'unknown' },
+    { step: 'sso_creds_resolved', source: creds.source },
   ];
 
   if (!(await ensureAdsReady(creds))) {

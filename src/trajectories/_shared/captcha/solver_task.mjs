@@ -14,13 +14,26 @@ export async function solverTaskResult(svc, apiKey, taskId) {
       `captcha_${svc.name}_http_${response.status}: getTaskResult for task ${taskId} failed`,
     );
   const res = await response.json();
-  if (res.errorId)
+  if (res.errorId) {
+    const code =
+      res.errorCode === undefined
+        ? `errorId ${res.errorId} with no errorCode`
+        : res.errorCode;
+    const description =
+      res.errorDescription === undefined
+        ? 'no errorDescription'
+        : res.errorDescription;
     throw new Error(
-      `captcha_${svc.name}_error: task ${taskId}: ${res.errorCode ?? 'error'} ${res.errorDescription ?? ''}`.trim(),
+      `captcha_${svc.name}_error: task ${taskId}: ${code}: ${description}`,
     );
+  }
   if (res.status !== 'ready') {
+    const stated =
+      res.status === undefined
+        ? 'the answer states no status'
+        : `status ${res.status}`;
     throw new Error(
-      `captcha_${svc.name}_processing: task ${taskId} has no result yet (status ${res.status ?? 'unknown'}); read it again with this task id`,
+      `captcha_${svc.name}_processing: task ${taskId} has no result yet (${stated}); read it again with this task id`,
     );
   }
   const token = res.solution?.gRecaptchaResponse ?? res.solution?.token;

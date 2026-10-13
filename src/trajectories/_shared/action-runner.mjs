@@ -204,7 +204,7 @@ export async function runAction(cfg) {
               signal: 'checkpoint',
               healthy: false,
               details: {
-                reason: `${jarErr.message} (inline relogin failed: ${r?.reason ?? 'unknown'})`,
+                reason: `${jarErr.message} (inline relogin failed: ${r?.reason === undefined ? 'the relogin returned no reason' : r.reason})`,
                 ...(jarErr.details ?? {}),
               },
             };

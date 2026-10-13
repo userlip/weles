@@ -97,7 +97,7 @@ export async function runAuthGate({ s, cfg, acct, feed, label }) {
   const r = await cfg.inlineRelogin(s, acct);
   if (!r?.ok) {
     console.log(
-      `[auth-gate] inline relogin did not pass: ${r?.reason ?? 'unknown'}`,
+      `[auth-gate] inline relogin did not pass: ${r?.reason === undefined ? 'the relogin returned no reason' : r.reason}`,
     );
     return result;
   }

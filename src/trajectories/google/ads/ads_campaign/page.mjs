@@ -47,7 +47,7 @@ export async function ensureCustomer(s) {
   const target = normalizeCustomerId(CUSTOMER_ID);
   const before = currentCustomerId(s.page.url?.() ?? '');
   console.log(
-    `[google-ads] current customer=${before || 'unknown'} target=${target || 'unspecified'}`,
+    `[google-ads] current customer=${customerOf(before)} target=${target ? target : 'not named by GOOGLE_ADS_CUSTOMER_ID'}`,
   );
   if (!target) return before;
   if (before === target) return before;
@@ -57,10 +57,15 @@ export async function ensureCustomer(s) {
   await navigate(s, switchUrl);
   await pageSettled(s.page);
   const after = currentCustomerId(s.page.url?.() ?? '');
-  console.log(`[google-ads] customer after switch=${after || 'unknown'}`);
+  console.log(`[google-ads] customer after switch=${customerOf(after)}`);
   if (after && after !== target)
     throw new Error(
       `wrong Google Ads customer selected; expected=${target} actual=${after} url=${s.page.url()}`,
     );
   return after;
+}
+
+/** A customer id read from the page URL, or why there is none. */
+function customerOf(id) {
+  return id ? id : 'not in the page URL';
 }

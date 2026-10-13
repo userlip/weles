@@ -132,14 +132,14 @@ export async function runPreferredGoogleSso(s, returnUrl) {
   }
 
   console.log(
-    `[google-ads-keyword-planner] running automated Google SSO for ${creds.email} source=${creds.source || 'unknown'}`,
+    `[google-ads-keyword-planner] running automated Google SSO for ${creds.email} source=${creds.source}`,
   );
   const ok = await googleSso(s, creds, { originHost: 'ads.google.com' });
   if (!ok) {
     authFailure = {
       blocked: 'google_sso_failed',
       email: creds.email,
-      source: creds.source || 'unknown',
+      source: creds.source,
       detail: 'Google SSO helper did not complete login.',
     };
     return false;

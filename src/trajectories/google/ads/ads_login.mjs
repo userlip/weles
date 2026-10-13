@@ -91,7 +91,7 @@ try {
     const creds = await resolveSsoCreds();
     if (creds) {
       console.log(
-        `[google-ads-login] running automated Google SSO for ${creds.email} source=${creds.source || 'unknown'}`,
+        `[google-ads-login] running automated Google SSO for ${creds.email} source=${creds.source}`,
       );
       const ok = await googleSso(s, creds);
       if (!ok) {
