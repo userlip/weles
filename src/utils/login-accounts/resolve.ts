@@ -113,7 +113,7 @@ export function resolveAccount(
     const recordIt =
       `record the account on the subscription item itself — ` +
       `brama subscription attribute ${provider === 'claude' ? 'claude-code' : provider} ` +
-      `--gateway <gateway> reads it from the member's own grant and writes ` +
+      `--gateway-consumer <consumer> --bearer-role brama-desktop-model-router reads it from the member's own grant and writes ` +
       `brama:account:<address> into the vault the gateway serves (Brama Desktop: ` +
       `Record accounts), or stado credentials item retag --host <VAULT HOST> ` +
       `${subscriptionItem} --tags "<its current tags>,brama:login:<login item>"`;
