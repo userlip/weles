@@ -19,9 +19,11 @@ import { statedText } from '../../_shared/inputs/stated.mjs';
 const REPO_NAME = statedText(
   ['REPO_NAME'],
   'the name of the repository to create',
-)
-  // GitHub decides how long a name may be and says so; no cut is chosen here.
-  .replace(/[^a-zA-Z0-9_.-]/g, '');
+);
+if (!/^[\p{L}\p{N}_.-]+$/u.test(REPO_NAME))
+  throw new Error(
+    'REPO_NAME contains unsupported characters; nothing was created',
+  );
 const REPO_DESC = statedText(
   ['REPO_DESC'],
   'the public description of the repository',
@@ -56,8 +58,7 @@ try {
   //   input#repository-name-input  — repo name
   //   input[name="Description"]    — description
   //   button[type="submit"] containing "Create repository" — submit
-  // README/gitignore/license toggles are optional; skip them — empty repo
-  // is fine for our use case (organic-looking workspaces).
+  // README, gitignore and license are not requested by this action.
   const nameIn = s.page.locator('input#repository-name-input').first();
   await nameIn.waitFor({ state: 'visible' });
   await humanFill(s.page, nameIn, REPO_NAME);
@@ -65,6 +66,12 @@ try {
   const descIn = s.page.locator('input[name="Description"]').first();
   await humanFill(s.page, descIn, REPO_DESC);
   await pageSettled(s.page);
+  const heldName = await nameIn.inputValue();
+  const heldDescription = await descIn.inputValue();
+  if (heldName !== REPO_NAME || heldDescription !== REPO_DESC)
+    throw new Error(
+      `repository form changed the requested name or description: name=${JSON.stringify(heldName)}, description=${JSON.stringify(heldDescription)}; nothing was submitted`,
+    );
   await humanClickLocator(
     s.page,
     s.page
@@ -82,13 +89,18 @@ try {
       .first(),
   );
   const finalUrl = s.page.url?.() ?? '';
+  if (!finalUrl)
+    throw new Error('repo_not_created: final page has no URL');
+  const createdUrl = new URL(finalUrl);
+  const [, owner, name] = createdUrl.pathname.split('/');
   if (
-    !new RegExp(`github\\.com/${acct.username}/${REPO_NAME}(?:/|$)`).test(
-      finalUrl,
-    )
-  ) {
+    createdUrl.hostname !== 'github.com' ||
+    !owner ||
+    !name ||
+    decodeURIComponent(owner) !== acct.username ||
+    decodeURIComponent(name) !== REPO_NAME
+  )
     throw new Error(`repo_not_created: final url=${finalUrl}`);
-  }
   ban = await banSignalOf(
     detectGitHubBanSignals,
     s,

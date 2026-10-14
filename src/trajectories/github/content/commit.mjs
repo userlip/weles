@@ -37,14 +37,27 @@ if (!FILE_APPEND?.trim())
   );
 
 function normalize(raw) {
-  if (!raw) return '';
-  if (raw.startsWith('http')) return raw.replace(/\/$/, '');
-  if (/^[\w.-]+\/[\w.-]+$/.test(raw)) return `https://github.com/${raw}`;
-  return '';
+  const url = new URL(raw, 'https://github.com/');
+  const [, owner, repo, ...remaining] = url.pathname.split('/');
+  if (
+    url.protocol !== 'https:' ||
+    url.hostname !== 'github.com' ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !owner ||
+    !repo ||
+    remaining.some(Boolean)
+  )
+    return '';
+  return `${url.origin}/${owner}/${repo}`;
 }
 const repoBase = normalize(REPO_URL);
 if (!repoBase) {
-  console.log('FAIL: REPO_URL required for commit');
+  console.log(
+    'FAIL: REPO_URL must name a GitHub repository URL or owner/name; nothing was opened',
+  );
   process.exit(1);
 }
 
@@ -77,11 +90,8 @@ try {
   );
   if (is404) throw new Error(`repo_or_file_404: url=${s.page.url?.() ?? ''}`);
 
-  // Programmatic CodeMirror append: click the editor, send End+Enter via
-  // keyboard, type the line. Direct DOM manipulation on CodeMirror would
-  // bypass GitHub's diff-tracking, so we stay with keyboard events. An append
-  // that fails stops here with its cause: swallowed, it surfaced later only as
-  // commit_not_applied, with nothing saying the file was never changed.
+  // Move to the end of the file and type only the caller's requested bytes.
+  // Direct DOM manipulation on CodeMirror would bypass GitHub's diff-tracking.
   await humanClickLocator(
     s.page,
     s.page
@@ -90,9 +100,8 @@ try {
       )
       .first(),
   );
-  await s.page.keyboard.press('End');
-  await s.page.keyboard.press('Enter');
-  await humanType(s.page, FILE_APPEND.trim());
+  await s.page.keyboard.press('ControlOrMeta+End');
+  await humanType(s.page, FILE_APPEND);
   await pageSettled(s.page);
 
   // Open the Commit-changes modal: toolbar button text is "Commit changes...".
@@ -111,18 +120,20 @@ try {
     )
     .filter({ visible: true })
     .first();
-  if (await msgIn.count()) {
-    await humanClickLocator(s.page, msgIn);
-    await s.page.keyboard.press('ControlOrMeta+A');
-    await s.page.keyboard.press('Delete');
-    await humanType(s.page, COMMIT_MESSAGE);
-    // A commit made with GitHub's default message is not the change asked for.
-    const held = await msgIn.inputValue();
-    if (held !== COMMIT_MESSAGE)
-      throw new Error(
-        `commit message field holds ${JSON.stringify(held)}, not the message typed`,
-      );
-  }
+  if (!(await msgIn.count()))
+    throw new Error(
+      'COMMIT_MESSAGE_FIELD_UNAVAILABLE: no visible commit message input',
+    );
+  await humanClickLocator(s.page, msgIn);
+  await s.page.keyboard.press('ControlOrMeta+A');
+  await s.page.keyboard.press('Delete');
+  await humanType(s.page, COMMIT_MESSAGE);
+  // GitHub's default message must never replace or prefix the requested one.
+  const held = await msgIn.inputValue();
+  if (held !== COMMIT_MESSAGE)
+    throw new Error(
+      `commit message field holds ${JSON.stringify(held)}, not the message typed`,
+    );
   await pageSettled(s.page);
   // Modal confirm button — second "Commit changes" inside dialog/Box--overlay.
   const confirmCommit = s.page

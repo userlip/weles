@@ -16,6 +16,8 @@ generic_capture
 generic_keeper_task
 generic_saved_task
 gmail_login_search
+github_commit
+github_create_repo
 github_health
 github_login
 github_register
