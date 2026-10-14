@@ -4,7 +4,7 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 // Env:
 //   CAMPAIGN_ID         optional campaign id for campaign-scoped insights
 //   AD_ACCOUNT_ID       optional act_<id> / numeric account id
-//   DATE_PRESET         optional, default last_7d
+//   DATE_PRESET         required: Meta's date preset for the window, e.g. last_7d
 //   FIELDS              optional comma-separated fields
 //   META_ADS_CLI_ARGS   optional full arg string after `meta`; bypasses generated args
 //
@@ -19,6 +19,7 @@ import { WSession } from '../../../../dist/session/wsession.js';
 import { generatePersona } from '../../../../dist/browser/persona.js';
 import { graphRequest } from './api/marketing_api.mjs';
 import { integrationsConfigured } from '../../../_shared/integrations.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
 const CAMPAIGN_ID = process.env.CAMPAIGN_ID;
 const AD_ACCOUNT_ID = (
@@ -29,9 +30,17 @@ const AD_ACCOUNT_ID = (
 const BUSINESS_ID = process.env.BUSINESS_ID || process.env.META_BUSINESS_ID;
 const AD_ACCOUNT_NAME =
   process.env.AD_ACCOUNT_NAME || process.env.META_ADS_ACCOUNT_NAME;
-const DATE_PRESET = process.env.DATE_PRESET || 'last_7d';
 const FIELDS = process.env.FIELDS;
 const META_ADS_CLI_ARGS = process.env.META_ADS_CLI_ARGS;
+// Which days the numbers cover is the caller's to say; a report over a window
+// nobody chose reads as the one they meant. Full META_ADS_CLI_ARGS carry their
+// own window.
+const DATE_PRESET = META_ADS_CLI_ARGS
+  ? undefined
+  : statedText(
+      ['DATE_PRESET'],
+      "Meta's date preset for the report window (e.g. last_7d, last_30d)",
+    );
 const META_CLI_BIN = process.env.META_CLI_BIN || 'meta';
 const META_CLI_REQUIRED = process.env.META_CLI_REQUIRED === '1';
 const META_API_ONLY = process.env.META_API_ONLY === '1';
@@ -178,7 +187,10 @@ async function apiPerformance() {
   const params = {
     fields,
     date_preset: DATE_PRESET,
-    level: process.env.LEVEL || (CAMPAIGN_ID ? 'campaign' : 'campaign'),
+    level: statedText(
+      ['LEVEL'],
+      'the insights level to break the numbers down by (account, campaign, adset or ad)',
+    ),
     filtering: process.env.FILTERING_JSON
       ? JSON.parse(process.env.FILTERING_JSON)
       : undefined,
