@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { generatePersona } from '../../../../../dist/browser/persona.js';
 import { WSession } from '../../../../../dist/session/wsession.js';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
-import { statedProxy, statedText } from '../../../_shared/inputs/stated.mjs';
+import { statedChoice, statedProxy, statedText } from '../../../_shared/inputs/stated.mjs';
 import { clickDescribed } from '../../../_shared/page/judged/seen.mjs';
 import { redactedUrl } from '../../../_shared/page/navigation/redacted.mjs';
 
@@ -20,14 +20,17 @@ const BUSINESS_ID = statedText(
   ['META_BUSINESS_ID', 'BUSINESS_ID'],
   'the Meta Business Manager id this run acts in',
 );
-const ASSET_KIND = process.env.META_ASSET_KIND || 'apps';
-mkdirSync(USER_DATA_DIR, { recursive: true });
-
-const pagePaths = {
+const pagePaths = Object.freeze({
   apps: 'apps',
   ad_accounts: 'ad_accounts',
   system_users: 'system_users',
-};
+});
+const ASSET_KIND = statedChoice(
+  ['META_ASSET_KIND'],
+  pagePaths,
+  'the Business asset kind the probe adds',
+);
+mkdirSync(USER_DATA_DIR, { recursive: true });
 
 function stableProfilePersona() {
   const p = join(USER_DATA_DIR, 'persona.json');
@@ -109,10 +112,6 @@ async function clickEnabledAdd(page) {
 }
 
 const path = pagePaths[ASSET_KIND];
-if (!path) {
-  console.log(`FAIL: unsupported META_ASSET_KIND=${ASSET_KIND}`);
-  process.exit(1);
-}
 
 console.log(
   JSON.stringify(
