@@ -33,6 +33,7 @@ meta_ads_api_audience
 meta_ads_api_campaign
 meta_ads_api_catalog
 meta_ads_api_creative
+meta_ads_api_lead_form
 microsoft_adopt_password
 microsoft_entra_adopt_password
 microsoft_entra_reset_password

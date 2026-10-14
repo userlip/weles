@@ -40,6 +40,9 @@ try {
       'special-ad-categories': { type: 'string' },
       'name-prefix': { type: 'string' },
       status: { type: 'string' },
+      'lead-form-id': { type: 'string' },
+      'lead-form-name': { type: 'string' },
+      'lead-form-locale': { type: 'string' },
     },
   });
   for (const key of [
@@ -48,6 +51,9 @@ try {
     'objective',
     'special-ad-categories',
     'name-prefix',
+    'lead-form-id',
+    'lead-form-name',
+    'lead-form-locale',
     'status',
   ]) {
     assert.ok(
@@ -55,6 +61,11 @@ try {
       `--${key} is required for the isolated Meta fixture`,
     );
   }
+  assert.notEqual(
+    values['lead-form-locale'],
+    'en_US',
+    'the dedicated lead form must expose an observable locale change',
+  );
   assert.equal(
     values.status,
     'PAUSED',
@@ -68,6 +79,11 @@ try {
   report.fixture = {
     ad_account: values['ad-account'],
     business: values['business-id'],
+    lead_form: {
+      id: values['lead-form-id'],
+      name: values['lead-form-name'],
+      locale: values['lead-form-locale'],
+    },
     objective: values.objective,
     special_ad_categories: categories,
     status: values.status,
@@ -83,6 +99,8 @@ try {
     ['meta_ads_api_catalog', { action: 'create' }, 'RESOURCE'],
     ['meta_ads_api_audience', {}, 'ACTION_KIND, META_ACTION'],
     ['meta_ads_api_creative', { action: 'create' }, 'RESOURCE'],
+    ['meta_ads_api_lead_form', {}, 'ACTION_KIND, META_ACTION'],
+    ['meta_ads_api_lead_form', { action: 'unknown' }, 'not one of'],
   ]) {
     const refused = await run(action, params);
     assert.equal(refused.status, 'failed');
@@ -112,6 +130,31 @@ try {
     }));
     assert.ok(Array.isArray(listed.data), JSON.stringify(listed));
   }
+
+  const leadForm = {
+    form_id: values['lead-form-id'],
+    fields: 'id,name,locale',
+    live_read: true,
+  };
+  const formBefore = graphResult(await run('meta_ads_api_lead_form', {
+    ...leadForm,
+    action: 'read',
+  }));
+  assert.equal(formBefore.id, values['lead-form-id']);
+  assert.equal(formBefore.name, values['lead-form-name']);
+  assert.equal(formBefore.locale, values['lead-form-locale']);
+  graphResult(await run('meta_ads_api_lead_form', {
+    ...leadForm,
+    action: 'update',
+    lead_form_name: values['lead-form-name'],
+    submit: true,
+  }));
+  const formAfter = graphResult(await run('meta_ads_api_lead_form', {
+    ...leadForm,
+    action: 'read',
+  }));
+  assert.equal(formAfter.locale, formBefore.locale);
+  assert.equal(formAfter.name, formBefore.name);
 
   const name = `${values['name-prefix']}-${randomUUID()}`;
   const created = graphResult(await run('meta_ads_api_campaign', {
