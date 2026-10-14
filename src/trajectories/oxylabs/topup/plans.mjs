@@ -1,21 +1,32 @@
-// The Oxylabs Mobile Proxies plans, the nearest one to a budget, and reading which plan
-// the account is on.
+// The Oxylabs Mobile Proxies plans, the one a tier change was asked for, and
+// reading which plan the account is on.
 import { humanIdlePause } from '../../../../dist/human/mouse.js';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
-// Oxylabs Mobile Proxies plans
+// Oxylabs Mobile Proxies plans, in the order Oxylabs ranks them.
 export const PLANS = [
   { name: 'Starter', price: 30, gb: 4 },
   { name: 'Basic', price: 100, gb: 15 },
   { name: 'Standard', price: 270, gb: 45 },
   { name: 'Advanced', price: 500, gb: 100 },
 ];
-export function nearestPlan(usd) {
-  return PLANS.reduce((a, b) =>
-    Math.abs(b.price - usd) < Math.abs(a.price - usd) ? b : a,
+
+// The plan a tier change moves to is stated by name (OXYLABS_PLAN); it is
+// never picked as the one priced nearest to an amount.
+export function statedPlan() {
+  const name = statedText(
+    ['OXYLABS_PLAN'],
+    `the Oxylabs plan to move to, one of ${PLANS.map((p) => p.name).join(', ')}`,
   );
+  const plan = PLANS.find((p) => p.name.toLowerCase() === name.toLowerCase());
+  if (!plan)
+    throw new Error(
+      `OXYLABS_PLAN is "${name}", not one of ${PLANS.map((p) => p.name).join(', ')}; nothing was charged`,
+    );
+  return plan;
 }
 
-export async function detectCurrentPlan(s, plan) {
+export async function detectCurrentPlan(s) {
   // Distinguish recurring monthly subscriptions from pay-as-you-go credit
   // purchases through the page-level
   // "Add more traffic" button. Auto-topup must use the PAYG path only —
@@ -49,8 +60,6 @@ export async function detectCurrentPlan(s, plan) {
     throw new Error(
       'could not detect current Oxylabs plan from /overview/MP — refusing to charge with unknown state',
     );
-  console.log(
-    `[trajectory] current plan=${currentPlanName}; requested=${plan.name}`,
-  );
+  console.log(`[trajectory] current plan=${currentPlanName}`);
   return { isPayAsYouGo, currentPlanName };
 }
