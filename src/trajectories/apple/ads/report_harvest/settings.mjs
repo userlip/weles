@@ -2,15 +2,27 @@
 import { runOutputPath } from '#run-output';
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
 
 export const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
   process.env.ADS_PROFILE_DIR ||
   join(homedir(), '.weles', 'browser_profiles', 'apple_ads');
+const runId = process.env.ACTION_LOG_ID;
+if (runId && basename(runId) !== runId)
+  throw new Error(`ACTION_LOG_ID must be a single path component: ${runId}`);
 export const DIAG_DIR =
-  process.env.APPLE_ADS_DIAG_DIR || runOutputPath('apple-ads-report-harvest');
+  process.env.APPLE_ADS_DIAG_DIR ||
+  (runId
+    ? join(
+        statedText(
+          ['WELES_RECORDINGS_ROOT'],
+          'the recording root for a managed Apple Ads report harvest',
+        ),
+        runId,
+      )
+    : runOutputPath('apple-ads-report-harvest'));
 // Which app, which presets and which date ranges are harvested are the
 // caller's: an app id or campaign dates written here would read someone
 // else's reports.

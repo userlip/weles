@@ -66,6 +66,7 @@ async function main() {
   });
 
   let exitCode = 0;
+  let completed = false;
   try {
     const network = installNetworkCapture(s.page);
     if (!(await gotoAndWait(s.page, REPORT_URL))) {
@@ -182,13 +183,25 @@ async function main() {
       );
     console.log(`[apple-ads-report-harvest] json=${outPath}`);
     console.log(JSON.stringify(summary, null, 2));
+    completed = true;
   } finally {
     process.exitCode = exitCode;
-    await keepOpen(s);
+    await keepOpen(s, completed);
   }
 }
 
 main().catch((error) => {
-  console.log('FAIL:', error.message || String(error));
+  const message = String(error);
+  console.error('FAIL:', message);
+  try {
+    const outPath = join(DIAG_DIR, 'report_harvest.json');
+    writeFileSync(
+      outPath,
+      JSON.stringify({ ok: false, error: message }),
+    );
+    console.error(`[apple-ads-report-harvest] json=${outPath}`);
+  } catch (writeError) {
+    console.error('[apple-ads-report-harvest] failed to write report:', writeError);
+  }
   process.exit(1);
 });

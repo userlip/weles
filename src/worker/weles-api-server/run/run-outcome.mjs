@@ -203,6 +203,7 @@ const RUN_OUTPUT_FILES = Object.freeze({
   'captcha_events.json': 'captcha',
   'overleaf_version_history_summary.json': 'overleaf_version_history_summary',
   'yahoo_register_result.json': 'yahoo_register',
+  'report_harvest.json': 'apple_ads_report_harvest',
 });
 
 // The named documents anywhere under recordings/<run>/, read without following

@@ -48,6 +48,32 @@ export function applyAppleActionParams(
     if (typeof params.apple_ads_diag_dir === 'string')
       env.APPLE_ADS_DIAG_DIR = params.apple_ads_diag_dir;
   }
+  if (trajPath.endsWith('/apple/ads/report_harvest.mjs')) {
+    if (
+      typeof params.apple_ads_app_id !== 'string' ||
+      !params.apple_ads_app_id.trim()
+    )
+      throw new Error(
+        'apple_ads_app_id is required for Apple Ads report harvest',
+      );
+    if (
+      typeof params.apple_ads_date_presets !== 'string' ||
+      !params.apple_ads_date_presets.trim()
+    )
+      throw new Error(
+        'apple_ads_date_presets is required for Apple Ads report harvest',
+      );
+    if (
+      typeof params.apple_ads_exact_ranges !== 'string' ||
+      !params.apple_ads_exact_ranges.trim()
+    )
+      throw new Error(
+        'apple_ads_exact_ranges is required for Apple Ads report harvest',
+      );
+    env.APPLE_ADS_APP_ID = params.apple_ads_app_id;
+    env.APPLE_ADS_DATE_PRESETS = params.apple_ads_date_presets;
+    env.APPLE_ADS_EXACT_RANGES = params.apple_ads_exact_ranges;
+  }
   if (
     trajPath.endsWith('/apple/login.mjs') ||
     trajPath.endsWith('/apple/create_developer_id.mjs')
