@@ -22,11 +22,13 @@ import {
 } from '../../_shared/auth/cookie-freshness.mjs';
 import { markCookiesStale } from '../../../../dist/utils/credentials.js';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
-// When TARGET_USER is unset, default to TikTok's official account — gives a
-// deterministic, always-populated profile page rather than relying on the
-// /foryou feed's per-session creator selection.
-const TARGET_USER = (process.env.TARGET_USER || 'tiktok').replace(/^@/, '');
+// Who is followed is the caller's to state; nobody is followed by default.
+const TARGET_USER = statedText(
+  ['TARGET_USER'],
+  'the TikTok handle to follow',
+).replace(/^@/, '');
 
 const acct = await getSocialAccount('tiktok');
 if (!acct) {

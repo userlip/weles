@@ -7,13 +7,16 @@ import {
 } from '../_shared/auth/cookie-freshness.mjs';
 import { loginViaTwitter } from './_session.mjs';
 import { listAccounts } from '../_shared/skarbiec/accounts.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
+import { clickOffered } from '../_shared/page/judged/seen.mjs';
 
-// Upvote a Product Hunt product. Pass PRODUCTHUNT_URL=https://www.producthunt.com/products/<slug>
-// to vote on a specific product; otherwise the trajectory upvotes the first product
-// card on the homepage.
+// Upvote the Product Hunt product PRODUCTHUNT_URL names
+// (https://www.producthunt.com/products/<slug>); nothing is upvoted by default.
 
-const TARGET_URL =
-  process.env.PRODUCTHUNT_URL || 'https://www.producthunt.com/';
+const TARGET_URL = statedText(
+  ['PRODUCTHUNT_URL'],
+  'the Product Hunt product page to upvote',
+);
 const proxy = process.env.PROXY_URL || 'none';
 import { pageSettled } from '../_shared/page/settled.mjs';
 
@@ -52,33 +55,6 @@ async function injectPHCookies(s, cookies) {
 // The whole page text: a state named past an invented cut was never seen.
 async function readPage(s) {
   return (await s.page.locator('body').innerText()).toLowerCase();
-}
-
-async function navigateToFirstProduct(s) {
-  // From the homepage, find the first product card link and follow it.
-  // PH uses /products/<slug> for current launches; older URLs are /posts/<slug>.
-  // Filter out footer reference links (?ref=footer) since those go to product hubs not the launch page.
-  const href = await s.page
-    .evaluate(`(() => {
-    var as = Array.from(document.querySelectorAll('a[href*="/products/"], a[href*="/posts/"]'));
-    for (var a of as) {
-      var h = a.getAttribute('href') || '';
-      if (h.includes('?ref=footer')) continue;
-      if (h.includes('/reviews')) continue;
-      var slug = (h.match(/\\/products\\/([^/?#]+)/) || h.match(/\\/posts\\/([^/?#]+)/) || [])[1];
-      if (slug) return h;
-    }
-    return null;
-  })()`)
-    .catch(() => null);
-  if (!href) return false;
-  const url = href.startsWith('http')
-    ? href
-    : new URL(href, 'https://www.producthunt.com').toString();
-  console.log(`[ph-vote] following first product: ${url}`);
-  await s.goto(url);
-  await pageSettled(s.page);
-  return true;
 }
 
 async function findVoteButton(s) {
@@ -164,13 +140,10 @@ async function vote(s) {
     }
   }
   // PH's homepage SSR cache sometimes serves the logged-out shell to a
-  // freshly-SSO'd session, so probing on the homepage is unreliable
-  // immediately after SSO.
-  // Probe on /products/<slug> first — that page always renders the authed
-  // topbar avatar — then navigate to the homepage feed with a ?bc=1
-  // cache-buster so we land on a freshly-rendered authed homepage where
-  // the inline vote button is.
-  await s.goto('https://www.producthunt.com/products/feather-18');
+  // freshly-SSO'd session, so the sign-in is probed on the requested product
+  // page itself, which renders the authed topbar avatar; the vote then loads
+  // it again with a ?bc=1 cache-buster.
+  await s.goto(TARGET_URL);
   await pageSettled(s.page);
   try {
     await assertAuthed('producthunt', s, { label: 'producthunt_upvote' });
@@ -186,30 +159,20 @@ async function vote(s) {
   await s.goto(cacheBustedHome);
   await pageSettled(s.page);
 
-  // Dismiss cookie consent banner if present
-  const t0 = await readPage(s);
-  if (t0.includes('cookies') || t0.includes('cookie preferences')) {
-    await s.click('Accept all').catch(() => {});
-    await s.click('Accept cookies').catch(() => {});
-    await pageSettled(s.page);
-  }
+  // A cookie notice is recognised and closed by the vision model, not by the
+  // words 'cookies' anywhere in the page.
+  await clickOffered(s.page, 'the button that accepts or closes the cookie notice');
+  await pageSettled(s.page);
 
-  // The homepage feed exposes inline launch vote buttons (data-test="vote-button")
-  // — those record a real vote. Product hub pages (/products/<slug>) only carry
-  // action-bar-vote-button which navigates away. So unless the user explicitly
-  // gave us a /posts/ launch URL, we vote on the homepage feed directly.
+  // A launch page carries the inline vote button (data-test="vote-button")
+  // that records a vote; a product hub (/products/<slug>) carries only the
+  // action-bar button, which navigates away. A requested launch that
+  // redirected to its hub is refused, never answered by a vote elsewhere.
   const cur = s.page.url();
-  if (cur.includes('/products/') && !TARGET_URL.includes('/products/')) {
-    // A requested launch that redirected to its hub must not be answered by a
-    // vote on whatever leads the homepage feed, reported as the one asked for.
-    if (process.env.PRODUCTHUNT_URL)
-      throw new Error(
-        `launch_page_unavailable: ${TARGET_URL} redirected to the product hub ${cur}, which records no launch vote; nothing was voted`,
-      );
-    console.log('[ph-vote] redirected to product hub — going back to homepage');
-    await s.goto('https://www.producthunt.com/');
-    await pageSettled(s.page);
-  }
+  if (cur.includes('/products/') && !TARGET_URL.includes('/products/'))
+    throw new Error(
+      `launch_page_unavailable: ${TARGET_URL} redirected to the product hub ${cur}, which records no launch vote; nothing was voted`,
+    );
 
   const beforeState = await readVoteState(s);
   console.log(`[ph-vote] before: ${JSON.stringify(beforeState)}`);

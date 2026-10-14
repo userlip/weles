@@ -4,6 +4,7 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { screenshotIfPossible } from '../../_shared/runner/evidence.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
 /** Whether the "Verify it's really you" new-device dialog is on the page. */
 export function verifyDialogPresent(page) {
@@ -110,9 +111,11 @@ export async function completeNewDeviceVerification(s, acct) {
   ]);
   await humanIdlePause('deliberate');
   // Poll the inbox for the 6-digit code (s.checkEmail handles auth + filter).
-  const acctEmail =
-    acct.metadata?.email ||
-    `${acct.username}@${process.env.AGENT_DOMAIN || 'pilatesguild.com'}`;
+  // The mailbox is the account's recorded email; without one, its username at
+  // the agent mail domain the run states.
+  const acctEmail = acct.metadata?.email
+    ? acct.metadata.email
+    : `${acct.username}@${statedText(['AGENT_DOMAIN'], "the agent mail domain of an account that records no email")}`;
   console.log(
     `[tiktok_login] polling email for verification code: ${acctEmail}`,
   );
