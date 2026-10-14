@@ -4,15 +4,15 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 // Env:
 //   AD_ACCOUNT_ID        required unless ADS_URL is set; numeric or act_<id>
 //   ADS_URL              optional direct Ads Manager creation URL
-//   CAMPAIGN_NAME        optional, defaults to timestamped name
-//   CAMPAIGN_OBJECTIVE   optional objective label text, e.g. Traffic, Leads
-//   CAMPAIGN_DESTINATION optional destination family. Supported: website
+//   CAMPAIGN_NAME        required to create: the name the campaign is listed under
+//   CAMPAIGN_OBJECTIVE   required to create: objective label text, e.g. Traffic, Leads
+//   CAMPAIGN_DESTINATION required to create: destination family. Supported: website
 //   DAILY_BUDGET_USD     optional daily budget
 //   DESTINATION_URL      optional landing page URL
 //   DISPLAY_LINK         optional visible display link
 //   URL_PARAMS           optional URL tracking params
-//   AD_NAME              optional ad name
-//   AD_SET_NAME          optional ad set name
+//   AD_NAME              required to create: ad name
+//   AD_SET_NAME          required to create: ad set name
 //   META_FACEBOOK_PAGE_NAME optional Facebook Page to select
 //   META_FACEBOOK_PAGE_ID   optional Facebook Page id to select
 //   PRIMARY_TEXT         optional ad primary text
@@ -40,6 +40,7 @@ import {
   guardUnsupportedParams,
   printCapabilitiesAndExit,
   profilePersona,
+  requireCampaignInputs,
   requireCampaignTarget,
   session,
   targetUrl,
@@ -66,6 +67,7 @@ import {
 if (PRINT_CAPABILITIES) printCapabilitiesAndExit();
 guardUnsupportedParams();
 requireCampaignTarget();
+if (!VERIFY_ACCOUNT_ONLY) requireCampaignInputs();
 
 console.log(
   `[meta-ads] profile=${USER_DATA_DIR} viewport=${process.env.WELES_VIEWPORT}`,
@@ -88,7 +90,7 @@ try {
   if (VERIFY_ACCOUNT_ONLY) {
     const visible = await visibleSelectedAdAccount(s);
     console.log(
-      `PASS: Meta Ads account verified (${visible.label || AD_ACCOUNT_ID || 'unknown'})`,
+      `PASS: Meta Ads account verified (${visible.label || AD_ACCOUNT_ID})`,
     );
     process.exit(0);
   }

@@ -19,6 +19,7 @@ import { generatePersona } from '../../../../../dist/browser/persona.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
 const ADS_URL = process.env.ADS_URL;
 const RAW_AD_ACCOUNT_ID =
@@ -27,21 +28,20 @@ const AD_ACCOUNT_ID = RAW_AD_ACCOUNT_ID?.replace(/^act_/, '');
 const BUSINESS_ID = process.env.BUSINESS_ID || process.env.META_BUSINESS_ID;
 const AD_ACCOUNT_NAME =
   process.env.AD_ACCOUNT_NAME || process.env.META_ADS_ACCOUNT_NAME;
-const CAMPAIGN_NAME =
-  process.env.CAMPAIGN_NAME ||
-  `Wisent ${new Date().toISOString().slice(0, 19)}`;
-const CAMPAIGN_OBJECTIVE = process.env.CAMPAIGN_OBJECTIVE || 'Traffic';
+// The names, objective and destination of a new campaign are the advertiser's
+// to state; requireCampaignInputs() refuses a run that creates one without
+// them. A run that only verifies the account or prints capabilities needs none.
+const CAMPAIGN_NAME = process.env.CAMPAIGN_NAME;
+const CAMPAIGN_OBJECTIVE = process.env.CAMPAIGN_OBJECTIVE;
 const CAMPAIGN_DESTINATION = (
-  process.env.CAMPAIGN_DESTINATION ||
-  process.env.DESTINATION_TYPE ||
-  'website'
-).toLowerCase();
+  process.env.CAMPAIGN_DESTINATION || process.env.DESTINATION_TYPE
+)?.toLowerCase();
 const DAILY_BUDGET_USD = process.env.DAILY_BUDGET_USD;
 const DESTINATION_URL = process.env.DESTINATION_URL || process.env.FINAL_URL;
 const DISPLAY_LINK = process.env.DISPLAY_LINK;
 const URL_PARAMS = process.env.URL_PARAMS;
-const AD_SET_NAME = process.env.AD_SET_NAME || `${CAMPAIGN_NAME} ad set`;
-const AD_NAME = process.env.AD_NAME || `${CAMPAIGN_NAME} ad`;
+const AD_SET_NAME = process.env.AD_SET_NAME;
+const AD_NAME = process.env.AD_NAME;
 const FACEBOOK_PAGE_NAME =
   process.env.META_FACEBOOK_PAGE_NAME || process.env.FACEBOOK_PAGE_NAME;
 const FACEBOOK_PAGE_ID =
@@ -167,7 +167,7 @@ function guardUnsupportedParams() {
   for (const key of unsupportedEnv) {
     if (process.env[key]) unsupported.push(key);
   }
-  if (CAMPAIGN_DESTINATION !== 'website')
+  if (CAMPAIGN_DESTINATION && CAMPAIGN_DESTINATION !== 'website')
     unsupported.push(`CAMPAIGN_DESTINATION=${CAMPAIGN_DESTINATION}`);
   if (!unsupported.length) return;
   const msg = `unsupported/unverified Meta campaign params: ${unsupported.join(', ')}. Supported verified destination is website traffic draft/configuration.`;
@@ -185,6 +185,21 @@ function requireCampaignTarget() {
     console.log('FAIL: AD_ACCOUNT_ID or ADS_URL required');
     process.exit(1);
   }
+}
+
+// What creating a campaign needs stated; each missing value is refused by name.
+function requireCampaignInputs() {
+  statedText(['CAMPAIGN_NAME'], 'the name the ad account lists the campaign under');
+  statedText(
+    ['CAMPAIGN_OBJECTIVE'],
+    "the campaign objective, as the account's Ads Manager labels it (e.g. Traffic)",
+  );
+  statedText(
+    ['CAMPAIGN_DESTINATION', 'DESTINATION_TYPE'],
+    'where the ad sends people; this trajectory configures website',
+  );
+  statedText(['AD_SET_NAME'], 'the name the ad account lists the ad set under');
+  statedText(['AD_NAME'], 'the name the ad account lists the ad under');
 }
 
 export {
@@ -209,6 +224,7 @@ export {
   VERIFY_ACCOUNT_ONLY,
   WAIT_FOR_LOGIN,
   guardUnsupportedParams,
+  requireCampaignInputs,
   objectiveLabels,
   printCapabilitiesAndExit,
   profilePersona,
