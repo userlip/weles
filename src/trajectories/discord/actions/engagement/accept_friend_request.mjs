@@ -3,7 +3,7 @@
 // Pending tab and clicks the green Accept button per row up to limit.
 //
 // Env vars:
-//   ACCEPT_LIMIT — max requests to accept per run (default 3).
+//   ACCEPT_LIMIT — required: how many pending requests to accept this run.
 //
 // Sequence:
 //   1. Source account, start WSession, addInitScript-inject discord_token.
