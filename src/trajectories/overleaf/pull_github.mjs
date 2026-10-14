@@ -3,12 +3,10 @@
 // step, no keeper, no manual login, no guessing between same-named
 // projects — the GitHub integration itself is the disambiguator.
 //
-// Evidence basis: .work/list_auto/overleaf_list_auto_failure.png shows the
-// automated Google-SSO flow reaching a fully authenticated Overleaf
-// dashboard. The automated SSO works end to end; this trajectory reuses
-// that exact proven auth path, then for every project whose title matches
-// PROJECT it opens the GitHub sync panel and pulls ONLY on the one whose
-// linked repository is REPO_SLUG.
+// It signs in through the automated Google SSO the other Overleaf
+// trajectories use, then for every project whose title matches PROJECT it
+// opens the GitHub sync panel and pulls ONLY on the one whose linked
+// repository is REPO_SLUG.
 //
 // Usage:
 //   node src/trajectories/overleaf/pull_github.mjs <PROJECT> <REPO_SLUG>

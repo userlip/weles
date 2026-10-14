@@ -2,9 +2,9 @@
 // via Overleaf's own JSON API from inside the authenticated session, and report
 // which figures each collaborator DELETED. The GitHub sync flattens authorship
 // onto the project owner, so only this native record attributes a figure
-// deletion to a specific person (e.g. sarthakmunshi).
+// deletion to a specific collaborator.
 //
-// Endpoints (confirmed from captured network in .work/inst/history_scan_*.json):
+// Endpoints (Overleaf's own JSON API, as the authenticated page calls it):
 //   GET /project/<id>/changes/users           -> collaborator id -> name/email
 //   GET /project/<id>/updates?min_count&before -> paginated save batches
 //   GET /project/<id>/diff?from&to&pathname    -> per-file diff; chunks carry
@@ -13,7 +13,7 @@
 //
 // Usage: node src/trajectories/overleaf/history_scan.mjs <PROJECT_ID_24hex>
 //   HEADLESS=1 for headless (default visible — Google SSO heuristics).
-// Output: .work/history_scan/figure_deletions.json (raw API + filtered result).
+// Output: figure_deletions.json in the run's recordings (raw API + filtered result).
 
 import { WSession } from '../../../../dist/session/wsession.js';
 import { getGoogleSsoCreds } from '../../_shared/services/google_sso.mjs';

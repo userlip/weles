@@ -3,7 +3,7 @@
 // After auth it scrapes the dashboard for all {id,title} then downloads each
 // project's source via the authenticated zip endpoint
 // (/project/<id>/download/zip) using the context request (shares cookies),
-// saving to .work/ol_sources/<id>.zip. Prints a JSON line per project so the
+// saving to $OVERLEAF_SOURCES_DIR/<id>.zip. Prints a JSON line per project so the
 // caller gets the full id->title map for reconciliation against GitHub repos.
 //
 // Usage: node src/trajectories/overleaf/io/download_all.mjs
