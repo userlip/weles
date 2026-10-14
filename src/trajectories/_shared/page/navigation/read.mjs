@@ -44,3 +44,16 @@ export async function readAcrossNavigation(page, read) {
     page.off('crash', onCrash);
   }
 }
+
+// A read whose document was replaced by a navigation the caller expects (an
+// OAuth redirect chain, a poll across page loads) answers `whenReplaced`, the
+// value meaning "not there yet" to that caller; closure and crash still throw.
+export async function readOr(page, read, whenReplaced) {
+  const value = await readAcrossNavigation(page, read);
+  return value === DOCUMENT_REPLACED ? whenReplaced : value;
+}
+
+// readOr for a function evaluated in the page.
+export function navEval(page, fn, whenReplaced, arg) {
+  return readOr(page, () => page.evaluate(fn, arg), whenReplaced);
+}

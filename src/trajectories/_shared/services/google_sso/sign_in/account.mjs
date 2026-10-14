@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { humanFill, humanType } from '../../../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../../../dist/human/mouse.js';
 import { readDocument } from '../../../../../../dist/state/skarbiec-records.js';
-import { fillAndVerify } from '../../../../codex/google_sso/page_controls.mjs';
+import { fillAndVerify } from '../../../page/confirmed-fill.mjs';
 import {
   waitForGooglePassword,
   waitForGooglePasswordResult,

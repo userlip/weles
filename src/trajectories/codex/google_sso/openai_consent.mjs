@@ -6,7 +6,7 @@
 // CLI cannot get past on its own, and a workspace that has device-code
 // authorization switched off says so by rendering its Continue button disabled —
 // a settings problem with its own error code, not something to wait out.
-import { navEval } from './page_controls.mjs';
+import { navEval } from '../../_shared/page/navigation/read.mjs';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 
 /** The consent page's own submit control. */

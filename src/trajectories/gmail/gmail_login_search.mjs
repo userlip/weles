@@ -20,10 +20,7 @@
 //       BROWSER      'firefox' | 'chromium' to pin the engine (default: roll)
 import { WSession } from '../../../dist/session/wsession.js';
 import { googleSso } from '../_shared/services/google_sso.mjs';
-import {
-  DOCUMENT_REPLACED,
-  readAcrossNavigation,
-} from '../_shared/page/navigation/read.mjs';
+import { readOr } from '../_shared/page/navigation/read.mjs';
 import { dismissGooglePostLogin } from '../_shared/services/google_sso/sign_in/redirect_watch.mjs';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
@@ -59,9 +56,8 @@ function log(...a) {
 // Locator.isVisible() rejects when its document is replaced mid-navigation;
 // that case (reported by the page, not read from the error's words) is "not
 // visible", and any other failure is surfaced.
-async function visible(loc) {
-  const shown = await readAcrossNavigation(loc.page(), () => loc.isVisible());
-  return shown === DOCUMENT_REPLACED ? false : shown;
+function visible(loc) {
+  return readOr(loc.page(), () => loc.isVisible(), false);
 }
 
 async function resolveCreds() {

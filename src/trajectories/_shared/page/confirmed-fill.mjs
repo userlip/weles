@@ -26,3 +26,47 @@ export async function statedField(field, value, what) {
     );
   return true;
 }
+
+// Typing into an empty field of a WIZ/React sign-in document (Google's,
+// OpenAI's): humanType emits the full keydown/keyup/input sequence per
+// character, which Google's WIZ validator needs to enable Next; insertText
+// does not. Keystrokes go to the focused element, so the field must hold focus
+// before typing: a pointer click that lands on a control drawn over the field
+// (Google's identifier page shows its floating label there) leaves focus
+// elsewhere and every keystroke is lost. The field is then focused directly, a
+// field that still does not hold focus is named in the failure, and a value
+// not retained refuses the run.
+export async function fillAndVerify(
+  page,
+  locator,
+  text,
+  humanClickLocator,
+  humanType,
+) {
+  const editable = locator.and(
+    page.locator(
+      'input:enabled:not([readonly]), textarea:enabled:not([readonly])',
+    ),
+  );
+  await editable.waitFor({ state: 'visible' });
+  await humanClickLocator(page, editable);
+  const focused = () =>
+    editable.evaluate(
+      (element) => element === element.ownerDocument.activeElement,
+    );
+  if (!(await focused())) {
+    await editable.focus();
+  }
+  if (!(await focused())) {
+    throw new Error(
+      'fillAndVerify: the field did not take focus after a pointer click and a focus call; keystrokes would be lost',
+    );
+  }
+  await humanType(page, text);
+  const actual = await locator.inputValue();
+  if (actual !== text) {
+    throw new Error(
+      `fillAndVerify: value mismatch after input dispatch; observed length=${actual.length}, expected length=${text.length}`,
+    );
+  }
+}

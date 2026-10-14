@@ -22,10 +22,7 @@
 import { WSession } from '../../../../../dist/session/wsession.js';
 import { urlMatching } from '../../../_shared/page/settled.mjs';
 import { googleSso } from '../../../_shared/services/google_sso.mjs';
-import {
-  DOCUMENT_REPLACED,
-  readAcrossNavigation,
-} from '../../../_shared/page/navigation/read.mjs';
+import { readOr } from '../../../_shared/page/navigation/read.mjs';
 import {
   humanClick,
   humanClickLocator,
@@ -131,9 +128,8 @@ try {
   // the URL is committed to stdout before any fragile UI manipulation.
   console.log('URL: ' + docUrl);
 
-  async function probeVisible(loc) {
-    const shown = await readAcrossNavigation(loc.page(), () => loc.isVisible());
-    return shown === DOCUMENT_REPLACED ? null : shown;
+  function probeVisible(loc) {
+    return readOr(loc.page(), () => loc.isVisible(), null);
   }
 
   await humanIdlePause('long'); // let the Docs canvas finish hydrating

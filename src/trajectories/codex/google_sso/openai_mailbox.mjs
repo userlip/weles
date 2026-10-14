@@ -7,7 +7,7 @@
 // to. Both are bounded and run once per run.
 import { humanClick, humanClickLocator } from '../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
-import { navEval } from './page_controls.mjs';
+import { navEval } from '../../_shared/page/navigation/read.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
 

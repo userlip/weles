@@ -5,7 +5,7 @@
 // and the click re-finds the tagged element after scrolling it into view rather
 // than trusting a coordinate from an earlier poll.
 import { humanClick } from '../../../../../dist/human/mouse.js';
-import { navEval } from '../page_controls.mjs';
+import { navEval } from '../../../_shared/page/navigation/read.mjs';
 
 // The smallest box that counts as a rendered control. A 1x1 tracking pixel
 // with role="button" is not an affordance. Titles, identifiers and the body

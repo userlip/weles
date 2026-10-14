@@ -4,7 +4,8 @@
 // Entry observes a writable field and verifies its value after trusted typing.
 // Native input attributes do not prove WIZ hydration. The Next control must be
 // enabled, and provider refusals are reported by the corresponding stage.
-import { fillAndVerify, navEval } from './page_controls.mjs';
+import { fillAndVerify } from '../../_shared/page/confirmed-fill.mjs';
+import { navEval } from '../../_shared/page/navigation/read.mjs';
 import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
 import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
 import {

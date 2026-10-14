@@ -2,7 +2,7 @@
 // for that prompt to end. The code itself comes only from the account's seed
 // (sign_in/challenge/seed.mjs); the credential driver handles an offered phone
 // approval when no seed is held.
-import { navEval } from './page_controls.mjs';
+import { navEval } from '../../_shared/page/navigation/read.mjs';
 import { pageCondition } from '../../_shared/page/settled.mjs';
 import { clickOffered } from '../../_shared/page/judged/seen.mjs';
 import { clickTryAnotherWay } from '../../_shared/services/google_sso/authenticator_challenge.mjs';

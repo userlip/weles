@@ -4,7 +4,7 @@
 // Entry observes a writable field and verifies its value after trusted typing.
 // Native input attributes do not prove WIZ hydration. The Next control must be
 // enabled, and provider refusals are reported by the corresponding stage.
-import { fillAndVerify } from './page_controls.mjs';
+import { fillAndVerify } from '../../_shared/page/confirmed-fill.mjs';
 import { resolveOtp } from '../../_shared/services/google_sso/sign_in/challenge/seed.mjs';
 import {
   requireAuthenticatorCode,

@@ -10,7 +10,8 @@
 // entry it starts from, the authenticator code that entry answers 2FA with, the
 // two mailbox steps OpenAI demands of a new identity, and the Codex consent page
 // are modules beside it.
-import { fillAndVerify, navEval } from './google_sso/page_controls.mjs';
+import { fillAndVerify } from '../_shared/page/confirmed-fill.mjs';
+import { navEval } from '../_shared/page/navigation/read.mjs';
 import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 import {
   enterGoogleCredentials,
