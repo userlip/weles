@@ -58,7 +58,7 @@ async function signup(s) {
   if (!igAccount) throw new Error('no_instagram_account_with_cookies');
   const igCookies = igAccount.metadata.cookies;
   const igUsername = igAccount.username;
-  const igPassword = igAccount.metadata?.password;
+  const igPassword = igAccount.password;
   const igEmail = igAccount.metadata?.email;
   console.log(
     `[threads] using instagram account: ${igUsername} (${igCookies.length} cookies)`,

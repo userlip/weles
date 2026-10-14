@@ -206,7 +206,10 @@ export async function findUsableTwitterAccount() {
 // so future findUsableTwitterAccount() calls can skip this Twitter.
 export async function stampLinkedTwitter(phUsername, twUsername) {
   const account = findAccount('producthunt', phUsername);
-  if (!account) return;
+  if (!account)
+    throw new Error(
+      `cannot link X ${twUsername}: Product Hunt account ${phUsername} was not saved`,
+    );
   updateAccountMetadata(account.id, { linked_twitter_username: twUsername });
   console.log(
     `[ph] stamped linked_twitter_username="${twUsername}" on ${account.id}`,

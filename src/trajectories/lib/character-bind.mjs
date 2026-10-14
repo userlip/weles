@@ -9,7 +9,10 @@ import {
 
 export async function autoBindCharacter(username, platform) {
   const account = findAccount(platform, username);
-  if (!account) return { status: 'account_not_found' };
+  if (!account)
+    throw new Error(
+      `cannot bind character: no saved ${platform} account for ${username}`,
+    );
   const used = new Set(
     listAccounts(platform)
       .map((candidate) => candidate.metadata?.character?.id)
