@@ -1,9 +1,11 @@
-// Subscribe to Oxylabs ISP Proxies (Starter, 10 IPs, $16/mo).
+// Subscribe to Oxylabs ISP Proxies at the tier the caller states.
 //
 // Flow:
 //   1. Login to dashboard.oxylabs.io via Google SSO (existing helper).
-//   2. Navigate to ISP product page; verify Starter tier price.
-//   3. Require ISP_BUY_CONFIRM=1 before opening the paid subscribe checkout.
+//   2. Navigate to the ISP product page.
+//   3. Require ISP_BUY_CONFIRM=1 before opening the paid subscribe checkout,
+//      ISP_IP_COUNT (the tier, by its number of IPs) and ISP_LOCATIONS=random
+//      (the only spread this trajectory offers: Oxylabs places the IPs).
 //   4. After subscription, navigate to ISP overview, scrape assigned IPs
 //      into the run's keeper output as oxylabs_isp_ips.json.
 //
@@ -20,6 +22,7 @@ import { OUT_DIR, shot, stamp } from './isp_subscribe/evidence.mjs';
 import { signInToDashboard } from './isp_subscribe/sign_in.mjs';
 import { openIspProduct, startCheckout } from './isp_subscribe/product.mjs';
 import { completeCheckout } from './isp_subscribe/checkout.mjs';
+import { statedChoice, statedCount } from '../../_shared/inputs/stated.mjs';
 
 // Source the card the same way every purchase trajectory does.
 loadTopupCardEnv();
@@ -28,6 +31,12 @@ if (process.env.ISP_BUY_CONFIRM !== '1') {
   console.log('FAIL: ISP_BUY_CONFIRM=1 required before subscribing');
   process.exit(2);
 }
+const IP_COUNT = statedCount('ISP_IP_COUNT', 'the ISP tier to buy, by its number of IPs');
+statedChoice(
+  ['ISP_LOCATIONS'],
+  Object.freeze({ random: 'Oxylabs places the IPs' }),
+  'how the bought IPs are spread across locations',
+);
 const login = await getScopedGoogleLogin('oxylabsDashboard');
 if (!login) {
   console.log('FAIL: no Google SSO creds');
@@ -41,7 +50,7 @@ const s = await WSession.start({
 try {
   await signInToDashboard(s, login);
   await openIspProduct(s);
-  await startCheckout(s);
+  await startCheckout(s, IP_COUNT);
   await completeCheckout(s);
 
   // Capture assigned IPs from /overview/ISP after subscription.
@@ -58,7 +67,7 @@ try {
   console.log(
     `[trajectory] IP-shaped strings on /overview/ISP: ${ipMatches.length} (${ipMatches.slice(0, 3).join(', ')}…)`,
   );
-  if (ipMatches.length >= 10) {
+  if (ipMatches.length >= IP_COUNT) {
     writeFileSync(
       runOutputPath('keeper', 'oxylabs_isp_ips.json'),
       JSON.stringify(

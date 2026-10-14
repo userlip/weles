@@ -1,5 +1,5 @@
-// The ISP product page and the start of its checkout: Buy now, the preselected 10 IPs,
-// and Buy random locations.
+// The ISP product page and the start of its checkout: Buy now, the stated IP
+// tier, and Buy random locations.
 import { writeFileSync } from 'node:fs';
 import { humanIdlePause } from '../../../../../dist/human/mouse.js';
 import { OUT_DIR, shot, stamp } from './evidence.mjs';
@@ -29,16 +29,11 @@ export async function openIspProduct(s) {
   await shot(s, 'overview_isp');
   const ispText = await s.page.evaluate(() => document.body.innerText);
   writeFileSync(`${OUT_DIR}/${stamp()}_overview_isp_text.txt`, ispText);
-
-  const hasStarter = /Starter\s*\$?16|10\s*IPs?\s*\$?16|\$1\.6\s*\/IP/i.test(
-    ispText,
-  );
-  console.log(
-    `[trajectory] /overview/ISP has Starter $16 marker: ${hasStarter}`,
-  );
 }
 
-export async function startCheckout(s) {
+// `ipCount` is the tier the caller states; the page's preselection is not a
+// choice anybody made.
+export async function startCheckout(s, ipCount) {
   // CONFIRM mode: click Buy now (opens 3-step checkout: plan → locations → review).
   console.log('[trajectory] CONFIRM mode — clicking Buy now');
   const buyBtn = s.page
@@ -51,40 +46,41 @@ export async function startCheckout(s) {
     await shot(s, 'no_buy_btn');
     throw new Error('no Buy-style button visible on /overview/ISP');
   }
-  await buyBtn.click({ force: true }).catch(() => {});
+  await buyBtn.click({ force: true });
   await humanIdlePause('long');
   await shot(s, 'step1_choose_plan');
   console.log(`[trajectory] step1 url=${s.page.url()}`);
 
-  // Step 1: 10 IPs tier is preselected by default. Verify it's selected
-  // (radio button on the "10 IPs" card filled) then click Continue.
-  const tenIpsSelected = await s.page
-    .evaluate(() => {
-      const cards = Array.from(
-        document.querySelectorAll('label, [role="radio"], div'),
-      ).filter((el) => /10\s*IPs/.test(el.textContent || ''));
-      return cards.some((c) => {
-        const radio = c.querySelector(
-          'input[type="radio"], [role="radio"][aria-checked="true"]',
-        );
-        if (
-          radio &&
-          (radio.checked === true ||
-            radio.getAttribute('aria-checked') === 'true')
-        )
-          return true;
-        // Or visual selection: card has a 'selected' class or filled radio dot
-        return /aria-checked="true"|data-selected="true"/.test(c.outerHTML);
-      });
-    })
-    .catch(() => null);
-  console.log(`[trajectory] step1: 10 IPs preselected = ${tenIpsSelected}`);
+  // Step 1: the tier whose card names the stated IP count, selected and then
+  // read back as selected; a page without that tier refuses the run.
+  const tierPattern = new RegExp(`^\\s*${ipCount}\\s*IPs\\b`);
+  const tier = s.page
+    .locator('label, [role="radio"]')
+    .filter({ hasText: tierPattern, visible: true })
+    .first();
+  if (!(await tier.isVisible())) {
+    await shot(s, 'no_stated_tier');
+    throw new Error(`the ISP checkout offers no ${ipCount} IPs tier; nothing was bought`);
+  }
+  await tier.click();
+  const tierSelected = await tier.evaluate((el) => {
+    const radio = el.matches('[role="radio"]')
+      ? el
+      : el.querySelector('input[type="radio"], [role="radio"]');
+    return (
+      radio !== null &&
+      (radio.checked === true || radio.getAttribute('aria-checked') === 'true')
+    );
+  });
+  if (!tierSelected) {
+    await shot(s, 'stated_tier_not_selected');
+    throw new Error(`the ${ipCount} IPs tier did not read back as selected; nothing was bought`);
+  }
+  console.log(`[trajectory] step1: ${ipCount} IPs tier selected`);
 
-  // The Oxylabs ISP buy-now page has 10 IPs preselected and surfaces a
-  // "Buy random locations" CTA
-  // that auto-assigns location distribution + advances to Stripe checkout.
-  // We use that path — random US locations is fine since we re-bind each IP
-  // to a specific social_accounts row regardless of the IP's lat/lon.
+  // "Buy random locations" lets Oxylabs spread the IPs and advances to Stripe
+  // checkout. The caller states that spread (ISP_LOCATIONS=random, read by
+  // isp_subscribe.mjs); no other distribution is offered by this trajectory.
   const buyRandomBtn = s.page
     .locator('button:has-text("Buy random locations")')
     .filter({ visible: true })
@@ -95,7 +91,7 @@ export async function startCheckout(s) {
   }
   await shot(s, 'before_buy_random');
   console.log('[trajectory] clicking "Buy random locations"…');
-  await buyRandomBtn.click({ force: true }).catch(() => {});
+  await buyRandomBtn.click({ force: true });
   await humanIdlePause('long');
   await shot(s, 'after_buy_random');
   console.log(`[trajectory] after buy-random url=${s.page.url()}`);
