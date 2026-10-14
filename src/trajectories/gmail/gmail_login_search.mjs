@@ -16,7 +16,7 @@
 // Credentials are resolved from the dedicated Gmail Skarbiec item.
 //       GM_QUERY     required nonempty Gmail search query; no account-specific default
 //       GM_OPEN=0    list only, skip opening thread bodies
-//       GM_MAX       max threads to open for body capture (default 6)
+//       GM_MAX       how many threads to open for body capture; required unless GM_OPEN=0
 //       BROWSER      'firefox' | 'chromium' to pin the engine (default: roll)
 import { WSession } from '../../../dist/session/wsession.js';
 import { googleSso } from '../_shared/services/google_sso.mjs';
@@ -25,6 +25,7 @@ import { dismissGooglePostLogin } from '../_shared/services/google_sso/sign_in/r
 import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { readScopedLogin } from '../../_shared/scoped-secrets.mjs';
+import { statedCount } from '../_shared/inputs/stated.mjs';
 
 const QUERY = process.env.GM_QUERY;
 if (typeof QUERY !== 'string' || !QUERY.trim()) {
@@ -33,7 +34,9 @@ if (typeof QUERY !== 'string' || !QUERY.trim()) {
   );
 }
 const OPEN_BODIES = process.env.GM_OPEN !== '0';
-const MAX_OPEN = parseInt(process.env.GM_MAX || '6', 10);
+const MAX_OPEN = OPEN_BODIES
+  ? statedCount('GM_MAX', 'how many matching threads the search opens and reads')
+  : undefined;
 // The stated credential service is read as given; the scoped-secret catalog
 // refuses one it does not declare. A run that states none reads Gmail's.
 const CREDENTIAL_SERVICE =

@@ -12,7 +12,8 @@ export async function uploadIpa(opts) {
   const keyId = opts.keyId;
   const issuerId = opts.issuerId;
   const privateKey = opts.privateKey;
-  const platform = opts.platform || 'ios';
+  const platform = opts.platform;
+  if (!platform) throw new Error('uploadIpa needs the Apple platform the .ipa is for');
 
   if (!ipaPath || !existsSync(ipaPath))
     throw new Error(`IPA not found: ${ipaPath}`);

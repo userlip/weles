@@ -25,7 +25,7 @@ import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
 import { uploadIpa } from './altool_upload.mjs';
 import { readScopedSecret } from '../../../_shared/scoped-secrets.mjs';
-import { statedProxy } from '../../_shared/inputs/stated.mjs';
+import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 
 const APP_ID = process.env.APP_ID;
 if (!APP_ID || !/^\d+$/.test(APP_ID)) {
@@ -55,7 +55,10 @@ if (IPA_PATH) {
     keyId: readScopedSecret('appleAppStoreConnectApi', 'key_id'),
     issuerId: readScopedSecret('appleAppStoreConnectApi', 'issuer_id'),
     privateKey: readScopedSecret('appleAppStoreConnectApi', 'private_key'),
-    platform: process.env.APPLE_PLATFORM || 'ios',
+    platform: statedText(
+      ['APPLE_PLATFORM'],
+      'the Apple platform the .ipa is uploaded for (ios, appletvos, macos or visionos, as altool names it)',
+    ),
   });
 }
 
