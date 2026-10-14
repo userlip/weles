@@ -391,20 +391,22 @@ export function writeWelesAcquiredSecret(
       },
     );
     if (result.error || result.status !== 0) {
-      const stderr = Buffer.isBuffer(result.stderr)
-        ? result.stderr.toString('utf8')
-        : String(result.stderr ?? '');
-      const httpStatus = stderr.match(/HTTP \d{3}/)?.[0];
-      const transport = stderr.match(
-        /(?:ECONNREFUSED|ECONNRESET|UND_ERR_[A-Z_]+)[^\r\n]*/,
-      )?.[0];
-      const safeReason = stderr
-        .match(/Error: ([^\r\n]+)/)?.[1]
-        ?.replace(/[A-Za-z0-9_-]{32,}/g, '[redacted]');
-      const detail =
-        httpStatus ?? transport ?? safeReason ?? 'without diagnostic detail';
+      // The helper's own words are the cause: they are passed on whole, with
+      // any long token-shaped run redacted, rather than one fragment picked
+      // by pattern (or 'no detail' when no pattern matched).
+      const exited = result.error
+        ? `could not run: ${result.error.message}`
+        : `exited with status ${result.status}`;
+      let said = ' and wrote nothing to stderr';
+      if (Buffer.isBuffer(result.stderr)) {
+        const stderr = result.stderr
+          .toString('utf8')
+          .replace(/[A-Za-z0-9_-]{32,}/g, '[redacted]')
+          .trim();
+        if (stderr) said = `: ${stderr}`;
+      }
       throw new Error(
-        `scoped Skarbiec write failed for ${secretName}/${field} via ${skarbiecEndpoint(tenantId)}: ${detail}`,
+        `scoped Skarbiec write failed for ${secretName}/${field} via ${skarbiecEndpoint(tenantId)}: the write helper ${exited}${said}`,
       );
     }
   } finally {
