@@ -24,11 +24,8 @@ export const CAMPAIGN_TYPE = statedText(
 export const APP_ID = process.env.APP_ID;
 export const PACKAGE_NAME = process.env.PACKAGE_NAME;
 export const APP_NAME = process.env.APP_NAME;
-export const APP_PLATFORM = process.env.APP_PLATFORM || process.env.PLATFORM;
-export const IS_APP_INSTALL =
-  /app/i.test(CAMPAIGN_OBJECTIVE) ||
-  /app/i.test(CAMPAIGN_TYPE) ||
-  !!(APP_ID || PACKAGE_NAME || APP_NAME);
+export const APP_PLATFORM = process.env.APP_PLATFORM;
+export const IS_APP_INSTALL = /app/i.test(CAMPAIGN_TYPE);
 export const APP_CAMPAIGN_SUBTYPE = IS_APP_INSTALL
   ? statedText(
       ['APP_CAMPAIGN_SUBTYPE'],

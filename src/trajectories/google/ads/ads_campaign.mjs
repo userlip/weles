@@ -101,7 +101,9 @@ const s = await WSession.start({
   proxy:
     session.proxyUrl && !process.env.PROXY_URL?.trim()
       ? session.proxyUrl
-      : statedProxy('the campaign draft, whose account session names no proxy,'),
+      : statedProxy(
+          'the campaign draft, whose account session names no proxy,',
+        ),
   persona: profilePersona,
   userDataDir: USER_DATA_DIR,
 });
@@ -134,12 +136,10 @@ try {
     s.page,
     `the campaign objective option labelled "${CAMPAIGN_OBJECTIVE}"`,
   );
-  if (!/app$/i.test(CAMPAIGN_TYPE)) {
-    await clickDescribed(
-      s.page,
-      `the campaign type option labelled "${CAMPAIGN_TYPE}"`,
-    );
-  }
+  await clickDescribed(
+    s.page,
+    `the campaign type option labelled "${CAMPAIGN_TYPE}"`,
+  );
   if (IS_APP_INSTALL) {
     await clickDescribed(
       s.page,
@@ -197,34 +197,40 @@ try {
     s.page,
     'the button that saves this step and continues to the next one',
   );
-
-  if (!filled.length) {
-    console.log(
-      `FAIL: Google Ads campaign form took none of the stated values (url=${s.page.url()})`,
+  if (
+    !(await pageShows(
+      s.page,
+      `Does the campaign setup page show the exact name "${CAMPAIGN_NAME}" in a field or summary?`,
+    ))
+  ) {
+    throw new Error(
+      `GOOGLE_ADS_CAMPAIGN_NAME_UNOBSERVED: the provider did not show "${CAMPAIGN_NAME}" after continuing`,
     );
-    process.exit(1);
   }
 
   if (!SUBMIT) {
     console.log(
-      `PASS: staged Google Ads campaign draft "${CAMPAIGN_NAME}" (SUBMIT=0, filled=${filledCount})`,
+      `PASS: reached Google Ads campaign form for "${CAMPAIGN_NAME}" without publishing (filled=${filled.length})`,
     );
-    process.exit(0);
+  } else {
+    await clickDescribed(
+      s.page,
+      'the enabled button that publishes the campaign',
+    );
+    if (
+      !(await pageShows(
+        s.page,
+        'Does the page say the campaign was published, created, is eligible or under review?',
+      ))
+    ) {
+      throw new Error(
+        `GOOGLE_ADS_CAMPAIGN_OUTCOME_UNOBSERVED: publish was clicked for "${CAMPAIGN_NAME}", but the provider did not show a created or review status`,
+      );
+    }
+    console.log(
+      `PASS: Google Ads campaign publish confirmed for "${CAMPAIGN_NAME}"`,
+    );
   }
-
-  await clickDescribed(
-    s.page,
-    'the enabled button that publishes the campaign',
-  );
-  const status = (await pageShows(
-    s.page,
-    'Does the page say the campaign was published, created, is eligible or under review?',
-  ))
-    ? 'confirmed'
-    : 'clicked';
-  console.log(
-    `PASS: Google Ads campaign publish ${status} for "${CAMPAIGN_NAME}"`,
-  );
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;
