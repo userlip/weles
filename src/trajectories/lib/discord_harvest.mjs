@@ -23,9 +23,7 @@ import {
   findAccount,
   updateAccountMetadata,
 } from '../_shared/skarbiec/accounts.mjs';
-
-const DEFAULT_INVITES =
-  'python,discord-developers,reactjs,nextjs,rust-lang,godotengine,unity-developer-community';
+import { statedCount, statedText } from '../_shared/inputs/stated.mjs';
 
 async function discordApi(token, apiPath, opts = {}) {
   const headers = {
@@ -384,12 +382,17 @@ export async function harvestAfterRegister(s, opts = {}) {
       await persistTokenAndPhone(username, pv.newToken, pv.phone);
       console.log('[harvest] phone-verify ok, retrying server probes');
     }
-    const OUT = path.resolve(
-      process.cwd(),
-      '.work/avatar-survey/data/discord.json',
+    // The harvest is written under the run's own output, not the checkout.
+    const OUT = runOutputPath('discord_harvest', 'discord.json');
+    fs.mkdirSync(path.dirname(OUT), { recursive: true });
+    const LIMIT = statedCount(
+      'DISCORD_HARVEST_LIMIT',
+      'how many profiles the harvest collects',
     );
-    const LIMIT = parseInt(process.env.DISCORD_HARVEST_LIMIT || '100', 10);
-    const INVITES = (process.env.DISCORD_INVITES || DEFAULT_INVITES)
+    const INVITES = statedText(
+      ['DISCORD_INVITES'],
+      'the comma-separated Discord invite codes whose servers are harvested',
+    )
       .split(',')
       .map((x) => x.trim());
     let existing = [];

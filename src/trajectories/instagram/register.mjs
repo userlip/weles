@@ -7,10 +7,15 @@ import { pickInstagramProxy } from '../lib/instagram-proxy.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { autocompleteField, field } from '../_shared/page/offers.mjs';
 import { pressDescribed } from '../_shared/page/judged/seen.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
 
 const URL = 'https://www.instagram.com/accounts/emailsignup/';
-// The SMS countries to order numbers from, in the order tried.
-const COUNTRY_ORDER = (process.env.INSTAGRAM_SMS_COUNTRIES || 'UK,NL,US')
+// The SMS countries to buy a verification number in, in the order tried. A
+// number costs money, so the countries are the caller's to state.
+const COUNTRY_ORDER = statedText(
+  ['INSTAGRAM_SMS_COUNTRIES'],
+  'the comma-separated SMS countries to buy a verification number in, in the order tried',
+)
   .split(',')
   .map((c) => c.trim())
   .filter(Boolean);

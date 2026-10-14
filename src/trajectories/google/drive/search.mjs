@@ -3,7 +3,7 @@
 // Run:
 //   node weles/src/trajectories/google/drive/search.mjs --q "grantland"
 //
-// Env mirror: GD_QUERY. Other env: GD_LIMIT, BROWSER.
+// Env mirror: GD_QUERY. GD_LIMIT (required): how many results to return.
 //
 // Output: JSON array on stdout with each result's title, url, fileId.
 
@@ -11,6 +11,7 @@ import { WSession } from '../../../../dist/session/wsession.js';
 import { googleSso } from '../../_shared/services/google_sso.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { readScopedLogin } from '../../../_shared/scoped-secrets.mjs';
+import { statedCount } from '../../_shared/inputs/stated.mjs';
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -18,7 +19,7 @@ function arg(name) {
 }
 
 const QUERY = arg('--q') || process.env.GD_QUERY;
-const LIMIT = parseInt(process.env.GD_LIMIT || '50', 10);
+const LIMIT = statedCount('GD_LIMIT', 'how many Drive results the search returns');
 const LABEL = 'drive_search';
 
 if (!QUERY) {
