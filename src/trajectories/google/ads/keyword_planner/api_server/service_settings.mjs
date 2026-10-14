@@ -11,8 +11,10 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 export const REPO = resolve(here, '../../../../..');
 export const RUNNER = join(here, '../ads_keyword_planner_keeper.mjs');
+// The keeper session a request runs in when it names none; unset, a request
+// must name its own (request_intake.mjs requestSession refuses it).
 export let SESSION =
-  process.env.SESSION || process.env.GOOGLE_ADS_KEEPER_SESSION || 'google_ads';
+  process.env.SESSION || process.env.GOOGLE_ADS_KEEPER_SESSION;
 export let API_TOKEN =
   process.env.WELES_KEYWORD_PLANNER_API_TOKEN ||
   process.env.WELES_CONSOLE_API_TOKEN ||

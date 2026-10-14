@@ -111,7 +111,7 @@ export function validateReportRequest(body) {
         'Find paid search opportunities with real Google Ads Keyword Planner metrics.',
     ).trim(),
     seedKeywords,
-    session: String(body.session || SESSION),
+    session: requestSession(body),
   };
 }
 
@@ -125,6 +125,16 @@ export function validateRequest(body) {
   return {
     customerId,
     keywords,
-    session: String(body.session || SESSION),
+    session: requestSession(body),
   };
+}
+
+// The keeper session whose signed-in browser runs the planner: the request's
+// own, or the one this process was configured with; neither is refused.
+function requestSession(body) {
+  if (body.session) return String(body.session);
+  if (SESSION) return SESSION;
+  throw new Error(
+    'session required: name the keeper session (weles keeper) that holds the Google Ads login, in the request or as SESSION / GOOGLE_ADS_KEEPER_SESSION',
+  );
 }
