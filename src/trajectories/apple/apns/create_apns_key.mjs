@@ -8,10 +8,14 @@ import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { homedir } from 'node:os';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
 const ADD_URL = 'https://developer.apple.com/account/resources/authkeys/add';
 const OUT_DIR = `${homedir()}/.swiatowid`;
-const KEY_NAME = process.env.APNS_KEY_NAME || 'Oko APNs';
+const KEY_NAME = statedText(
+  ['APNS_KEY_NAME'],
+  'the name the new APNs key is given in the Apple Developer portal',
+);
 
 async function clickText(page, rx) {
   for (const loc of [

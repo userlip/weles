@@ -8,6 +8,7 @@ import { WSession } from '../../../../dist/session/wsession.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
 import { clickOffered } from '../../_shared/page/judged/seen.mjs';
 import { homedir } from 'node:os';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
 async function requireAuthenticatedSession(s) {
   await pageSettled(s.page);
@@ -48,7 +49,10 @@ async function requireAuthenticatedSession(s) {
 }
 
 const API_URL = 'https://appstoreconnect.apple.com/access/integrations/api';
-const KEY_NAME = process.env.KEY_NAME || 'swiatowid-ios-ci';
+const KEY_NAME = statedText(
+  ['KEY_NAME'],
+  'the name the new App Store Connect API key is given',
+);
 const OUT_DIR = `${homedir()}/.swiatowid`;
 
 async function requireApiPage(s) {
