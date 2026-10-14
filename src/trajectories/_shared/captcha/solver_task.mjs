@@ -9,11 +9,21 @@ export async function solverTaskResult(svc, apiKey, taskId) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clientKey: apiKey, taskId }),
   });
+  // The answer is read as text so a refusal or a body that is not JSON reaches
+  // the error whole.
+  const body = await response.text();
   if (!response.ok)
     throw new Error(
-      `captcha_${svc.name}_http_${response.status}: getTaskResult for task ${taskId} failed`,
+      `captcha_${svc.name}_http_${response.status}: getTaskResult for task ${taskId} failed: ${body}`,
     );
-  const res = await response.json();
+  let res;
+  try {
+    res = JSON.parse(body);
+  } catch (error) {
+    throw new Error(
+      `captcha_${svc.name}_answer_invalid: getTaskResult for task ${taskId} answered a body that is not JSON (${error.message}): ${body}`,
+    );
+  }
   if (res.errorId) {
     const code =
       res.errorCode === undefined

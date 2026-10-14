@@ -51,14 +51,17 @@ async function post(url, payload, form = false) {
       `${url}: ${error.message}`,
     );
   }
+  // The body is read as text first so an answer that is not JSON reaches the
+  // refusal whole, with the parse error, instead of 'did not return JSON'.
+  const body = await response.text();
   let data;
   try {
-    data = await response.json();
-  } catch {
+    data = JSON.parse(body);
+  } catch (error) {
     throw new AuthenticationFailure(
       'oauth_response_invalid',
       'oauth_exchange',
-      `${url} did not return JSON`,
+      `${url} answered HTTP ${response.status} with a body that is not JSON (${error.message}): ${body}`,
       response.status,
     );
   }
@@ -67,13 +70,15 @@ async function post(url, payload, form = false) {
 
 function accepted(answer, stage) {
   if (answer.ok) return answer.data;
+  // A refusal names its cause in the provider's own field; one that names it
+  // in none of them is passed on whole.
   const detail =
     answer.data.error_description ||
     answer.data.message ||
     answer.data.error?.message ||
     (typeof answer.data.error === 'string'
       ? answer.data.error
-      : 'provider refused the OAuth request');
+      : `HTTP ${answer.status} naming no cause in error_description, message or error: ${JSON.stringify(answer.data)}`);
   throw new AuthenticationFailure(
     'oauth_provider_refused',
     stage,
