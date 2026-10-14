@@ -12,25 +12,38 @@ import {
   humanScrollPage,
 } from '../../../../../dist/human/mouse.js';
 import { runRecordingsDir } from '../../../../../dist/session/run-recordings.js';
+import { runOutputPath } from '#run-output';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const requestedProxy =
-  process.env.LINKEDIN_REGISTER_PROXY ??
-  process.env.LINKEDIN_PROXY ??
-  process.env.PROXY_URL ??
-  'isp decodo us';
+// The exit, browser and operating system the warm profile presents are the
+// caller's; the register run that reuses the profile must present the same.
+const requestedProxy = statedText(
+  ['LINKEDIN_REGISTER_PROXY', 'LINKEDIN_PROXY', 'PROXY_URL'],
+  'the proxy (URL or provider filter) the warm profile browses through',
+);
 const HEADLESS =
   process.env.HEADLESS === '1' ||
   process.env.WELES_HEADLESS === '1' ||
   process.env.LINKEDIN_WARM_HEADLESS === '1';
-const WARM_BROWSER = process.env.LINKEDIN_WARM_BROWSER || 'chromium';
-const WARM_OS = process.env.LINKEDIN_WARM_OS || 'windows';
+const WARM_BROWSER = statedText(
+  ['LINKEDIN_WARM_BROWSER'],
+  'the browser engine the warm profile presents (chromium or firefox)',
+);
+const WARM_OS = statedText(
+  ['LINKEDIN_WARM_OS'],
+  'the operating system the warm profile presents (windows, macos or linux)',
+);
+// The profile lives in Weles' own state beside the other reused profiles,
+// never inside the checkout.
 const profileDir =
   process.env.LINKEDIN_REGISTER_WARM_PROFILE_DIR ||
   join(
-    process.cwd(),
-    '.work',
+    homedir(),
+    '.weles',
+    'browser_profiles',
     'linkedin_register_warm',
     new Date().toISOString().replace(/[:.]/g, '-'),
   );
@@ -103,9 +116,8 @@ function visibleSummaryScript(stage) {
 const outDir = runRecordingsDir('linkedin_register_warm');
 mkdirSync(outDir, { recursive: true });
 mkdirSync(profileDir, { recursive: true });
-mkdirSync(join(process.cwd(), '.work', 'linkedin_register_warm'), {
-  recursive: true,
-});
+const latestFile = runOutputPath('linkedin_register_warm', 'latest.json');
+mkdirSync(join(latestFile, '..'), { recursive: true });
 
 console.log(`[warm-signup] proxy request: ${safeProxy(requestedProxy)}`);
 console.log(`[warm-signup] profile dir: ${profileDir}`);
@@ -240,10 +252,7 @@ try {
     join(outDir, 'warm_signup_profile.json'),
     JSON.stringify(summary, null, 2),
   );
-  writeFileSync(
-    join(process.cwd(), '.work', 'linkedin_register_warm', 'latest.json'),
-    JSON.stringify(summary, null, 2),
-  );
+  writeFileSync(latestFile, JSON.stringify(summary, null, 2));
   console.log(`PASS: warm signup profile ready -> ${profileDir}`);
   console.log(
     `[warm-signup] summary -> ${join(outDir, 'warm_signup_profile.json')}`,
