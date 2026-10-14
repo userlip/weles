@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -60,7 +61,7 @@ console.log(
 const s = await WSession.start({
   label: 'meta_ads_login',
   browser: 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the Meta Ads login'),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
 });

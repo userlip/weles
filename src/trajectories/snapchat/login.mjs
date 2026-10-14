@@ -4,6 +4,7 @@ import { humanType } from '../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { urlMatching } from '../_shared/page/settled.mjs';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const URL = 'https://accounts.snapchat.com/accounts/login';
 
@@ -18,7 +19,7 @@ console.log(`[trajectory] Using account: ${acct.username}`);
 
 const s = await WSession.start({
   label: 'snapchat_login',
-  proxy: process.env.PROXY_URL || undefined,
+  proxy: statedProxy('the Snapchat login'),
 });
 try {
   await s.goto(URL);

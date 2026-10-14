@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -39,7 +40,7 @@ function normalizePhone(raw) {
 const s = await WSession.start({
   label: 'meta_accounts_center_phone_candidate_probe',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the Accounts Center phone-candidate probe'),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
   headless: process.env.META_VERIFY_HEADLESS === '1',

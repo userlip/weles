@@ -18,6 +18,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const SOURCE_USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -119,7 +120,7 @@ console.log(
 const s = await WSession.start({
   label: 'meta_ads_verify_access',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the Meta Ads access check'),
   persona: stableProfilePersona(),
   userDataDir: preparedProfile.dir,
   headless: process.env.META_VERIFY_HEADLESS !== '0',

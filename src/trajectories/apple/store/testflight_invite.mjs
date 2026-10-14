@@ -6,6 +6,7 @@ import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
 import { getSocialAccount } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const APP_ID = process.env.APP_ID;
 const TESTER_EMAIL = process.env.TESTER_EMAIL;
@@ -23,7 +24,7 @@ if (!acct) {
 
 const s = await WSession.start({
   label: 'apple_testflight_invite',
-  proxy: process.env.PROXY_URL || undefined,
+  proxy: statedProxy('the TestFlight invite'),
 });
 try {
   await s.goto(

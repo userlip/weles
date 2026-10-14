@@ -17,6 +17,7 @@ import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../dist/human/mouse.js';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const URL = 'https://www.facebook.com/r.php';
 
@@ -209,7 +210,7 @@ async function signup(s) {
 
 const s = await WSession.start({
   label: 'facebook_register',
-  proxy: process.env.PROXY_URL || 'none',
+  proxy: statedProxy('the Facebook signup'),
 });
 try {
   const username = await signup(s);

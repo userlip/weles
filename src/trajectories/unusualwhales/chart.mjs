@@ -1,5 +1,6 @@
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { loginUnusualWhales } from './session/login.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 // Fetch a specific sub-chart from the UW flow-overview page by clicking its
 // tab and screenshotting just that chart element.
 // Usage: node src/trajectories/unusualwhales/chart.mjs \
@@ -31,7 +32,7 @@ if (!email || !password) {
 
 const s = await WSession.start({
   label: `uw_chart_${ticker}`,
-  proxy: process.env.PROXY_URL || 'residential',
+  proxy: statedProxy('the Unusual Whales chart capture'),
 });
 
 try {

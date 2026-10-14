@@ -6,6 +6,7 @@ import {
   humanIdlePause,
 } from '../../../dist/human/mouse.js';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const URL =
   'https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.youtube.com%2F';
@@ -21,7 +22,7 @@ console.log(`[trajectory] Using account: ${acct.username}`);
 
 const s = await WSession.start({
   label: 'youtube_login',
-  proxy: process.env.PROXY_URL || undefined,
+  proxy: statedProxy('the YouTube login'),
 });
 try {
   // Cookie-first removed — login always means form login. See auth-probe.mjs.

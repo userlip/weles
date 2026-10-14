@@ -17,7 +17,7 @@ import {
 } from '../../../../dist/diagnostics/fingerprint_analyzer.js';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { writeSubmitDiagnostics } from './diagnostics.mjs';
-import { statedNumber } from '../../_shared/inputs/stated.mjs';
+import { statedNumber, statedProxy } from '../../_shared/inputs/stated.mjs';
 import { statedOnboardingProfile } from '../../_shared/linkedin/onboarding/work_school.mjs';
 
 export const SIGNUP_URL = 'https://www.linkedin.com/signup';
@@ -105,11 +105,11 @@ function parseLinkedinUrlList(value = '') {
 // Persona + identity + browser + OS + input rotation all centralized in
 // WSession.start (platform: 'linkedin'). No browser/OS/input pin — rolls
 // naturally like the keeper does.
-export const requestedProxy =
-  process.env.LINKEDIN_REGISTER_PROXY ??
-  process.env.LINKEDIN_PROXY ??
-  process.env.PROXY_URL ??
-  'isp decodo us';
+export const requestedProxy = statedProxy(
+  'the LinkedIn signup',
+  'LINKEDIN_REGISTER_PROXY',
+  'LINKEDIN_PROXY',
+);
 export const requestedEntryUrl =
   process.env.LINKEDIN_REGISTER_ENTRY_URL ?? DEFAULT_ENTRY_URL;
 export const STOP_AFTER_SIGNUP_READY =

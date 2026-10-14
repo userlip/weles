@@ -21,7 +21,8 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 //   META_ADS_CAPABILITIES print supported params and exit
 //   ALLOW_UNVERIFIED_META_PARAMS set "1" to warn instead of failing for unsupported params
 //   SUBMIT               must be "1" to publish. Default stages only.
-//   PROXY_URL            optional proxy override
+//   PROXY_URL            proxy URL or provider filter ('direct' for none);
+//                        required unless the account session names its own proxy
 //
 // Requires a logged-in facebook account cookie jar. Run meta/facebook_login.mjs
 // first when the session is stale.
@@ -63,6 +64,7 @@ import {
   fillCampaignFields,
   verifyConfiguredDraft,
 } from './ads_campaign/draft_fields.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 if (PRINT_CAPABILITIES) printCapabilitiesAndExit();
 guardUnsupportedParams();
@@ -75,7 +77,10 @@ console.log(
 const s = await WSession.start({
   label: 'meta_ads_campaign',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || session.proxyUrl || 'direct',
+  proxy:
+    session.proxyUrl && !process.env.PROXY_URL?.trim()
+      ? session.proxyUrl
+      : statedProxy('the campaign draft, whose account session names no proxy,'),
   persona: profilePersona,
   userDataDir: USER_DATA_DIR,
   pageDiagnostics: process.env.WELES_PAGE_DIAGNOSTICS === '1',

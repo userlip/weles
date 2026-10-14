@@ -60,6 +60,20 @@ export function statedText(names, what, code) {
 }
 
 /**
+ * The proxy a browser session goes through, stated in PROXY_URL (or first in
+ * one of the trajectory's own `preferred` names): a proxy URL, a provider
+ * filter, or 'direct' for none. Unset is refused, never read as a direct
+ * connection or a built-in provider, so a run cannot reach a site from an
+ * address nobody chose. `who` names what browses.
+ */
+export function statedProxy(who, ...preferred) {
+  return statedText(
+    [...preferred, 'PROXY_URL'],
+    `the proxy (URL or provider filter, or 'direct' for none) ${who} browses through`,
+  );
+}
+
+/**
  * One of the keys of `table`, stated in the first of `names` that is set
  * (an action, a resource, a destination). Unset or not a key: refused by name
  * with the keys that are, never a default.

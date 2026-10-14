@@ -13,6 +13,7 @@ import {
   inboxConfigured,
   messagesTo,
 } from '../../_shared/mail/skrzynka-inbox.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const URL = 'https://discord.com/login';
 
@@ -29,13 +30,15 @@ if (!acct.metadata?.password)
 process.env.SVC_EMAIL = acct.metadata.email ?? acct.username;
 process.env.SVC_PASSWORD = acct.metadata.password;
 const accountSession = await resolveAccountSession(acct);
-const proxyUrl =
-  process.env.PROXY_URL || accountSession.proxyUrl || 'residential';
-if (process.env.PROXY_URL) {
-  console.log(`[trajectory] PROXY_URL override: "${proxyUrl}"`);
-} else {
-  console.log(`[trajectory] Using persisted account proxy pin`);
-}
+const pinned = accountSession.proxyUrl && !process.env.PROXY_URL?.trim();
+const proxyUrl = pinned
+  ? accountSession.proxyUrl
+  : statedProxy('the Discord login, whose account has no proxy pin,');
+console.log(
+  pinned
+    ? `[trajectory] Using persisted account proxy pin`
+    : `[trajectory] PROXY_URL stated: "${proxyUrl}"`,
+);
 console.log(
   `[trajectory] Using account: ${acct.username} (${process.env.SVC_EMAIL})`,
 );

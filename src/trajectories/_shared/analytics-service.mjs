@@ -9,6 +9,7 @@ import { safeGoto } from './analytics-service/page-interaction.mjs';
 import { ensureLoggedIn } from './analytics-service/session-login.mjs';
 import { humanScrollPage } from '../../../dist/human/mouse.js';
 import { pageSettled } from './page/settled.mjs';
+import { statedProxy } from './inputs/stated.mjs';
 import {
   resolvedUrl,
   openExpectedDashboardSection,
@@ -34,7 +35,7 @@ async function run() {
   const s = await WSession.start({
     label: name,
     browser: 'chromium',
-    proxy: process.env.PROXY_URL || 'direct',
+    proxy: statedProxy(`the ${name} analytics action`),
     os: 'macos',
   });
   const store = new SessionStore();

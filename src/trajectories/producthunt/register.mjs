@@ -14,13 +14,14 @@ import {
 } from './_session.mjs';
 import { assertAuthed, AuthProbeError } from '../_shared/auth/auth-probe.mjs';
 import { findAccount } from '../_shared/skarbiec/accounts.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 // ProductHunt does not offer email/password signup — only OAuth via Twitter,
 // Google, Facebook, AngelList. This trajectory uses an existing Twitter account
 // from the Twitter account pool in Skarbiec (inject cookies → OAuth through → onboard).
 
 const URL = 'https://www.producthunt.com/';
-const proxy = process.env.PROXY_URL || 'none';
+const proxy = statedProxy('the Product Hunt signup');
 import { pageSettled } from '../_shared/page/settled.mjs';
 
 // findUsableTwitterAccount + stampLinkedTwitter live in _session.mjs.

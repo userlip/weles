@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
-import { statedText } from '../../_shared/inputs/stated.mjs';
+import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
 import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
 
@@ -196,7 +196,7 @@ console.log(JSON.stringify(start, null, INDENT));
 const s = await WSession.start({
   label: 'meta_business_approval_autopilot',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the Business approval autopilot'),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
   headless: process.env.META_BUSINESS_HEADLESS !== '0',

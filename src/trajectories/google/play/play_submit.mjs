@@ -30,7 +30,7 @@ import { getSocialAccount } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
-import { statedText } from '../../_shared/inputs/stated.mjs';
+import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 
 const BUNDLE_PATH = process.env.BUNDLE_PATH;
 const PACKAGE_NAME = process.env.PACKAGE_NAME;
@@ -107,7 +107,7 @@ async function fillAny(s, selectors, value, label) {
 async function runRelease() {
   const s = await WSession.start({
     label: 'google_play_submit',
-    proxy: process.env.PROXY_URL || undefined,
+    proxy: statedProxy('the Play Console release'),
   });
   try {
     // 1) Reach the track's release page.

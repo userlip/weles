@@ -5,6 +5,7 @@ import {
   humanIdlePause,
 } from '../../../dist/human/mouse.js';
 import { urlMatching } from '../_shared/page/settled.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const URL = 'https://accounts.snapchat.com/accounts/signup';
 
@@ -27,7 +28,7 @@ async function fillNext(s, locator, value) {
 {
   const s = await WSession.start({
     label: 'snapchat_register',
-    proxy: process.env.PROXY_URL || 'none',
+    proxy: statedProxy('the Snapchat signup'),
   });
   try {
     const id = await s.generateIdentity('snapchat');

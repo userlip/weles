@@ -23,6 +23,7 @@ import {
   SUBMIT_FORM,
   selectPhoneAssociationAccount,
 } from './accounts_center_add_phone/steps.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const PASSKEY_OFFERED =
   'Does the page offer to create a passkey, with a way to decline it for now?';
@@ -32,7 +33,7 @@ const DECLINE_PASSKEY =
 const s = await WSession.start({
   label: 'meta_accounts_center_add_phone',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the Accounts Center phone step'),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
   headless: process.env.META_VERIFY_HEADLESS === '1',

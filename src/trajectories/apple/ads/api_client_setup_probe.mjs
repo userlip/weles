@@ -26,6 +26,7 @@ import {
 } from './api_client_setup_probe/page.mjs';
 import { inspectExistingAppleAdsApi } from './api_client_setup_probe/artifacts.mjs';
 import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 /** Whether the page is the Apple Ads API settings page. */
 function onApiSettings(page) {
@@ -45,7 +46,9 @@ async function main() {
   const s = await WSession.start({
     label: 'apple_ads_api_setup',
     browser: 'chromium',
-    proxy: proxyUrl ?? (process.env.PROXY_URL || 'direct'),
+    proxy:
+      proxyUrl ??
+      statedProxy('the Apple Ads API setup, whose account names no proxy,'),
     persona: persona || stableProfilePersona(),
     userDataDir: USER_DATA_DIR,
   });

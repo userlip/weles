@@ -7,7 +7,7 @@ import { autoBindCharacter } from '../lib/character-bind.mjs';
 import { harvestAfterRegister } from '../lib/discord_harvest.mjs';
 import { accountItemFor } from '../_shared/skarbiec/accounts.mjs';
 import { messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
-import { statedText } from '../_shared/inputs/stated.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 // burned.js is CommonJS; default-import then destructure (named ESM import
 // of a CJS export is fragile across rebuilds). This lineage exposes
 // markBurned(host,signal,platform) — no multi-level markBurnedIp.
@@ -24,10 +24,7 @@ const URL = 'https://discord.com/register';
 // Discord country policy.
 const s = await WSession.start({
   label: 'discord_register',
-  proxy: statedText(
-    ['PROXY_URL'],
-    'the proxy (URL or provider filter) the signup browses through',
-  ),
+  proxy: statedProxy('the Discord signup'),
   targetHost: 'discord.com',
 });
 const exitIp =

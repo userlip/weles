@@ -13,6 +13,7 @@ import {
   loadFreshCookieJarOrFail,
   CookieJarStaleError,
 } from '../_shared/auth/cookie-freshness.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 // The video and the words published under the account's name are the
 // caller's; nothing is assumed, because a built-in comment on a built-in
@@ -37,7 +38,7 @@ console.log(`[trajectory] Using account: ${acct.username} video=${VIDEO}`);
 
 const s = await WSession.start({
   label: 'youtube_comment',
-  proxy: process.env.PROXY_URL || undefined,
+  proxy: statedProxy('the YouTube comment'),
 });
 try {
   // Cookie injection — youtube_login persists Google + youtube cookies; this

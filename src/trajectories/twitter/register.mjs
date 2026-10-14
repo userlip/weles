@@ -9,10 +9,11 @@ import {
   field,
   frameFrom,
 } from '../_shared/page/offers.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const URL = 'https://x.com/i/flow/signup?lang=en';
 const HOME = 'https://x.com/home';
-const proxy = process.env.PROXY_URL || 'none';
+const proxy = statedProxy('the X signup');
 
 // Twitter's flow marks its own controls with test ids: the signup form's Next,
 // the submit, and on every onboarding step a Skip control and a Next control.

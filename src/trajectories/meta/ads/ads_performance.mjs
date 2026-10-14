@@ -19,7 +19,7 @@ import { WSession } from '../../../../dist/session/wsession.js';
 import { generatePersona } from '../../../../dist/browser/persona.js';
 import { graphRequest } from './api/marketing_api.mjs';
 import { integrationsConfigured } from '../../../_shared/integrations.mjs';
-import { statedText } from '../../_shared/inputs/stated.mjs';
+import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 
 const CAMPAIGN_ID = process.env.CAMPAIGN_ID;
 const AD_ACCOUNT_ID = (
@@ -117,7 +117,7 @@ async function browserPerformance() {
   const s = await WSession.start({
     label: 'meta_ads_performance',
     browser: process.env.BROWSER || 'chromium',
-    proxy: process.env.PROXY_URL || 'direct',
+    proxy: statedProxy('the Meta Ads performance read'),
     persona: stableProfilePersona(),
     userDataDir: USER_DATA_DIR,
     pageDiagnostics: process.env.WELES_PAGE_DIAGNOSTICS === '1',

@@ -8,6 +8,7 @@ import {
 } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const LABEL = 'yahoo_register';
 const SIGNUP_URL =
@@ -327,7 +328,7 @@ async function successState(s) {
 {
   const s = await WSession.start({
     label: LABEL,
-    proxy: process.env.PROXY_URL || 'none',
+    proxy: statedProxy('the Yahoo signup'),
     browser: 'chromium',
     platform: 'yahoo',
     headless: process.env.YAHOO_HEADLESS === '1',

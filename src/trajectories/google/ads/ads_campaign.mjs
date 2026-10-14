@@ -35,7 +35,7 @@ import {
   closeAllowedByEnv,
 } from './_profile_guard.mjs';
 import { closeGoogleAdsSession } from './_close_session.mjs';
-import { statedText } from '../../_shared/inputs/stated.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 import {
   ADS_URL,
   APP_CAMPAIGN_SUBTYPE,
@@ -101,10 +101,7 @@ const s = await WSession.start({
   proxy:
     session.proxyUrl && !process.env.PROXY_URL?.trim()
       ? session.proxyUrl
-      : statedText(
-          ['PROXY_URL'],
-          'the proxy (URL or provider filter) the campaign is created through; the account session names none',
-        ),
+      : statedProxy('the campaign draft, whose account session names no proxy,'),
   persona: profilePersona,
   userDataDir: USER_DATA_DIR,
 });

@@ -27,11 +27,12 @@ import {
   fillCodeAndContinue,
   fillPhoneAndSend,
 } from './developer_account_verification_accounts_center/phone_steps.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const s = await WSession.start({
   label: 'meta_developer_account_verification_accounts_center',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the developer verification through Accounts Center'),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
   headless: process.env.META_VERIFY_HEADLESS === '1',

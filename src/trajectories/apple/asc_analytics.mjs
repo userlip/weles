@@ -5,6 +5,7 @@ import { pageSettled } from '../_shared/page/settled.mjs';
 
 import { getSocialAccount } from '../../../dist/utils/credentials.js';
 import { WSession } from '../../../dist/session/wsession.js';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const acct = await getSocialAccount('apple');
 if (!acct) {
@@ -14,7 +15,7 @@ if (!acct) {
 
 const s = await WSession.start({
   label: 'apple_asc_analytics',
-  proxy: process.env.PROXY_URL || undefined,
+  proxy: statedProxy('the App Store Connect analytics read'),
 });
 try {
   await s.goto('https://appstoreconnect.apple.com/apps');

@@ -1,5 +1,5 @@
 import { pageSettled } from '../../_shared/page/settled.mjs';
-import { statedText } from '../../_shared/inputs/stated.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 // retry-allowed: each paper queries Google Scholar through a residential
 // proxy; the previous run died on the very first nav with net::ERR_ABORTED
 // (proxy handshake race) and cascaded for all 10 papers because the
@@ -29,10 +29,7 @@ if (args.length === 0) {
   process.exit(2);
 }
 
-const PROXY_URL = statedText(
-  ['PROXY_URL'],
-  'the proxy (URL or provider filter) Scholar is queried through',
-);
+const PROXY_URL = statedProxy('each Google Scholar query');
 const LABEL = 'scholar_citations';
 
 const creds = await getCaptchaCredentials();

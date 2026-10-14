@@ -1,5 +1,6 @@
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { loginUnusualWhales } from './session/login.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 // Two modes:
 //  (default) extract every internal URL from the authenticated UW sidebar/page.
 //  --mode inventory: walk every known per-ticker page and capture interactive
@@ -33,7 +34,7 @@ if (!email || !password) {
 
 const s = await WSession.start({
   label: `uw_probe_${ticker}`,
-  proxy: process.env.PROXY_URL || 'oxylabs',
+  proxy: statedProxy('the Unusual Whales URL probe'),
 });
 
 async function collectLinks() {

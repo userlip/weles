@@ -13,7 +13,7 @@ import { WSession } from '../../../../dist/session/wsession.js';
 import { humanType } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
-import { statedText } from '../../_shared/inputs/stated.mjs';
+import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
 import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
 
@@ -164,7 +164,7 @@ console.log(JSON.stringify(start, null, INDENT));
 const s = await WSession.start({
   label: 'meta_business_request_ad_account_access',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the ad-account access request'),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
   headless: process.env.META_BUSINESS_HEADLESS !== '0',

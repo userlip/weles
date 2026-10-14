@@ -1,4 +1,5 @@
 import { pageSettled } from '../_shared/page/settled.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 // Scrape one volumeleaders.com page for a given ticker.
 // Usage: node src/trajectories/volumeleaders/scrape.mjs --ticker ORCL --page trades [--screenshot /path.png]
 // Pages: trades | clusters | cluster_bombs | levels | level_touches | chart |
@@ -76,10 +77,10 @@ if (!PAGE_URLS[pageKey]) {
 }
 
 // VL is a paid SaaS dashboard authenticated with a single session.
-// Default direct; override via PROXY_URL or params.proxy_url_override.
+// The caller states the proxy, or PROXY_URL=direct for none.
 const s = await WSession.start({
   label: `vl_scrape_${ticker}_${pageKey}`,
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the VolumeLeaders scrape'),
 });
 
 async function login() {

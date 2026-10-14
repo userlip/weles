@@ -15,6 +15,7 @@ import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const URL = 'https://appleid.apple.com/account';
 
@@ -43,7 +44,7 @@ async function fillCodeBoxes(boxes, code, refusal) {
 {
   const s = await WSession.start({
     label: 'apple_register',
-    proxy: process.env.PROXY_URL || 'none',
+    proxy: statedProxy('the Apple ID signup'),
   });
   try {
     const id = await s.generateIdentity('apple');

@@ -11,6 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageCondition } from '../../_shared/page/settled.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -66,7 +67,7 @@ console.log(
 const s = await WSession.start({
   label: 'meta_developer_account_verification_wait',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the developer verification wait'),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
   headless: false,

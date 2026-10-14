@@ -7,7 +7,7 @@ import {
 } from '../_shared/auth/cookie-freshness.mjs';
 import { loginViaTwitter } from './_session.mjs';
 import { listAccounts } from '../_shared/skarbiec/accounts.mjs';
-import { statedText } from '../_shared/inputs/stated.mjs';
+import { statedProxy, statedText } from '../_shared/inputs/stated.mjs';
 import { clickOffered } from '../_shared/page/judged/seen.mjs';
 
 // Upvote the Product Hunt product PRODUCTHUNT_URL names
@@ -17,7 +17,7 @@ const TARGET_URL = statedText(
   ['PRODUCTHUNT_URL'],
   'the Product Hunt product page to upvote',
 );
-const proxy = process.env.PROXY_URL || 'none';
+const proxy = statedProxy('the Product Hunt upvote');
 import { pageSettled } from '../_shared/page/settled.mjs';
 
 async function findProductHuntAccount() {

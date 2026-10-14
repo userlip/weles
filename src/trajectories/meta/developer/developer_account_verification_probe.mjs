@@ -9,6 +9,7 @@ import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const INDENT = '  ';
 
@@ -107,7 +108,7 @@ console.log(
 const s = await WSession.start({
   label: 'meta_developer_account_verification_probe',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the developer verification probe'),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
   headless: process.env.META_VERIFY_HEADLESS !== '0',

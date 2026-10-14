@@ -10,6 +10,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { exitStatusFor } from '../../../dist/cli/usage.js';
 import { loginUnusualWhales } from './session/login.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 // Redirect all console.log to stderr so stdout is pure JSON output.
 console.log = (...a) => process.stderr.write(a.map(String).join(' ') + '\n');
@@ -104,12 +105,9 @@ if (!email || !password) {
   process.exit(1);
 }
 
-// UW is a paid SaaS dashboard we authenticate to with a single shared
-// session; per-request residential rotation is not required and the
-// residential pool's pre-flight checks have repeatedly failed on the
-// mac-mini host. Default to direct (no proxy). Set PROXY_URL=residential
-// (or pass --proxy=residential via params.proxy_url_override) to opt in.
-const proxyUrl = process.env.PROXY_URL || 'direct';
+// UW is a paid SaaS dashboard read through one authenticated session; the
+// caller states whether it goes through a proxy (PROXY_URL=direct for none).
+const proxyUrl = statedProxy('the Unusual Whales scrape');
 const s = await WSession.start({
   label: `uw_scrape_${ticker}`,
   proxy: proxyUrl,

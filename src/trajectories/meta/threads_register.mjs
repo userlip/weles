@@ -4,6 +4,7 @@ import { listAccounts } from '../_shared/skarbiec/accounts.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { control, field } from '../_shared/page/offers.mjs';
 import { clickOffered } from '../_shared/page/judged/seen.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 // The control that takes an onboarding step forward without changing it.
 const NEXT_STEP = 'the button that skips or continues this onboarding step';
@@ -20,7 +21,7 @@ function findUsableInstagramAccount() {
 }
 
 const URL = 'https://www.threads.net/login';
-const proxy = process.env.PROXY_URL || 'none';
+const proxy = statedProxy('the Threads signup');
 
 function pathOf(page) {
   return new globalThis.URL(page.url()).pathname;

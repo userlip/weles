@@ -19,6 +19,7 @@ import {
   USER_DATA_DIR,
 } from './report_harvest/settings.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 import {
   ensureReportPage,
   gotoAndWait,
@@ -55,7 +56,9 @@ async function main() {
   const s = await WSession.start({
     label: SESSION_LABEL,
     browser: process.env.BROWSER || 'chromium',
-    proxy: proxyUrl ?? (process.env.PROXY_URL || 'direct'),
+    proxy:
+      proxyUrl ??
+      statedProxy('the Apple Ads report harvest, whose account names no proxy,'),
     persona,
     userDataDir: USER_DATA_DIR,
     record: false,

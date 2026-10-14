@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
-import { statedText } from '../../_shared/inputs/stated.mjs';
+import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
 
 const APP_ID = statedText(
@@ -115,7 +115,7 @@ console.log(
 const s = await WSession.start({
   label: 'meta_developer_app_status',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the developer app status read'),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
   headless: process.env.META_DEV_HEADLESS !== '0',

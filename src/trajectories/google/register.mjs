@@ -5,15 +5,12 @@ import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { autocompleteField, field } from '../_shared/page/offers.mjs';
 import { clickOffered, pageShows } from '../_shared/page/judged/seen.mjs';
-import { statedText } from '../_shared/inputs/stated.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const SIGNUP_URL =
   'https://accounts.google.com/signup/v2/createaccount?biz=false&cc=US&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue&dsh=S0&flowEntry=SignUp&flowName=GlifWebSignIn&hl=en&service=youtube';
 
-const BASE_PROXY = statedText(
-  ['PROXY_URL'],
-  'the proxy (URL or provider filter) the signup browses through',
-);
+const BASE_PROXY = statedProxy('the Google signup');
 
 // Rotate the sticky-session id per attempt; the URL forms of PacketStream,
 // IPRoyal, Pingproxies and Oxylabs embed it as session-NNNN / sessid-NNNN / _s_NNNN.

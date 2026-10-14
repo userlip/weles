@@ -16,6 +16,7 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 // A review is a real publication under the account's name: the app, the
 // rating and the words are the caller's; nothing is assumed.
@@ -53,7 +54,9 @@ if (!acct) {
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({
   label: 'apple_appstore_review',
-  proxy: proxyUrl ?? (process.env.PROXY_URL || undefined),
+  proxy:
+    proxyUrl ??
+    statedProxy('the App Store review, whose account names no proxy,'),
   persona,
 });
 try {

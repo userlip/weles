@@ -34,7 +34,7 @@ import {
 } from './planner/capture.mjs';
 import { collectKeywordPlanner, openKeywordPlanner } from './planner/page.mjs';
 import { pageShows } from '../../../_shared/page/judged/seen.mjs';
-import { statedText } from '../../../_shared/inputs/stated.mjs';
+import { statedProxy } from '../../../_shared/inputs/stated.mjs';
 
 async function main() {
   console.log(
@@ -48,10 +48,7 @@ async function main() {
   const s = await WSession.start({
     label: 'google_ads_keyword_planner',
     browser: process.env.BROWSER || 'chromium',
-    proxy: statedText(
-      ['PROXY_URL'],
-      'the proxy (URL or provider filter) Keyword Planner is browsed through',
-    ),
+    proxy: statedProxy('Keyword Planner'),
     persona: stableProfilePersona(),
     userDataDir: USER_DATA_DIR,
     pageDiagnostics: process.env.WELES_PAGE_DIAGNOSTICS === '1',

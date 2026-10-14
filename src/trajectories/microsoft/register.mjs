@@ -15,13 +15,14 @@ import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../dist/human/mouse.js';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const URL = 'https://signup.live.com';
 
 {
   const s = await WSession.start({
     label: 'microsoft_register',
-    proxy: process.env.PROXY_URL || 'none',
+    proxy: statedProxy('the Microsoft signup'),
   });
   try {
     const id = await s.generateIdentity('microsoft');

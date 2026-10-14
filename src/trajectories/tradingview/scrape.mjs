@@ -1,5 +1,5 @@
 import { pageSettled } from '../_shared/page/settled.mjs';
-import { statedText } from '../_shared/inputs/stated.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 // Scrape a public tradingview.com per-symbol page for a ticker.
 // No login required — all pages here are public.
 // Usage: node src/trajectories/tradingview/scrape.mjs --ticker ORCL --page technicals [--screenshot /path.png]
@@ -56,10 +56,7 @@ if (!ALLOWED.has(pageKey)) {
 
 const s = await WSession.start({
   label: `tv_scrape_${ticker}_${pageKey}`,
-  proxy: statedText(
-    ['PROXY_URL'],
-    'the proxy (URL, provider filter or direct) the scrape browses through',
-  ),
+  proxy: statedProxy('the TradingView scrape'),
 });
 
 try {

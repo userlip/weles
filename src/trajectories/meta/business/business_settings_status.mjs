@@ -10,6 +10,7 @@ import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -141,7 +142,7 @@ console.log(
 const s = await WSession.start({
   label: 'meta_business_settings_status',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the Business settings status read'),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
   headless: process.env.META_BUSINESS_HEADLESS !== '0',

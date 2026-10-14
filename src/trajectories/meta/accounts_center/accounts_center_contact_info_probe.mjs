@@ -12,6 +12,7 @@ import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
 import { redactedUrl } from '../../_shared/page/navigation/redacted.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const INDENT = '  ';
 
@@ -133,7 +134,7 @@ console.log(JSON.stringify(start, null, INDENT));
 const s = await WSession.start({
   label: 'meta_accounts_center_contact_info_probe',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedProxy('the Accounts Center contact-info probe'),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
   headless: process.env.META_VERIFY_HEADLESS === '1',

@@ -6,6 +6,7 @@ import {
 } from '../../../dist/human/mouse.js';
 import { autoBindCharacter } from '../lib/character-bind.mjs';
 import { assertAuthed, AuthProbeError } from '../_shared/auth/auth-probe.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const URL =
   'https://accounts.google.com/signup?continue=https%3A%2F%2Fwww.youtube.com%2F&flowName=GlifWebSignIn&flowEntry=SignUp';
@@ -26,7 +27,7 @@ async function clickNext(s) {
 {
   const s = await WSession.start({
     label: 'youtube_register',
-    proxy: process.env.PROXY_URL || 'none',
+    proxy: statedProxy('the YouTube signup'),
   });
   try {
     const id = await s.generateIdentity('youtube');

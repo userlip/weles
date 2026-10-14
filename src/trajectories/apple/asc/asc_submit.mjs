@@ -25,6 +25,7 @@ import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
 import { uploadIpa } from './altool_upload.mjs';
 import { readScopedSecret } from '../../../_shared/scoped-secrets.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 
 const APP_ID = process.env.APP_ID;
 if (!APP_ID || !/^\d+$/.test(APP_ID)) {
@@ -168,7 +169,7 @@ async function selectBuild(s) {
 
 const s = await WSession.start({
   label: 'apple_asc_submit',
-  proxy: process.env.PROXY_URL || undefined,
+  proxy: statedProxy('the App Store Connect submission'),
 });
 try {
   await s.goto(DIST_URL);

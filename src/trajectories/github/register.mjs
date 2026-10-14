@@ -8,7 +8,7 @@ import { humanType } from '../../../dist/human/keyboard.js';
 import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 import { autoBindCharacter } from '../lib/character-bind.mjs';
 import { messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
-import { statedText } from '../_shared/inputs/stated.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 
 const URL = 'https://github.com/signup';
 
@@ -18,10 +18,7 @@ const URL = 'https://github.com/signup';
 // accept-language headers to match US proxy geolocation.
 const s = await WSession.start({
   label: 'github_register',
-  proxy: statedText(
-    ['PROXY_URL'],
-    'the proxy (URL or provider filter) the signup browses through',
-  ),
+  proxy: statedProxy('the GitHub signup'),
   locale: 'en-US',
 });
 await s.goto('https://github.com/');

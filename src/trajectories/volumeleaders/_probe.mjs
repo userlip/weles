@@ -3,6 +3,7 @@ import {
   pageSettled,
   submitAnswered,
 } from '../_shared/page/settled.mjs';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
 // Discover volumeleaders.com URL structure after login.
 // Default mode: logs in, dumps every <a href> on the dashboard and /ticker/TICKER pages.
 // Inventory mode: walks a list of candidate per-ticker pages, screenshots + records DOM.
@@ -35,7 +36,7 @@ if (!email || !password) {
 
 const s = await WSession.start({
   label: `vl_probe_${ticker}`,
-  proxy: process.env.PROXY_URL || 'oxylabs',
+  proxy: statedProxy('the VolumeLeaders URL probe'),
 });
 
 async function login() {

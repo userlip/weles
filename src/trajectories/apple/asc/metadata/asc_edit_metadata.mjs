@@ -4,6 +4,7 @@ import { pageSettled } from '../../../_shared/page/settled.mjs';
 
 import { getSocialAccount } from '../../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../../dist/session/wsession.js';
+import { statedProxy } from '../../../_shared/inputs/stated.mjs';
 
 const APP_ID = process.env.APP_ID;
 if (!APP_ID) {
@@ -33,7 +34,7 @@ if (!acct) {
 
 const s = await WSession.start({
   label: 'apple_asc_edit_metadata',
-  proxy: process.env.PROXY_URL || undefined,
+  proxy: statedProxy('the App Store Connect metadata edit'),
 });
 try {
   await s.goto(
