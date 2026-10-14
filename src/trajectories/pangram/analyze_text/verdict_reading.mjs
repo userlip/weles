@@ -27,18 +27,27 @@ function normalizePercent(n) {
 // `ai_assistance_score`); the first finite one is the value. The label is
 // `label`, or `editlens.prediction_text` in answers that carry the EditLens
 // reading instead (Lem read recorded answers in both shapes).
-function windowOf(window) {
+// A window without integer offsets that enclose some text cannot be placed on
+// the text, so it is returned as unreadable with the offsets it carried rather
+// than dropped from the answer.
+function windowOf(window, index) {
   const start = Number(window?.start_index);
   const end = Number(window?.end_index);
   if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start)
-    return null;
+    return {
+      unreadable: {
+        index,
+        start_index: window?.start_index,
+        end_index: window?.end_index,
+      },
+    };
   const likelihood = [window.ai_likelihood, window.ai_assistance_score]
     .map(Number)
     .find(Number.isFinite);
   const label = [window.label, window.editlens?.prediction_text].find(
     (value) => typeof value === "string",
   );
-  return {
+  return { window: {
     start_index: start,
     end_index: end,
     text: typeof window.text === "string" ? window.text : null,
@@ -46,7 +55,7 @@ function windowOf(window) {
     confidence:
       typeof window.confidence === "string" ? window.confidence : null,
     ai_likelihood: likelihood === undefined ? null : likelihood,
-  };
+  } };
 }
 
 export function extractFromPangramClassify(parsed) {
@@ -77,9 +86,14 @@ export function extractFromPangramClassify(parsed) {
   // (it may normalise the submitted text; `text` is the one the offsets
   // refer to). A caller colouring words reads these; without them it has
   // one verdict for the whole text.
-  const windows = Array.isArray(response.windows)
-    ? response.windows.map(windowOf).filter(Boolean)
-    : [];
+  // An answer without a windows array has no per-window reading: windows is
+  // null, not an empty list that would read as "no window labelled".
+  const read = Array.isArray(response.windows)
+    ? response.windows.map(windowOf)
+    : null;
+  const windows = read === null ? null : read.filter((r) => r.window).map((r) => r.window);
+  const unreadableWindows =
+    read === null ? [] : read.filter((r) => r.unreadable).map((r) => r.unreadable);
   return {
     source: "api",
     api_kind: "classify-text-sliding-window",
@@ -94,6 +108,7 @@ export function extractFromPangramClassify(parsed) {
     textquery_uuid: task.result.textquery_uuid || null,
     text: typeof response.text === "string" ? response.text : null,
     windows,
+    unreadable_windows: unreadableWindows,
   };
 }
 

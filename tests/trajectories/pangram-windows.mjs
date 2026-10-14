@@ -92,6 +92,11 @@ test("a placed Pangram run leaves windows over the analysed text", () => {
     Array.isArray(pangram.windows) && pangram.windows.length,
     "the output carries windows",
   );
+  assert.deepEqual(
+    pangram.unreadable_windows,
+    [],
+    "every window Pangram returned could be placed on the text",
+  );
   for (const window of pangram.windows) {
     assert.ok(
       Number.isInteger(window.start_index) &&
