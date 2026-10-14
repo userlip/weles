@@ -24,7 +24,11 @@ import { statedText } from '../_shared/inputs/stated.mjs';
 
 // What is read from the mailbox is the caller's; a built-in query read a
 // year of every message.
-const QUERY = statedText(['GM_QUERY'], 'the Gmail search query to read');
+const QUERY = statedText(
+  ['GM_QUERY'],
+  'the Gmail search query to read',
+  'GMAIL_QUERY_REQUIRED',
+);
 const OPEN_BODIES = process.env.GM_OPEN !== '0';
 const SEARCH_URL =
   'https://mail.google.com/mail/u/0/#search/' + encodeURIComponent(QUERY);
