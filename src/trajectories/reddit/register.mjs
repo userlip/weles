@@ -12,6 +12,7 @@ import { humanMove, humanClickLocator } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { autoBindCharacter } from '../lib/character-bind.mjs';
 import { findAccount } from '../_shared/skarbiec/accounts.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
 
 const URL = 'https://www.reddit.com/register';
 
@@ -20,7 +21,10 @@ const URL = 'https://www.reddit.com/register';
 // PacketStream provider when picking the proxy. Specific provider in
 // the filter triggers config.ts's KNOWN_PROVIDERS match — only providers
 // matching that name will be tried.
-const PROXY_FILTER = process.env.PROXY_URL || 'residential oxylabs us';
+const PROXY_FILTER = statedText(
+  ['PROXY_URL'],
+  'the proxy (URL or provider filter) the signup browses through',
+);
 // Persona + identity rotation centralized in WSession.start (opts.platform).
 const s = await WSession.start({
   label: 'reddit_register',

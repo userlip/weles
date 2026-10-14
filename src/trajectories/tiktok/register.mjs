@@ -14,7 +14,7 @@ import {
 import { screenshotIfPossible } from '../_shared/runner/evidence.mjs';
 import { probeButton, recordedClicks } from './register/button_probe.mjs';
 import { dumpStuckState } from './register/stuck_diagnostics.mjs';
-import { statedCount } from '../_shared/inputs/stated.mjs';
+import { statedCount, statedText } from '../_shared/inputs/stated.mjs';
 
 const SIGNUP_URL = 'https://www.tiktok.com/signup';
 // TikTok's own calls: the code request and the sign-up verification.
@@ -106,7 +106,10 @@ async function answerBody(response) {
       // is not a function" on the first click.
       s = await WSession.start({
         label: 'tiktok_register',
-        proxy: process.env.PROXY_URL || 'residential brightdata',
+        proxy: statedText(
+          ['PROXY_URL'],
+          'the proxy (URL or provider filter) the signup browses through',
+        ),
         targetHost: 'www.tiktok.com',
         persona: generatePersona({
           country: 'US',
