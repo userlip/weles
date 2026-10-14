@@ -223,6 +223,11 @@ try {
         .first();
       await msgBox.waitFor({ state: 'visible' });
       await humanFill(s.page, msgBox, COMMIT_MESSAGE);
+      const held = await msgBox.inputValue();
+      if (held !== COMMIT_MESSAGE)
+        throw new Error(
+          `OVERLEAF_COMMIT_MESSAGE_MISMATCH: field holds ${JSON.stringify(held)}`,
+        );
       await shot(s, `commit_dialog_${tag8}`);
       const syncBtn = s.page
         .getByRole('button', { name: /^\s*sync\s*$/i })
