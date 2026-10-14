@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../../../_shared/ncbr/lsi_form.mjs';
 // The section 2.2 collection forms, bound to the page: opening a row form, filling its
 // fields by name or suffix, picking an autocomplete value, and saving.
 import {
@@ -20,16 +21,7 @@ export function collectionsForm({ page }) {
     await humanIdlePause('long');
   }
 
-  async function saveForm() {
-    await humanIdlePause('deliberate');
-    await humanIdlePause('deliberate');
-    const saves = page
-      .getByRole('button', { name: 'Zapisz', exact: true })
-      .filter({ visible: true });
-    if ((await saves.count()) === 0) throw new Error('no enabled Zapisz');
-    await humanClickLocator(page, saves.last());
-    await humanIdlePause('long');
-  }
+  const saveForm = () => saveLsiForm(page);
 
   async function fillBySuffix(suffix, value) {
     const loc = page

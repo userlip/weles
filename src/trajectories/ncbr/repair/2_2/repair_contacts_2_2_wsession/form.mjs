@@ -7,9 +7,10 @@ import { humanFill } from '../../../../../../dist/human/keyboard.js';
 import { assertFits } from '../../../form-input.mjs';
 import { EDORECZENIA } from './source.mjs';
 import {
-  chooseDeleteInRowMenu,
-  confirmDeletion,
-} from '../../../../_shared/ncbr/row_menu.mjs';
+  deleteLsiRowsContaining,
+  fillLsiEdoreczenia,
+  saveLsiForm,
+} from '../../../../_shared/ncbr/lsi_form.mjs';
 
 export function lsiForm({ page, session, email, password, progress }) {
   async function setReactInputValue(locator, value) {
@@ -104,27 +105,7 @@ export function lsiForm({ page, session, email, password, progress }) {
     await humanIdlePause('long');
   }
 
-  async function saveVisibleForm() {
-    await page.waitForFunction(
-      () =>
-        Array.from(document.querySelectorAll('button')).some(
-          (b) =>
-            b.innerText.trim() === 'Zapisz' &&
-            !b.disabled &&
-            b.getClientRects().length,
-        ),
-      null,
-      { polling: 'raf' },
-    ); // allow-raw-playwright: wait for enabled LSI save
-    await humanClickLocator(
-      page,
-      page
-        .locator('button:visible:not([disabled])')
-        .filter({ hasText: /^Zapisz$/ })
-        .last(),
-    ); // allow-raw-playwright: save visible row/form only
-    await humanIdlePause('long');
-  }
+  const saveVisibleForm = () => saveLsiForm(page);
 
   async function fillAny(names, value) {
     for (const name of names) {
@@ -147,71 +128,12 @@ export function lsiForm({ page, session, email, password, progress }) {
     return fillAny([name], value);
   }
 
-  async function deleteRowsContaining(needle) {
-    const deleted = [];
-    while (
-      await page.evaluate((text) => {
-        const norm = (s) =>
-          String(s || '')
-            .replace(/\s+/g, ' ')
-            .trim();
-        return Array.from(document.querySelectorAll('table tbody tr')).some(
-          (r) => norm(r.innerText).includes(text),
-        );
-      }, needle)
-    ) {
-      progress(`1.3:delete:${needle}`);
-      const row = page
-        .locator('table tbody tr')
-        .filter({ hasText: needle })
-        .first();
-      await humanClickLocator(
-        page,
-        row.locator('button[aria-label="overflow-options"]'),
-      ); // allow-raw-playwright: open stale visible row menu
-      await humanIdlePause('deliberate');
-      await chooseDeleteInRowMenu(page);
-      await confirmDeletion(page);
-      await humanIdlePause('long');
-      deleted.push(needle);
-    }
-    return deleted;
+  function deleteRowsContaining(needle) {
+    progress(`1.3:delete:${needle}`);
+    return deleteLsiRowsContaining(page, needle);
   }
 
-  async function fillEdoreczeniaIfPresent() {
-    const result = await page.evaluate((value) => {
-      // The entity form names the e-Doręczenia address field; it is found by
-      // that name, not by words in its label.
-      const hit = document.querySelector(
-        'input[name$="adres_e_doreczenie_podmiot"], textarea[name$="adres_e_doreczenie_podmiot"]',
-      );
-      if (!hit || hit.disabled || hit.readOnly)
-        return { found: Boolean(hit), filled: false };
-      const proto =
-        hit instanceof HTMLTextAreaElement
-          ? HTMLTextAreaElement.prototype
-          : HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-      if (setter) setter.call(hit, value);
-      else hit.value = value;
-      hit.dispatchEvent(
-        new InputEvent('input', {
-          bubbles: true,
-          inputType: 'insertText',
-          data: value,
-        }),
-      );
-      hit.dispatchEvent(new Event('change', { bubbles: true }));
-      hit.dispatchEvent(new Event('blur', { bubbles: true }));
-      return {
-        found: true,
-        filled: true,
-        name: hit.name || null,
-        id: hit.id || null,
-      };
-    }, EDORECZENIA); // allow-raw-playwright: fill visible e-Doreczenia field if present
-    return result;
-  }
+  const fillEdoreczeniaIfPresent = () => fillLsiEdoreczenia(page, EDORECZENIA);
   return {
     setReactInputValue,
     login,

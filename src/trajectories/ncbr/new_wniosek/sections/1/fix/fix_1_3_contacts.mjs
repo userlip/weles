@@ -8,9 +8,10 @@ import {
 import { humanFill } from '../../../../../../../dist/human/keyboard.js';
 import { assertFits } from '../../../../form-input.mjs';
 import {
-  chooseDeleteInRowMenu,
-  confirmDeletion,
-} from '../../../../../_shared/ncbr/row_menu.mjs';
+  deleteLsiRowsContaining,
+  fillLsiEdoreczenia,
+  saveLsiForm,
+} from '../../../../../_shared/ncbr/lsi_form.mjs';
 
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
 const SECTION_URL = (await import('#ncbr-settings')).sectionUrl('1_3');
@@ -92,105 +93,11 @@ async function fillAny(names, value) {
   throw new Error(`none of fields found: ${names.join(', ')}`);
 }
 
-async function saveForm() {
-  await humanIdlePause('deliberate');
-  await humanIdlePause('deliberate');
-  const save = page
-    .locator('button:not([disabled])')
-    .filter({ hasText: /^Zapisz$/ })
-    .filter({ visible: true })
-    .last();
-  if ((await save.count()) === 0) throw new Error('no enabled Zapisz');
-  await humanClickLocator(page, save);
-  await humanIdlePause('long');
-}
-
-async function deleteRowsContaining(needle) {
-  const deleted = [];
-  while (
-    await page.evaluate(
-      (text) =>
-        Array.from(document.querySelectorAll('table tbody tr')).some((r) =>
-          (r.innerText || '').includes(text),
-        ),
-      needle,
-    )
-  ) {
-    await page.evaluate((text) => {
-      const row = Array.from(document.querySelectorAll('table tbody tr')).find(
-        (candidate) => (candidate.innerText || '').includes(text),
-      );
-      const btn = row?.querySelector('button[aria-label="overflow-options"]');
-      if (!btn) throw new Error(`row menu not found for ${text}`);
-      btn.setAttribute('data-weles-human-target', 'stale-contact-row-menu');
-    }, needle); // allow-raw-playwright: locate visible stale contact row menu
-    const menuButton = page
-      .locator('[data-weles-human-target="stale-contact-row-menu"]')
-      .first();
-    await humanClickLocator(page, menuButton);
-    await menuButton.evaluate((element) =>
-      element.removeAttribute('data-weles-human-target'),
-    );
-    await humanIdlePause('deliberate');
-    await chooseDeleteInRowMenu(page);
-    await confirmDeletion(page);
-    await humanIdlePause('long');
-    deleted.push(needle);
-  }
-  return deleted;
-}
-
-async function fillEdoreczeniaIfPresent() {
-  const result = await page.evaluate((value) => {
-    // The entity form names the e-Doręczenia address field; it is found by
-    // that name, not by words in its label.
-    const hit = document.querySelector(
-      'input[name$="adres_e_doreczenie_podmiot"], textarea[name$="adres_e_doreczenie_podmiot"]',
-    );
-    if (!hit || hit.disabled || hit.readOnly)
-      return { found: Boolean(hit), filled: false };
-    const proto =
-      hit instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-    if (setter) setter.call(hit, value);
-    else hit.value = value;
-    hit.dispatchEvent(
-      new InputEvent('input', {
-        bubbles: true,
-        inputType: 'insertText',
-        data: value,
-      }),
-    );
-    hit.dispatchEvent(new Event('change', { bubbles: true }));
-    hit.dispatchEvent(new Event('blur', { bubbles: true }));
-    return {
-      found: true,
-      filled: true,
-      name: hit.name || null,
-      id: hit.id || null,
-    };
-  }, EDORECZENIA); // allow-raw-playwright: fill visible e-Doreczenia field if present
-  if (result.filled) {
-    const save = page
-      .locator('button:not([disabled])')
-      .filter({ hasText: /^Zapisz$/ })
-      .filter({ visible: true })
-      .last();
-    const clicked = (await save.count()) > 0;
-    if (clicked) {
-      await humanClickLocator(page, save);
-      await humanIdlePause('long');
-    }
-  }
-  return result;
-}
-
 const deleted = [];
 for (const person of WITHDRAWN)
-  deleted.push(...(await deleteRowsContaining(person)));
-const edoreczenia = await fillEdoreczeniaIfPresent();
+  deleted.push(...(await deleteLsiRowsContaining(page, person)));
+const edoreczenia = await fillLsiEdoreczenia(page, EDORECZENIA);
+if (edoreczenia.filled) await saveLsiForm(page);
 const added = [];
 for (const c of CONTACTS) {
   await page.goto(SECTION_URL, { waitUntil: 'domcontentloaded' });
@@ -220,7 +127,7 @@ for (const c of CONTACTS) {
       c.email,
     ),
   );
-  await saveForm();
+  await saveLsiForm(page);
   added.push({ person: `${c.imie} ${c.nazwisko}`, filled });
 }
 

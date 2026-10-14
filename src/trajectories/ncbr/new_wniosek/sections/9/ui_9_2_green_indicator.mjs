@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../../_shared/ncbr/lsi_form.mjs';
 // UI-only 9.2 fixer: add the environmental rethink indicator used by 10.4.
 // Never submits; never calls LSI APIs directly.
 
@@ -68,16 +69,7 @@ async function fillSuffix(suffix, value) {
   return `${suffix}:${v.length}/${max}`;
 }
 
-async function saveForm() {
-  await humanIdlePause('deliberate');
-  await humanIdlePause('deliberate');
-  const save = page
-    .getByRole('button', { name: 'Zapisz', exact: true })
-    .filter({ visible: true })
-    .last();
-  await humanClickLocator(page, save);
-  await humanIdlePause('long');
-}
+const saveForm = () => saveLsiForm(page);
 
 await clickDodaj();
 const filled = [];

@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../../_shared/ncbr/lsi_form.mjs';
 // Section 10.1 required product/service accessibility collection. UI-only; never closes page.
 
 import { readFileSync } from 'node:fs';
@@ -97,16 +98,7 @@ if (process.env.DIAG) {
   process.exit(0);
 }
 
-async function saveForm() {
-  await humanIdlePause('deliberate');
-  await humanIdlePause('deliberate');
-  const saves = page
-    .getByRole('button', { name: 'Zapisz', exact: true })
-    .filter({ visible: true });
-  if ((await saves.count()) === 0) throw new Error('no enabled Zapisz');
-  await humanClickLocator(page, saves.last());
-  await humanIdlePause('long');
-}
+const saveForm = () => saveLsiForm(page);
 
 async function fillText(name, value) {
   const loc = page.locator(`[name="${name}"]`).first();

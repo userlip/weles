@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../../_shared/ncbr/lsi_form.mjs';
 // The 4.1 member row form, bound to the page: adding a row, the named fields and
 // autocompletes, the applicant and status choices, saving, the project sub-row and
 // opening an existing member row.
@@ -71,16 +72,7 @@ export function membersForm({ page, SECTION_URL }) {
     );
   }
 
-  async function saveForm() {
-    await humanIdlePause('deliberate');
-    await humanIdlePause('deliberate');
-    const saves = page
-      .getByRole('button', { name: 'Zapisz', exact: true })
-      .filter({ visible: true });
-    if ((await saves.count()) === 0) throw new Error('no enabled Zapisz');
-    await humanClickLocator(page, saves.last());
-    await humanIdlePause('long');
-  }
+  const saveForm = () => saveLsiForm(page);
 
   async function fillProjectSubrow(project, addIdx = 0) {
     const adds = page

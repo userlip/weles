@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../../_shared/ncbr/lsi_form.mjs';
 // Section 9.2 (Wskazniki rezultatu) filler for the NEW NCBR wniosek.
 // Edits existing predefined indicator rows and adds own result indicators from the prepared markdown.
 // Never closes the page.
@@ -116,18 +117,7 @@ async function clickDodaj() {
   await humanIdlePause('long');
 }
 
-async function saveForm() {
-  await humanIdlePause('deliberate');
-  await humanIdlePause('deliberate');
-  const save = page
-    .locator('button:not([disabled])')
-    .filter({ hasText: /^Zapisz$/ })
-    .filter({ visible: true })
-    .last();
-  if ((await save.count()) === 0) throw new Error('no enabled Zapisz');
-  await humanClickLocator(page, save);
-  await humanIdlePause('long');
-}
+const saveForm = () => saveLsiForm(page);
 
 async function fillField(suffix, value) {
   const loc = page.locator(`[name$="${suffix}"]`).first();

@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../_shared/ncbr/lsi_form.mjs';
 // Section 6.5 indirect costs collection filler for NEW NCBR wniosek.
 // UI-only, no direct API writes. Never closes page.
 
@@ -121,18 +122,7 @@ async function fill(name, value) {
   await fillField(page, loc, String(value));
 }
 
-async function saveForm() {
-  await humanIdlePause('deliberate');
-  await humanIdlePause('deliberate');
-  await humanClickLocator(
-    page,
-    page
-      .locator('button:not([disabled])')
-      .filter({ hasText: /^Zapisz$/ })
-      .last(),
-  ); // allow-raw-playwright: save indirect-cost row
-  await humanIdlePause('long');
-}
+const saveForm = () => saveLsiForm(page);
 
 if (process.env.DIAG) {
   await clickDodaj();

@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../../_shared/ncbr/lsi_form.mjs';
 // Section 9.2 cleanup: force the green rethink own indicator years if the UI allows it.
 // UI-only; never submits.
 
@@ -89,17 +90,7 @@ async function setSuffix(suffix, value) {
   return { suffix, status: 'set', value };
 }
 
-async function saveForm() {
-  await humanIdlePause('deliberate');
-  await humanIdlePause('deliberate');
-  const saves = page
-    .getByRole('button', { name: 'Zapisz', exact: true })
-    .filter({ visible: true });
-  const count = await saves.count();
-  if (!count) throw new Error('no enabled Zapisz');
-  await humanClickLocator(page, saves.nth(count - 1));
-  await humanIdlePause('long');
-}
+const saveForm = () => saveLsiForm(page);
 
 async function readRow() {
   await page.goto(SECTION_URL, { waitUntil: 'domcontentloaded' }); // allow-raw-playwright: reload for readback

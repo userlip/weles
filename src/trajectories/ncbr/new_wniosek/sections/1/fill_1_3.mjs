@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../../_shared/ncbr/lsi_form.mjs';
 // Section 1.3 (Podmioty realizujące projekt) of the NEW NCBR wniosek.
 // Replicates the working Kimi reference cdp_fill_1_3.py. Never closes the page.
 
@@ -39,16 +40,7 @@ async function clickDodaj(nth) {
   await humanClickLocator(page, button);
   await humanIdlePause('long');
 }
-async function saveForm() {
-  const saves = page
-    .getByRole('button', { name: 'Zapisz', exact: true })
-    .filter({ visible: true });
-  const count = await saves.count();
-  if (!count) throw new Error('no enabled Zapisz');
-  await humanClickLocator(page, saves.nth(count - 1));
-  await humanIdlePause('long');
-  await humanIdlePause('deliberate');
-}
+const saveForm = () => saveLsiForm(page);
 async function radio(value) {
   await selectRadio(
     page,

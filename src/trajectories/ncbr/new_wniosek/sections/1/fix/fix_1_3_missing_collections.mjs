@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../../../_shared/ncbr/lsi_form.mjs';
 // Repairs missing 1.3 activity-description and KKK collection rows. UI-only.
 // Never submits and never closes the page.
 
@@ -89,17 +90,7 @@ async function fillFirstTextArea(value) {
   return v.length;
 }
 
-async function saveForm() {
-  await humanIdlePause('deliberate');
-  await humanIdlePause('deliberate');
-  const saves = page
-    .getByRole('button', { name: 'Zapisz', exact: true })
-    .filter({ visible: true });
-  const count = await saves.count();
-  if (!count) throw new Error('no enabled Zapisz');
-  await humanClickLocator(page, saves.nth(count - 1));
-  await humanIdlePause('long');
-}
+const saveForm = () => saveLsiForm(page);
 
 if (process.env.DIAG) {
   await clickDodaj(Number(process.env.DIAG));

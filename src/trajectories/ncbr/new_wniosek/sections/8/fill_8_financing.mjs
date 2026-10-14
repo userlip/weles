@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../../_shared/ncbr/lsi_form.mjs';
 // Section 8 (Zrodla finansowania wydatkow) — one row for the declared applicant.
 // UI-only. Never closes the page and never submits.
 
@@ -78,16 +79,7 @@ async function fillBySuffix(fragment, value) {
   return { fragment, value };
 }
 
-async function saveForm() {
-  await humanIdlePause('deliberate');
-  await humanIdlePause('deliberate');
-  const save = page
-    .getByRole('button', { name: 'Zapisz', exact: true })
-    .filter({ visible: true })
-    .last();
-  await humanClickLocator(page, save);
-  await humanIdlePause('long');
-}
+const saveForm = () => saveLsiForm(page);
 
 async function fillFinancingFields() {
   const filled = [];

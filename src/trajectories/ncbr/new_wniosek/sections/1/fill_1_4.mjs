@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../../_shared/ncbr/lsi_form.mjs';
 // Section 1.4 (Konkurencja) of the NEW NCBR wniosek — 5 competitor rows.
 // Data from the working Kimi reference save_1_4_collection.py. Never closes page.
 
@@ -58,17 +59,7 @@ async function clickDodaj(nth) {
     page.locator('[name="nazwa_podmiotu_konkurencyjnego"]'),
   );
 }
-async function saveForm() {
-  const save = page
-    .locator('button:not([disabled])')
-    .filter({ hasText: /^Zapisz$/ })
-    .filter({ visible: true })
-    .last();
-  if ((await save.count()) === 0) throw new Error('no enabled Zapisz');
-  await humanClickLocator(page, save);
-  await humanIdlePause('long');
-  await humanIdlePause('deliberate');
-}
+const saveForm = () => saveLsiForm(page);
 
 async function editDataRow(index) {
   await page.goto(SECTION_URL, { waitUntil: 'domcontentloaded' });

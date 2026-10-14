@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../_shared/ncbr/lsi_form.mjs';
 // Section 6.3 actual cost collection inspector/filler for NEW NCBR wniosek.
 // DIAG=1 opens one row and dumps field names. Never closes page.
 
@@ -215,18 +216,7 @@ async function fill(name, value) {
   await humanFill(page, loc, v);
 }
 
-async function saveForm() {
-  await humanIdlePause('deliberate');
-  await humanIdlePause('deliberate');
-  const save = page
-    .locator('button:not([disabled])')
-    .filter({ hasText: /^Zapisz$/ })
-    .filter({ visible: true })
-    .last();
-  if ((await save.count()) === 0) throw new Error('no enabled Zapisz');
-  await humanClickLocator(page, save);
-  await humanIdlePause('long');
-}
+const saveForm = () => saveLsiForm(page);
 
 if (process.env.EDIT) {
   const contains = process.env.CONTAINS;

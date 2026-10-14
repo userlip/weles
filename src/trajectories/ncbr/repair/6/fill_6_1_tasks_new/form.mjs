@@ -1,3 +1,4 @@
+import { saveLsiForm } from '../../../../_shared/ncbr/lsi_form.mjs';
 // The 6.1 task row form, bound to the page: adding a row, the named and selector fields,
 // the pre-save check, the radio and applicant choices, saving, and opening a task row.
 import {
@@ -93,18 +94,7 @@ export function tasksForm({ page, SECTION_URL }) {
     await humanIdlePause('short');
   }
 
-  async function saveForm() {
-    await humanIdlePause('deliberate');
-    await humanIdlePause('deliberate');
-    await humanClickLocator(
-      page,
-      page
-        .locator('button:not([disabled])')
-        .filter({ hasText: /^Zapisz$/ })
-        .last(),
-    ); // allow-raw-playwright: save task sub-form
-    await humanIdlePause('long');
-  }
+  const saveForm = () => saveLsiForm(page);
 
   async function editTaskRow(nr) {
     await page.goto(SECTION_URL, { waitUntil: 'domcontentloaded' });
