@@ -32,16 +32,21 @@ export const CAPTURE_NAMESPACE = 'weles-captures';
 // The release identity of the code that produced the artifact: the package
 // version plus the exact commit, marked dirty when the worktree that ran is not
 // the committed one. Same source captureVersions writes onto every action row.
+// An artifact is never stamped with a version or commit nobody read: when
+// either could not be read (captureVersions leaves it null), the capture is
+// refused with the reads that failed.
 export function welesVersion() {
   const versions = captureVersions(null);
-  const pkg =
-    typeof versions.weles_pkg_version === 'string'
-      ? versions.weles_pkg_version
-      : '0.0.0';
-  const commit =
-    typeof versions.weles_commit_short === 'string'
-      ? versions.weles_commit_short
-      : 'unknown';
+  const pkg = versions.weles_pkg_version;
+  const commit = versions.weles_commit_short;
+  if (pkg === null || commit === null) {
+    const failed = versions.version_capture_failures.map(
+      (failure) => `${failure.field}: ${failure.operation}: ${failure.message}`,
+    );
+    throw new Error(
+      `the Weles release identity could not be read (package version ${JSON.stringify(pkg)}, commit ${JSON.stringify(commit)}); failed reads: ${JSON.stringify(failed)}; no artifact is stamped without it`,
+    );
+  }
   return `${pkg}+${commit}${versions.weles_dirty === true ? '-dirty' : ''}`;
 }
 

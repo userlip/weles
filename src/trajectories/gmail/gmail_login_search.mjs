@@ -92,7 +92,12 @@ const s = await WSession.start({
   browser: process.env.BROWSER || undefined,
 });
 try {
-  log('engine:', s.personaConfig?.browser ?? 'unknown', '| query:', QUERY);
+  log(
+    'engine:',
+    s._browserProvenance ? s._browserProvenance.browser : null,
+    '| query:',
+    QUERY,
+  );
   await s.page.goto(inboxUrl, { waitUntil: 'domcontentloaded' });
   await pageSettled(s.page);
 

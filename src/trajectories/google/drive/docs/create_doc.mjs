@@ -77,7 +77,7 @@ const s = await WSession.start({
 try {
   log(
     'engine:',
-    s.personaConfig?.browser ?? 'unknown',
+    s._browserProvenance ? s._browserProvenance.browser : null,
     '| title:',
     TITLE,
     '| content_bytes:',

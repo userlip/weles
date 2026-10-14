@@ -57,7 +57,12 @@ const s = await WSession.start({
 });
 
 try {
-  log('engine:', s.personaConfig?.browser ?? 'unknown', '| doc_id:', DOC_ID);
+  log(
+    'engine:',
+    s._browserProvenance ? s._browserProvenance.browser : null,
+    '| doc_id:',
+    DOC_ID,
+  );
   await s.page.goto('https://docs.google.com/document/u/0/', {
     waitUntil: 'domcontentloaded',
   });

@@ -181,7 +181,7 @@ async function captureVersionPanel(meta) {
 try {
   log(
     'engine:',
-    s.personaConfig?.browser ?? 'unknown',
+    s._browserProvenance ? s._browserProvenance.browser : null,
     '| folder:',
     rootMeta.name,
     '| files:',

@@ -31,7 +31,7 @@ const exitIp =
   (s.proxyConfig?.server
     ? new globalThis.URL(s.proxyConfig.server).hostname
     : null);
-console.log(`[register] exit=${exitIp ?? 'unknown'}`);
+console.log(`[register] exit=${exitIp === null ? 'not read from the proxy config' : exitIp}`);
 
 const SOLVERS = [
   {

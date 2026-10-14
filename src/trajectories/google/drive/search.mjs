@@ -43,7 +43,12 @@ const s = await WSession.start({
 });
 
 try {
-  log('engine:', s.personaConfig?.browser ?? 'unknown', '| query:', QUERY);
+  log(
+    'engine:',
+    s._browserProvenance ? s._browserProvenance.browser : null,
+    '| query:',
+    QUERY,
+  );
   const url =
     'https://drive.google.com/drive/search?q=' + encodeURIComponent(QUERY);
   await s.page.goto(url, { waitUntil: 'domcontentloaded' });
