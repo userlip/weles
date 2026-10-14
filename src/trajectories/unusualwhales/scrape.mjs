@@ -27,7 +27,7 @@ for (let i = 2; i < process.argv.length; i += 2) {
   args[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];
 }
 const ticker = (args.ticker || process.env.TICKER || '').toUpperCase();
-const page = args.page || process.env.PAGE || 'overview';
+const page = args.page || process.env.PAGE;
 // `pages` is comma-separated; if present, scrape all of them in one
 // Playwright session (login once, navigate per page, persist per page).
 // Single-job-per-ticker shape — replaces the old one-job-per-page blast.
@@ -49,9 +49,9 @@ const qs = (() => {
   const s = p.toString();
   return s ? `?${s}` : '';
 })();
-if (!ticker) {
-  console.error('FAIL: --ticker required');
-  process.exit(1);
+if (!ticker) throw new Error('--ticker required: name the symbol to scrape');
+if (!page && !pagesList) {
+  throw new Error('--page or --pages required: name the Unusual Whales pages to scrape');
 }
 
 // Every path below was extracted live from the authenticated UW sidebar

@@ -19,12 +19,10 @@ const args = {};
 for (let i = 2; i < process.argv.length; i += 2)
   args[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];
 const ticker = (args.ticker || process.env.TICKER || '').toUpperCase();
-const pageKey = args.page || process.env.PAGE || 'overview';
+const pageKey = args.page || process.env.PAGE;
 const screenshotPath = args.screenshot;
-if (!ticker) {
-  console.error('FAIL: --ticker required');
-  process.exit(1);
-}
+if (!ticker) throw new Error('--ticker required: name the symbol to scrape');
+if (!pageKey) throw new Error('--page required: name the TradingView page to scrape');
 
 const ALLOWED = new Set([
   'overview',
