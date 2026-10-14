@@ -134,21 +134,20 @@ try {
   await requireApiPage(s);
   await pageSettled(s.page);
 
-  // Arm the download capture FIRST, then attempt the clicks. Whichever path
-  // triggers the download (script or human), we save it.
+  // Arm the download capture before the clicks so the key is caught however
+  // quickly it arrives. A step that fails ends the run with its error and the
+  // page it was on; nothing waits for someone to finish it in the window.
   const downloadPromise = s.page.waitForEvent('download');
   try {
     await clickGenerate(s.page);
   } catch (e) {
-    console.log(
-      '[asc-create] auto-klik nie przeszedł, dokończ w oknie ręcznie:',
-      e.message,
+    throw new Error(
+      `ASC_API_KEY_FLOW_FAILED on ${s.page.url()}: ${e.message}`,
+      { cause: e },
     );
   }
 
-  console.log(
-    '[asc-create] czekam na pobranie .p8 (kliknij „Download API Key" jeśli trzeba)…',
-  );
+  console.log('[asc-create] waiting for the .p8 download');
   const download = await downloadPromise;
   const suggested = download.suggestedFilename(); // AuthKey_<KEYID>.p8
   const dest = `${OUT_DIR}/${suggested}`;

@@ -45,14 +45,15 @@ if (
   landed.pathname.includes('/login') ||
   landed.searchParams.get('authResult') === 'FAILED'
 ) {
-  console.log(
-    'NEED_LOGIN: persisted Apple session expired — cannot create the key without a fresh login.',
+  throw new Error(
+    `NEED_LOGIN: the persisted Apple session expired; the key cannot be created without a fresh apple_login (landed on ${s.page.url()})`,
   );
-  console.log('current url:', s.page.url());
 } else {
   console.log('[apns] on add page, logged in');
   // Arm the download capture before any clicks, so a flaky selector never loses the key.
   const downloadPromise = s.page.waitForEvent('download');
+  // A step that fails ends the run with the step's error and the page it was
+  // on; nothing waits for someone to finish the flow in the window.
   try {
     await s.page.waitForSelector('#name', { state: 'visible' });
     await humanFill(s.page, s.page.locator('#name').first(), KEY_NAME);
@@ -73,9 +74,9 @@ if (
     const dl = await clickText(s.page, /download/i);
     console.log('[apns] download clicked =', dl);
   } catch (e) {
-    console.log(
-      '[apns] click flow error (finish in window if needed):',
-      e.message,
+    throw new Error(
+      `APNS_KEY_FLOW_FAILED on ${s.page.url()}: ${e.message}`,
+      { cause: e },
     );
   }
   console.log('[apns] waiting for the .p8 download…');
