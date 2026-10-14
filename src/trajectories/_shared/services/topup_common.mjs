@@ -1,11 +1,9 @@
 // Shared scaffolding for service-credential topup trajectories.
 // TOPUP_CONFIRM=1 is required before any provider topup flow can continue.
 
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { pageSettled } from '../page/settled.mjs';
 import { clickOffered } from '../page/judged/seen.mjs';
 import { humanType } from '../../../../dist/human/keyboard.js';
@@ -152,78 +150,63 @@ export async function fillStripeElements(page, card = null) {
   return { ok, filled };
 }
 
-// The purchase card reaches a host two ways: as a file, at one of the paths
-// below, or as one JSON value injected from Skarbiec by Stado
-// (--secret-env TOPUP_CARD_JSON=topup-card#value), which is how a card gets to
-// a host without ever appearing in a command line or a job log.
-//
-// As a file it is one fact kept in one file, but not at one path: hosts
-// provisioned through Weles carry it at ~/.weles/topup_card.env, and hosts
-// provisioned through Stado carry it at ~/.stado/topup_card.env. Every
-// trajectory that spends money used to hardcode the first, so the same
-// purchase worked on a laptop and failed on the always-on mini with nothing
-// but "no card". One loader, searched in a fixed order, is what makes a
-// purchase trajectory portable.
+// The purchase card can come from one declared JSON secret or a local card
+// file. A supplied but invalid JSON secret must not silently select a file.
 export const TOPUP_ENV_FILES = [
   join(homedir(), '.weles', 'topup_card.env'),
   join(homedir(), '.stado', 'topup_card.env'),
 ];
-const TOPUP_ENV_FILE = TOPUP_ENV_FILES[0];
-const TOPUP_REQUIRED = [
+export const TOPUP_REQUIRED = [
   'TOPUP_CARD_NUMBER',
   'TOPUP_CARD_EXP',
   'TOPUP_CARD_CVC',
 ];
-/// The services a topup can run for: the ones that actually carry a
-/// `topup.mjs` beside this shared scaffolding.
-///
-/// This was a list of four names while thirteen trajectories carried a
-/// `topup.mjs`: `capsolver`, `packetstream`, `anticaptcha` and six more
-/// were refused by the orchestrator although their flow was right there.
-/// The directory is the answer, and a trajectory is allowed the day it is
-/// added.
-function topupProviders(currentFileUrl) {
-  const root = join(dirname(fileURLToPath(currentFileUrl)), '..', '..');
-  return readdirSync(root, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isDirectory() && existsSync(join(root, entry.name, 'topup.mjs')),
-    )
-    .map((entry) => entry.name)
-    .sort();
-}
 
-/// Source the card into process.env from the first file that carries it, and
-/// report which one answered. An environment variable already set always wins,
-/// so a caller can override a single field without editing any file.
+// Load the explicit card source into the trajectory environment. Conflicting
+// values refuse rather than mixing credentials from separate sources.
 export function loadTopupCardEnv() {
-  // A host that gets the card from the vault gets it as one JSON value, because
-  // Stado injects a job secret as a single environment variable and redacts
-  // exactly that value from the job's output. Expanding it here means the file
-  // path and the vault path feed identical code, and no trajectory has to know
-  // which one answered.
-  const bundled = process.env.TOPUP_CARD_JSON?.trim();
-  if (bundled) {
+  if (Object.hasOwn(process.env, 'TOPUP_CARD_JSON')) {
+    const bundled = process.env.TOPUP_CARD_JSON;
+    if (!bundled?.trim())
+      throw new Error(
+        'TOPUP_CARD_JSON was supplied empty; the purchase card was not selected',
+      );
+    let card;
     try {
-      const card = JSON.parse(bundled);
-      const mapping = {
-        TOPUP_CARD_NUMBER: card.number,
-        TOPUP_CARD_EXP: card.exp,
-        TOPUP_CARD_CVC: card.cvc,
-        TOPUP_CARD_ZIP: card.zip,
-        TOPUP_CARD_NAME: card.name,
-      };
-      for (const [key, value] of Object.entries(mapping)) {
-        if (value && !process.env[key]) process.env[key] = String(value);
-      }
-      if (mapping.TOPUP_CARD_NUMBER) return 'TOPUP_CARD_JSON';
-    } catch {
-      // A malformed bundle is worth saying out loud: the alternative is a
-      // trajectory reporting "no card" while a card was supplied.
-      console.log(
-        '[topup] TOPUP_CARD_JSON is set but is not JSON; ignoring it',
+      card = JSON.parse(bundled);
+    } catch (error) {
+      throw new Error(
+        `TOPUP_CARD_JSON is not valid JSON: ${error.message}; the purchase card was not selected`,
+        { cause: error },
       );
     }
+    if (!card || typeof card !== 'object' || Array.isArray(card))
+      throw new Error(
+        'TOPUP_CARD_JSON must be a card object; the purchase card was not selected',
+      );
+    const mapping = {
+      TOPUP_CARD_NUMBER: card.number,
+      TOPUP_CARD_EXP: card.exp,
+      TOPUP_CARD_CVC: card.cvc,
+      TOPUP_CARD_ZIP: card.zip,
+      TOPUP_CARD_NAME: card.name,
+    };
+    const missing = TOPUP_REQUIRED.filter(
+      (key) => typeof mapping[key] !== 'string' || !mapping[key].trim(),
+    );
+    if (missing.length)
+      throw new Error(
+        `TOPUP_CARD_JSON has no ${missing.join(', ')}; the purchase card was not selected`,
+      );
+    for (const [key, value] of Object.entries(mapping)) {
+      if (value === undefined || value === null || value === '') continue;
+      if (process.env[key] && process.env[key] !== String(value))
+        throw new Error(
+          `${key} conflicts with TOPUP_CARD_JSON; no card was selected`,
+        );
+      process.env[key] = String(value);
+    }
+    return 'TOPUP_CARD_JSON';
   }
   for (const path of TOPUP_ENV_FILES) {
     if (!existsSync(path)) continue;
@@ -242,101 +225,4 @@ export function loadTopupCardEnv() {
     return path;
   }
   return null;
-}
-
-function loadCardEnvFile() {
-  const found = loadTopupCardEnv();
-  if (!found) {
-    console.log(
-      `BLOCKER: no card file at ${TOPUP_ENV_FILES.join(' or ')}. Copy ${TOPUP_ENV_FILE}.template, paste card values from Rho dashboard, chmod 600.`,
-    );
-    return false;
-  }
-  return true;
-}
-
-export async function runTopupOrchestrator(provider, usd, currentFileUrl) {
-  const allowed = topupProviders(currentFileUrl);
-  if (!allowed.includes(provider)) {
-    console.log(
-      `BLOCKER: unknown provider ${provider}. Allowed: ${allowed.join(', ')}`,
-    );
-    process.exit(1);
-  }
-  const usdNum = Number(usd);
-  if (
-    usd === undefined ||
-    usd === null ||
-    !(usdNum >= Number.MIN_VALUE) ||
-    !Number.isFinite(usdNum)
-  ) {
-    console.log(
-      `BLOCKER: usd is ${usd === undefined || usd === null ? 'not given' : `"${usd}", not an amount above zero`}: the US dollars this top-up charges; nothing is assumed`,
-    );
-    process.exit(1);
-  }
-  if (!loadCardEnvFile()) process.exit(1);
-  // Also source weles/.env so the trajectory's SUPABASE_* lookups work when invoked via node directly.
-  const welesEnv = join(
-    dirname(fileURLToPath(currentFileUrl)),
-    '..',
-    '..',
-    '..',
-    '..',
-    '.env',
-  );
-  if (existsSync(welesEnv)) {
-    for (const raw of readFileSync(welesEnv, 'utf8').split('\n')) {
-      const line = raw.trim();
-      if (!line || line.startsWith('#')) continue;
-      const eq = line.indexOf('=');
-      if (eq < 0) continue;
-      const k = line.slice(0, eq).trim();
-      const v = line
-        .slice(eq + 1)
-        .trim()
-        .replace(/^["']|["']$/g, '');
-      if (k && v && !process.env[k]) process.env[k] = v;
-    }
-  }
-  const missing = TOPUP_REQUIRED.filter((k) => !process.env[k]);
-  if (missing.length) {
-    console.log(
-      `BLOCKER: missing card env vars in ${TOPUP_ENV_FILE}: ${missing.join(', ')}`,
-    );
-    process.exit(1);
-  }
-  const here = dirname(fileURLToPath(currentFileUrl));
-  const trajectory = join(here, '..', '..', provider, 'topup.mjs');
-  if (!existsSync(trajectory)) {
-    console.log(`BLOCKER: trajectory not found: ${trajectory}`);
-    process.exit(1);
-  }
-  console.log(
-    `[orchestrator] provider=${provider} usd=$${usdNum} card=****${process.env.TOPUP_CARD_NUMBER.slice(-4)}`,
-  );
-  // `process.execPath`, not `'node'`: this also runs under the launchd worker,
-  // whose unit carries no PATH. See `../../codex/reauth.mjs`.
-  const child = spawn(process.execPath, [trajectory], {
-    env: { ...process.env, TOPUP_USD: String(usdNum), TOPUP_CONFIRM: '1' },
-    stdio: 'inherit',
-  });
-  return new Promise((resolve) => {
-    child.on('exit', (code) => {
-      console.log(`[orchestrator] ${provider} topup exited with code ${code}`);
-      resolve(code ?? 1);
-    });
-  });
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const [, , provider, usd] = process.argv;
-  if (!provider) {
-    console.log(
-      `Usage: node ${process.argv[1]} <${topupProviders(import.meta.url).join('|')}> <usd>`,
-    );
-    process.exit(1);
-  }
-  const code = await runTopupOrchestrator(provider, usd, import.meta.url);
-  process.exit(code);
 }
