@@ -127,36 +127,37 @@ export async function gotoLoginRotating({ session, persona, restartFn }) {
   let remaining = proxyExitBudget();
   let rotations = 0;
   while (true) {
-    try {
-      await s.page.goto('https://www.linkedin.com/login', {
-        waitUntil: 'domcontentloaded',
-      });
-      const url = s.page.url?.() ?? '';
-      if (url.startsWith('chrome-error://'))
-        throw new Error('goto_chrome_error');
-      if (!(await pageHasLoginForm(s.page)))
-        throw new Error('stripped_login_shell');
+    // The two outcomes a fresh exit can cure are read from the page itself:
+    // a chrome-error document, or a page without the login form. Any error
+    // the navigation throws is not one of them and ends the attempt.
+    await s.page.goto('https://www.linkedin.com/login', {
+      waitUntil: 'domcontentloaded',
+    });
+    const url = s.page.url();
+    let refusal = null;
+    if (url.startsWith('chrome-error://')) refusal = 'goto_chrome_error';
+    else if (!(await pageHasLoginForm(s.page)))
+      refusal = 'stripped_login_shell';
+    if (refusal === null) {
       console.log(
         `[linkedin_login] goto: full login form rendered (rotations=${rotations})`,
       );
       return { session: s, proxyUrl: activeProxy };
-    } catch (e) {
-      if (!/stripped_login_shell|goto_chrome_error/.test(e.message)) throw e;
-      rotations += 1;
-      console.log(
-        `[linkedin_login] ${e.message} — rotating sticky (${remaining} exits left in LINKEDIN_PROXY_EXIT_BUDGET)`,
-      );
-      const fresh = await findUnflaggedSticky(remaining);
-      if (!fresh)
-        throw new Error(
-          `no_unflagged_sticky_found: LINKEDIN_PROXY_EXIT_BUDGET spent after ${rotations} rotations: ${e.message}`,
-        );
-      remaining -= fresh.attempts;
-      await s
-        .close()
-        .catch((e) => console.log(`[session] close failed: ${e.message}`));
-      s = await restartFn(fresh.url, persona);
-      activeProxy = fresh.url;
     }
+    rotations += 1;
+    console.log(
+      `[linkedin_login] ${refusal} — rotating sticky (${remaining} exits left in LINKEDIN_PROXY_EXIT_BUDGET)`,
+    );
+    const fresh = await findUnflaggedSticky(remaining);
+    if (!fresh)
+      throw new Error(
+        `no_unflagged_sticky_found: LINKEDIN_PROXY_EXIT_BUDGET spent after ${rotations} rotations: ${refusal}`,
+      );
+    remaining -= fresh.attempts;
+    await s
+      .close()
+      .catch((e) => console.log(`[session] close failed: ${e.message}`));
+    s = await restartFn(fresh.url, persona);
+    activeProxy = fresh.url;
   }
 }
