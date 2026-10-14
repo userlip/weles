@@ -1,102 +1,12 @@
-// The keyword intents come from the model router, never from a list we keep.
-// This module holds the Brama credentials and the per-request HMAC signature,
-// the two prompts (open the research, or judge whether the intents are already
-// saturated), and the reading of the JSON the model was asked to answer with.
+// The keyword intents come from the model, never from a list we keep. The call
+// goes through Weles' one model client (`callJeden`): Brama with this
+// workload's alias and signed identity, or the provider a user without Brama
+// names in WELES_MODEL_ENDPOINT and WELES_MODEL. This module holds the two
+// prompts (open the research, or judge whether the intents are already
+// saturated) and the reading of the JSON the model was asked to answer with.
 
-import { createHash, createHmac } from 'node:crypto';
+import { callJeden } from '../../../../../../dist/agent/jeden.js';
 import { normalizeKeyword } from './request_intake.mjs';
-
-let routerConfig = null;
-
-export function loadModelRouterConfig() {
-  if (routerConfig) return routerConfig;
-  // A user without Brama names an OpenAI-compatible provider and its model,
-  // as for every other Weles model call; nothing is signed for it.
-  const directUrl = String(process.env.WELES_MODEL_ENDPOINT || '')
-    .trim()
-    .replace(/\/+$/, '');
-  if (directUrl) {
-    const model = String(process.env.WELES_MODEL || '').trim();
-    if (!model)
-      throw new Error(
-        'WELES_MODEL_ENDPOINT is set but WELES_MODEL is not; name the provider model Weles asks',
-      );
-    routerConfig = {
-      routerUrl: directUrl,
-      routerToken: String(process.env.WELES_MODEL_KEY || '').trim() || null,
-      agentId: null,
-      agentAuthSecret: null,
-      model,
-      configId: 'direct-provider',
-    };
-    return routerConfig;
-  }
-  const routerUrl = String(process.env.STADO_MODEL_ROUTER_URL || '')
-    .trim()
-    .replace(/\/+$/, '');
-  const routerToken = String(
-    process.env.WELES_STADO_MODEL_ROUTER_TOKEN || '',
-  ).trim();
-  const agentId = String(
-    process.env.WELES_STADO_MODEL_ROUTER_AGENT_ID || '',
-  ).trim();
-  const agentAuthSecret = String(
-    process.env.WELES_STADO_MODEL_ROUTER_AGENT_AUTH_SECRET || '',
-  );
-  if (!routerUrl)
-    throw new Error(
-      'missing required STADO_MODEL_ROUTER_URL; without Brama set WELES_MODEL_ENDPOINT and WELES_MODEL to an OpenAI-compatible provider',
-    );
-  if (!routerToken)
-    throw new Error('missing required WELES_STADO_MODEL_ROUTER_TOKEN');
-  if (!agentId)
-    throw new Error('missing required WELES_STADO_MODEL_ROUTER_AGENT_ID');
-  if (!agentAuthSecret)
-    throw new Error(
-      'missing required WELES_STADO_MODEL_ROUTER_AGENT_AUTH_SECRET',
-    );
-  if (
-    agentAuthSecret.trim() !== agentAuthSecret ||
-    /\s/.test(agentAuthSecret)
-  ) {
-    throw new Error(
-      'WELES_STADO_MODEL_ROUTER_AGENT_AUTH_SECRET must be one exact non-whitespace credential',
-    );
-  }
-  if (routerToken === agentAuthSecret) {
-    throw new Error(
-      'keyword-planner Brama bearer and agent HMAC secret must be distinct',
-    );
-  }
-  routerConfig = {
-    routerUrl,
-    routerToken,
-    agentId,
-    agentAuthSecret,
-    model: String(
-      process.env.WELES_AGENT_MODEL || process.env.MODEL_ROUTER_MODEL || 'any',
-    ).trim(),
-    configId: 'stado-env',
-  };
-  return routerConfig;
-}
-
-function routerHeaders(cfg, body) {
-  const headers = { 'content-type': 'application/json' };
-  if (cfg.routerToken) headers.Authorization = `Bearer ${cfg.routerToken}`;
-  if (!cfg.agentAuthSecret) return headers;
-  const timestamp = String(Date.now());
-  const bodyHash = createHash('sha256').update(body, 'utf8').digest('hex');
-  const signature = createHmac('sha256', cfg.agentAuthSecret)
-    .update(`${cfg.agentId}:${timestamp}:${bodyHash}`, 'utf8')
-    .digest('hex');
-  return {
-    ...headers,
-    'x-agent-id': cfg.agentId,
-    'x-agent-timestamp': timestamp,
-    'x-agent-signature': signature,
-  };
-}
 
 // Models wrap their JSON in prose or a code fence. The document is whatever sits
 // between the first opening bracket of the outermost kind and its last closer,
@@ -137,18 +47,7 @@ export function parseKeywordRouterResponse(raw) {
   };
 }
 
-function readRouterCompletion(answer) {
-  try {
-    return JSON.parse(answer);
-  } catch (error) {
-    throw new Error(
-      `model-router accepted the request but answered with a body that is not JSON: ${error?.message || error}; body began: ${answer}`,
-    );
-  }
-}
-
 export async function generateKeywordsWithRouter(input, state = null) {
-  const cfg = loadModelRouterConfig();
   const prompt = state
     ? [
         'Continue Google Ads keyword research by checking intent saturation.',
@@ -188,19 +87,8 @@ export async function generateKeywordsWithRouter(input, state = null) {
         `Seed keywords: ${input.seedKeywords.join(', ') || '(none)'}`,
         'Prefer commercial-intent search phrases. Avoid brands not present in the prompt and policy-sensitive/adult-explicit terms.',
       ].join('\n');
-  const body = JSON.stringify({
-    model: cfg.model,
-    messages: [{ role: 'user', content: prompt }],
-  });
-  const res = await fetch(`${cfg.routerUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: routerHeaders(cfg, body),
-    body,
-  });
-  const answer = await res.text();
-  if (!res.ok) throw new Error(`model-router ${res.status}: ${answer}`);
-  const data = readRouterCompletion(answer);
-  const raw = data.choices?.[0]?.message?.content || '';
+  const routed = await callJeden(prompt);
+  const raw = routed.raw;
   const parsed = parseKeywordRouterResponse(raw);
   if (!parsed.saturated && !parsed.keywords.length)
     throw new Error(
@@ -209,9 +97,8 @@ export async function generateKeywordsWithRouter(input, state = null) {
   return {
     ok: true,
     source: 'model-router',
-    model: data.model || cfg.model,
-    routerHost: new URL(cfg.routerUrl).host,
-    configId: cfg.configId,
+    model: routed.model,
+    routerHost: new URL(routed.routerUrl).host,
     saturated: parsed.saturated,
     keywords: parsed.keywords,
     intents: parsed.intents,
