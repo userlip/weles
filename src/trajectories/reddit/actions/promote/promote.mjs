@@ -6,7 +6,7 @@
  * gate is the source of truth.
  *
  * Args via env: TARGET_URL (a thread) or SUBREDDIT (one subreddit), PRODUCT_ID (required), VARIANT
- * ("link"|"mention", default "mention").
+ * (required: "link" or "mention", how the comment names the product).
  */
 import {
   getSocialAccount,
@@ -27,6 +27,7 @@ import {
   findAccount,
   findProduct,
 } from '../../../_shared/skarbiec/accounts.mjs';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
 // Where the account speaks is the request's: a thread (TARGET_URL) or one
 // subreddit (SUBREDDIT). A default feed chose it for the caller, and an
@@ -38,7 +39,10 @@ if (!TARGET_URL && !SUBREDDIT)
     'TARGET_URL (the thread) or SUBREDDIT (the subreddit) required: where the comment goes',
   );
 const PRODUCT_ID = process.env.PRODUCT_ID;
-const VARIANT = (process.env.VARIANT || 'mention').toLowerCase();
+const VARIANT = statedText(
+  ['VARIANT'],
+  'how the comment names the product: link or mention',
+).toLowerCase();
 const REQUIRE_APPROVAL = process.env.REQUIRE_APPROVAL === '1';
 if (!PRODUCT_ID) {
   console.log('FAIL: PRODUCT_ID required');
