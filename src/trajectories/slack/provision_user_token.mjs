@@ -85,6 +85,9 @@ const { humanFill, humanType } = await import(
 const { humanClickLocator, humanIdlePause } = await import(
   `${WELES}/dist/human/mouse.js`
 );
+const { runRecordingsDir } = await import(
+  `${WELES}/dist/session/run-recordings.js`
+);
 
 const headless = process.env.HEADLESS === '1';
 const s = await WSession.start({
@@ -94,7 +97,8 @@ const s = await WSession.start({
 });
 console.log('[slack-user-token] WSession started');
 
-const SHOT_DIR = join(WELES, '.work', 'slack-user-token');
+// Screenshots go to the run's own recordings, not into the checkout.
+const SHOT_DIR = runRecordingsDir('slack-user-token');
 mkdirSync(SHOT_DIR, { recursive: true });
 async function shot(label) {
   const fp = join(SHOT_DIR, `${label}_${Date.now()}.png`);
