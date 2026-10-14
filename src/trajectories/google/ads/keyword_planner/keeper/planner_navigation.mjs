@@ -8,6 +8,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { statedText } from '../../../../_shared/inputs/stated.mjs';
 import {
   DIAG_DIR,
   RESULT_FILE,
@@ -34,7 +35,15 @@ const SIGN_IN = /accounts\.google\.com/i;
 function adsUrl(pathname) {
   const url = new URL(pathname, 'https://ads.google.com');
   url.searchParams.set('cid', cid);
-  url.searchParams.set('authuser', process.env.GOOGLE_ADS_AUTHUSER || '1');
+  // Which signed-in Google account of the browser the planner opens under is
+  // the caller's; the slot index is not guessed.
+  url.searchParams.set(
+    'authuser',
+    statedText(
+      ['GOOGLE_ADS_AUTHUSER'],
+      "the browser's Google account index (authuser) the Ads customer is signed in as",
+    ),
+  );
   return url.toString();
 }
 

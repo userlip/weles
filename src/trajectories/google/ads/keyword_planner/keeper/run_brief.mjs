@@ -8,23 +8,27 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { readScopedLogin } from '../../../../../_shared/scoped-secrets.mjs';
+import { statedText } from '../../../../_shared/inputs/stated.mjs';
 
 const GOOGLE_ADS_LOGIN = readScopedLogin('googleAds');
-export const SESSION =
-  process.env.SESSION || process.env.GOOGLE_ADS_KEEPER_SESSION || 'google_ads';
+// The keeper session holding the signed-in browser and the customer whose
+// planner is read are the caller's; neither is assumed.
+export const SESSION = statedText(
+  ['SESSION', 'GOOGLE_ADS_KEEPER_SESSION'],
+  'the keeper session (weles keeper) whose browser holds the Google Ads login',
+);
 export const SOCK = join(homedir(), '.weles', 'keeper', SESSION, 'socket');
+export const cid = normalizeCustomerId(
+  statedText(
+    ['GOOGLE_ADS_CUSTOMER_ID'],
+    'the Google Ads customer id whose Keyword Planner is read',
+  ),
+);
 export const DIAG_DIR =
   process.env.GOOGLE_ADS_DIAG_DIR ||
   runOutputPath('google-ads-keyword-planner');
 export const RESULT_FILE =
-  process.env.GOOGLE_ADS_RESULT_FILE ||
-  join(
-    DIAG_DIR,
-    `keywords-${normalizeCustomerId(process.env.GOOGLE_ADS_CUSTOMER_ID || '') || 'unknown'}.json`,
-  );
-export const cid = normalizeCustomerId(
-  process.env.GOOGLE_ADS_CUSTOMER_ID || '',
-);
+  process.env.GOOGLE_ADS_RESULT_FILE || join(DIAG_DIR, `keywords-${cid}.json`);
 export const keywords = parseKeywords(
   process.env.GOOGLE_ADS_KEYWORDS ||
     process.env.KEYWORDS ||
