@@ -17,6 +17,7 @@ import {
   loadFreshCookieJarOrFail,
 } from '../../../_shared/auth/cookie-freshness.mjs';
 import { listAccounts } from '../../../_shared/skarbiec/accounts.mjs';
+import { statedCount } from '../../../_shared/inputs/stated.mjs';
 
 export function todayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -148,10 +149,15 @@ async function fetchActivePangramAccounts() {
   const selected = accountId
     ? accounts.filter((account) => account.id === accountId)
     : accounts;
-  const limit = Math.max(
-    1,
-    Number(process.env.PANGRAM_ACCOUNT_POOL_LIMIT || '100'),
-  );
+  // Every account is considered unless the run caps the pool itself; a cap
+  // nobody stated left every account past the hundredth unused.
+  const limit =
+    process.env.PANGRAM_ACCOUNT_POOL_LIMIT === undefined
+      ? selected.length
+      : statedCount(
+          'PANGRAM_ACCOUNT_POOL_LIMIT',
+          'how many Pangram accounts the rotation considers',
+        );
   return {
     accounts: selected.slice(0, limit).map((account) => ({
       ...account,
