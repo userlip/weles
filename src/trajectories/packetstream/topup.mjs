@@ -1,14 +1,14 @@
 // PacketStream topup.
-// PacketStream's /dashboard/deposit only offers preset amounts ($50/$100/$250/$500/$1000)
-// — TOPUP_USD is rounded UP to the nearest preset.
+// PacketStream's /dashboard/deposit offers fixed deposit amounts in its own
+// dropdown. The stated TOPUP_USD must be one of the amounts that dropdown
+// lists, read from the page; any other amount is refused before anything is
+// charged, instead of charging the next amount up.
 import { getServiceLogin } from '../../../dist/utils/credentials.js';
 import { WSession } from '../../../dist/session/wsession.js';
 import { topupOpts } from '../_shared/services/topup_common.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
 
-const PRESETS = [50, 100, 250, 500, 1000];
 const { usd } = topupOpts();
-const target = PRESETS.find((p) => p >= usd) ?? PRESETS[0];
 
 const login = await getServiceLogin('PacketStream');
 if (!login) {
@@ -44,18 +44,19 @@ try {
     waitUntil: 'domcontentloaded',
   });
   await pageSettled(s.page);
-  await s.page.selectOption('#paypal-amount', String(target)).catch(() => {});
-  console.log(`[trajectory] selected preset $${target} (requested $${usd})`);
-
-  // PacketStream's deposit dropdown auto-fires onChange which redirects to PayPal.
-  // Trigger the change event explicitly so the redirect fires deterministically.
-  await s.page.evaluate((amt) => {
-    const sel = document.querySelector('#paypal-amount');
-    if (sel) {
-      sel.value = String(amt);
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-  }, target);
+  const offered = await s.page
+    .locator('#paypal-amount option')
+    .evaluateAll((options) =>
+      options.map((option) => option.value).filter(Boolean),
+    );
+  if (!offered.includes(String(usd)))
+    throw new Error(
+      `PacketStream offers deposits of ${JSON.stringify(offered)} USD, not ${usd}; nothing was charged`,
+    );
+  // Selecting the amount fires the dropdown's change handler, which
+  // redirects to the payment provider.
+  await s.page.selectOption('#paypal-amount', String(usd));
+  console.log(`[trajectory] selected $${usd}`);
   // The change handler navigates to the payment provider; the page that
   // navigation lands on settles before it is read.
   await pageSettled(s.page);
@@ -66,7 +67,7 @@ try {
       `dropdown change did not redirect to a checkout URL (${finalUrl}). PacketStream may have changed its flow; revisit selectors.`,
     );
   console.log(
-    `PASS-CHARGED-PENDING: redirected to checkout (${finalUrl}). PayPal/Stripe will complete the $${target} charge against the saved payment method. Verify via PacketStream's "Recent Payments" or by re-running src/trajectories/packetstream/balance.mjs in 1-2 minutes.`,
+    `PASS-CHARGED-PENDING: redirected to checkout (${finalUrl}). PayPal/Stripe will complete the $${usd} charge against the saved payment method. Verify via PacketStream's "Recent Payments" or by re-running src/trajectories/packetstream/balance.mjs.`,
   );
 } catch (e) {
   console.log('FAIL:', e.message);

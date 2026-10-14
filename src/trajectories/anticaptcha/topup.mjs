@@ -1,5 +1,7 @@
-// AntiCaptcha topup via Google SSO. Uses fixed amounts ($10, $25, $50, $100, $500).
-// TOPUP_USD is rounded to nearest preset. Clicking amount redirects to Stripe.
+// AntiCaptcha topup via Google SSO. The refill page offers fixed amounts as
+// buttons; the stated TOPUP_USD must be one of them. An amount the page does
+// not offer is refused before anything is charged, instead of charging the
+// nearest one. Clicking the amount redirects to Stripe.
 import { WSession } from '../../../dist/session/wsession.js';
 import {
   googleSso,
@@ -7,17 +9,10 @@ import {
 } from '../_shared/services/google_sso.mjs';
 import { topupOpts } from '../_shared/services/topup_common.mjs';
 import { humanIdlePause } from '../../../dist/human/mouse.js';
+import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 
-const PRESETS = [10, 25, 50, 100, 500];
-function nearestPreset(usd) {
-  return PRESETS.reduce((a, b) =>
-    Math.abs(b - usd) < Math.abs(a - usd) ? b : a,
-  );
-}
-
-const { usd } = topupOpts();
-const amount = nearestPreset(usd);
-console.log(`[trajectory] requested $${usd}, using nearest preset $${amount}`);
+const { usd: amount } = topupOpts();
+console.log(`[trajectory] requested $${amount}`);
 
 const login = await getGoogleSsoCreds();
 if (!login) {
@@ -52,22 +47,25 @@ try {
   await s.page.locator('span.card-cat:has(img[alt="Visa"])').first().click();
   await humanIdlePause('deliberate');
 
-  // Click Stripe "Select" button (second one in dialog)
-  const selectBtns = await s.page
-    .locator('button:has-text("Select"), a:has-text("Select")')
-    .all();
-  if (selectBtns.length >= 2) {
-    await selectBtns[1].click();
-    await humanIdlePause('deliberate');
-  }
+  // The Stripe option's own Select control, found by the vision model rather
+  // than by its position among the dialog's buttons; none refuses the run.
+  await clickDescribed(
+    s.page,
+    'the Select button of the Stripe payment option in the open payment dialog',
+  );
+  await humanIdlePause('deliberate');
 
-  // Now on amount selection page - click the matching preset button
+  // The amount control whose whole text is the stated amount: a substring
+  // match would take "$100" for "$10".
+  const exactAmount = new RegExp(`^\\s*\\$${String(amount).replace('.', '\\.')}\\s*$`);
   const amountBtn = s.page
-    .locator(`button:has-text("$${amount}"), div:has-text("$${amount}")`)
-    .filter({ visible: true })
-    .first();
-  if (!(await amountBtn.isVisible().catch(() => false)))
-    throw new Error(`amount button $${amount} not found`);
+    .locator('button, div')
+    .filter({ hasText: exactAmount, visible: true })
+    .last();
+  if (!(await amountBtn.isVisible()))
+    throw new Error(
+      `the refill page offers no $${amount} amount; nothing was charged`,
+    );
   console.log(`[trajectory] found amount button $${amount}`);
 
   // CONFIRM: Click amount to redirect to Stripe checkout
@@ -75,15 +73,13 @@ try {
   await amountBtn.click();
   await humanIdlePause('long');
 
-  // Should redirect to stripe.com or payment partner
+  // The amount redirects to Stripe's checkout; anything else is not a charge.
   const url = s.page.url();
-  if (/stripe\.com|checkout/i.test(url)) {
-    console.log(
-      `PASS-CHARGED: redirected to ${url}... (complete payment manually)`,
+  if (!/stripe\.com|checkout/i.test(url))
+    throw new Error(
+      `clicking $${amount} did not reach a checkout (now on ${url}); nothing was charged`,
     );
-  } else {
-    console.log(`PASS-CHARGED: amount $${amount} selected, url=${url}`);
-  }
+  console.log(`PASS-CHARGED: redirected to ${url} (complete payment there)`);
 } catch (e) {
   console.log('FAIL:', e.message);
   process.exitCode = 1;
