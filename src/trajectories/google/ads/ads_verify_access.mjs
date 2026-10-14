@@ -23,6 +23,7 @@ import {
   closeAllowedByEnv,
 } from './_profile_guard.mjs';
 import { closeGoogleAdsSession } from './_close_session.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
 const SOURCE_USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
@@ -131,7 +132,10 @@ console.log(
 const s = await WSession.start({
   label: 'google_ads_verify_access',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedText(
+    ['PROXY_URL'],
+    'the proxy (URL or provider filter) the Google Ads access check browses through',
+  ),
   persona: stableProfilePersona(),
   userDataDir: preparedProfile.dir,
   headless: process.env.GOOGLE_VERIFY_HEADLESS !== '0',

@@ -19,7 +19,8 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 //   KEYWORDS               optional comma-separated search keywords
 //   LOCATIONS              optional comma-separated location names
 //   SUBMIT                 must be "1" to publish. Default stages only.
-//   PROXY_URL              optional proxy override
+//   PROXY_URL              proxy URL or provider filter ('direct' for none);
+//                          required unless the account session names its own proxy
 //
 // Requires a logged-in google account cookie jar. Run google login/register
 // flow first when the session is stale.
@@ -34,6 +35,7 @@ import {
   closeAllowedByEnv,
 } from './_profile_guard.mjs';
 import { closeGoogleAdsSession } from './_close_session.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 import {
   ADS_URL,
   APP_CAMPAIGN_SUBTYPE,
@@ -96,7 +98,13 @@ assertGoogleAdsProfileNotAlreadyOpen(USER_DATA_DIR, 'google_ads_campaign');
 const s = await WSession.start({
   label: 'google_ads_campaign',
   browser: process.env.BROWSER || 'chromium',
-  proxy: process.env.PROXY_URL || session.proxyUrl || 'direct',
+  proxy:
+    session.proxyUrl && !process.env.PROXY_URL?.trim()
+      ? session.proxyUrl
+      : statedText(
+          ['PROXY_URL'],
+          'the proxy (URL or provider filter) the campaign is created through; the account session names none',
+        ),
   persona: profilePersona,
   userDataDir: USER_DATA_DIR,
 });

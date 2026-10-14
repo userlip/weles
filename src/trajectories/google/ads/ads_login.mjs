@@ -15,6 +15,7 @@ import {
 } from './_profile_guard.mjs';
 import { closeGoogleAdsSession } from './_close_session.mjs';
 import { readScopedLogin } from '../../../_shared/scoped-secrets.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
 const ALLOW_MANUAL_LOGIN =
   process.env.ALLOW_MANUAL_LOGIN === '1' || process.env.WAIT_FOR_LOGIN === '1';
@@ -77,7 +78,10 @@ assertGoogleAdsProfileNotAlreadyOpen(USER_DATA_DIR, 'google_ads_login');
 const s = await WSession.start({
   label: 'google_ads_login',
   browser: 'chromium',
-  proxy: process.env.PROXY_URL || 'direct',
+  proxy: statedText(
+    ['PROXY_URL'],
+    'the proxy (URL or provider filter) the Google Ads login browses through',
+  ),
   persona: stableProfilePersona(),
   userDataDir: USER_DATA_DIR,
 });

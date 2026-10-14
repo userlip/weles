@@ -6,6 +6,7 @@ import { pageSettled } from '../../../_shared/page/settled.mjs';
 //   GOOGLE_ADS_CUSTOMER_ID       required
 //   GOOGLE_ADS_KEYWORDS          required, comma/newline separated
 //   GOOGLE_ADS_RESULT_FILE       optional JSON output path
+//   PROXY_URL                    required proxy URL or provider filter; 'direct' for none
 //   Login identity/password/MFA are read only from the dedicated Google Ads Skarbiec item.
 
 import { writeFileSync } from 'node:fs';
@@ -33,6 +34,7 @@ import {
 } from './planner/capture.mjs';
 import { collectKeywordPlanner, openKeywordPlanner } from './planner/page.mjs';
 import { pageShows } from '../../../_shared/page/judged/seen.mjs';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
 async function main() {
   console.log(
@@ -46,7 +48,10 @@ async function main() {
   const s = await WSession.start({
     label: 'google_ads_keyword_planner',
     browser: process.env.BROWSER || 'chromium',
-    proxy: process.env.PROXY_URL || 'direct',
+    proxy: statedText(
+      ['PROXY_URL'],
+      'the proxy (URL or provider filter) Keyword Planner is browsed through',
+    ),
     persona: stableProfilePersona(),
     userDataDir: USER_DATA_DIR,
     pageDiagnostics: process.env.WELES_PAGE_DIAGNOSTICS === '1',
