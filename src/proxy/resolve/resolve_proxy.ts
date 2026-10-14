@@ -180,7 +180,11 @@ export async function resolveProxy(
         }
         host = live[Math.floor(Math.random() * live.length)];
         attemptDiag.endpoint = { host, port: String(p.proxy_port) };
-      } catch {
+      } catch (resolveError) {
+        // The load balancer's A records could not be read; one address from
+        // the system resolver stands in. When that fails too the attempt is
+        // rejected with both causes, instead of handing the preflight a host
+        // name nobody resolved.
         try {
           const dns = await import('node:dns');
           host = await new Promise<string>((res, rej) =>
@@ -188,7 +192,10 @@ export async function resolveProxy(
               e ? rej(e) : res(a),
             ),
           );
-        } catch {}
+        } catch (lookupError) {
+          attemptDiag.rejected_reason = `dns_unresolved: ${p.proxy_host}: resolve4: ${(resolveError as Error).message}; lookup: ${(lookupError as Error).message}`;
+          continue;
+        }
         attemptDiag.endpoint = { host, port: String(p.proxy_port) };
         if (await isBurned(host, platformFromTarget(targetHost))) {
           attemptDiag.rejected_reason = 'dns_answer_burned';

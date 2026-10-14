@@ -92,6 +92,7 @@ export async function probeLinkedinSignup(
     time_appconnect?: number;
     time_starttransfer?: number;
     time_total?: number;
+    meta_error?: string;
   };
   body_markers?: {
     login_form: boolean;
@@ -162,10 +163,18 @@ export async function probeLinkedinSignup(
     const idx = out.lastIndexOf(marker);
     const body = idx >= 0 ? out.slice(0, idx) : out;
     const metaRaw = idx >= 0 ? out.slice(idx + marker.length) : '';
+    // curl's -w JSON is the only source of the transport fields; when it is
+    // missing or does not parse, the fields stay absent and meta_error says
+    // why, instead of an empty object reading as "curl reported nothing".
     let meta: any = {};
-    try {
-      meta = metaRaw ? JSON.parse(metaRaw) : {};
-    } catch {}
+    let metaError: string | undefined;
+    if (!metaRaw) metaError = 'curl printed no __CURL_META__ block';
+    else
+      try {
+        meta = JSON.parse(metaRaw);
+      } catch (error) {
+        metaError = `curl's metadata is not JSON: ${(error as Error).message}`;
+      }
     const responseBody = {
       encoding: 'utf8' as const,
       text: body,
@@ -227,6 +236,7 @@ export async function probeLinkedinSignup(
           : undefined,
       time_total:
         typeof meta.time_total === 'number' ? meta.time_total : undefined,
+      meta_error: metaError,
     };
     if (bodyMarkers.signup_form && !bodyMarkers.hard_challenge)
       return {
