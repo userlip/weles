@@ -114,7 +114,7 @@ try {
   const writes = [];
   if (await statedField(nameIn, targetName, 'the Reddit display name field')) {
     const cur = await nameIn.inputValue();
-    if (cur.trim() !== targetName.trim()) {
+    if (cur !== targetName) {
       await fitsField(nameIn, targetName, 'the Reddit display name');
       await confirmedFill(
         s.page,
@@ -127,7 +127,7 @@ try {
   }
   if (await statedField(bioIn, targetBio, 'the Reddit about field')) {
     const cur = await bioIn.inputValue();
-    if (cur.trim() !== targetBio.trim()) {
+    if (cur !== targetBio) {
       await fitsField(bioIn, targetBio, 'the Reddit about text');
       await confirmedFill(s.page, bioIn, targetBio, 'the Reddit about field');
       writes.push(`bio (${cur.length} -> ${targetBio.length} chars)`);
@@ -154,7 +154,7 @@ try {
     ]) {
       if (!target) continue;
       const kept = await field.inputValue();
-      if (kept.trim() !== target.trim())
+      if (kept !== target)
         throw new Error(
           `Reddit kept a ${what} of ${kept.length} characters after Save, not the ${target.length} written`,
         );
@@ -232,7 +232,9 @@ try {
   // before: a save that failed left the record naming a profile Reddit never had.
   const recordProfile = () =>
     updateAccountMetadata(acct.id, {
-      display_name: targetName || null,
+      ...(typeof targetName === 'string' && targetName.trim()
+        ? { display_name: targetName }
+        : {}),
       profile_url: `https://www.reddit.com/user/${acct.username}/`,
       updated_at: new Date().toISOString(),
     });

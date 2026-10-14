@@ -124,7 +124,7 @@ try {
   const writes = [];
   if (await statedField(nameIn, targetName, 'the Instagram name field')) {
     const cur = await nameIn.inputValue();
-    if (cur.trim() !== targetName.trim()) {
+    if (cur !== targetName) {
       await confirmedFill(
         s.page,
         nameIn,
@@ -136,7 +136,7 @@ try {
   }
   if (await statedField(bioIn, targetBio, 'the Instagram bio field')) {
     const cur = await bioIn.inputValue();
-    if (cur.trim() !== targetBio.trim()) {
+    if (cur !== targetBio) {
       await fitsField(bioIn, targetBio, 'the Instagram bio');
       await confirmedFill(s.page, bioIn, targetBio, 'the Instagram bio field');
       writes.push(`bio (${cur.length} -> ${targetBio.length} chars)`);
@@ -170,7 +170,9 @@ try {
   // never had.
   const recordProfile = () =>
     updateAccountMetadata(acct.id, {
-      display_name: targetName || null,
+      ...(typeof targetName === 'string' && targetName.trim()
+        ? { display_name: targetName }
+        : {}),
       profile_url: `https://www.instagram.com/${acct.username}/`,
       updated_at: new Date().toISOString(),
     });
@@ -194,12 +196,12 @@ try {
     await pageSettled(s.page);
     const verifiedName = await nameIn.inputValue();
     const verifiedBio = await bioIn.inputValue();
-    if (targetName && verifiedName.trim() !== targetName.trim()) {
+    if (targetName && verifiedName !== targetName) {
       throw new Error(
         `name mismatch after submit ("${verifiedName}" != "${targetName}")`,
       );
     }
-    if (targetBio && verifiedBio.trim() !== targetBio.trim()) {
+    if (targetBio && verifiedBio !== targetBio) {
       throw new Error(
         `bio mismatch after submit ("${verifiedBio}..." != "${targetBio}...")`,
       );

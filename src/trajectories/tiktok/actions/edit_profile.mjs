@@ -1,10 +1,7 @@
 // Write the linked character's persona content (display_name + bio) onto
 // the TikTok profile via the settings/profile page.
 //
-// Companion to instagram's edit_profile (commit b9be789). tiktok has 2
-// char-linked active accounts (marlongoodwin9943, meredithortiz502) so
-// this trajectory can be live-validated, unlike instagram where all 5
-// char-linked accounts are deactivated.
+// A stated character field must be observed in the editor before saving.
 
 import {
   getSocialAccount,
@@ -136,14 +133,14 @@ try {
   const writes = [];
   if (await statedField(nameIn, targetName, 'the TikTok name field')) {
     const cur = await nameIn.inputValue();
-    if (cur.trim() !== targetName.trim()) {
+    if (cur !== targetName) {
       await confirmedFill(s.page, nameIn, targetName, 'the TikTok name field');
       writes.push(`name "${cur}" -> "${targetName}"`);
     }
   }
   if (await statedField(bioIn, targetBio, 'the TikTok bio field')) {
     const cur = await bioIn.inputValue();
-    if (cur.trim() !== targetBio.trim()) {
+    if (cur !== targetBio) {
       await fitsField(bioIn, targetBio, 'the TikTok bio');
       await confirmedFill(s.page, bioIn, targetBio, 'the TikTok bio field');
       writes.push(`bio (${cur.length} -> ${targetBio.length} chars)`);
@@ -163,10 +160,12 @@ try {
       )
       .filter({ visible: true })
       .first();
-    if (await changeBtn.isVisible()) {
-      await humanClickLocator(s.page, changeBtn);
-      await humanIdlePause('deliberate');
-    }
+    if (!(await changeBtn.isVisible()))
+      throw new Error(
+        `the TikTok profile has no Change photo control at ${s.page.url()}; the requested avatar was not uploaded`,
+      );
+    await humanClickLocator(s.page, changeBtn);
+    await humanIdlePause('deliberate');
     const fileIn = s.page
       .locator('input[type="file"][accept*="image"]')
       .first();
@@ -193,7 +192,9 @@ try {
   // had.
   const recordProfile = () =>
     updateAccountMetadata(acct.id, {
-      display_name: targetName || null,
+      ...(typeof targetName === 'string' && targetName.trim()
+        ? { display_name: targetName }
+        : {}),
       profile_url: `https://www.tiktok.com/@${acct.username}`,
       updated_at: new Date().toISOString(),
     });
@@ -225,7 +226,7 @@ try {
     ]) {
       if (!target) continue;
       const kept = await field.inputValue();
-      if (kept.trim() !== target.trim())
+      if (kept !== target)
         throw new Error(
           `TikTok kept a ${what} of ${kept.length} characters after Save, not the ${target.length} written`,
         );

@@ -8,9 +8,9 @@ import { humanFill } from '../../../../dist/human/keyboard.js';
 export async function confirmedFill(page, field, text, what) {
   await humanFill(page, field, text);
   const held = await field.inputValue();
-  if (held.trim() !== text.trim())
+  if (held !== text)
     throw new Error(
-      `${what} holds ${held.length} characters, not the ${text.length} typed; nothing was saved`,
+      `${what} differs after input: observed length=${held.length}, requested length=${text.length}; nothing was saved`,
     );
   return held;
 }

@@ -86,8 +86,15 @@ export interface SocialAccount {
 export async function getSocialAccount(
   platform: string,
 ): Promise<SocialAccount | null> {
-  const requested =
-    process.env.WELES_LOGIN_ITEM || process.env.ACCOUNT_ITEM || '';
+  const [requested, ...otherBindings] = [
+    process.env.WELES_LOGIN_ITEM,
+    process.env.ACCOUNT_ITEM,
+    process.env.ACCOUNT_ID,
+  ].filter((item): item is string => Boolean(item));
+  if (otherBindings.some((item) => item !== requested))
+    throw new Error(
+      `conflicting Weles account bindings: ${[requested, ...otherBindings].join(', ')}; the run cannot choose an account`,
+    );
   const candidates = requested
     ? [getAccount(requested)].filter(Boolean)
     : listAccounts(platform);

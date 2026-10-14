@@ -138,14 +138,14 @@ try {
   const writes = [];
   if (await statedField(nameIn, targetName, 'the X name field')) {
     const cur = await nameIn.inputValue();
-    if (cur.trim() !== targetName.trim()) {
+    if (cur !== targetName) {
       await confirmedFill(s.page, nameIn, targetName, 'the X name field');
       writes.push(`name "${cur}" -> "${targetName}"`);
     }
   }
   if (await statedField(bioIn, targetBio, 'the X bio field')) {
     const cur = await bioIn.inputValue();
-    if (cur.trim() !== targetBio.trim()) {
+    if (cur !== targetBio) {
       await fitsField(bioIn, targetBio, 'the X bio');
       await confirmedFill(s.page, bioIn, targetBio, 'the X bio field');
       writes.push(`bio (${cur.length} -> ${targetBio.length} chars)`);
@@ -157,7 +157,9 @@ try {
   // before: a save that failed left the record naming a profile X never had.
   const recordProfile = () =>
     updateAccountMetadata(acct.id, {
-      display_name: targetName || null,
+      ...(typeof targetName === 'string' && targetName.trim()
+        ? { display_name: targetName }
+        : {}),
       profile_url: `https://x.com/${acct.username}`,
       updated_at: new Date().toISOString(),
     });
