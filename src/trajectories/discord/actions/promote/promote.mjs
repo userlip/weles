@@ -1,8 +1,12 @@
 import { runAction } from '../../../_shared/action-runner.mjs';
 import { discordSubmitMessage } from '../../submit.mjs';
 import { detectDiscordBanSignals } from '../../../../../dist/platforms/discord/ban_signals.js';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
-const channelPath = process.env.SERVER_CHANNEL_PATH || '@me';
+const channelPath = statedText(
+  ['SERVER_CHANNEL_PATH'],
+  'the Discord channel to promote in, as <server id>/<channel id> (or @me/<dm id>)',
+);
 await runAction({
   platform: 'discord',
   action: 'promote',

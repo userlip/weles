@@ -9,8 +9,12 @@ import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
 import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
-const channelPath = process.env.SERVER_CHANNEL_PATH || '@me';
+const channelPath = statedText(
+  ['SERVER_CHANNEL_PATH'],
+  'the Discord channel to react in, as <server id>/<channel id> (or @me/<dm id>)',
+);
 const acct = await getSocialAccount('discord');
 if (!acct) {
   console.log('FAIL: no active discord account');
