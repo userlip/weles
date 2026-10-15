@@ -1,32 +1,14 @@
 // What the Google page in front of the driver actually says: its own text, the
 // controls it offers, and — when the run asks for them — a screenshot beside the
 // log line.
-//
-// Reading a page while it navigates is not the same fact as a page with nothing
-// on it, so that read has its own named answer and every caller branches on it
-// instead of matching patterns against an empty string.
 import { runOutputPath } from '#run-output';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  DOCUMENT_REPLACED,
-  readAcrossNavigation,
-} from '../../page/navigation/read.mjs';
-
-export const PAGE_TEXT_UNREADABLE = 'weles:google-page-text-unreadable';
-
-// The document that was there a moment ago is gone mid-read during a redirect,
-// which in a poll loop means "look again", never "the page was blank".
-export async function readGooglePageText(page) {
-  const text = await readAcrossNavigation(page, () =>
-    page.evaluate(() => document.body?.innerText || ''),
-  );
-  return text === DOCUMENT_REPLACED ? PAGE_TEXT_UNREADABLE : text;
-}
 
 export async function logGooglePageDiag(page, label) {
-  const diag = await page
-    .evaluate(() => {
+  let diag;
+  try {
+    diag = await page.evaluate(() => {
       const text = document.body.innerText.replace(/\s+/g, ' ');
       const buttons = Array.from(
         document.querySelectorAll('button, [role="button"]'),
@@ -51,7 +33,7 @@ export async function logGooglePageDiag(page, label) {
           visible: Boolean(
             el.offsetWidth || el.offsetHeight || el.getClientRects().length,
           ),
-          valueLength: String(el.value || '').length,
+          valueLength: el.value.length,
         }),
       );
       return {
@@ -61,8 +43,11 @@ export async function logGooglePageDiag(page, label) {
         buttons,
         inputs,
       };
-    })
-    .catch((e) => ({ error: e.message }));
+    });
+  } catch (error) {
+    // The log line then says why the page could not be read, at its address.
+    diag = { url: page.url(), unreadable: error.message };
+  }
   console.log(`[google_sso] ${label} diag=${JSON.stringify(diag)}`);
 
   if (
@@ -72,7 +57,7 @@ export async function logGooglePageDiag(page, label) {
     const dir =
       process.env.GOOGLE_SSO_DIAG_DIR || runOutputPath('google-sso-diag');
     mkdirSync(dir, { recursive: true });
-    const file = join(dir, `${label.replace(/[^a-z0-9_-]/gi, '_')}.png`);
+    const file = join(dir, `${label.replace(/[^\w-]/g, '_')}.png`);
     await page.screenshot({ path: file, fullPage: true });
     console.log(`[google_sso] ${label} screenshot=${file}`);
   }
