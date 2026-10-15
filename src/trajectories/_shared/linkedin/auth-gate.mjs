@@ -1,111 +1,52 @@
-// Navigation + auth-wall + assertAuthed gate. Extracted from action-runner.mjs
-// to fit under the 300-line cap and to add cfg.inlineRelogin
-// support so engagement trajectories can recover from auth_wall on the
-// SAME WSession (rather than dying + queueing a routine tick that lands
-// on a different proxy sticky and re-burns).
+// Navigation + reachability + assertAuthed gate of the shared action runner,
+// with cfg.inlineRelogin support so engagement trajectories can recover from
+// a signed-out session on the SAME WSession (rather than dying + queueing a
+// routine tick that lands on a different proxy sticky and re-burns).
+// Whether the session reached the site is Chromium's error page
+// (`../action/reachable.mjs`); whether it is signed in is the DOM probe
+// (`../auth/auth-probe.mjs`), never words in the address. A failed gate is
+// thrown with its banSignal attached.
 
 import { assertAuthed, AuthProbeError } from '../auth/auth-probe.mjs';
 import { pageSettled } from '../page/settled.mjs';
-
-const AUTH_WALL_RE =
-  /\/(login|signin|sessions\/new|uas\/login|checkpoint|accounts\/login)\b/;
+import { checkReachable } from '../action/reachable.mjs';
 
 async function authPass({ s, cfg, feed, label }) {
   await s.goto(feed);
-  const finalUrl = s.page.url?.() ?? '';
-  if (finalUrl.startsWith('chrome-error://')) {
-    return {
-      ok: false,
-      banSignal: {
-        signal: 'proxy_failed',
-        healthy: false,
-        details: {
-          final_url: finalUrl,
-          reason:
-            'chrome-error: proxy CONNECT failed (likely tunnel/sticky-session issue)',
-        },
-      },
-      error: new Error(
-        `proxy_failed: ${cfg.platform} navigation never left chrome-error — proxy CONNECT failed for ${feed}`,
-      ),
-    };
-  }
-  if (AUTH_WALL_RE.test(finalUrl)) {
-    return {
-      ok: false,
-      banSignal: {
-        signal: 'checkpoint',
-        healthy: false,
-        details: {
-          final_url: finalUrl,
-          reason:
-            'redirected to platform login wall — stored cookies stale or session never authenticated',
-        },
-      },
-      error: new Error(
-        `auth_wall: ${cfg.platform} session not authenticated — landed at ${finalUrl}`,
-      ),
-    };
-  }
+  checkReachable(s, cfg.platform);
   await pageSettled(s.page);
-  const settledUrl = s.page.url?.() ?? '';
-  if (AUTH_WALL_RE.test(settledUrl)) {
-    return {
-      ok: false,
-      banSignal: {
-        signal: 'checkpoint',
-        healthy: false,
-        details: {
-          final_url: settledUrl,
-          reason:
-            'SPA-redirected to login wall during settle — stored cookies stale',
-        },
-      },
-      error: new Error(
-        `auth_wall: ${cfg.platform} session redirected to login during SPA settle — landed at ${settledUrl}`,
-      ),
-    };
-  }
-  try {
-    const opts = { label };
-    await assertAuthed(cfg.platform, s, opts);
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      return {
-        ok: false,
-        banSignal: probeErr.banSignal,
-        error: new Error(`auth_probe_failed: ${probeErr.message}`),
-      };
-    }
-    throw probeErr;
-  }
-  return { ok: true, banSignal: null };
+  await assertAuthed(cfg.platform, s, { label });
 }
 
-// Drive the auth gate up to 2 attempts. On first-attempt auth_wall AND when
-// cfg.inlineRelogin is supplied, run it on the SAME session and retry once.
+/**
+ * Open `feed` signed in. On a first attempt that finds the session signed
+ * out (a checkpoint), and when cfg.inlineRelogin is supplied, the relogin
+ * runs on the SAME session and the gate is passed once more; otherwise the
+ * failure is thrown as it was met.
+ */
 export async function runAuthGate({ s, cfg, acct, feed, label }) {
-  let result = await authPass({ s, cfg, feed, label });
-  if (result.ok) return result;
-  const recoverable =
-    result.banSignal?.signal === 'checkpoint' ||
-    /auth_(wall|probe_failed)/.test(result.error?.message ?? '');
-  if (!recoverable || typeof cfg.inlineRelogin !== 'function') return result;
-  console.log(
-    `[auth-gate] ${cfg.platform}/${cfg.action} auth_wall on attempt 1 — running inline relogin`,
-  );
-  const r = await cfg.inlineRelogin(s, acct);
-  if (!r?.ok) {
+  try {
+    await authPass({ s, cfg, feed, label });
+    return;
+  } catch (error) {
+    if (
+      error.banSignal?.signal !== 'checkpoint' ||
+      typeof cfg.inlineRelogin !== 'function'
+    )
+      throw error;
     console.log(
-      `[auth-gate] inline relogin did not pass: ${r?.reason === undefined ? 'the relogin returned no reason' : r.reason}`,
+      `[auth-gate] ${cfg.platform}/${cfg.action} signed out on attempt 1 (${error.message}) — running inline relogin`,
     );
-    return result;
+    const relogin = await cfg.inlineRelogin(s, acct);
+    if (!relogin?.ok) {
+      error.message = `${error.message}; inline relogin did not pass: ${relogin?.reason ? relogin.reason : 'the relogin returned no reason'}`;
+      throw error;
+    }
   }
   console.log(
     `[auth-gate] inline relogin PASSED — retrying ${cfg.platform}/${cfg.action} auth gate`,
   );
-  result = await authPass({ s, cfg, feed, label });
-  return result;
+  await authPass({ s, cfg, feed, label });
 }
 
 export { AuthProbeError };
