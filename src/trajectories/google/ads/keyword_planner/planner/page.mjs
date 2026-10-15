@@ -10,11 +10,11 @@ import {
   clickOffered,
   pageShows,
 } from '../../../../_shared/page/judged/seen.mjs';
-import { cid, dashedCustomerId, keywords, norm } from './settings.mjs';
+import { cid, keywords, norm } from './settings.mjs';
+import { customerIdPattern } from '../request.mjs';
 import { preferredGoogleAdsEmail } from './sign_in.mjs';
 import {
   buildGoogleAdsPath,
-  campaignsUrl,
   summarizeKeywordPlannerResponses,
 } from './capture.mjs';
 import { collectDom, parseKeywordRows } from './dom.mjs';
@@ -33,27 +33,25 @@ function plannerShown(page) {
   );
 }
 
+// Google Ads asks which account to open on its account selector route.
+function onAccountSelector(url) {
+  const { hostname, pathname } = new URL(url);
+  return (
+    hostname === 'ads.google.com' && pathname.startsWith('/nav/selectaccount')
+  );
+}
+
 export async function continueFromGoogleAdsAccountSelector(page) {
-  if (!/ads\.google\.com\/nav\/selectaccount/i.test(page.url?.() || ''))
-    return false;
-  const dashed = dashedCustomerId(cid);
-  const candidates = [
-    page
-      .getByText(new RegExp(dashed.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')))
-      .filter({ visible: true })
-      .first(),
-  ];
-  for (const candidate of candidates) {
-    if (await candidate.isVisible()) {
-      console.log(
-        `[google-ads-keyword-planner] selecting Google Ads account ${dashed}`,
-      );
-      await humanClickLocator(page, candidate);
-      await pageSettled(page);
-      return true;
-    }
-  }
-  return false;
+  if (!onAccountSelector(page.url())) return false;
+  const account = page
+    .getByText(customerIdPattern(cid))
+    .filter({ visible: true })
+    .first();
+  if (!(await account.isVisible())) return false;
+  console.log(`[google-ads-keyword-planner] selecting Google Ads account ${cid}`);
+  await humanClickLocator(page, account);
+  await pageSettled(page);
+  return true;
 }
 
 // The keyword box is the planner form's text area; the website field beside
@@ -78,10 +76,7 @@ export async function openKeywordPlanner(s) {
   ];
   const attempts = [];
   for (const path of candidates) {
-    const url = buildGoogleAdsPath(
-      s.page.url?.() || campaignsUrl('cid', cid),
-      path,
-    );
+    const url = buildGoogleAdsPath(s.page.url(), path);
     await s.page.goto(url, { waitUntil: 'domcontentloaded' });
     await pageSettled(s.page);
     if (await continueFromGoogleAdsAccountSelector(s.page)) {
@@ -145,10 +140,9 @@ export async function collectKeywordPlanner(s, captured) {
   const parsedRows = parseKeywordRows(rows);
   return {
     customer: cid,
-    customerDashed: dashedCustomerId(cid),
     preferredEmail: preferredGoogleAdsEmail(),
     keywords,
-    url: s.page.url?.() || '',
+    url: s.page.url(),
     capturedAt: new Date().toISOString(),
     fill,
     actionClicks,
