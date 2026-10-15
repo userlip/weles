@@ -1,225 +1,64 @@
 // Gmail login + search trajectory (self-contained, no pre-seeded profile).
 //
-// Unlike gmail_search.mjs (which depends on a Google session previously
-// established in the launchRealChrome persistent profile via
-// setup_chrome_profile), this trajectory logs in from scratch with
-// credentials, using a full WSession (patched Chromium 147 OR weles-firefox).
-// Chromium uses the --weles-fingerprint binary. Firefox uses a coherent Gecko
-// user agent and native navigator.webdriver rather than a JavaScript override.
+// Unlike gmail_search.mjs (which reads the Google session of the persistent
+// real-Chrome profile), this signs in from scratch with the stated Gmail
+// credentials in a full WSession (patched Chromium or weles-firefox), then
+// reads the search result through ./search_result.mjs.
 //
-// Flow: WSession.start -> goto Gmail (redirects to accounts if logged out) ->
-// googleSso(identifier+password) -> dismiss post-login speedbump ->
-// #search/<query> -> read-only scrape of the result list -> open up to N
-// threads and scrape their bodies -> structured PASS report.
+// Flow: open the mailbox -> Google sign-in when Gmail asks for it (the
+// account chooser's "use another account" first, when shown) -> dismiss the
+// post-login speedbump -> #search/<query> -> the result list -> the bodies of
+// GM_MAX threads.
 //
 // Run:  node src/trajectories/gmail/gmail_login_search.mjs
-// Credentials are resolved from the dedicated Gmail Skarbiec item.
-//       GM_QUERY     required nonempty Gmail search query; no account-specific default
-//       GM_OPEN=0    list only, skip opening thread bodies
-//       GM_MAX       how many threads to open for body capture; required unless GM_OPEN=0
-//       BROWSER      'firefox' | 'chromium' to pin the engine (default: roll)
+//       GM_QUERY      required nonempty Gmail search query
+//       GM_OPEN=0     list only, skip opening thread bodies
+//       GM_MAX        how many threads to open; required unless GM_OPEN=0
+//       GM_CREDENTIAL_SERVICE  the scoped login read; Gmail's own when unstated
+//       BROWSER       'firefox' | 'chromium' to pin the engine (rolled otherwise)
 import { WSession } from '../../../dist/session/wsession.js';
 import { googleSso } from '../_shared/services/google_sso.mjs';
-import { readOr } from '../_shared/page/navigation/read.mjs';
 import { dismissGooglePostLogin } from '../_shared/services/google_sso/sign_in/redirect_watch.mjs';
-import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
+import { clickOffered } from '../_shared/page/judged/seen.mjs';
 import { readScopedLogin } from '../../_shared/scoped-secrets.mjs';
-import { statedCount } from '../_shared/inputs/stated.mjs';
+import { statedCount, statedText } from '../_shared/inputs/stated.mjs';
+import { gmailSearchUrl, printSearchResult, signedInGmail } from './search_result.mjs';
 
-const QUERY = process.env.GM_QUERY;
-if (typeof QUERY !== 'string' || !QUERY.trim()) {
-  throw new Error(
-    'GMAIL_QUERY_REQUIRED: GM_QUERY must be a nonempty Gmail search query',
-  );
-}
-const OPEN_BODIES = process.env.GM_OPEN !== '0';
-const MAX_OPEN = OPEN_BODIES
-  ? statedCount('GM_MAX', 'how many matching threads the search opens and reads')
-  : undefined;
+const QUERY = statedText(['GM_QUERY'], 'the Gmail search query to read', 'GMAIL_QUERY_REQUIRED');
+const OPEN = process.env.GM_OPEN === '0' ? undefined : statedCount('GM_MAX', 'how many matching threads the search opens and reads');
 // The stated credential service is read as given; the scoped-secret catalog
 // refuses one it does not declare. A run that states none reads Gmail's.
 const CREDENTIAL_SERVICE =
-  process.env.GM_CREDENTIAL_SERVICE === undefined
-    ? 'gmail'
-    : process.env.GM_CREDENTIAL_SERVICE;
-function gmailUrl(email, fragment) {
-  return (
-    'https://mail.google.com/mail/u/0/?tab=rm&ogbl&authuser=' +
-    encodeURIComponent(email) +
-    '#' +
-    fragment
-  );
-}
+  process.env.GM_CREDENTIAL_SERVICE === undefined ? 'gmail' : process.env.GM_CREDENTIAL_SERVICE;
 
-function log(...a) {
-  console.log('[gmail_login_search]', ...a);
-}
+const log = (...a) => console.log('[gmail_login_search]', ...a);
 
-// Locator.isVisible() rejects when its document is replaced mid-navigation;
-// that case (reported by the page, not read from the error's words) is "not
-// visible", and any other failure is surfaced.
-function visible(loc) {
-  return readOr(loc.page(), () => loc.isVisible(), false);
-}
-
-async function resolveCreds() {
-  return readScopedLogin(CREDENTIAL_SERVICE);
-}
-
-// Returns 'in' or 'login' from observed page state. Browser failures propagate.
-async function detectSession(page) {
-  for (;;) {
-    if (new URL(page.url()).hostname !== 'mail.google.com') return 'login';
-    // Signed-in Gmail carries its search field, whatever the results show.
-    if (await page.locator('input[name="q"]').count()) return 'in';
-    await pageSettled(page);
-  }
-}
-
-async function needsGoogleLogin(page) {
-  if (new URL(page.url()).hostname !== 'mail.google.com') return true;
-  const identifier = await page
-    .locator(
-      'input[type="email"], input[name="identifier"], input#identifierId',
-    )
-    .count();
-  return identifier > 0;
-}
-
-const creds = await resolveCreds();
-const inboxUrl = gmailUrl(creds.email, 'inbox');
-const searchUrl = gmailUrl(creds.email, 'search/' + encodeURIComponent(QUERY));
-const s = await WSession.start({
-  label: 'gmail_login_search',
-  browser: process.env.BROWSER || undefined,
-});
+const creds = readScopedLogin(CREDENTIAL_SERVICE);
+const mailbox = `https://mail.google.com/mail/u/0/?tab=rm&ogbl&authuser=${encodeURIComponent(creds.email)}`;
+const s = await WSession.start({ label: 'gmail_login_search', browser: process.env.BROWSER });
 try {
-  log(
-    'engine:',
-    s._browserProvenance ? s._browserProvenance.browser : null,
-    '| query:',
-    QUERY,
-  );
-  await s.page.goto(inboxUrl, { waitUntil: 'domcontentloaded' });
+  log('engine:', s._browserProvenance ? s._browserProvenance.browser : null, '| query:', QUERY);
+  await s.page.goto(`${mailbox}#inbox`, { waitUntil: 'domcontentloaded' });
   await pageSettled(s.page);
-
-  const gmailNeedsLogin = await needsGoogleLogin(s.page);
-  if (gmailNeedsLogin) {
-    const useAnotherAccount = s.page
-      .getByText(/^Use another account$/i)
-      .first();
-    if (await visible(useAnotherAccount)) {
-      log('choosing another Google account');
-      await humanClickLocator(s.page, useAnotherAccount);
-      await pageSettled(s.page);
-    }
-  }
-  if (gmailNeedsLogin) {
+  // Gmail sends a signed-out session to Google's sign-in (or shows its
+  // identifier field); a signed-in one stays on Gmail.
+  const identifier = s.page.locator('input[type="email"], input[name="identifier"], input#identifierId');
+  if (new URL(s.page.url()).hostname !== 'mail.google.com' || (await identifier.count())) {
+    if (await clickOffered(s.page, 'the account chooser option to use another account')) await pageSettled(s.page);
     log('logged out — running googleSso for', creds.email);
-    const ok = await googleSso(s, creds);
-    if (!ok) {
-      log('FAIL: googleSso did not complete (url=' + s.page.url() + ').');
-      await s.close();
-      process.exit(2);
-    }
+    if (!(await googleSso(s, creds)))
+      throw new Error(`GMAIL_SIGN_IN_INCOMPLETE: Google sign-in for ${creds.email} did not complete (url=${s.page.url()})`);
     await dismissGooglePostLogin(s.page);
     log('signed in, at ' + s.page.url());
-  } else {
-    log('already signed in (existing session)');
-  }
+  } else log('already signed in (existing session)');
 
-  await s.page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
+  await s.page.goto(gmailSearchUrl(mailbox, QUERY), { waitUntil: 'domcontentloaded' });
   await pageSettled(s.page);
-  const status = await detectSession(s.page);
-  if (status !== 'in') {
-    log(
-      'FAIL: search did not render (status=' +
-        status +
-        ', url=' +
-        s.page.url() +
-        ').',
-    );
-    await s.close();
-    process.exit(2);
-  }
-
-  const rows = await s.page.evaluate(() => {
-    // allow-raw-playwright: read-only DOM text scrape of the inbox result list, no synthetic interaction
-    const out = [];
-    const trs = Array.from(document.querySelectorAll('tr.zA'));
-    for (const r of trs) {
-      const fEl =
-        r.querySelector('.yW span[email]') ||
-        r.querySelector('.yW span') ||
-        r.querySelector('.zF');
-      const sEl = r.querySelector('.bog');
-      const dEl =
-        r.querySelector('.xW span[title]') || r.querySelector('.xW span');
-      const snEl = r.querySelector('.y2');
-      out.push({
-        from: fEl
-          ? (fEl.getAttribute('email') || fEl.textContent || '').trim()
-          : '',
-        subject: sEl ? (sEl.textContent || '').trim() : '',
-        date: dEl
-          ? (dEl.getAttribute('title') || dEl.textContent || '').trim()
-          : '',
-        snippet: snEl ? (snEl.textContent || '').trim() : '',
-      });
-    }
-    return out;
-  });
-
-  log('PASS: signed in. ' + rows.length + ' threads match the query');
-  console.log('================ THREAD LIST ================');
-  rows.forEach((r, i) => {
-    console.log(`#${i + 1} | ${r.date} | ${r.from}`);
-    console.log(`     SUBJ: ${r.subject}`);
-    console.log(`     SNIP: ${r.snippet}`);
-  });
-
-  if (OPEN_BODIES && rows.length) {
-    console.log('================ THREAD BODIES ================');
-    const n = Math.min(rows.length, MAX_OPEN);
-    for (let idx = 0; idx < n; idx++) {
-      try {
-        await humanClickLocator(s.page, s.page.locator('tr.zA').nth(idx));
-        await s.page
-          .locator('.a3s, div[role="listitem"] .ii')
-          .first()
-          .waitFor({ state: 'visible' });
-        const body = await s.page.evaluate(() => {
-          // allow-raw-playwright: read-only DOM text scrape of an opened email body, no synthetic interaction
-          const subj = document.querySelector('h2.hP');
-          const blocks = Array.from(document.querySelectorAll('.a3s'))
-            .map((b) => b.innerText.trim())
-            .filter(Boolean);
-          return {
-            subj: subj ? subj.textContent.trim() : '',
-            text: blocks.join('\n---\n'),
-          };
-        });
-        console.log(`\n>>> THREAD #${idx + 1}: ${body.subj}`);
-        console.log(body.text);
-        await s.page.goBack({ waitUntil: 'domcontentloaded' }); // allow-raw-playwright: navigate back to the result list, no bot-classified interaction
-        await s.page.locator('tr.zA').first().waitFor({ state: 'visible' });
-      } catch (e) {
-        console.log(`\n>>> THREAD #${idx + 1}: (failed to open: ${e.message})`);
-        throw e;
-      }
-    }
-  }
-
+  if (!(await signedInGmail(s.page)))
+    throw new Error(`GMAIL_SEARCH_NOT_SHOWN: the search did not open in signed-in Gmail (url=${s.page.url()})`);
+  await printSearchResult(s.page, OPEN, log);
   log('done.');
+} finally {
   await s.close();
-  process.exit(0);
-} catch (e) {
-  log('ERROR: ' + ((e && e.stack) || e));
-  try {
-    await s.close();
-  } catch (ce) {
-    log('close failed: ' + ce.message);
-  }
-  process.exit(1);
 }

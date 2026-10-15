@@ -5,22 +5,15 @@
 // registration-dialog paths, not until some words disappear. The final page's
 // state is kept with the run (`_shared/diagnostics/page_state.mjs`).
 
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageCondition } from '../../_shared/page/settled.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
-import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import { bringBrowserToFront } from '../../_shared/action/window.mjs';
 import { recordPageState } from '../../_shared/diagnostics/page_state.mjs';
 
 const RUN = 'meta_developer_account_verification_wait';
-const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
-mkdirSync(USER_DATA_DIR, { recursive: true });
+const USER_DATA_DIR = keptProfileDir('meta_ads');
 
 // Meta's verification and registration-dialog paths.
 const VERIFICATION_PATHS = ['/account/verification', '/registration/dialog'];

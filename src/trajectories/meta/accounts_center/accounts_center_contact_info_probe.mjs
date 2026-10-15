@@ -4,22 +4,15 @@
 // model from its description (`_shared/page/judged/seen.mjs`) in the
 // account's language. A failed step is thrown with its cause.
 
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
-import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import { bringBrowserToFront } from '../../_shared/action/window.mjs';
 import { recordPageState } from '../../_shared/diagnostics/page_state.mjs';
 
 const RUN = 'meta_accounts_center_contact_info_probe';
-const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
-mkdirSync(USER_DATA_DIR, { recursive: true });
+const USER_DATA_DIR = keptProfileDir('meta_ads');
 
 async function clickControl(page, label, description) {
   const target = await clickDescribed(page, description);

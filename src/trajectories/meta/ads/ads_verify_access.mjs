@@ -8,14 +8,11 @@
 // the vision model. A signed-out profile or a different account than the one
 // stated fails the run.
 
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { shownText } from '../../_shared/page/judged/seen.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
-import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import { profileForCheck } from '../../_shared/profile/clone.mjs';
 import { holdsMetaSession } from '../../_shared/profile/meta_session.mjs';
 import { isLoginUrl } from './session/login_wall.mjs';
@@ -23,10 +20,7 @@ import { isLoginUrl } from './session/login_wall.mjs';
 const INDENT = '  ';
 const ADS_MANAGER_CAMPAIGNS =
   'https://adsmanager.facebook.com/adsmanager/manage/campaigns';
-const SOURCE_USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
+const SOURCE_USER_DATA_DIR = keptProfileDir('meta_ads');
 const WAIT_FOR_LOGIN = process.env.WAIT_FOR_LOGIN === '1';
 const STATED_ACCOUNT =
   process.env.AD_ACCOUNT_ID || process.env.META_ADS_COMPANY_ACCOUNT_ID;
@@ -37,7 +31,6 @@ const BUSINESS_ID = process.env.BUSINESS_ID || process.env.META_BUSINESS_ID;
 const AD_ACCOUNT_NAME =
   process.env.AD_ACCOUNT_NAME || process.env.META_ADS_ACCOUNT_NAME;
 const USE_PROFILE_CLONE = process.env.META_VERIFY_USE_PROFILE_CLONE !== '0';
-mkdirSync(SOURCE_USER_DATA_DIR, { recursive: true });
 
 function targetUrl() {
   if (process.env.ADS_URL) return process.env.ADS_URL;

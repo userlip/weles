@@ -15,16 +15,13 @@
 // it is installed and authenticated, and otherwise through the logged-in Ads
 // Manager browser profile. Every refusal is thrown with its cause.
 
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { graphRequest } from './api/marketing_api.mjs';
 import { integrationsConfigured } from '../../../_shared/integrations.mjs';
 import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { shownText } from '../../_shared/page/judged/seen.mjs';
-import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import {
   cliUnavailable,
   runMetaCommand,
@@ -51,11 +48,7 @@ const DATE_PRESET = META_ADS_CLI_ARGS
       ['DATE_PRESET'],
       "Meta's date preset for the report window (e.g. last_7d, last_30d)",
     );
-const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
-mkdirSync(USER_DATA_DIR, { recursive: true });
+const USER_DATA_DIR = keptProfileDir('meta_ads');
 
 async function browserPerformance() {
   if (!AD_ACCOUNT_ID)

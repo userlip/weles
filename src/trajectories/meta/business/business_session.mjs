@@ -1,21 +1,14 @@
 // The Meta Business Suite session every Business trajectory runs in: the
-// persistent Meta profile (WELES_USER_DATA_DIR or ADS_PROFILE_DIR), its
-// shared profile persona, the stated proxy and the Business portfolio the
-// run acts in, and the address of a Business Settings page in that
-// portfolio.
+// kept Meta profile (keptProfileDir: WELES_USER_DATA_DIR or ADS_PROFILE_DIR
+// when stated), its shared profile persona, the stated proxy and the Business
+// portfolio the run acts in, and the address of a Business Settings page in
+// that portfolio.
 
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
-import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
 
-export const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
-mkdirSync(USER_DATA_DIR, { recursive: true });
+export const USER_DATA_DIR = keptProfileDir('meta_ads');
 
 export const BUSINESS_ID = statedText(
   ['META_BUSINESS_ID', 'BUSINESS_ID'],

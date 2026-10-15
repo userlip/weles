@@ -1,6 +1,6 @@
-// Paying for the plan a new Claude account is bought on, with the card
-// Skarbiec holds for purchases (`topup-card`, delivered to the run as
-// TOPUP_CARD_JSON or the host's card file).
+// Paying for the plan a new Claude account is bought on, with the purchase
+// card Skarbiec holds (delivered to the run as TOPUP_CARD_JSON, the host's
+// card file, or the environment).
 //
 // The plan is the one Brama read from the pool's own accounts, named the way
 // Anthropic names its rate-limit tier (`default_claude_max_<multiplier>`).
@@ -13,6 +13,7 @@ import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
 import {
   fillStripeElements,
   loadTopupCardEnv,
+  topupCard,
 } from '../../_shared/services/topup_common.mjs';
 import { AuthenticationFailure } from '../../_shared/subscription-auth/oauth.mjs';
 import { clickNamed, failOnPage } from './page_steps.mjs';
@@ -43,32 +44,19 @@ const CARD_NAME =
 const CHALLENGE =
   'iframe[src*="three-ds"],iframe[name*="challenge" i],iframe[src*="3ds"]';
 
+/** The purchase card: purchase_card_missing when no source holds one, purchase_card_incomplete when it lacks a field. */
 function card() {
-  const source = loadTopupCardEnv();
-  if (!source)
-    throw new AuthenticationFailure(
-      'purchase_card_missing',
-      'checkout',
-      'no purchase card reached this run: TOPUP_CARD_JSON is not set and no host card file exists',
-    );
-  const missing = [
-    'TOPUP_CARD_NUMBER',
-    'TOPUP_CARD_EXP',
-    'TOPUP_CARD_CVC',
-  ].filter((name) => !process.env[name]);
-  if (missing.length)
-    throw new AuthenticationFailure(
-      'purchase_card_incomplete',
-      'checkout',
-      `the purchase card from ${source} lacks ${missing.join(', ')}`,
-    );
-  return {
-    num: process.env.TOPUP_CARD_NUMBER,
-    exp: process.env.TOPUP_CARD_EXP,
-    cvc: process.env.TOPUP_CARD_CVC,
-    zip: process.env.TOPUP_CARD_ZIP,
-    name: process.env.TOPUP_CARD_NAME,
-  };
+  let source;
+  try {
+    source = loadTopupCardEnv();
+  } catch (error) {
+    throw new AuthenticationFailure('purchase_card_missing', 'checkout', error.message);
+  }
+  try {
+    return topupCard();
+  } catch (error) {
+    throw new AuthenticationFailure('purchase_card_incomplete', 'checkout', `the purchase card from ${source}: ${error.message}`);
+  }
 }
 
 /** Ask the operator to approve a payment his card issuer holds for him. */

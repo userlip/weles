@@ -7,10 +7,9 @@
 import { humanClick } from '../../../../../dist/human/mouse.js';
 import { navEval } from '../../../_shared/page/navigation/read.mjs';
 
-// The smallest box that counts as a rendered control. A 1x1 tracking pixel
-// with role="button" is not an affordance. Titles, identifiers and the body
+// A rendered control is one the browser draws: it has an area and is not
+// hidden by display, visibility or opacity. Titles, identifiers and the body
 // are read whole.
-const GIS_MIN_BOX_PX = 4;
 
 // One read of one page: everything the state machine decides on, collected in a
 // single evaluate so the facts cannot disagree with each other. Element centres
@@ -24,7 +23,10 @@ export const readGisState = (arg) => {
   const rect = (el) => el.getBoundingClientRect();
   const shown = (el) => {
     const r = rect(el);
-    return r.width >= arg.minBox && r.height >= arg.minBox;
+    return (
+      Boolean(r.width && r.height) &&
+      el.checkVisibility({ visibilityProperty: true, opacityProperty: true })
+    );
   };
   const live = (el) =>
     !(
@@ -32,8 +34,8 @@ export const readGisState = (arg) => {
       el.getAttribute('aria-disabled') === 'true' ||
       el.getAttribute('disabled') !== null
     );
-  const label = (el) =>
-    (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const label = (el) => el.innerText.replace(/\s+/g, ' ').trim();
+  const mean = (...values) => values.reduce((sum, value) => sum + value) / values.length;
   // Tag the element the state machine will act on, so the click re-finds exactly
   // this element (after scrolling it into view) instead of trusting a coordinate
   // read one poll earlier. Tags from the previous poll are cleared first.
@@ -42,7 +44,7 @@ export const readGisState = (arg) => {
   const point = (el, kind) => {
     el.setAttribute('data-weles-gis', kind);
     const r = rect(el);
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    return { x: mean(r.left, r.right), y: mean(r.top, r.bottom) };
   };
   const pick = (selector, kind, re) => {
     for (const el of Array.from(document.querySelectorAll(selector))) {
@@ -58,7 +60,7 @@ export const readGisState = (arg) => {
   const rows = Array.from(
     document.querySelectorAll('[data-identifier]'),
   ).filter((el) => el.getAttribute('data-identifier').trim() && shown(el));
-  const wanted = (arg.email || '').trim().toLowerCase();
+  const wanted = arg.email ? arg.email.trim().toLowerCase() : null;
   const mine = wanted
     ? rows.find(
         (el) =>
@@ -162,7 +164,7 @@ export const readGisState = (arg) => {
     passwordField: Array.from(
       document.querySelectorAll('input[type="password"]'),
     ).some(shown),
-    bodyText: document.body ? document.body.innerText.replace(/\s+/g, ' ') : '',
+    bodyText: document.body.innerText.replace(/\s+/g, ' '),
   };
   // Only look for the affirmative button once no row is waiting to be picked
   // (picking the account always precedes confirming it), and only on Google's
@@ -189,9 +191,10 @@ export async function clickGisTarget(page, kind) {
       if (!el) return null;
       el.scrollIntoView({ block: 'center', inline: 'center' });
       const r = el.getBoundingClientRect();
-      if (r.width < 1 || r.height < 1) return null;
-      const x = r.x + r.width / 2;
-      const y = r.y + r.height / 2;
+      if (!(r.width && r.height)) return null;
+      const mean = (...values) => values.reduce((sum, value) => sum + value) / values.length;
+      const x = mean(r.left, r.right);
+      const y = mean(r.top, r.bottom);
       const hit = document.elementFromPoint(x, y);
       const reachable =
         Boolean(hit) && (hit === el || el.contains(hit) || hit.contains(el));
@@ -215,8 +218,5 @@ export async function clickGisTarget(page, kind) {
 // Read one live page through that probe. A navigation mid-read means "not ready,
 // look again", which navEval already turns into the null default.
 export async function observeGisPage(p, email) {
-  return navEval(p, readGisState, null, {
-    email,
-    minBox: GIS_MIN_BOX_PX,
-  });
+  return navEval(p, readGisState, null, { email });
 }

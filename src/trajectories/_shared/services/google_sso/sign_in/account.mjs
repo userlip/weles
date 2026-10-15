@@ -9,8 +9,7 @@
 // screen the login item can answer — address, password, authenticator code —
 // and reports a phone approval only after Google displays its device prompt.
 import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { keptProfilePath } from '../../../profile/persona.mjs';
 import { humanFill, humanType } from '../../../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../../../dist/human/mouse.js';
 import { readDocument } from '../../../../../../dist/state/skarbiec-records.js';
@@ -18,7 +17,7 @@ import { fillAndVerify } from '../../../page/confirmed-fill.mjs';
 import {
   waitForGooglePassword,
   waitForGooglePasswordResult,
-} from '../../../../codex/google_sso/google_credentials.mjs';
+} from './credentials.mjs';
 import {
   selectAuthenticatorMethod,
   waitForGoogleChallengeExit,
@@ -37,7 +36,9 @@ const SECOND_FACTOR_CHALLENGE = /\/signin\/challenge\/(?!pwd(?:\/|$))/;
 /** The username, password and authenticator seed of one Skarbiec login item. */
 export function loginMaterial(loginItem) {
   const document = readDocument(loginItem);
-  const fields = document.fields ?? {};
+  const fields = document.fields;
+  if (!fields || typeof fields !== 'object')
+    throw new Error(`Skarbiec login ${loginItem} holds no fields`);
   if (typeof fields.username !== 'string' || !fields.username) {
     throw new Error(`Skarbiec login ${loginItem} has no username`);
   }
@@ -49,22 +50,19 @@ export function loginMaterial(loginItem) {
     document,
     email: fields.username,
     password: fields.password,
-    seed: String(fields.totp_secret || '').trim(),
+    seed: typeof fields.totp_secret === 'string' ? fields.totp_secret.trim() : undefined,
   };
 }
 
-/** The persistent browser profile of one Google account. */
+/** Where one Google account's persistent browser profile lives, created or not. */
+export function accountProfilePath(login) {
+  const account = (login.email || login.loginItem).toLowerCase().replace(/[^a-z\d._@-]+/g, '_');
+  return keptProfilePath('google-account', account);
+}
+
+/** The persistent browser profile of one Google account (created when absent). */
 export function accountProfileDir(login) {
-  const account = (login.email || login.loginItem)
-    .toLowerCase()
-    .replace(/[^a-z0-9._@-]+/g, '_');
-  const userDataDir = join(
-    homedir(),
-    '.weles',
-    'browser_profiles',
-    'google-account',
-    account,
-  );
+  const userDataDir = accountProfilePath(login);
   mkdirSync(userDataDir, { recursive: true });
   return userDataDir;
 }
@@ -173,11 +171,7 @@ export async function signIn(page, wait, login) {
       };
     }
   }
-  const password = await waitForGooglePassword({
-    page,
-    mark: () => {},
-    humanClickLocator,
-  });
+  const password = await waitForGooglePassword({ page, mark: () => {} });
   await fillAndVerify(
     page,
     password,

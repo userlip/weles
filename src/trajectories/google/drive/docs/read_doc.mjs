@@ -1,101 +1,29 @@
-// Read the plain-text body of an existing Google Doc.
-//
-// Uses Drive's /export?format=txt endpoint via the WSession's authenticated
-// HTTP context (session cookies handle auth). Bypasses canvas-rendered
-// editor scraping, which is brittle.
+// Read the plain-text body of an existing Google Doc through Docs' own
+// /export?format=txt endpoint, fetched with the signed-in session's cookies
+// (./document.mjs), rather than scraping the canvas-rendered editor.
 //
 // Run:
-//   node weles/src/trajectories/google/drive/read_doc.mjs --doc <url-or-id> [--out path]
-//
-// Env mirror: DOC_URL, DOC_ID. Other env: BROWSER.
-
-import { WSession } from '../../../../../dist/session/wsession.js';
-import { googleSso } from '../../../_shared/services/google_sso.mjs';
-import { pageSettled } from '../../../_shared/page/settled.mjs';
+//   node src/trajectories/google/drive/docs/read_doc.mjs --doc <url-or-id> [--out path]
+// Env mirrors: DOC_URL (or DOC_ID); BROWSER pins the engine. Without --out
+// the text is written to stdout.
 import { writeFileSync } from 'node:fs';
-import { readScopedLogin } from '../../../../_shared/scoped-secrets.mjs';
+import { docInput, documentId, openSignedInDocs } from './document.mjs';
 
-function arg(name) {
-  const i = process.argv.indexOf(name);
-  return i >= 0 ? process.argv[i + 1] : undefined;
-}
+const DOC_ID = documentId(docInput('--doc', ['DOC_URL', 'DOC_ID'], 'the document to read'));
+const OUT_PATH = process.argv.includes('--out') ? docInput('--out', [], 'the file the text is written to') : null;
+const log = (...a) => console.error('[drive_read_doc]', ...a);
 
-const DOC_INPUT = arg('--doc') || process.env.DOC_URL || process.env.DOC_ID;
-const OUT_PATH = arg('--out');
-const LABEL = 'drive_read_doc';
-
-if (!DOC_INPUT) {
-  console.log('FAIL: --doc (or DOC_URL / DOC_ID) required');
-  process.exit(2);
-}
-
-function extractId(s) {
-  const m = s.match(/\/document\/d\/([A-Za-z0-9_-]+)/);
-  if (m) return m[1];
-  if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s;
-  return null;
-}
-
-const DOC_ID = extractId(DOC_INPUT);
-if (!DOC_ID) {
-  console.log('FAIL: could not extract doc id from "' + DOC_INPUT + '"');
-  process.exit(2);
-}
-
-function log(...a) {
-  console.error('[drive_read_doc]', ...a);
-}
-
-async function resolveCreds() {
-  return readScopedLogin('googleDrive');
-}
-
-const creds = await resolveCreds();
-const s = await WSession.start({
-  label: LABEL,
-  browser: process.env.BROWSER || 'chromium',
-});
-
+const s = await openSignedInDocs('drive_read_doc', 'https://docs.google.com/document/u/0/');
 try {
-  log(
-    'engine:',
-    s._browserProvenance ? s._browserProvenance.browser : null,
-    '| doc_id:',
-    DOC_ID,
-  );
-  await s.page.goto('https://docs.google.com/document/u/0/', {
-    waitUntil: 'domcontentloaded',
-  });
-  await pageSettled(s.page);
-
-  if (/accounts\.google\.com|ServiceLogin|signin/.test(s.page.url())) {
-    log('logged out — running googleSso for', creds.email);
-    const ok = await googleSso(s, creds);
-    if (!ok) throw new Error(`DRIVE_DOCUMENT_SIGN_IN_FAILED: ${s.page.url()}`);
-    await pageSettled(s.page);
-  }
-
-  const exportUrl =
-    'https://docs.google.com/document/d/' + DOC_ID + '/export?format=txt';
+  const exportUrl = `https://docs.google.com/document/d/${DOC_ID}/export?format=txt`;
   log('fetching:', exportUrl);
-  const resp = await s.page.context().request.get(exportUrl); // allow-raw-playwright: read-only export HTTP fetch via the page's authenticated context
-  const status = resp.status();
-  log('HTTP', status);
-  if (status !== 200) {
-    throw new Error(
-      `DRIVE_DOCUMENT_EXPORT_HTTP_ERROR: HTTP ${status} for ${exportUrl}`,
-    );
-  }
-  const body = await resp.text();
-  log('body chars:', body.length);
-
+  const response = await s.page.context().request.get(exportUrl); // allow-raw-playwright: read-only export HTTP fetch via the page's authenticated context
+  if (!response.ok()) throw new Error(`DRIVE_DOCUMENT_EXPORT_HTTP_ERROR: HTTP ${response.status()} for ${exportUrl}`);
+  const body = await response.text();
   if (OUT_PATH) {
     writeFileSync(OUT_PATH, body);
-    log('wrote ' + OUT_PATH);
-    console.log('OK: wrote ' + body.length + ' chars to ' + OUT_PATH);
-  } else {
-    process.stdout.write(body);
-  }
+    console.log(`OK: wrote ${body.length} chars to ${OUT_PATH}`);
+  } else process.stdout.write(body);
 } finally {
   await s.close();
 }

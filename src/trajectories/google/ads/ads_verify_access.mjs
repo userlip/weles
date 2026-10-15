@@ -6,9 +6,6 @@
 // signed in is read by the shared Google session reader; a signed-out profile
 // fails the run with the address it landed on.
 
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import {
@@ -17,7 +14,7 @@ import {
 } from './_profile_guard.mjs';
 import { closeGoogleAdsSession } from './_close_session.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
-import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import {
   holdsGoogleSession,
   onGoogleSignIn,
@@ -26,10 +23,7 @@ import { profileForCheck } from '../../_shared/profile/clone.mjs';
 
 const INDENT = '  ';
 const GOOGLE_ADS_CAMPAIGNS = 'https://ads.google.com/aw/campaigns';
-const SOURCE_USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'google_ads');
+const SOURCE_USER_DATA_DIR = keptProfileDir('google_ads');
 const WAIT_FOR_LOGIN = process.env.WAIT_FOR_LOGIN === '1';
 const STATED_CUSTOMER =
   process.env.GOOGLE_ADS_CUSTOMER_ID || process.env.CUSTOMER_ID;
@@ -37,7 +31,6 @@ const CUSTOMER_ID = STATED_CUSTOMER
   ? STATED_CUSTOMER.replace(/\D/g, '')
   : null;
 const USE_PROFILE_CLONE = process.env.GOOGLE_VERIFY_USE_PROFILE_CLONE !== '0';
-mkdirSync(SOURCE_USER_DATA_DIR, { recursive: true });
 
 function targetUrl() {
   if (process.env.ADS_URL) return process.env.ADS_URL;

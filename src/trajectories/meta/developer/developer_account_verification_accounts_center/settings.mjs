@@ -7,19 +7,13 @@
 // the Meta account already lists in that country. A + number that does not
 // carry its stated dialling code is refused; nothing guesses a country from a
 // number's first digits.
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { keptProfileDir } from '../../../_shared/profile/persona.mjs';
 
-export const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
+export const USER_DATA_DIR = keptProfileDir('meta_ads');
 export const VERIFY_CODE = process.env.META_VERIFY_CODE;
 export const CODE_ONLY = process.env.META_VERIFY_CODE_ONLY === '1';
 export const OPEN_UPDATE_PHONE =
   process.env.META_VERIFY_OPEN_UPDATE_PHONE === '1';
-mkdirSync(USER_DATA_DIR, { recursive: true });
 
 function digitsOf(value) {
   return value.replace(/\D/g, '');

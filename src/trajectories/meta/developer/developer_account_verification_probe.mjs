@@ -3,20 +3,13 @@
 // (`_shared/diagnostics/page_state.mjs`): the title, text and visible
 // controls as they stand. Clicks nothing.
 
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
-import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import { recordPageState } from '../../_shared/diagnostics/page_state.mjs';
 
 const RUN = 'meta_developer_account_verification_probe';
-const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
-mkdirSync(USER_DATA_DIR, { recursive: true });
+const USER_DATA_DIR = keptProfileDir('meta_ads');
 
 console.log(
   JSON.stringify({

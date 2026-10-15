@@ -75,7 +75,8 @@ function creativePayload(destination) {
   });
 }
 
-try {
+// Every failure is thrown with its cause; nothing below is caught.
+{
   const destinationName = statedText(
     ['CAMPAIGN_DESTINATION', 'DESTINATION_TYPE'],
     `where the ad opens a conversation, one of ${Object.keys(DESTINATIONS).join(', ')}`,
@@ -167,7 +168,4 @@ try {
     `PASS: Meta messaging stack created campaign=${campaign.id} adset=${adset.id} creative=${creative.id} ad=${ad.id}`,
   );
   console.log('PASS: Meta messaging API completed');
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exit(1);
 }

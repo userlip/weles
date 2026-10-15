@@ -99,7 +99,7 @@ const promotedObject = () =>
       object_store_url: process.env.OBJECT_STORE_URL,
       page_id:
         process.env.PROMOTED_PAGE_ID ||
-        (boolEnv('PROMOTED_OBJECT_USES_PAGE', false)
+        (boolEnv('PROMOTED_OBJECT_USES_PAGE')
           ? process.env.PAGE_ID ||
             process.env.FACEBOOK_PAGE_ID ||
             process.env.META_FACEBOOK_PAGE_ID

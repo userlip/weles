@@ -1,147 +1,35 @@
-// Gmail search trajectory.
+// Read the result of a Gmail search from the Google session of the
+// persistent real-Chrome profile (launchRealChrome; the session is made once
+// with the setup_chrome_profile trajectory).
 //
-// Pattern mirrors src/trajectories/google/gcp_credits.mjs and
-// src/trajectories/_shared/services/setup_chrome_profile.mjs: it uses the
-// launchRealChrome primitive (Weles Chromium 147, persistent context at
-// ~/.weles/chrome_profiles/service_balance) and the Google session that was
-// established once via the setup_chrome_profile trajectory.
-//
-// It navigates to a Gmail search, and:
-//   - if the profile has no Google session -> prints FAIL + how to fix
-//     (run the setup_chrome_profile trajectory), exits 2.
-//   - if signed in -> read-only scrapes the result list (from / subject /
-//     date / snippet) and opens up to six matching threads to capture body
-//     text, printing a structured PASS report.
+// The search result list is printed, and, unless GM_OPEN=0, GM_MAX threads
+// of it are opened and their bodies printed too (./search_result.mjs). A
+// profile with no Gmail session, and any thread that cannot be opened, fails
+// the run with its cause.
 //
 // Run:  node src/trajectories/gmail/gmail_search.mjs
 // Env:  GM_QUERY  the Gmail search query (required; no mailbox is read
 //                 without one)
-//       GM_OPEN=0 skips opening thread bodies (list only)
+//       GM_OPEN=0 list only, skip opening thread bodies
+//       GM_MAX    how many threads to open; required unless GM_OPEN=0
 import { launchRealChrome } from '../../browser/real_chrome.mjs';
-import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { pageSettled } from '../_shared/page/settled.mjs';
-import { statedText } from '../_shared/inputs/stated.mjs';
+import { statedCount, statedText } from '../_shared/inputs/stated.mjs';
+import { gmailSearchUrl, printSearchResult, signedInGmail } from './search_result.mjs';
 
-// What is read from the mailbox is the caller's; a built-in query read a
-// year of every message.
-const QUERY = statedText(
-  ['GM_QUERY'],
-  'the Gmail search query to read',
-  'GMAIL_QUERY_REQUIRED',
-);
-const OPEN_BODIES = process.env.GM_OPEN !== '0';
-const SEARCH_URL =
-  'https://mail.google.com/mail/u/0/#search/' + encodeURIComponent(QUERY);
+const QUERY = statedText(['GM_QUERY'], 'the Gmail search query to read', 'GMAIL_QUERY_REQUIRED');
+const OPEN = process.env.GM_OPEN === '0' ? undefined : statedCount('GM_MAX', 'how many matching threads the search opens and reads');
 
-function log(...a) {
-  console.log('[gmail_search]', ...a);
-}
-
-// Returns 'login' or 'in' from observed page state. Browser failures propagate.
-async function detectSession(page) {
-  for (;;) {
-    if (new URL(page.url()).hostname !== 'mail.google.com') return 'login';
-    // Signed-in Gmail carries its search field, whatever the results show.
-    if (await page.locator('input[name="q"]').count()) return 'in';
-    await pageSettled(page);
-  }
-}
+const log = (...a) => console.log('[gmail_search]', ...a);
 
 const s = await launchRealChrome({ label: 'gmail_search' });
 try {
   log('query:', QUERY);
-  await s.page.goto(SEARCH_URL, { waitUntil: 'domcontentloaded' });
-
-  const status = await detectSession(s.page);
-  if (status !== 'in') {
-    log(
-      'FAIL: profile not signed in to Gmail (status=' +
-        status +
-        ', url=' +
-        s.page.url() +
-        ').',
+  await s.page.goto(gmailSearchUrl('https://mail.google.com/mail/u/0/', QUERY), { waitUntil: 'domcontentloaded' });
+  if (!(await signedInGmail(s.page)))
+    throw new Error(
+      `GMAIL_SIGNED_OUT: the profile is not signed in to Gmail (url=${s.page.url()}); sign it in once with src/trajectories/_shared/services/setup_chrome_profile.mjs`,
     );
-    log('Fix: run src/trajectories/_shared/services/setup_chrome_profile.mjs');
-    log('and sign in once; the session persists for this trajectory.');
-    await s.close();
-    process.exit(2);
-  }
-
-  const rows = await s.page.evaluate(() => {
-    // allow-raw-playwright: read-only DOM text scrape of the inbox result list, no synthetic interaction
-    const out = [];
-    const trs = Array.from(document.querySelectorAll('tr.zA'));
-    for (const r of trs) {
-      const fEl =
-        r.querySelector('.yW span[email]') ||
-        r.querySelector('.yW span') ||
-        r.querySelector('.zF');
-      const sEl = r.querySelector('.bog');
-      const dEl =
-        r.querySelector('.xW span[title]') || r.querySelector('.xW span');
-      const snEl = r.querySelector('.y2');
-      out.push({
-        from: fEl
-          ? (fEl.getAttribute('email') || fEl.textContent || '').trim()
-          : '',
-        subject: sEl ? (sEl.textContent || '').trim() : '',
-        date: dEl
-          ? (dEl.getAttribute('title') || dEl.textContent || '').trim()
-          : '',
-        snippet: snEl ? (snEl.textContent || '').trim() : '',
-      });
-    }
-    return out;
-  });
-
-  log('PASS: signed in. ' + rows.length + ' threads match the query');
-  console.log('================ THREAD LIST ================');
-  rows.forEach((r, i) => {
-    console.log(`#${i + 1} | ${r.date} | ${r.from}`);
-    console.log(`     SUBJ: ${r.subject}`);
-    console.log(`     SNIP: ${r.snippet}`);
-  });
-
-  if (OPEN_BODIES && rows.length) {
-    console.log('================ THREAD BODIES ================');
-    const n = Math.min(rows.length, 6);
-    for (let idx = 0; idx < n; idx++) {
-      try {
-        await humanClickLocator(s.page, s.page.locator('tr.zA').nth(idx));
-        await s.page
-          .locator('.a3s, div[role="listitem"] .ii')
-          .first()
-          .waitFor({ state: 'visible' });
-        const body = await s.page.evaluate(() => {
-          // allow-raw-playwright: read-only DOM text scrape of an opened email body, no synthetic interaction
-          const subj = document.querySelector('h2.hP');
-          const blocks = Array.from(document.querySelectorAll('.a3s'))
-            .map((b) => b.innerText.trim())
-            .filter(Boolean);
-          return {
-            subj: subj ? subj.textContent.trim() : '',
-            text: blocks.join('\n---\n'),
-          };
-        });
-        console.log(`\n>>> THREAD #${idx + 1}: ${body.subj}`);
-        console.log(body.text);
-        await s.page.goBack({ waitUntil: 'domcontentloaded' }); // allow-raw-playwright: navigate back to the result list, no bot-classified interaction
-        await s.page.locator('tr.zA').first().waitFor({ state: 'visible' });
-      } catch (e) {
-        console.log(`\n>>> THREAD #${idx + 1}: (failed to open: ${e.message})`);
-        throw e;
-      }
-    }
-  }
-
-  log('done.');
+  await printSearchResult(s.page, OPEN, log);
+} finally {
   await s.close();
-} catch (e) {
-  log('ERROR: ' + ((e && e.stack) || e));
-  try {
-    await s.close();
-  } catch (ce) {
-    log('close failed: ' + ce.message);
-  }
-  process.exit(1);
 }

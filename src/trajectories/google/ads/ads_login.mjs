@@ -8,9 +8,6 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { googleSso } from '../../_shared/services/google_sso.mjs';
 import { dismissGooglePostLogin } from '../../_shared/services/google_sso/sign_in/redirect_watch.mjs';
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import {
   assertGoogleAdsProfileNotAlreadyOpen,
   closeAllowedByEnv,
@@ -18,7 +15,7 @@ import {
 import { closeGoogleAdsSession } from './_close_session.mjs';
 import { readScopedLogin } from '../../../_shared/scoped-secrets.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
-import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import {
   holdsGoogleSession,
   onGoogleSignIn,
@@ -26,14 +23,10 @@ import {
 import { bringBrowserToFront } from '../../_shared/action/window.mjs';
 
 const GOOGLE_ADS_URL = 'https://ads.google.com/aw/campaigns';
-const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'google_ads');
+const USER_DATA_DIR = keptProfileDir('google_ads');
 // The login is read from Skarbiec before anything opens; an unreadable or
 // ungranted item ends the run with Skarbiec's own refusal.
 const GOOGLE_ADS_LOGIN = readScopedLogin('googleAds');
-mkdirSync(USER_DATA_DIR, { recursive: true });
 
 console.log(
   `[google-ads-login] profile=${USER_DATA_DIR} viewport=${process.env.WELES_VIEWPORT}`,

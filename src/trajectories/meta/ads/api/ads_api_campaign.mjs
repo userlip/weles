@@ -136,7 +136,7 @@ async function readResource(resource) {
   const { id, edge } = resourceSpec(resource);
   const fields = process.env.FIELDS;
   const readOpts = {
-    execute: SUBMIT || boolEnv('LIVE_READ', false),
+    execute: SUBMIT || boolEnv('LIVE_READ'),
     label: `meta-ads-api-${resource}-read`,
   };
   if (id) return graphRequest('GET', `/${id}`, { fields }, readOpts);
@@ -217,16 +217,10 @@ async function createStack() {
   );
 }
 
-try {
-  if (RESOURCE === 'stack') {
-    if (ACTION !== 'create')
-      throw new Error('RESOURCE=stack supports ACTION=create only');
-    await createStack();
-  } else {
-    await ACTIONS[ACTION](RESOURCE);
-    console.log(`PASS: Meta Ads API ${ACTION} ${RESOURCE} completed`);
-  }
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exit(1);
+if (RESOURCE === 'stack') {
+  if (ACTION !== 'create') throw new Error('RESOURCE=stack supports ACTION=create only');
+  await createStack();
+} else {
+  await ACTIONS[ACTION](RESOURCE);
+  console.log(`PASS: Meta Ads API ${ACTION} ${RESOURCE} completed`);
 }

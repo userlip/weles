@@ -7,19 +7,15 @@
 // module carries the catalog of parameters this trajectory can honour and the
 // refusal it prints when the request names something it cannot configure.
 //
-// Loading this module creates the profile directory, defaults the viewport,
-// reads the stored persona and resolves the facebook account session, in that
-// order - the order the root file performed them in before the split.
+// Loading this module creates the profile directory, resolves the facebook
+// account session and reads the profile's stored persona, in that order.
 
 import {
   getSocialAccount,
   resolveAccountSession,
 } from '../../../../../dist/utils/credentials.js';
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
-import { stableProfilePersona } from '../../../_shared/profile/persona.mjs';
+import { keptProfileDir, stableProfilePersona } from '../../../_shared/profile/persona.mjs';
 
 const ADS_URL = process.env.ADS_URL;
 const RAW_AD_ACCOUNT_ID =
@@ -55,11 +51,7 @@ const ALLOW_UNVERIFIED_META_PARAMS =
   process.env.ALLOW_UNVERIFIED_META_PARAMS === '1';
 const WAIT_FOR_LOGIN = process.env.WAIT_FOR_LOGIN === '1';
 const VERIFY_ACCOUNT_ONLY = process.env.VERIFY_ACCOUNT_ONLY === '1';
-const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
-mkdirSync(USER_DATA_DIR, { recursive: true });
+const USER_DATA_DIR = keptProfileDir('meta_ads');
 
 const acct = await getSocialAccount('facebook');
 const session = acct
@@ -130,13 +122,6 @@ const CAPABILITIES = {
     'placement matrix and bid strategy tuning',
   ],
 };
-
-// The capability catalog is the whole answer of a capabilities run: printed,
-// then the process ends with no error.
-function printCapabilitiesAndExit() {
-  console.log(JSON.stringify(CAPABILITIES, null, '  '));
-  process.exit();
-}
 
 function guardUnsupportedParams() {
   const unsupported = [];
@@ -217,7 +202,7 @@ export {
   guardUnsupportedParams,
   requireCampaignInputs,
   objectiveLabels,
-  printCapabilitiesAndExit,
+  CAPABILITIES,
   profilePersona,
   requireCampaignTarget,
   session,

@@ -13,41 +13,38 @@
 // never written to a file, a log or this run's result.
 //
 // Input: WELES_LOGIN_ITEM, the Skarbiec Google login (username, password,
-// totp_secret), and SKRZYNKA_ORGANIZATION, the organization Skrzynka files
-// the mailbox under. Output: one JSON result on stdout and in the run's
-// output directory; every stop is named.
+// totp_secret), SKRZYNKA_ORGANIZATION, the organization Skrzynka files the
+// mailbox under, and WELES_EXPECTED_ACCOUNT, the mailbox the login must be.
+// Output: one JSON result on stdout and in the run's output directory; every
+// stop is named in it, and a run that stopped ends failed.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runOutputPath } from '#run-output';
 import { WSession } from '../../../../dist/session/wsession.js';
+import { exitStatusFor } from '../../../../dist/cli/usage.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
-import {
-  accountProfileDir,
-  loginMaterial,
-  signIn,
-} from '../../_shared/services/google_sso/sign_in/account.mjs';
-import {
-  createAppPassword,
-  openAppPasswords,
-  redactAppPasswords,
-} from './page.mjs';
-import {
-  APP_NAME,
-  SKRZYNKA_BIN_VARIABLE,
-  SKRZYNKA_DEFAULT_BIN,
-} from './constants.mjs';
+import { accountProfileDir, loginMaterial, signIn } from '../../_shared/services/google_sso/sign_in/account.mjs';
+import { createAppPassword, openAppPasswords, redactAppPasswords } from './page.mjs';
+import { APP_NAME, SKRZYNKA_BIN_VARIABLE, SKRZYNKA_DEFAULT_BIN } from './constants.mjs';
 
 const RUN = 'google-app-password';
 const RESULT_DIR = runOutputPath(RUN);
 const RESULT_FILE = join(RESULT_DIR, 'result.json');
+const INDENT = '  ';
 
 function report(result) {
   mkdirSync(RESULT_DIR, { recursive: true });
-  const text = redactAppPasswords(JSON.stringify(result, null, 2));
+  const text = redactAppPasswords(JSON.stringify(result, null, INDENT));
   writeFileSync(RESULT_FILE, text);
   console.log(text);
   return result;
+}
+
+/** Report a stop and end the run as failed; the report names the stop. */
+function refuse(row) {
+  report({ ok: false, ...row });
+  process.exitCode = exitStatusFor(new Error(row.blocked));
 }
 
 /**
@@ -61,9 +58,7 @@ async function issue(page, wait, login) {
   const asked = new Set();
   for (;;) {
     const opened = await openAppPasswords(page, wait);
-    const step = opened.ok
-      ? await createAppPassword(page, wait, APP_NAME)
-      : opened;
+    const step = opened.ok ? await createAppPassword(page, wait, APP_NAME) : opened;
     if (step.ok || step.blocked !== 'google_sign_in_required') return step;
     const at = page.url();
     if (asked.has(at)) return step;
@@ -73,101 +68,59 @@ async function issue(page, wait, login) {
   }
 }
 
-/** Hand the password to Skrzynka on stdin; its JSON answer is the verdict. */
+/** Hand the password to Skrzynka on stdin; its answer is the verdict. */
 function giveToSkrzynka(organization, email, password) {
-  const binary =
-    String(process.env[SKRZYNKA_BIN_VARIABLE] || '').trim() ||
-    SKRZYNKA_DEFAULT_BIN;
+  const stated = process.env[SKRZYNKA_BIN_VARIABLE]?.trim();
+  const binary = stated ? stated : SKRZYNKA_DEFAULT_BIN;
   const result = spawnSync(
     binary,
-    [
-      '--organization',
-      organization,
-      'account',
-      'app-password',
-      '--provider',
-      'gmail',
-      '--email',
-      email,
-    ],
-    {
-      input: password,
-      encoding: 'utf8',
-    },
+    ['--organization', organization, 'account', 'app-password', '--provider', 'gmail', '--email', email],
+    { input: password, encoding: 'utf8' },
   );
-  if (result.error) {
-    return {
-      ok: false,
-      blocked: 'skrzynka_unavailable',
-      detail: `${binary}: ${result.error.message}`,
-    };
-  }
+  if (result.error) return { ok: false, blocked: 'skrzynka_unavailable', detail: `${binary}: ${result.error.message}` };
   // spawnSync with an encoding answers both streams as text.
   const output = redactAppPasswords(`${result.stdout}${result.stderr}`);
-  if (result.status !== 0) {
+  if (result.signal || result.status)
     return {
       ok: false,
       blocked: 'skrzynka_refused_app_password',
       exit_status: result.status,
+      signal: result.signal,
       detail: output,
     };
-  }
   return { ok: true, skrzynka: output };
 }
 
 async function main() {
-  const loginItem = String(process.env.WELES_LOGIN_ITEM || '').trim();
-  if (!loginItem) {
-    report({
-      ok: false,
-      blocked: 'login_item_required',
-      detail: 'WELES_LOGIN_ITEM must name the Skarbiec Google login',
-    });
-    process.exit(2);
-  }
-  const organization = String(process.env.SKRZYNKA_ORGANIZATION || '').trim();
-  if (!organization) {
-    report({
-      ok: false,
+  const loginItem = process.env.WELES_LOGIN_ITEM?.trim();
+  if (!loginItem)
+    return refuse({ blocked: 'login_item_required', detail: 'WELES_LOGIN_ITEM must name the Skarbiec Google login' });
+  const organization = process.env.SKRZYNKA_ORGANIZATION?.trim();
+  if (!organization)
+    return refuse({
       blocked: 'organization_required',
-      detail:
-        'SKRZYNKA_ORGANIZATION must name the Skrzynka organization the mailbox is declared in',
+      detail: 'SKRZYNKA_ORGANIZATION must name the Skrzynka organization the mailbox is declared in',
     });
-    process.exit(2);
-  }
-  const requestedAccount = process.env.WELES_EXPECTED_ACCOUNT;
-  if (typeof requestedAccount !== 'string' || !requestedAccount.trim()) {
-    report({
-      ok: false,
-      blocked: 'expected_account_required',
-      detail: 'WELES_EXPECTED_ACCOUNT must name the requested mailbox account',
-    });
-    process.exit(2);
-  }
-  const expectedAccount = requestedAccount.trim();
+  const expectedAccount = process.env.WELES_EXPECTED_ACCOUNT?.trim();
+  if (!expectedAccount)
+    return refuse({ blocked: 'expected_account_required', detail: 'WELES_EXPECTED_ACCOUNT must name the requested mailbox account' });
   const login = loginMaterial(loginItem);
-  if (login.email.trim().toLowerCase() !== expectedAccount.toLowerCase()) {
-    report({
-      ok: false,
+  const named = { login_item: loginItem, expected_account: expectedAccount, email: login.email };
+  if (login.email.trim().toLowerCase() !== expectedAccount.toLowerCase())
+    return refuse({
       blocked: 'expected_account_mismatch',
-      login_item: loginItem,
-      expected_account: expectedAccount,
-      email: login.email,
-      detail:
-        'The selected login does not belong to the requested mailbox account',
+      ...named,
+      detail: 'The selected login does not belong to the requested mailbox account',
     });
-    process.exit(2);
-  }
   const session = await WSession.start({
     label: `${RUN}-${loginItem}`,
     browser: 'chromium',
     headless: false,
     userDataDir: accountProfileDir(login),
   });
-  const wait = () => pageSettled(session.page);
   let issued;
   try {
-    issued = await issue(session.page, wait, login);
+    issued = await issue(session.page, () => pageSettled(session.page), login);
   } finally {
     await session.close();
   }
@@ -179,60 +132,20 @@ async function main() {
         params: { login_item: loginItem, expected_account: expectedAccount },
         detached: true,
       });
-      const resume = [
-        'weles',
-        'app-password',
-        '--provider',
-        'google',
-        '--login-item',
-        loginItem,
-        '--organization',
-        organization,
-        '--account',
-        expectedAccount,
-      ]
+      const resume = ['weles', 'app-password', '--provider', 'google', '--login-item', loginItem, '--organization', organization, '--account', expectedAccount]
         .map((argument) => `'${argument.replaceAll("'", "'\\''")}'`)
         .join(' ');
       next.next_action = `POST /run ${enrollment} on this executor, then ${resume}`;
     }
-    report({
-      ok: false,
-      login_item: loginItem,
-      expected_account: expectedAccount,
-      email: login.email,
-      ...issued,
-      ...next,
-    });
-    process.exit(3);
+    return refuse({ ...named, ...issued, ...next });
   }
   const handed = giveToSkrzynka(organization, login.email, issued.password);
-  if (!handed.ok) {
-    report({
-      ok: false,
-      login_item: loginItem,
-      expected_account: expectedAccount,
-      email: login.email,
-      app_password_created: true,
-      ...handed,
-    });
-    process.exit(4);
-  }
-  report({
-    ok: true,
-    login_item: loginItem,
-    organization,
-    expected_account: expectedAccount,
-    email: login.email,
-    app_name: APP_NAME,
-    skrzynka: handed.skrzynka,
-  });
+  if (!handed.ok) return refuse({ ...named, app_password_created: true, ...handed });
+  report({ ok: true, ...named, organization, app_name: APP_NAME, skrzynka: handed.skrzynka });
 }
 
-main().catch((error) => {
-  report({
-    ok: false,
-    blocked: 'google_app_password_error',
-    error: String(error?.message || error),
-  });
-  process.exit(1);
-});
+try {
+  await main();
+} catch (error) {
+  refuse({ blocked: 'google_app_password_error', error: error instanceof Error ? error.message : String(error) });
+}

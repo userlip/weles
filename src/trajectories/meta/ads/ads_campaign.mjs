@@ -1,4 +1,3 @@
-import { pageSettled } from '../../_shared/page/settled.mjs';
 // Meta Ads Manager: create/fill a campaign draft in the browser.
 //
 // Env:
@@ -18,7 +17,7 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 //   PRIMARY_TEXT         optional ad primary text
 //   HEADLINE             optional ad headline
 //   DESCRIPTION          optional ad description
-//   META_ADS_CAPABILITIES print supported params and exit
+//   META_ADS_CAPABILITIES "1" prints the supported parameters as the whole answer
 //   ALLOW_UNVERIFIED_META_PARAMS set "1" to warn instead of failing for unsupported params
 //   SUBMIT               must be "1" to publish. Default stages only.
 //   PROXY_URL            proxy URL or provider filter ('direct' for none);
@@ -29,26 +28,28 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 //
 // The run itself lives here: the admission checks, the session, the walk past
 // the login gate, the account proof, the draft and the publish. The steps it is
-// made of live in ./ads_campaign/.
-
+// made of live in ./ads_campaign/. A refusal is thrown and sets the exit status
+// from its error.
+import { WSession } from '../../../../dist/session/wsession.js';
+import { exitStatusFor } from '../../../../dist/cli/usage.js';
+import { pageSettled } from '../../_shared/page/settled.mjs';
+import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
+import { statedProxy } from '../../_shared/inputs/stated.mjs';
 import {
-  AD_ACCOUNT_ID,
   CAMPAIGN_NAME,
+  CAPABILITIES,
   PRINT_CAPABILITIES,
   SUBMIT,
   USER_DATA_DIR,
   VERIFY_ACCOUNT_ONLY,
   guardUnsupportedParams,
-  printCapabilitiesAndExit,
   profilePersona,
   requireCampaignInputs,
   requireCampaignTarget,
   session,
   targetUrl,
 } from './ads_campaign/campaign_request.mjs';
-import { WSession } from '../../../../dist/session/wsession.js';
 import { closeObstructingPanels } from './ads_campaign/panel_controls.mjs';
-import { clickDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
 import {
   bringBrowserToFront,
   ensureAdAccount,
@@ -58,94 +59,68 @@ import {
 import {
   chooseObjectiveAndContinue,
   openCampaignCreation,
-  reportDraftOutcomeWithoutFields,
+  stagedDraftWithoutFields,
 } from './ads_campaign/campaign_draft.mjs';
-import {
-  fillCampaignFields,
-  verifyConfiguredDraft,
-} from './ads_campaign/draft_fields.mjs';
-import { statedProxy } from '../../_shared/inputs/stated.mjs';
+import { fillCampaignFields, verifyConfiguredDraft } from './ads_campaign/draft_fields.mjs';
 
-if (PRINT_CAPABILITIES) printCapabilitiesAndExit();
-guardUnsupportedParams();
-requireCampaignTarget();
-if (!VERIFY_ACCOUNT_ONLY) requireCampaignInputs();
+const INDENT = '  ';
 
-console.log(
-  `[meta-ads] profile=${USER_DATA_DIR} viewport=${process.env.WELES_VIEWPORT}`,
-);
-const s = await WSession.start({
-  label: 'meta_ads_campaign',
-  browser: process.env.BROWSER || 'chromium',
-  proxy:
-    session.proxyUrl && !process.env.PROXY_URL?.trim()
-      ? session.proxyUrl
-      : statedProxy('the campaign draft, whose account session names no proxy,'),
-  persona: profilePersona,
-  userDataDir: USER_DATA_DIR,
-  pageDiagnostics: process.env.WELES_PAGE_DIAGNOSTICS === '1',
-});
-try {
+/** The draft, staged or published; its PASS line. */
+async function runCampaign(s) {
   await bringBrowserToFront(s);
   await s.goto(targetUrl);
   await pageSettled(s.page);
   await passLoginGate(s);
-
-  await ensureAdAccount(s);
+  const accountId = await ensureAdAccount(s);
   if (VERIFY_ACCOUNT_ONLY) {
     const visible = await visibleSelectedAdAccount(s);
-    console.log(
-      `PASS: Meta Ads account verified (${visible.label || AD_ACCOUNT_ID})`,
-    );
-    process.exit(0);
+    return `PASS: Meta Ads account ${accountId} verified (${JSON.stringify(visible.label)})`;
   }
   await closeObstructingPanels(s);
+  if (await pageShows(s.page, 'Is a Meta advertising policy dialog open that asks to be accepted before continuing?'))
+    await clickDescribed(s.page, 'the button that accepts the open advertising policy dialog');
 
-  if (
-    await pageShows(
-      s.page,
-      'Is a Meta advertising policy dialog open that asks to be accepted before continuing?',
-    )
-  ) {
-    await clickDescribed(
-      s.page,
-      'the button that accepts the open advertising policy dialog',
-    );
-  }
-
-  const createClicked = await openCampaignCreation(s);
+  await openCampaignCreation(s);
   await chooseObjectiveAndContinue(s);
   const filledCount = await fillCampaignFields(s);
-
-  // Nothing to verify and nothing to publish: this reports the staged draft or
-  // refuses, and never comes back.
-  if (!createClicked || filledCount === 0)
-    await reportDraftOutcomeWithoutFields(s, createClicked, filledCount);
-
+  if (!filledCount)
+    return `PASS: staged Meta ads campaign draft "${CAMPAIGN_NAME}" (SUBMIT=0, campaign_id=${await stagedDraftWithoutFields(s)})`;
   if (!SUBMIT) {
     await verifyConfiguredDraft(s);
-    console.log(
-      `PASS: staged Meta ads campaign draft "${CAMPAIGN_NAME}" (SUBMIT=0, filled=${filledCount})`,
-    );
-    process.exit(0);
+    return `PASS: staged Meta ads campaign draft "${CAMPAIGN_NAME}" (SUBMIT=0, filled=${filledCount})`;
   }
-
   await clickDescribed(
     s.page,
     'the enabled button that publishes the campaign (or confirms its publication in an open dialog)',
   );
-  const status = (await pageShows(
-    s.page,
-    'Does the page say the campaign was published, is processing, or is in review?',
-  ))
-    ? 'confirmed'
-    : 'clicked';
-  console.log(
-    `PASS: Meta ads campaign publish ${status} for "${CAMPAIGN_NAME}"`,
-  );
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
+  if (!(await pageShows(s.page, 'Does the page say the campaign was published, is processing, or is in review?')))
+    throw new Error(`META_ADS_PUBLISH_UNCONFIRMED: Ads Manager did not confirm publishing "${CAMPAIGN_NAME}" at ${s.page.url()}`);
+  return `PASS: Meta ads campaign "${CAMPAIGN_NAME}" published`;
+}
+
+if (PRINT_CAPABILITIES) console.log(JSON.stringify(CAPABILITIES, null, INDENT));
+else {
+  guardUnsupportedParams();
+  requireCampaignTarget();
+  if (!VERIFY_ACCOUNT_ONLY) requireCampaignInputs();
+  console.log(`[meta-ads] profile=${USER_DATA_DIR} viewport=${process.env.WELES_VIEWPORT}`);
+  const s = await WSession.start({
+    label: 'meta_ads_campaign',
+    browser: 'chromium',
+    proxy:
+      session.proxyUrl && !process.env.PROXY_URL?.trim()
+        ? session.proxyUrl
+        : statedProxy('the campaign draft, whose account session names no proxy,'),
+    persona: profilePersona,
+    userDataDir: USER_DATA_DIR,
+    pageDiagnostics: process.env.WELES_PAGE_DIAGNOSTICS === '1',
+  });
+  try {
+    console.log(await runCampaign(s));
+  } catch (error) {
+    console.error(`FAIL: ${error.message}`);
+    process.exitCode = exitStatusFor(error);
+  } finally {
+    await s.close();
+  }
 }

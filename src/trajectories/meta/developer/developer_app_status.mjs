@@ -6,12 +6,9 @@
 // controls as they stand. The app's mode is read from that record, not
 // guessed here from the words one language prints.
 
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
-import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import { recordPageState } from '../../_shared/diagnostics/page_state.mjs';
 
 const RUN = 'meta_developer_app_status';
@@ -19,11 +16,7 @@ const APP_ID = statedText(
   ['META_APP_ID', 'NEXT_PUBLIC_META_ADS_APP_ID'],
   'the Meta app id this run acts on',
 );
-const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
-mkdirSync(USER_DATA_DIR, { recursive: true });
+const USER_DATA_DIR = keptProfileDir('meta_ads');
 
 const app = `https://developers.facebook.com/apps/${encodeURIComponent(APP_ID)}`;
 // The app's pages read, by name and address.

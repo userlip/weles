@@ -1,8 +1,6 @@
 // The environment a Google Ads campaign submission arrives as.
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
+import { keptProfileDir } from '../../../_shared/profile/persona.mjs';
 
 export const ADS_URL = process.env.ADS_URL;
 export const CUSTOMER_ID = process.env.GOOGLE_ADS_CUSTOMER_ID;
@@ -40,11 +38,7 @@ export const KEYWORDS = process.env.KEYWORDS;
 export const LOCATIONS = process.env.LOCATIONS;
 export const SUBMIT = process.env.SUBMIT === '1';
 export const WAIT_FOR_LOGIN = process.env.WAIT_FOR_LOGIN === '1';
-export const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'google_ads');
-mkdirSync(USER_DATA_DIR, { recursive: true });
+export const USER_DATA_DIR = keptProfileDir('google_ads');
 
 process.env.WELES_DISABLE_RECORDING ??= '1';
 process.env.WELES_NO_INSTRUMENT ??= '1';

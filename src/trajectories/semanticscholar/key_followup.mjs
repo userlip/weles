@@ -1,32 +1,31 @@
+// The Semantic Scholar API-key follow-up: the inbox of the identity a key
+// request was submitted for is read for Semantic Scholar's key mail, and a key
+// it holds is validated and stored in Skarbiec (src/secrets/semantic-scholar-followup.ts).
+// The result is kept as the run's service action result.
+//
+// Env (all optional): SOURCE_ACTION_LOG_ID (the submission to follow; the
+// latest completed one when unset), ATTEMPT (which read of the inbox this is),
+// SEMANTIC_SCHOLAR_TENANT_ID (the tenant whose Skarbiec holds the key).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 import { runSemanticScholarKeyFollowup } from '../../../dist/secrets/semantic-scholar-followup.js';
 import { exitStatusFor } from '../../../dist/cli/usage.js';
 
-const sourceActionLogId =
-  process.env.SOURCE_ACTION_LOG_ID ||
-  process.env.source_action_log_id ||
-  process.env.SEMANTIC_SCHOLAR_SOURCE_ACTION_LOG_ID ||
-  '';
-const attemptRaw = process.env.ATTEMPT || process.env.attempt || '0';
-const attempt = Number.parseInt(attemptRaw, 10) || 0;
-const tenantId = process.env.SEMANTIC_SCHOLAR_TENANT_ID || null;
+const INDENT = '  ';
+const attempt = process.env.ATTEMPT ? Number(process.env.ATTEMPT) : undefined;
+if (attempt !== undefined && !Number.isSafeInteger(attempt))
+  throw new Error(`ATTEMPT is "${process.env.ATTEMPT}", not a whole number: which read of the inbox this is`);
 
 const result = await runSemanticScholarKeyFollowup(
-  sourceActionLogId || undefined,
+  process.env.SOURCE_ACTION_LOG_ID ? process.env.SOURCE_ACTION_LOG_ID : undefined,
   attempt,
-  tenantId,
+  process.env.SEMANTIC_SCHOLAR_TENANT_ID ? process.env.SEMANTIC_SCHOLAR_TENANT_ID : null,
 );
-const dir = runRecordingsDir(
-  process.env.ACTION_LOG_ID || 'semanticscholar_key_followup',
-  process.env.ACTION || 'semanticscholar_key_followup',
-);
+// The dispatched action's own recordings, where the API server reads results.
+const dir = runRecordingsDir();
 mkdirSync(dir, { recursive: true });
-writeFileSync(
-  join(dir, 'service_action_result.json'),
-  JSON.stringify({ semantic_scholar_key_followup: result }, null, 2),
-);
+writeFileSync(join(dir, 'service_action_result.json'), JSON.stringify({ semantic_scholar_key_followup: result }, null, INDENT));
 
 // The follow-up's own outcomes that are not a failure: the key request still
 // waits for Semantic Scholar, or the key it sent was validated.
@@ -39,16 +38,10 @@ if (!Object.hasOwn(STANDING, result.status)) {
     JSON.stringify({
       status: result.status,
       validated: result.validated,
-      // Skarbiec v2 returns a vault coordinate, never a credential row id. The
-      // dropped `service_credential_id` belonged to the plaintext service_credentials
-      // path and could not populate under either merge parent.
-      validation_status:
-        'validation_status' in result ? result.validation_status : undefined,
-      vault_item_id:
-        'vault_item_id' in result ? result.vault_item_id : undefined,
-      vault_field: 'vault_field' in result ? result.vault_field : undefined,
-      next_scheduled_at:
-        'next_scheduled_at' in result ? result.next_scheduled_at : undefined,
+      validation_status: result.validation_status,
+      vault_item_id: result.vault_item_id,
+      vault_field: result.vault_field,
+      next_scheduled_at: result.next_scheduled_at,
     }),
   );
 }

@@ -6,23 +6,16 @@
 // trajectories reuse the same profile + persona.
 
 import { WSession } from '../../../../dist/session/wsession.js';
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
-import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import { holdsMetaSession } from '../../_shared/profile/meta_session.mjs';
 import { bringBrowserToFront } from '../../_shared/action/window.mjs';
 import { isLoginUrl } from './session/login_wall.mjs';
 
 const ADS_MANAGER_URL =
   'https://adsmanager.facebook.com/adsmanager/manage/campaigns';
-const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
-mkdirSync(USER_DATA_DIR, { recursive: true });
+const USER_DATA_DIR = keptProfileDir('meta_ads');
 
 console.log(
   `[meta-ads-login] profile=${USER_DATA_DIR} viewport=${process.env.WELES_VIEWPORT}`,

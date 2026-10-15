@@ -16,7 +16,6 @@ export { generateTotp } from './google_sso/totp_secret.mjs';
 export {
   getGoogleSsoCreds,
   getScopedGoogleLogin,
-  readShownBalance,
   patchServiceBalance,
 } from './google_sso/service_account.mjs';
 
@@ -24,28 +23,16 @@ export {
  * Drive Google's identifier → password → consent sequence.
  * @param {object} session - WSession instance (we use session.page).
  * @param {{ email: string, password: string, totpSecret?: string, totp_secret?: string, metadata?: object }} creds
- * @param {{ originHost?: string }} opts - originHost (e.g. "dashboard.iproyal.com") for the post-login redirect check.
- * @returns {Promise<boolean>} true on success, false on detectable failure.
+ * @param {{ originHost?: string, page?: object }} opts - originHost (e.g. "dashboard.iproyal.com") for the post-login redirect check; page to drive instead of the session's own (a popup the caller captured).
+ * @returns {Promise<boolean>} true on success, false when the identifier step or the redirect back reports a failure; a password step Google refuses throws with what it showed.
  */
 export async function googleSso(session, creds, opts = {}) {
-  // If caller passes opts.page (e.g. a popup), drive that page; otherwise the
-  // session's main page. Caller is responsible for capturing popups before
-  // calling this helper since on('page') listeners attach too late if added
-  // here.
-  const page = opts.page ?? session.page;
-
+  const page = opts.page ? opts.page : session.page;
   const arrival = await reachGooglePasswordStep(page, creds);
   // Google finished the handoff on its own — an account it already knew, or a
   // consent screen it accepted — and the browser is back on the caller's site.
   if (arrival.at === 'caller_site') return true;
   if (arrival.at === 'refused') return false;
-
-  const submitted = await submitGooglePassword(
-    page,
-    creds,
-    arrival.passwordFieldCount,
-  );
-  if (!submitted) return false;
-
+  await submitGooglePassword(page, creds);
   return await watchGoogleRedirect(page, session, creds, opts);
 }
