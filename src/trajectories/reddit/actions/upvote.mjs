@@ -27,7 +27,7 @@ const SUBREDDIT = process.env.TARGET_URL
 await runAction({
   platform: 'reddit',
   action: 'upvote',
-  feedUrl: `${OLD_REDDIT}/r/${encodeURIComponent(SUBREDDIT)}/`,
+  feedUrl: SUBREDDIT && `${OLD_REDDIT}/r/${encodeURIComponent(SUBREDDIT)}/`,
   banDetector: detectRedditBanSignals,
   act: async (s) => {
     const oldAddress = onOldReddit(s.page.url());

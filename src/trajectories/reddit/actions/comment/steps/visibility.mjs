@@ -2,167 +2,75 @@ import {
   contextRead,
   ownListingHas,
   publicAboutStatus,
-  readOwnHandle,
 } from './reddit_json.mjs';
+import { HTTP_NOT_FOUND, HTTP_OK } from '../../../../../worker/weles-api-server/routes/http-status.mjs';
 
 /**
- * Check an unhealthy signal read after submitting against the authenticated
- * comment listing. The listing can prove the comment was accepted despite
- * that signal. Return false when it contains the comment; otherwise throw.
- * A healthy verdict, or none, is returned as it is.
+ * Whether the comment can be seen publicly right after submit. With its id,
+ * the comment's own permalink JSON (/r/<sub>/comments/<post>/<slug>/<id>/.json)
+ * is read: it carries a fresh comment at once, where the thread listing lags
+ * by hours. Without one, the account's public comment listing is read.
  */
-export async function confirmBlockingSignal(s, banSignal, body) {
-  if (!banSignal || banSignal.healthy) return banSignal;
-  // An unreadable listing cannot clear the signal; its cause goes with it.
-  const me = await readOwnHandle(s.page);
-  if (!me)
-    throw new Error(
-      `reddit returned ${banSignal.signal} on submit, and the account's own handle could not be read to check its comment listing: ${JSON.stringify(banSignal.details)}`,
+export async function publiclyVisible(s, { thread, commentId, handle, body }) {
+  if (commentId) {
+    const { status, body: text } = await contextRead(
+      s,
+      `${thread}${commentId}/.json`,
     );
-  if (await ownListingHas(s.page, me, body, 10)) {
-    console.log(
-      `[ban-signal] ${banSignal.signal} after submit, but the comment is in the account's own listing; continuing to the public-visibility check`,
-    );
-    return false;
+    if (status !== HTTP_OK)
+      throw new Error(
+        `REDDIT_PERMALINK_UNREAD: ${thread}${commentId}/.json answered ${status}: ${text}`,
+      );
+    const [, replies] = JSON.parse(text);
+    const node = replies?.data?.children?.find((c) => c.data?.id === commentId);
+    return node?.kind === 't1' && node.data.author === handle;
   }
-  throw new Error(
-    `reddit returned ${banSignal.signal} on submit and the comment is not in u/${me}'s own listing: ${JSON.stringify(banSignal.details)}`,
-  );
+  const listing = `https://old.reddit.com/user/${encodeURIComponent(handle)}/comments/.json?sort=new`;
+  const { status, body: text } = await contextRead(s, listing);
+  if (status !== HTTP_OK)
+    throw new Error(`REDDIT_LISTING_UNREAD: ${listing} answered ${status}: ${text}`);
+  return text.includes(body);
 }
 
 /**
- * Verify public visibility via the comment-permalink JSON, NOT the thread
- * listing. Reddit's thread-listing endpoint (.json?limit=500&sort=new) caches
- * independently of the permalink and lags freshly-posted comments by far
- * longer than 60s — produces false-positive "rate_limited" verdicts on
- * comments that are in fact publicly visible. The permalink JSON
- * /r/<sub>/comments/<post>/<slug>/<id>/.json is real-time: the permalink
- * carries a fresh comment within minutes while the thread listing takes
- * hours. Without a captured comment id the user's own
- * comment listing is read instead.
- *
- * Returns { publiclyVisible, stillVisibleAtEnd }: seen at least once, and
- * seen on the last poll.
+ * Why a comment the account posted is not publicly visible:
+ *   - the account's public about.json answers 404: the account is hidden
+ *     from signed-out readers (shadowban);
+ *   - the comment is in the account's own signed-in listing but not public:
+ *     Reddit holds it back (a new account cooling, when the profile is
+ *     public, or the subreddit's filter);
+ *   - it is in neither: Reddit dropped it, under the signal read right
+ *     after submit when that one was not healthy.
+ * Every read is Reddit's own; one that fails throws.
  */
-export async function pollPublicVisibility(
-  s,
-  { baseUrl, postedCommentId, handle, body },
-) {
-  if (postedCommentId) {
-    // Reddit's comment-permalink JSON format is /r/<sub>/comments/<post>/<post-slug>/<comment-id>/.json
-    // (NOT /r/<sub>/comments/<post>/<post-slug>/comment/<comment-id>/.json — the
-    // /comment/ segment is not part of the comment-permalink JSON route).
-    const { status, body: text } = await contextRead(
-      s,
-      `${baseUrl}/${postedCommentId}/.json`,
-    );
-    let j = false;
-    try {
-      j = JSON.parse(text);
-    } catch {
-      /* not JSON: the permalink answered with a page */
-    }
-    const commentNode = j?.[1]?.data?.children?.[0];
-    const has =
-      commentNode?.kind === 't1' &&
-      commentNode?.data?.id === postedCommentId &&
-      (!handle || commentNode?.data?.author === handle);
-    console.log(
-      `[verify] permalink id=${postedCommentId} status=${status} hasMatch=${has}`,
-    );
-    return { publiclyVisible: has, stillVisibleAtEnd: has };
-  }
-  if (handle) {
-    const { status, body: text } = await contextRead(
-      s,
-      `https://old.reddit.com/user/${encodeURIComponent(handle)}/comments/.json?limit=25&sort=new`,
-    );
-    const has = text.includes(body);
-    console.log(
-      `[verify] handle=${handle} userListing status=${status} bodyLen=${text.length} hasMatch=${has}`,
-    );
-    return { publiclyVisible: has, stillVisibleAtEnd: has };
-  }
-  throw new Error(
-    'reddit comment verify: neither a posted comment id nor the account handle is known, so public visibility cannot be read',
-  );
-}
-
-/**
- * Distinguish four states when the comment isn't publicly visible:
- *   1. shadowbanned account: about.json 404 publicly, 200 authenticated
- *      (account exists but is hidden from non-logged-in viewers).
- *   2. new-account cooling: about.json 200 publicly, comment in auth
- *      listing but not in public listing (Reddit hides comments from
- *      <24h-old / <10-karma accounts until trust accrues).
- *   3. subreddit auto-filter: about.json 200 publicly, comment NOT in
- *      auth listing either (the comment was rejected by the subreddit's
- *      AutoModerator filter).
- *   4. true rate-limit: api/comment XHR returned an error AND comment
- *      is missing from auth listing.
- * `priorSignal` is the XHR signal, kept for state 4 when nothing else fits.
- */
-export async function classifyInvisibleComment(s, priorSignal, body) {
-  let realHandle = false;
-  try {
-    realHandle = await readOwnHandle(s.page);
-  } catch (e) {
-    console.log(`[ban-signal] own handle unreadable: ${e.message}`);
-  }
-  let unauthAboutStatus = 0;
-  let inAuthListing = false;
-  if (realHandle) {
-    try {
-      unauthAboutStatus = await publicAboutStatus(s, realHandle);
-    } catch (e) {
-      console.log(`[ban-signal] about.json unreadable: ${e.message}`);
-    }
-    try {
-      inAuthListing = await ownListingHas(s.page, realHandle, body, 15);
-    } catch (e) {
-      console.log(`[ban-signal] auth listing unreadable: ${e.message}`);
-    }
-  }
-  if (unauthAboutStatus === 404) {
+export async function invisibleCommentSignal(s, { handle, body, afterSubmit }) {
+  const aboutStatus = await publicAboutStatus(s, handle);
+  const details = { real_handle: handle, public_about_status: aboutStatus };
+  if (aboutStatus === HTTP_NOT_FOUND)
     return {
-      signal: 'shadowbanned',
+      signal: 'shadowban_suspected',
       healthy: false,
-      details: {
-        real_handle: realHandle,
-        reason: 'about.json 404 publicly — account shadowbanned',
-      },
+      details: { ...details, reason: 'the profile is hidden from signed-out readers' },
     };
-  }
-  if (unauthAboutStatus === 200 && inAuthListing) {
+  if (await ownListingHas(s.page, handle, body))
     return {
-      signal: 'new_account_cooling',
+      signal: 'shadowban_suspected',
       healthy: false,
       details: {
-        real_handle: realHandle,
+        ...details,
         reason:
-          'about.json 200 + comment in auth listing but not public — Reddit cooling new account',
+          aboutStatus === HTTP_OK
+            ? 'the comment is in the account listing but not public: Reddit is holding back a new account'
+            : 'the comment is in the account listing but not public: the subreddit filtered it',
       },
     };
-  }
-  if (inAuthListing) {
-    return {
-      signal: 'subreddit_filter',
-      healthy: false,
-      details: {
-        real_handle: realHandle,
-        reason:
-          'comment in auth listing but not public — subreddit AutoMod filtered it',
-      },
-    };
-  }
-  return (
-    priorSignal || {
-      signal: 'rate_limited',
-      healthy: false,
-      details: {
-        real_handle: realHandle,
-        reason: 'comment missing from auth listing — submission rejected',
-      },
-    }
-  );
+  if (!afterSubmit.healthy) return afterSubmit;
+  return {
+    signal: 'shadowban_suspected',
+    healthy: false,
+    details: {
+      ...details,
+      reason: 'the comment is in neither the public view nor the account listing',
+    },
+  };
 }

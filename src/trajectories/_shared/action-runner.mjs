@@ -10,7 +10,8 @@
  *   feedUrl:        string | (username) => string — landing URL for this action
  *   scrolls:        number — how many idle scrolls for browse
  *   banDetector:    async (page, responses) => BanSignal
- *   submitComment:  async (s, text) => void — deterministic Playwright path for comment/promote
+ *   pickPost:       optional async (s) => { postTitle, postBody, url } — the post a comment answers
+ *   submitComment:  async (s, text, post, acct) => void | string — deterministic Playwright path for comment/promote
  *   submitPost:     async (s, text) => void — deterministic Playwright path for post/post_promote
  *   act:            optional async (s, ctx) => result — the action itself, on the
  *                   signed-in landing page; it speaks with no character or product

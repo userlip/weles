@@ -1,241 +1,31 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
-import { detectRedditBanSignals } from '../../../../dist/platforms/reddit/ban_signals.js';
-import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
-import { humanType } from '../../../../dist/human/keyboard.js';
-import {
-  humanIdlePause,
-  humanScrollPage,
-  humanClickLocator,
-} from '../../../../dist/human/mouse.js';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
-import { pageSettled } from '../../_shared/page/settled.mjs';
-import { restoreRedditSession } from './comment/steps/session_restore.mjs';
-import {
-  readOwnHandle,
-  resolveTargetPost,
-} from './comment/steps/reddit_json.mjs';
-import {
-  classifyInvisibleComment,
-  confirmBlockingSignal,
-  pollPublicVisibility,
-} from './comment/steps/visibility.mjs';
-import {
-  recordCommentForVerify,
-  verifyPreviousComment,
-} from './comment/steps/deferred_verify.mjs';
-
-// Use old.reddit.com — comment composer is a plain visible <textarea name="text">
-// inside a normal form. New reddit.com puts the composer inside <shreddit-composer>'s
-// shadow root collapsed at 0×0 until the user clicks "Join the conversation",
-// which the agent loop never reliably finds and times out at max-iterations.
+// Comment on a Reddit thread with the caller's text, through the shared
+// action runner: the account's fresh jar and saved site storage, the
+// signed-in gate, the verdict and its record are the runner's.
 //
-// The target and the comment body are the caller's: a comment is a real
-// publication under the account's name, so neither a subreddit nor words
-// are built in. The body must read as a person's own, topic-appropriate
-// remark; text that announces automation is classified and the account
-// shadowbanned within minutes of submit.
-const TARGET_URL = process.env.TARGET_URL;
-const COMMENT_BODY = process.env.COMMENT_BODY;
-if (!TARGET_URL) {
-  console.log(
-    'FAIL: TARGET_URL env var required: the post or listing the comment goes to',
-  );
-  process.exit(1);
-}
-if (!COMMENT_BODY) {
-  console.log('FAIL: COMMENT_BODY env var required');
-  process.exit(1);
-}
+// Env (both required; a comment is a publication under the account's name):
+//   TARGET_URL     the thread, or a subreddit whose first open post is used
+//   COMMENT_BODY   the comment, as the account's own words; text that
+//                  announces automation gets the account shadowbanned
+//
+// Publishing and its proof are ./comment/steps/publish.mjs.
+import { detectRedditBanSignals } from '../../../../dist/platforms/reddit/ban_signals.js';
+import { runAction } from '../../_shared/action-runner.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
+import { threadAt } from './comment/steps/reddit_json.mjs';
+import { publishComment } from './comment/steps/publish.mjs';
 
-const acct = await getSocialAccount('reddit');
-if (!acct) {
-  console.log('FAIL: no active reddit account in Skarbiec');
-  process.exitCode = 1;
-}
-console.log(`[trajectory] Using account: ${acct.username}`);
-
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'reddit_comment',
-  proxy: proxyUrl,
-  persona,
-});
-
-// Translate www.reddit.com URLs → old.reddit.com so we can use the plain form.
-const oldUrl = TARGET_URL.replace(
-  /^https?:\/\/(www\.)?reddit\.com/,
-  'https://old.reddit.com',
+const TARGET_URL = statedText(
+  ['TARGET_URL'],
+  'the Reddit thread or subreddit the comment goes to',
 );
+const COMMENT_BODY = statedText(['COMMENT_BODY'], 'the comment to publish');
 
-/** Our real handle for the post-submit verification, or false when Reddit gives none. */
-async function readHandle() {
-  // The about.json 404 pre-check that used to live here has a documented
-  // false-positive history: Reddit's edge tier returns 404 for about.json
-  // requests routed through certain residential proxy IPs even when the
-  // account is healthy and the comment becomes publicly visible. The
-  // reliable shadowban signal is the
-  // post-submit permalink JSON check, which uses the same fetch path as the
-  // comment submission, so only the handle is read here.
-  try {
-    return await readOwnHandle(s.page);
-  } catch (e) {
-    console.log(`[trajectory] /api/me.json unreadable: ${e.message}`);
-    return false;
-  }
-}
-
-/** Type the comment into the first composer and submit it through real pointer events. */
-async function writeComment() {
-  // Pre-comment dwell — scroll the post body and a few existing comments
-  // before opening the composer. Reddit's behavioral classifier scores the
-  // user's pre-action telemetry as part of the post-submit shadowban gate.
-  await humanIdlePause('deliberate');
-  await humanScrollPage(s.page, 'down');
-  await humanIdlePause('short');
-  // The comment composer is the FIRST textarea[name="text"] on the page —
-  // there's one per existing reply box but the top-level reply form is first.
-  const ta = s.page
-    .locator('textarea[name="text"]')
-    .filter({ visible: true })
-    .first();
-  await ta.waitFor({ state: 'visible' });
-  // Humanized click into textarea — moves cursor via Bezier path, lands at
-  // a randomized offset inside the box, then clicks: the pre-click pointer
-  // trajectory is a behavioral signal Reddit's anti-bot reads alongside the
-  // submit click.
-  await humanClickLocator(s.page, ta);
-  await humanIdlePause('short');
-  await ta.focus();
-  await humanType(s.page, COMMENT_BODY);
-  await humanIdlePause('short');
-  // Submit through the shared input path after locating the enclosing form.
-  const submitBtn = ta
-    .locator('xpath=ancestor::form[1]')
-    .locator('button.save, button[type="submit"]')
-    .first();
-  await submitBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, submitBtn);
-}
-
-/**
- * Read our own page once it has settled after the submit. Returns the authored
- * comment's id, 'POSTED_NO_ID' when the body is on the page but the node was
- * not found, or false when it is not there.
- */
-async function readLocalPost() {
-  await pageSettled(s.page);
-  return s.page.evaluate((body) => {
-    const text = document.body?.innerText ?? '';
-    if (!text.includes(body)) return false;
-    // Find the comment node we just authored — old.reddit renders
-    // <div id="thing_t1_<id>" class="thing id-t1_<id> ..."> for each comment.
-    const things = document.querySelectorAll('div[id^="thing_t1_"]');
-    for (const el of things) {
-      const md = el.querySelector('.usertext-body, .md');
-      if (md && md.textContent && md.textContent.includes(body)) {
-        const m = el.id.match(/^thing_t1_([a-z0-9]+)$/);
-        if (m) return m[1];
-      }
-    }
-    return 'POSTED_NO_ID';
-  }, COMMENT_BODY);
-}
-
-let banSignal = false;
-try {
-  await verifyPreviousComment(acct);
-  await restoreRedditSession(s, acct);
-  await s.page.goto('https://old.reddit.com/api/me.json', {
-    waitUntil: 'domcontentloaded',
-  });
-  await humanIdlePause('deliberate');
-  const handle = await readHandle();
-  if (handle) console.log(`[trajectory] real handle: ${handle}`);
-
-  const resolvedOldUrl = await resolveTargetPost(s.page, oldUrl);
-  await s.page.goto(resolvedOldUrl, { waitUntil: 'domcontentloaded' });
-  await humanIdlePause('deliberate');
-  const url = s.page.url();
-  if (/\/login/.test(url))
-    throw new Error(`cookies stale, redirected to login (${url})`);
-
-  await writeComment();
-  // The optimistic in-page check (body text appearing in page innerText) was
-  // returning true even when a spam filter removed the comment server-side a
-  // few seconds after submit, so the trajectory printed PASS while the comment
-  // never made it to public listing. Two-step verification: (a) read the
-  // settled page for the body (submit confirmed), (b) re-fetch the permalink
-  // JSON and confirm the comment is in the public tree.
-  const found = await readLocalPost();
-  const postedCommentId = found && found !== 'POSTED_NO_ID' ? found : false;
-  banSignal = await banSignalOf(
-    detectRedditBanSignals,
-    s,
-    'after submitting the comment',
-  );
-  if (!found)
-    throw new Error(
-      `submit did not confirm — body did not appear in page text`,
-    );
-  banSignal = await confirmBlockingSignal(s, banSignal, COMMENT_BODY);
-
-  const visibility = await pollPublicVisibility(s, {
-    baseUrl: oldUrl.replace(/\/$/, ''),
-    postedCommentId,
-    handle,
-    body: COMMENT_BODY,
-  });
-  if (!visibility.publiclyVisible) {
-    banSignal = await classifyInvisibleComment(s, banSignal, COMMENT_BODY);
-    console.log(`[ban-signal] ${banSignal.signal}`);
-    throw new Error(
-      `comment not publicly visible — ${banSignal.signal} (${banSignal.details?.reason ?? 'no detail'})`,
-    );
-  }
-  console.log('[ban-signal] healthy');
-  console.log(
-    `PASS: commented "${COMMENT_BODY}" on ${resolvedOldUrl} (verified public, in-session)`,
-  );
-
-  recordCommentForVerify(acct, { resolvedOldUrl, postedCommentId, handle });
-} catch (e) {
-  if (e.banSignal) banSignal = e.banSignal;
-  if (!banSignal)
-    banSignal = await banSignalOf(
-      detectRedditBanSignals,
-      s,
-      'after the failure',
-    );
-  if (banSignal) console.log(`[ban-signal] ${banSignal.signal}`);
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  if (banSignal) {
-    try {
-      const dir = runRecordingsDir('reddit_comment');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'ban_signal.json'),
-        JSON.stringify(
-          {
-            account_id: acct.id,
-            username: acct.username,
-            ...banSignal,
-            ts: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
-      );
-    } catch (e) {
-      console.log('[ban-signal] persist err:', e.message);
-    }
-  }
-  await s.close();
-}
+await runAction({
+  platform: 'reddit',
+  action: 'comment',
+  banDetector: detectRedditBanSignals,
+  act: async (s, { acct }) => {
+    const { url } = await threadAt(s.page, TARGET_URL);
+    return publishComment(s, acct, { thread: url, body: COMMENT_BODY });
+  },
+});

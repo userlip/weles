@@ -1,236 +1,39 @@
-/**
- * Reddit organic comment — picks a recent post in a niche sub, generates a
- * persona-voiced comment via the LLM proxy, submits it.
- *
- * Args via env: SUBREDDIT (required for now). Character context fetched from
- * social_accounts → character_social_accounts → characters. Ban-detector at
- * session close writes ban_signal.json into recordings/reddit_organic_comment/.
- */
-import {
-  getSocialAccount,
-  resolveAccountSession,
-} from '../../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../../dist/session/wsession.js';
-import { generateOrganicComment } from '../../../_shared/content/llm.mjs';
-import { checkReachable } from '../../../_shared/action-runner.mjs';
+// Comment in a subreddit in the account character's own voice, through the
+// shared action runner: the account's fresh jar and saved site storage, the
+// signed-in gate, the character, the generated text, the verdict and its
+// record are the runner's.
+//
+// Env: SUBREDDIT (required; r/ prefix optional): the subreddit the comment
+// goes to. The comment answers the first post Reddit lists there that is
+// neither locked nor archived; a feed that aggregates other subreddits is
+// refused, since its filters remove new comments. TARGET_URL names a thread
+// instead.
+//
+// Publishing and its proof are ./steps/publish.mjs.
 import { detectRedditBanSignals } from '../../../../../dist/platforms/reddit/ban_signals.js';
-import { banSignalOf } from '../../../_shared/auth/ban-signal.mjs';
-import {
-  humanScrollPage,
-  humanIdlePause,
-  humanClickLocator,
-  humanHoverLocator,
-} from '../../../../../dist/human/mouse.js';
-import { humanType } from '../../../../../dist/human/keyboard.js';
-import {
-  recordCommentForVerify,
-  verifyPreviousComment,
-} from './steps/deferred_verify.mjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { runRecordingsDir } from '../../../../../dist/session/run-recordings.js';
+import { runAction } from '../../../_shared/action-runner.mjs';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
+import { OLD_REDDIT } from '../../content/old_reddit.mjs';
+import { threadAt } from './steps/reddit_json.mjs';
+import { publishComment } from './steps/publish.mjs';
 
-// The subreddit the comment goes to is the request's. Nothing is picked here:
-// a built-in list of "newbie-friendly" subs chose where an account spoke
-// without anyone asking. A feed that aggregates other subreddits lands on
-// mega-threads whose filters remove new comments and read as shadowbans to the
-// verifier; it is recognised from the listing itself, whose posts then name
-// other subreddits, not from a list of feed names.
-const SUBREDDIT = (process.env.SUBREDDIT || '').replace(/^r\//, '');
-if (!SUBREDDIT) {
-  console.log(
-    'FAIL: SUBREDDIT env var required: the subreddit the comment goes to',
-  );
-  process.exit(1);
-}
+const SUBREDDIT = process.env.TARGET_URL
+  ? undefined
+  : statedText(['SUBREDDIT'], 'the subreddit the comment goes to').replace(
+      /^\/?r\//,
+      '',
+    );
 
-// Deferred clean-session verify: Reddit's async spam classifier removes
-// comments minutes after submit, so each run records its comment and the next
-// run on the account re-checks it from a fresh proxy with no cookies
-// (steps/deferred_verify.mjs).
-
-const acct = await getSocialAccount('reddit');
-if (!acct) {
-  console.log('FAIL: no active reddit account');
-  process.exit(1);
-}
-
-const character = acct.metadata?.character;
-if (!character || typeof character !== 'object') {
-  console.log('FAIL: no character stored for account');
-  process.exit(1);
-}
-console.log(
-  `[comment] acct=${acct.username} character=${character.name} sub=${SUBREDDIT}`,
-);
-
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'reddit_organic_comment',
-  proxy: proxyUrl,
-  persona,
+await runAction({
+  platform: 'reddit',
+  action: 'organic_comment',
+  feedUrl: SUBREDDIT && `${OLD_REDDIT}/r/${encodeURIComponent(SUBREDDIT)}/`,
+  surfaceLabel: (_acct, feed) => (SUBREDDIT ? `r/${SUBREDDIT}` : feed),
+  pickPost: async (s) => {
+    const thread = await threadAt(s.page, s.page.url());
+    return { postTitle: thread.title, postBody: thread.body, url: thread.url };
+  },
+  submitComment: (s, text, post, acct) =>
+    publishComment(s, acct, { thread: post.url, body: text }),
+  banDetector: detectRedditBanSignals,
 });
-let banSignal = null;
-try {
-  await verifyPreviousComment(acct);
-  // Inject saved reddit cookies — anonymous .json fetches hit the JS-challenge
-  // wall on residential proxies. With session cookies the listing returns directly.
-  const cookies = (acct.metadata?.cookies ?? []).filter((c) =>
-    (c.domain ?? '').includes('reddit.com'),
-  );
-  if (cookies.length) await s.ctx.addCookies(cookies);
-  // Capture the listing body via page.evaluate fetch (not capturedResponses,
-  // which truncates to 8KB and breaks JSON.parse on listing payloads).
-  const sortPath = `/r/${SUBREDDIT}`;
-  await s.goto('https://www.reddit.com/');
-  const listingUrl = `https://www.reddit.com${sortPath}/.json?limit=50&raw_json=1`;
-  const data = await s.page
-    .evaluate(async (u) => {
-      try {
-        const r = await fetch(u, { credentials: 'include' });
-        if (!r.ok) return null;
-        return await r.json();
-      } catch {
-        return null;
-      }
-    }, listingUrl)
-    .catch(() => null);
-  const listed = data?.data?.children;
-  if (!Array.isArray(listed))
-    throw new Error(`the listing ${listingUrl} answered no posts`);
-  const posts = listed.map((c) => c.data).filter(Boolean);
-  const own = posts.filter(
-    (p) => p.subreddit?.toLowerCase() === SUBREDDIT.toLowerCase(),
-  );
-  if (posts.length && !own.length)
-    throw new Error(
-      `r/${SUBREDDIT} lists only posts of other subreddits, so it is an aggregate feed whose filters remove new comments; name one subreddit`,
-    );
-  const candidates = own.filter(
-    (p) => !p.locked && !p.archived && p.num_comments < 2000,
-  );
-  const pick =
-    candidates[Math.floor(Math.random() * Math.min(candidates.length, 12))];
-  if (!pick) throw new Error('no eligible post found');
-  const postUrl = `https://www.reddit.com${pick.permalink}`;
-  const postTitle = pick.title;
-  const postBody = pick.selftext;
-
-  const commentText = await generateOrganicComment({
-    persona: {
-      name: character.name,
-      bio: character.bio,
-      personality: character.personality,
-      niche: character.niche,
-    },
-    post: { surface: `r/${SUBREDDIT}`, title: postTitle, body: postBody },
-  });
-  console.log(`[comment-text] ${commentText}...`);
-
-  // Translate www.reddit.com permalink → old.reddit.com so the comment
-  // composer is a plain visible <textarea name="text"> rather than the
-  // <shreddit-composer> shadow-DOM widget.
-  const oldPostUrl = postUrl.replace(
-    /^https?:\/\/(www\.)?reddit\.com/,
-    'https://old.reddit.com',
-  );
-  await s.goto(oldPostUrl);
-  checkReachable(s, 'reddit');
-
-  // Scroll and optionally hover an author link before composing. Pointer input
-  // is observed; neither time spent reading nor a displayed hovercard is inferred.
-  await humanIdlePause('deliberate');
-  await humanScrollPage(s.page, 'down');
-  await humanIdlePause('deliberate');
-  const authorLink = s.page
-    .locator('a[href*="/user/"], a[href*="/u/"]')
-    .filter({ visible: true })
-    .first();
-  if (await authorLink.count()) await humanHoverLocator(s.page, authorLink);
-  else
-    console.log(
-      '[trajectory] no visible author link offered; optional hover omitted',
-    );
-  await humanScrollPage(s.page, 'down');
-
-  // Deterministic submit: same selectors as reddit_comment.mjs. textarea
-  // [name="text"] first visible (top-level reply form), submit via
-  // form-scoped button.save / button[type="submit"], verify by waiting
-  // for the comment body to appear in the page.
-  const ta = s.page
-    .locator('textarea[name="text"]')
-    .filter({ visible: true })
-    .first();
-  await ta.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, ta);
-  await humanIdlePause('short');
-  await ta.focus();
-  await humanType(s.page, commentText);
-  const submitBtn = ta
-    .locator('xpath=ancestor::form[1]')
-    .locator(
-      'button.save:enabled:not([aria-disabled="true"]), button[type="submit"]:enabled:not([aria-disabled="true"])',
-    )
-    .first();
-  await submitBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, submitBtn);
-  // Confirm the body appears in page text — local visibility post-submit.
-  await s.page.waitForFunction(
-    (body) => (document.body?.innerText ?? '').includes(body),
-    commentText,
-  );
-  banSignal = await banSignalOf(detectRedditBanSignals, s, 'after commenting');
-  console.log(`[ban-signal] ${banSignal?.signal}`);
-  console.log('PASS: commented');
-
-  // Deferred clean-session verify — Reddit's async spam classifier removes
-  // comments minutes after submit. We can't reliably get the comment id from
-  // the agent-loop submit, so the next run falls back to the multi-vantage
-  // account probe of this handle.
-  if (!banSignal) {
-    const realHandle = await s.page.evaluate(async () => {
-      const r = await fetch('/api/me.json', { credentials: 'include' });
-      const j = await r.json();
-      return j?.data?.name ?? null;
-    });
-    if (!realHandle)
-      throw new Error(
-        'reddit organic comment: /api/me.json returned no handle, so the comment cannot be recorded for the deferred verify',
-      );
-    recordCommentForVerify(acct, {
-      resolvedOldUrl: '',
-      postedCommentId: '',
-      handle: realHandle,
-    });
-  }
-} catch (e) {
-  banSignal = await banSignalOf(detectRedditBanSignals, s, 'after the failure');
-  if (banSignal) console.log(`[ban-signal] ${banSignal.signal}`);
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  if (banSignal) {
-    try {
-      const dir = runRecordingsDir('reddit_organic_comment');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'ban_signal.json'),
-        JSON.stringify(
-          {
-            account_id: acct.id,
-            username: acct.username,
-            action: 'reddit_organic_comment',
-            subreddit: SUBREDDIT,
-            ...banSignal,
-            ts: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
-      );
-    } catch (e) {
-      console.log('[ban-signal] persist err:', e.message);
-    }
-  }
-  await s.close();
-}

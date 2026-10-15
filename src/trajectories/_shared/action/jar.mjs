@@ -4,6 +4,8 @@
 // domain-match against that site's host) are added. A stale jar, or one
 // holding nothing for that site, is answered by the platform's inline
 // relogin when the action has one; otherwise it is the run's checkpoint.
+// The localStorage the account's last session saved for that site's origins
+// goes back with the cookies, so session headers that refer to it match.
 
 import {
   loadFreshCookieJarOrFail,
@@ -14,6 +16,34 @@ import {
 function sentTo(cookie, host) {
   const domain = cookie.domain.replace(/^\./, '');
   return host === domain || host.endsWith(`.${domain}`);
+}
+
+/**
+ * Put the localStorage the account's session saved for origins on
+ * `siteHost`'s site back into every page of that origin, before its own
+ * scripts read it; answers how many entries are restored. A page that
+ * refuses an entry throws inside that page.
+ */
+async function restoreSiteStorage(s, acct, siteHost) {
+  const origins = acct.metadata?.storage_state?.origins;
+  const saved = Array.isArray(origins)
+    ? origins.filter(
+        (o) =>
+          URL.canParse(o?.origin) &&
+          Array.isArray(o.localStorage) &&
+          sentTo({ domain: new URL(o.origin).hostname }, siteHost),
+      )
+    : [];
+  for (const { origin, localStorage: items } of saved)
+    await s.ctx.addInitScript(
+      ({ origin: own, entries }) => {
+        if (location.origin !== own) return;
+        for (const { name, value } of entries)
+          window.localStorage.setItem(name, value);
+      },
+      { origin, entries: items },
+    );
+  return saved.flatMap((o) => o.localStorage).length;
 }
 
 /**
@@ -47,8 +77,9 @@ export async function admitAccountJar({
         { platform: cfg.platform, reason: 'no_domain_match' },
       );
     await s.ctx.addCookies(cookies);
+    const restored = await restoreSiteStorage(s, acct, siteHost);
     console.log(
-      `[${label}] injected ${cookies.length} ${siteHost} cookies (jar fresh)`,
+      `[${label}] injected ${cookies.length} ${siteHost} cookies and ${restored} stored localStorage entries (jar fresh)`,
     );
     return null;
   } catch (error) {

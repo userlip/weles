@@ -292,5 +292,6 @@ export function applyPaidAdsActionParams(
   ]) {
     if (typeof params[k] === 'string') env[ek] = params[k] as string;
   }
-  if (params.require_approval === true) env.REQUIRE_APPROVAL = '1';
+  const approval = statedFlag(params.require_approval);
+  if (approval !== undefined) env.REQUIRE_APPROVAL = approval ? '1' : '0';
 }

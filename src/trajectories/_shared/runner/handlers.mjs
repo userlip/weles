@@ -1,6 +1,11 @@
 // Per-action dispatchers receive the prepared session and context and return
 // resultValue. Mutations stay on the session; no other state is shared across
 // actions.
+//
+// A promotion (promote, post_promote) is held for review, written to the
+// run's pending_review.json and not published, unless the caller supplies
+// reviewed text (SVC_TEXT) or states that no review is required
+// (REQUIRE_APPROVAL=0).
 
 import {
   generateOrganicComment,
@@ -15,53 +20,77 @@ import {
 } from '../../../../dist/human/mouse.js';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 
-const REQUIRE_APPROVAL = process.env.REQUIRE_PROMOTE_APPROVAL !== '0';
+const REVIEW_REQUIRED = process.env.REQUIRE_APPROVAL !== '0';
 
-async function genComment({
-  character,
-  product,
-  variant,
-  surfaceLabel,
-  postTitle,
-  postBody,
-}) {
-  const persona = {
+/**
+ * How a promotion names its product: the run's VARIANT, else the
+ * character's promotion config; refused when neither states it.
+ */
+function promotionVariant(character) {
+  const stated = process.env.VARIANT?.trim()
+    ? process.env.VARIANT
+    : character?.promotion_config?.variant;
+  if (!stated)
+    throw new Error(
+      'PROMOTION_VARIANT_REQUIRED: neither VARIANT nor the character promotion config states how the product is named (link or mention)',
+    );
+  return stated.trim().toLowerCase();
+}
+
+function personaOf(character) {
+  return {
     name: character.name,
     bio: character.bio,
     personality: character.personality,
     niche: character.niche,
   };
-  const post = { surface: surfaceLabel, title: postTitle, body: postBody };
-  if (product)
-    return generatePromoteComment({
-      persona,
-      post,
-      product: {
-        name: product.name,
-        description: product.description,
-        variant,
+}
+
+/** Write the generated text for review instead of publishing it. */
+function holdForReview(label, acct, record) {
+  const dir = runRecordingsDir(label);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, 'pending_review.json'),
+    JSON.stringify(
+      {
+        account_id: acct.id,
+        username: acct.username,
+        action: label,
+        ...record,
+        ts: new Date().toISOString(),
       },
-    });
-  return generateOrganicComment({ persona, post });
+      null,
+      '  ',
+    ),
+  );
+  console.log(`pending_review: written to ${dir}; review required, not published`);
+  return 'pending_review';
+}
+
+function surfaceOf(cfg, acct, feed) {
+  if (typeof cfg.surfaceLabel === 'function') return cfg.surfaceLabel(acct, feed);
+  return cfg.surfaceLabel ? cfg.surfaceLabel : feed;
 }
 
 // cfg.scrolls and cfg.dwellMs are the declared observation's: how many
 // viewports are read and the idle read time after each, in milliseconds.
 // Every browse trajectory passes its declaration's values; a caller without
-// one is refused rather than given a count nobody declared.
+// them is refused rather than given a count or a pause nobody declared.
 export async function handleBrowse(s, cfg) {
   const scrolls = cfg.scrolls;
   if (
     !Number.isSafeInteger(scrolls) ||
-    Math.sign(scrolls) === -Math.sign(Number.MAX_VALUE)
+    Math.sign(scrolls) === -Math.sign(Number.MAX_VALUE) ||
+    !cfg.dwellMs
   ) {
     throw new Error(
-      `browse needs the declared observation's scroll count, got ${JSON.stringify(scrolls ?? null)}`,
+      `browse needs the declared observation's scroll count and dwell, got ${JSON.stringify({ scrolls: cfg.scrolls, dwellMs: cfg.dwellMs })}`,
     );
   }
-  for (let i = 0; i < scrolls; i++) {
+  for (const _ of Array(scrolls).keys()) {
     await humanScrollPage(s.page, 'down');
-    await humanIdlePause(cfg.dwellMs ?? 'deliberate');
+    await humanIdlePause(cfg.dwellMs);
   }
   return `scrolled ${scrolls}x`;
 }
@@ -72,51 +101,22 @@ export async function handlePost(s, cfg, ctx) {
   if (!text) {
     if (!character)
       throw new Error(
-        'no character — cannot LLM-generate post without persona',
+        'ACTION_CHARACTER_REQUIRED: no character to write the post as, and no text (SVC_TEXT) supplied',
       );
-    const personaCtx = {
-      name: character.name,
-      bio: character.bio,
-      personality: character.personality,
-      niche: character.niche,
-    };
     text = await generatePost({
-      persona: personaCtx,
+      persona: personaOf(character),
       surface: cfg.platform,
-      product: product ?? undefined,
+      product: product ? product : undefined,
     });
     console.log(`[post-text] ${text}...`);
   }
-  if (cfg.action === 'post_promote' && REQUIRE_APPROVAL && !preapprovedText) {
-    const dir = runRecordingsDir(label);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, 'pending_review.json'),
-      JSON.stringify(
-        {
-          account_id: acct.id,
-          username: acct.username,
-          action: label,
-          surface_label:
-            typeof cfg.surfaceLabel === 'function'
-              ? cfg.surfaceLabel(acct, feed)
-              : cfg.surfaceLabel,
-          product: product ? { name: product.name } : null,
-          variant: (
-            process.env.VARIANT ||
-            character?.promotion_config?.variant ||
-            'mention'
-          ).toLowerCase(),
-          post_text: text,
-          ts: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-    );
-    console.log('PASS: pending_review (approval required, not posted)');
-    return 'pending_review';
-  }
+  if (cfg.action === 'post_promote' && REVIEW_REQUIRED && !preapprovedText)
+    return holdForReview(label, acct, {
+      surface_label: surfaceOf(cfg, acct, feed),
+      product: { name: product.name },
+      variant: promotionVariant(character),
+      post_text: text,
+    });
   if (typeof cfg.submitPost !== 'function')
     throw new Error(
       `cfg.submitPost not provided for ${cfg.platform} ${cfg.action}`,
@@ -125,6 +125,10 @@ export async function handlePost(s, cfg, ctx) {
   return 'posted';
 }
 
+// cfg.pickPost(s), when the platform has one, answers the post the comment
+// goes to ({ postTitle, postBody, url }); its failure fails the run. The
+// submitter receives that post and the account after the text, and may
+// answer the run's result.
 export async function handleComment(s, cfg, ctx) {
   const {
     acct,
@@ -135,71 +139,43 @@ export async function handleComment(s, cfg, ctx) {
     feed,
     targetedMode,
   } = ctx;
-  const surfaceLabel =
-    typeof cfg.surfaceLabel === 'function'
-      ? cfg.surfaceLabel(acct, feed)
-      : (cfg.surfaceLabel ?? feed);
-  const picked = await (cfg.pickPost?.(s).catch((e) => {
-    console.log(`[${label}] pickPost failed: ${e.message}`);
-    return { postTitle: '', postBody: '' };
-  }) ?? Promise.resolve({ postTitle: '', postBody: '' }));
-  const postTitle =
-    picked.postTitle ||
-    `post on ${typeof surfaceLabel === 'function' ? surfaceLabel(acct, feed) : surfaceLabel || cfg.platform}`;
-  const postBody = picked.postBody || '';
+  const surfaceLabel = surfaceOf(cfg, acct, feed);
+  const picked = cfg.pickPost ? await cfg.pickPost(s) : {};
   let text = preapprovedText;
   if (!text) {
-    text = await genComment({
-      character,
-      product,
-      variant: (
-        process.env.VARIANT ||
-        character?.promotion_config?.variant ||
-        'mention'
-      ).toLowerCase(),
-      surfaceLabel,
-      postTitle,
-      postBody,
-    });
+    const post = {
+      surface: surfaceLabel,
+      title: picked.postTitle,
+      body: picked.postBody,
+    };
+    text = product
+      ? await generatePromoteComment({
+          persona: personaOf(character),
+          post,
+          product: {
+            name: product.name,
+            description: product.description,
+            variant: promotionVariant(character),
+          },
+        })
+      : await generateOrganicComment({ persona: personaOf(character), post });
     console.log(`[comment-text] ${text}...`);
   } else {
     console.log(
       `[preapproved] using operator-reviewed text (${text.length} chars)`,
     );
   }
-  if (cfg.action === 'promote' && REQUIRE_APPROVAL && !preapprovedText) {
-    const dir = runRecordingsDir(label);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, 'pending_review.json'),
-      JSON.stringify(
-        {
-          account_id: acct.id,
-          username: acct.username,
-          action: label,
-          post_url: targetedMode ? feed : null,
-          surface_label: surfaceLabel,
-          post_title: postTitle,
-          post_body: postBody || '',
-          character: character
-            ? { name: character.name, niche: character.niche }
-            : null,
-          product: product ? { name: product.name } : null,
-          variant: (
-            process.env.VARIANT ||
-            character?.promotion_config?.variant ||
-            'mention'
-          ).toLowerCase(),
-          comment_text: text,
-          ts: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-    );
-    console.log('PASS: pending_review (approval required, not submitted)');
-    return 'pending_review';
-  }
+  if (cfg.action === 'promote' && REVIEW_REQUIRED && !preapprovedText)
+    return holdForReview(label, acct, {
+      post_url: picked.url ? picked.url : targetedMode ? feed : null,
+      surface_label: surfaceLabel,
+      post_title: picked.postTitle,
+      post_body: picked.postBody,
+      character: { name: character.name, niche: character.niche },
+      product: { name: product.name },
+      variant: promotionVariant(character),
+      comment_text: text,
+    });
   const submitter =
     targetedMode && typeof cfg.submitTargetedComment === 'function'
       ? cfg.submitTargetedComment
@@ -208,6 +184,6 @@ export async function handleComment(s, cfg, ctx) {
     throw new Error(
       `cfg.submitComment not provided for ${cfg.platform} ${cfg.action}`,
     );
-  await submitter(s, text);
-  return 'commented';
+  const submitted = await submitter(s, text, picked, acct);
+  return typeof submitted === 'string' ? submitted : 'commented';
 }
