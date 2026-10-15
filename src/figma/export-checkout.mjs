@@ -10,19 +10,41 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
+/** The exit status of a run that succeeded, C's EXIT_SUCCESS: https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/stdlib.h.html */
+const EXIT_SUCCESS = 0;
+
+/**
+ * Hide credentials git may echo: the token shapes GitHub issues
+ * (https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/)
+ * and the user part of a URL that carries one.
+ */
+function redacted(text) {
+  return text
+    .replace(/\b(?:gh[pousr]_|github_pat_)\w+/g, '[redacted]')
+    .replace(/([a-z][a-z+.-]*:\/\/)[^@\s/]+@/gi, '$1[redacted]@');
+}
+
 /** Publish only the managed figma tree in an existing, explicitly selected checkout. */
 export function prepareExport({ checkout, remote, branch }) {
   function git(args) {
+    const [verb] = args;
+    // git's whole output is read: no size is guessed for it.
     const result = spawnSync('git', ['-C', checkout, ...args], {
       encoding: 'utf8',
-      maxBuffer: 32 * 1024 * 1024,
+      maxBuffer: Number.POSITIVE_INFINITY,
     });
-    if (result.status !== 0) {
-      const detail = String(
-        result.stderr || result.error?.message || `exit ${result.status}`,
-      ).replace(/[A-Za-z0-9_-]{32,}/g, '[redacted]');
+    if (result.error) {
       throw new Error(
-        `design export git ${args[0]} failed in ${checkout}: ${detail.trim()}`,
+        `design export git ${verb} could not run in ${checkout}: ${redacted(result.error.message)}`,
+      );
+    }
+    if (result.status !== EXIT_SUCCESS) {
+      const ended =
+        result.signal === null
+          ? `exited ${result.status}`
+          : `was ended by ${result.signal}`;
+      throw new Error(
+        `design export git ${verb} ${ended} in ${checkout}: ${redacted(result.stderr).trim()}`,
       );
     }
     return result.stdout.trim();
@@ -39,18 +61,17 @@ export function prepareExport({ checkout, remote, branch }) {
     );
   }
   const revision = git(['rev-parse', 'HEAD']);
-  const destinations = git([
+  const [repository, ...others] = git([
     'remote',
     'get-url',
     '--push',
     '--all',
     remote,
   ]).split('\n');
-  if (destinations.length !== 1)
+  if (!repository || others.length)
     throw new Error(
       'design export requires exactly one push URL for its Git remote',
     );
-  const repository = destinations[0];
   git(['var', 'GIT_AUTHOR_IDENT']);
   git(['var', 'GIT_COMMITTER_IDENT']);
   function clean() {
@@ -85,12 +106,12 @@ export function prepareExport({ checkout, remote, branch }) {
     }
   }
   clean();
-  const remoteRevision = git([
+  const [remoteRevision] = git([
     'ls-remote',
     '--exit-code',
     repository,
     `refs/heads/${branch}`,
-  ]).split(/\s+/)[0];
+  ]).split(/\s+/);
   if (remoteRevision !== revision) {
     throw new Error(
       `design export refuses divergent ${remote}/${branch}: local ${revision}, remote ${remoteRevision}`,
@@ -167,23 +188,25 @@ export function prepareExport({ checkout, remote, branch }) {
             'figma',
           ]);
           if (changes) {
+            // The export's day: the date part of its ISO 8601 timestamp.
+            const [day] = generatedAt.split('T');
             git([
               'commit',
               '--only',
               '-m',
-              `Export Figma design assets ${generatedAt.slice(0, 10)}`,
+              `Export Figma design assets ${day}`,
               '--',
               'figma',
             ]);
             git(['push', repository, `HEAD:refs/heads/${branch}`]);
           }
           const commit = git(['rev-parse', 'HEAD']);
-          const observed = git([
+          const [observed] = git([
             'ls-remote',
             '--exit-code',
             repository,
             `refs/heads/${branch}`,
-          ]).split(/\s+/)[0];
+          ]).split(/\s+/);
           if (observed !== commit)
             throw new Error(
               `remote readback differs: local ${commit}, remote ${observed}`,
