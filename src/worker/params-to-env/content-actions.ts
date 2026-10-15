@@ -94,8 +94,18 @@ export function applyContentActionParams(
   if (typeof params.invite_url === 'string') env.INVITE_URL = params.invite_url;
   if (typeof params.repo_url === 'string') env.REPO_URL = params.repo_url;
   if (typeof params.text === 'string') env.SVC_TEXT = params.text;
+  // The Slack workspace and the app a browser run creates in it (its name and
+  // scopes) are the caller's; the trajectories refuse a missing one by name.
+  if (typeof params.slack_workspace_url === 'string')
+    env.SLACK_WORKSPACE_URL = params.slack_workspace_url;
   if (typeof params.slack_app_id === 'string')
     env.SLACK_APP_ID = params.slack_app_id;
+  if (typeof params.user_token_app_name === 'string')
+    env.SLACK_USER_TOKEN_APP_NAME = params.user_token_app_name;
   if (typeof params.user_token_scopes === 'string')
     env.SLACK_USER_TOKEN_SCOPES = params.user_token_scopes;
+  if (typeof params.bot_app_name === 'string')
+    env.SLACK_BOT_APP_NAME = params.bot_app_name;
+  if (typeof params.bot_scopes === 'string')
+    env.SLACK_BOT_SCOPES = params.bot_scopes;
 }

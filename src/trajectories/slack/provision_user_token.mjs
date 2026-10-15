@@ -1,250 +1,141 @@
 #!/usr/bin/env node
-// Provision a Slack User OAuth Token (xoxp) through the logged-in workspace flow.
+// Provision a Slack User OAuth Token (xoxp) through the signed-in workspace.
 //
-// Required env:
-//   WELES_SECRET_RESULT_FILE     JSON output path for the raw token; stdout stays redacted
-// Optional env:
-//   SLACK_EMAIL, SLACK_PASS      login through Google SSO; otherwise reuse existing Slack session
-//   SLACK_APP_ID                 reuse an existing app and scrape its User OAuth Token
-//   SLACK_USER_TOKEN_SCOPES      comma/space list; default is chat:write + read scopes
+// Env:
+//   SLACK_WORKSPACE_URL          required: the workspace, https://<name>.slack.com
+//   WELES_SECRET_RESULT_FILE     required: JSON path the raw token is written to;
+//                                stdout carries only its type and length
+//   PROXY_URL                    required: the proxy the browser goes through,
+//                                or 'direct'
+//   SLACK_EMAIL, SLACK_PASS      sign in through the workspace's Google SSO;
+//                                unset, the browser must already hold the
+//                                workspace's session
+//   SLACK_WEB_USER_TOKEN         the web client's xoxc token, with
+//   SLACK_WEB_COOKIE_D           its session cookie, instead of reading the
+//                                signed-in client's own
+//   SLACK_APP_ID                 read the token of this existing app
+//   SLACK_USER_TOKEN_APP_NAME    required when an app is created: its name
+//   SLACK_USER_TOKEN_SCOPES      required when an app is created: the user
+//                                scopes it is granted (comma or space separated)
+//
+// The scopes reported are the ones Slack says the token holds (auth.test's
+// x-oauth-scopes header), not the ones asked for.
 
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { writeFileSync } from 'node:fs';
+import { statedText } from '../_shared/inputs/stated.mjs';
 import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
-import { homedir } from 'node:os';
+  appToken,
+  installManifestApp,
+  statedManifest,
+} from './steps/manifest_app.mjs';
+import {
+  readClientToken,
+  seatApiSession,
+  signInThroughGoogle,
+  slackWorkspace,
+  startSlackSession,
+  statedSlackLogin,
+} from './steps/workspace.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const WELES = join(__dirname, '..', '..', '..');
-process.env.WELES_ROOT = WELES;
-
-const SLACK_EMAIL = process.env.SLACK_EMAIL || '';
-const SLACK_PASS = process.env.SLACK_PASS || '';
-const RESULT_FILE = process.env.WELES_SECRET_RESULT_FILE || '';
-
-function tokenSummary(token) {
-  // Slack names a token's type before its first hyphen (xoxb, xoxp, ...).
-  return { prefix: token.split('-').shift(), length: token.length };
-}
-
-function writeSecretResult(result) {
-  if (!RESULT_FILE) {
-    console.log(
-      '[slack-user-token] WELES_SECRET_RESULT_FILE unset; raw token not written',
-    );
-    return;
-  }
-  writeFileSync(RESULT_FILE, JSON.stringify(result, null, 2));
-  console.log(`[slack-user-token] wrote secret result to ${RESULT_FILE}`);
-}
-
-function persistSlackUserTokenResult(result) {
-  const tokenPath =
-    process.env.SLACK_TOKENS_FILE ||
-    join(homedir(), '.oko', 'slack_tokens.json');
-  let existing = {};
-  try {
-    if (existsSync(tokenPath))
-      existing = JSON.parse(readFileSync(tokenPath, 'utf8'));
-  } catch {
-    existing = {};
-  }
-  const updated = {
-    ...existing,
-    slack_user_token: result.token,
-    slack_user_token_app_id: result.app_id,
-    slack_user_token_team: result.team,
-    slack_user_token_team_id: result.team_id,
-    slack_user_token_user: result.user,
-    slack_user_token_user_id: result.user_id,
-    slack_user_token_scopes: result.scopes,
-    slack_user_token_created_at: result.created_at,
-  };
-  mkdirSync(dirname(tokenPath), { recursive: true });
-  writeFileSync(tokenPath, JSON.stringify(updated, null, 2));
-  try {
-    chmodSync(tokenPath, 0o600);
-  } catch {}
-  console.log(`[slack-user-token] persisted xoxp metadata to ${tokenPath}`);
-}
-
-if (!RESULT_FILE) {
-  console.error('WELES_SECRET_RESULT_FILE env required');
-  process.exit(2);
-}
-
-const { WSession } = await import(`${WELES}/dist/session/wsession.js`);
-const { humanFill, humanType } = await import(
-  `${WELES}/dist/human/keyboard.js`
+const LABEL = 'slack-user-token';
+const workspace = slackWorkspace();
+const RESULT_FILE = statedText(
+  ['WELES_SECRET_RESULT_FILE'],
+  'the JSON file the raw user token is written to',
 );
-const { humanClickLocator, humanIdlePause } = await import(
-  `${WELES}/dist/human/mouse.js`
-);
-const { runRecordingsDir } = await import(
-  `${WELES}/dist/session/run-recordings.js`
-);
+const APP_ID = process.env.SLACK_APP_ID;
+// The app is named and granted before the browser starts, so a run that would
+// create one nobody described is refused before anything happens.
+const manifest = APP_ID
+  ? null
+  : statedManifest({
+      kind: 'user',
+      nameVar: 'SLACK_USER_TOKEN_APP_NAME',
+      scopesVar: 'SLACK_USER_TOKEN_SCOPES',
+      what: 'user-token',
+    });
+const STATED_CLIENT = process.env.SLACK_WEB_USER_TOKEN;
+const login = statedSlackLogin();
 
-const headless = process.env.HEADLESS === '1';
-const s = await WSession.start({
-  label: 'slack-user-token',
-  headless,
-  browser: 'chromium',
-});
-console.log('[slack-user-token] WSession started');
-
-// Screenshots go to the run's own recordings, not into the checkout.
-const SHOT_DIR = runRecordingsDir('slack-user-token');
-mkdirSync(SHOT_DIR, { recursive: true });
-async function shot(label) {
-  const fp = join(SHOT_DIR, `${label}_${Date.now()}.png`);
-  try {
-    await s.page.screenshot({ path: fp, fullPage: true });
-    console.log(`[slack-user-token] shot=${fp}`);
-  } catch (e) {
-    console.log(`[slack-user-token] screenshot WARN ${label}: ${e.message}`);
-  }
+/** The caller's xoxc token, its session cookie seated in the browser. */
+async function seatStatedClient(page) {
+  await page.context().addCookies([
+    {
+      name: 'd',
+      value: statedText(
+        ['SLACK_WEB_COOKIE_D'],
+        'the Slack session cookie (d) that goes with SLACK_WEB_USER_TOKEN',
+      ),
+      domain: '.slack.com',
+      path: '/',
+      secure: true,
+      httpOnly: true,
+      sameSite: 'None',
+    },
+  ]);
+  return STATED_CLIENT;
 }
 
-async function safeShutdown() {
-  if (!s.shutdown) return;
-  try {
-    await s.shutdown();
-  } catch (e) {
-    console.log(`[slack-user-token] shutdown WARN: ${e.message}`);
-  }
-}
-
-async function fillPasswordWhenAvailable() {
-  const pwd = s.page
-    .locator('input[type="password"]:not([aria-hidden="true"])')
-    .first();
-  if ((await pwd.count()) === 0) return false;
-  await pwd.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, pwd);
-  await humanType(s.page, SLACK_PASS);
-  await s.page.keyboard.press('Enter');
-  await humanIdlePause('long');
-  return true;
-}
-
+const { s, shot } = await startSlackSession(LABEL);
 try {
-  if (SLACK_EMAIL && SLACK_PASS) {
-    console.log(`[slack-user-token] step 1: Google SSO as ${SLACK_EMAIL}`);
-    await s.page.goto('https://wisent-workspace.slack.com', {
-      waitUntil: 'domcontentloaded',
+  const statedXoxc = STATED_CLIENT ? await seatStatedClient(s.page) : null;
+  await signInThroughGoogle(s, workspace, login, LABEL);
+  await seatApiSession(s.page, workspace);
+
+  let appId = APP_ID;
+  if (!appId) {
+    const xoxc = statedXoxc
+      ? statedXoxc
+      : await readClientToken(s.page, workspace);
+    appId = await installManifestApp({
+      page: s.page,
+      xoxc,
+      manifest,
+      label: LABEL,
+      shot,
     });
-    await humanIdlePause('deliberate');
-    await shot('01-slack-landing');
-
-    const googleBtn = s.page
-      .getByRole('button', { name: /^\s*google\s*$/i })
-      .or(s.page.getByRole('link', { name: /^\s*google\s*$/i }));
-    await humanClickLocator(s.page, googleBtn.first());
-    await humanIdlePause('long');
-
-    const emailInput = s.page.locator('input[type="email"]').first();
-    if ((await emailInput.count()) > 0) {
-      await humanFill(s.page, emailInput, SLACK_EMAIL);
-      await s.page.keyboard.press('Enter');
-      await humanIdlePause('long');
-    }
-
-    if (!(await fillPasswordWhenAvailable())) {
-      const tryOther = s.page
-        .getByRole('button', { name: /try another way/i })
-        .or(s.page.getByRole('link', { name: /try another way/i }));
-      if ((await tryOther.count()) > 0) {
-        await humanClickLocator(s.page, tryOther.first());
-        await humanIdlePause('long');
-        const enterPwd = s.page.getByText(/enter your password/i).first();
-        if ((await enterPwd.count()) > 0) {
-          await humanClickLocator(s.page, enterPwd);
-          await humanIdlePause('long');
-          await fillPasswordWhenAvailable();
-        }
-      }
-    }
-
-    const continueBtn = s.page.getByRole('button', {
-      name: /^\s*continue\s*$/i,
-    });
-    if ((await continueBtn.count()) > 0) {
-      await humanClickLocator(s.page, continueBtn.first());
-      await humanIdlePause('long');
-    }
-  } else {
-    console.log(
-      '[slack-user-token] step 1: using existing Slack browser session; SLACK_EMAIL/SLACK_PASS unset',
-    );
-    await s.page.goto('https://wisent-workspace.slack.com/messages', {
-      waitUntil: 'domcontentloaded',
-    });
-    await humanIdlePause('long');
   }
-  console.log(`[slack-user-token] post-signin url=${s.page.url()}`);
-
-  console.log('[slack-user-token] step 2: seat api.slack.com workspace auth');
-  await s.page.goto('https://wisent-workspace.slack.com/apps/manage', {
-    waitUntil: 'domcontentloaded',
-  });
-  await humanIdlePause('long');
-
-  console.log('[slack-user-token] step 3: app install/token extraction');
-  const { createUserTokenApp } = await import(
-    './steps/create_user_token_app.mjs'
-  );
-  const provisioned = await createUserTokenApp({
-    page: s.page,
-    shot,
-    appId: process.env.SLACK_APP_ID || '',
-  });
-  if (!provisioned.token?.startsWith('xoxp-'))
-    throw new Error('[slack-user-token] expected xoxp token from OAuth page');
+  const token = await appToken(s.page, appId, 'xoxp');
 
   const authRes = await s.page
     .context()
     .request.post('https://slack.com/api/auth.test', {
-      headers: {
-        Authorization: `Bearer ${provisioned.token}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      data: '',
+      headers: { Authorization: `Bearer ${token}` },
     });
   const auth = await authRes.json();
   if (!auth.ok)
     throw new Error(
-      `[slack-user-token] auth.test rejected token: ${auth.error}`,
+      `SLACK_TOKEN_REFUSED: auth.test refused the xoxp token of app ${appId}: ${auth.error}`,
+    );
+  const granted = authRes.headers()['x-oauth-scopes'];
+  if (!granted)
+    throw new Error(
+      `SLACK_TOKEN_SCOPES_UNREAD: auth.test answered no x-oauth-scopes header for app ${appId}`,
     );
 
-  const result = {
-    ok: true,
-    token: provisioned.token,
-    token_prefix: 'xoxp-',
-    token_length: provisioned.token.length,
-    app_id: provisioned.appId,
-    app_created: provisioned.created,
-    scopes: provisioned.scopes,
-    team: auth.team,
-    team_id: auth.team_id,
-    user: auth.user,
-    user_id: auth.user_id,
-    url: auth.url,
-    created_at: new Date().toISOString(),
-  };
-  writeSecretResult(result);
-  persistSlackUserTokenResult(result);
-  console.log(
-    `[slack-user-token] ready ${JSON.stringify({ ...tokenSummary(provisioned.token), app_id: provisioned.appId, team: auth.team, user: auth.user })}`,
+  writeFileSync(
+    RESULT_FILE,
+    JSON.stringify(
+      {
+        ok: true,
+        token,
+        app_id: appId,
+        app_created: !APP_ID,
+        scopes: granted.split(','),
+        team: auth.team,
+        team_id: auth.team_id,
+        user: auth.user,
+        user_id: auth.user_id,
+        url: auth.url,
+        created_at: new Date().toISOString(),
+      },
+      null,
+      '  ',
+    ),
   );
-  await safeShutdown();
-  process.exit(0);
-} catch (e) {
-  console.error(`[slack-user-token] failed: ${e.message}`);
-  await safeShutdown();
-  process.exit(7);
+  console.log(
+    `[${LABEL}] ready ${JSON.stringify({ type: token.split('-').shift(), length: token.length, app_id: appId, team: auth.team, user: auth.user, scopes: granted, result: RESULT_FILE })}`,
+  );
+} finally {
+  await s.close();
 }

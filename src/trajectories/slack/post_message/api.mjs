@@ -71,19 +71,47 @@ export async function slackDirectory(method, key, form) {
   return entries;
 }
 
-/** The same call through the signed-in browser context, for the client (xoxc) token. */
-export function workspaceApi(request) {
+/**
+ * One Slack call through the signed-in browser context, on `workspace`'s own
+ * API address (the client token rides the form, the session cookie the
+ * context). A refusal carries Slack's whole answer.
+ */
+export function workspaceApi(request, workspace) {
   return async function slackApi(method, form) {
-    const body = encodeForm(form);
     const r = await request.post(
-      `https://wisent-workspace.slack.com/api/${method}?_x_id=${Date.now()}`,
+      `${workspace}/api/${method}?_x_id=${Date.now()}`,
       {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        data: body,
+        data: encodeForm(form),
       },
     );
     const j = await r.json();
-    if (!j.ok) throw new Error(`${method}: ${j.error || JSON.stringify(j)}`);
+    if (!j.ok) throw new Error(`${method}: ${JSON.stringify(j)}`);
     return j;
+  };
+}
+
+/**
+ * slackDirectory's reading through the signed-in client as `token`: every
+ * page of `method` until Slack's next_cursor is empty.
+ */
+export function workspaceDirectory(slackApi, token) {
+  return async function directory(method, key, form) {
+    const entries = [];
+    let cursor;
+    do {
+      const page = await slackApi(method, {
+        ...form,
+        token,
+        ...(cursor ? { cursor } : {}),
+      });
+      if (!Array.isArray(page[key]))
+        throw new Error(
+          `${method} answered without a ${key} list: ${JSON.stringify(page)}`,
+        );
+      entries.push(...page[key]);
+      cursor = page.response_metadata?.next_cursor;
+    } while (cursor);
+    return entries;
   };
 }

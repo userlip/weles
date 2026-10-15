@@ -1,241 +1,135 @@
-// Slack-post trajectory. TWO paths:
-//   BOT (default): post as the Swiatowid bot through wisent-integrations'
-//     slack domain (identity swiatowid-bot), which holds the bot token.
-//     No browser, no Google SSO, no app re-creation. This is what runs on a
-//     managed worker.
-//   BROWSER (integrations not configured): Google-SSO into
-//     wisent-workspace.slack.com, create the app via manifest, scrape a fresh
-//     xoxb, post.
-// IMPORTANT: do NOT re-create the app when the bot is reachable — that spawns
-// a duplicate (logo-less) "Oko" and posts from the wrong identity.
-// Env: STADO_INTEGRATION_API_URL + WELES_STADO_INTEGRATION_TOKEN (bot path),
-//      MESSAGE_TEXT | MESSAGE_FILE,
-//      SLACK_TARGET_CHANNEL (id) | SLACK_TARGET_CHANNEL_NAME | SLACK_TARGET_USER_ID,
-//      SLACK_TARGET_USER_MATCHERS (csv) | SLACK_RECIPIENT_GROUPS ('a,b;c,d'),
-//      SLACK_ENABLE_TAGGING=0 | SLACK_MENTION_USER_IDS | SLACK_MENTION_USER_MATCHERS,
-//      SLACK_EMAIL/SLACK_PASS (browser path only).
+// Post a message to Slack, by one of two routes that resolve recipients and
+// mentions the same way (`./post_message/recipients.mjs`):
+//   BOT: as the bot wisent-integrations' slack domain holds the token of
+//     (identity swiatowid-bot) — no browser, no app creation. Taken whenever
+//     the integrations are configured, so a reachable bot is never shadowed by
+//     a second app.
+//   BROWSER: signed in to the workspace (`./steps/workspace.mjs`), a bot app
+//     is created from the caller's manifest, and the message is posted with
+//     its fresh xoxb token, never as the signed-in person.
+// Every recipient is attempted; any that refused fails the run, named with
+// Slack's answer.
+//
+// Env:
+//   MESSAGE_TEXT | MESSAGE_FILE   the message: inline text, or a file on this machine
+//   SLACK_TARGET_CHANNEL (id) | SLACK_TARGET_CHANNEL_NAME | SLACK_TARGET_USER_IDS |
+//   SLACK_TARGET_USER_MATCHERS (csv) | SLACK_RECIPIENT_GROUPS ('a,b;c,d')
+//   SLACK_ENABLE_TAGGING=0 | SLACK_MENTION_USER_IDS | SLACK_MENTION_USER_MATCHERS
+//   STADO_INTEGRATION_API_URL + WELES_STADO_INTEGRATION_TOKEN   the bot route
+//   SLACK_WORKSPACE_URL, SLACK_BOT_APP_NAME, SLACK_BOT_SCOPES, PROXY_URL,
+//   SLACK_EMAIL/SLACK_PASS        the browser route
 
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { botConfigured, slackPost, workspaceApi } from './post_message/api.mjs';
+import { readFileSync } from 'node:fs';
+import { statedText } from '../_shared/inputs/stated.mjs';
+import {
+  botConfigured,
+  slackDirectory,
+  slackPost,
+  workspaceApi,
+  workspaceDirectory,
+} from './post_message/api.mjs';
 import {
   applyMentions,
   listMembers,
   mentionIdsForTarget,
-  parseCsv,
   resolveTargets,
-  resolveUsersFromMembers,
 } from './post_message/recipients.mjs';
+import { botManifest, createBotApp } from './steps/create_bot_app.mjs';
 import {
   readClientToken,
+  seatApiSession,
   signInThroughGoogle,
-} from './post_message/browser_signin.mjs';
+  slackWorkspace,
+  startSlackSession,
+  statedSlackLogin,
+} from './steps/workspace.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const WELES = join(__dirname, '..', '..', '..');
-const TARGET_NAME = (process.env.SLACK_TARGET_CHANNEL_NAME || '').toLowerCase();
-const TARGET_CHAN = process.env.SLACK_TARGET_CHANNEL || '';
+const LABEL = 'slack-post';
 
-// Message source: inline MESSAGE_TEXT (machine-independent — survives being
-// enqueued on one host and run on another) takes precedence over MESSAGE_FILE
-// (a path, only valid on the enqueuing machine's filesystem).
-const INLINE_MESSAGE = process.env.MESSAGE_TEXT || '';
-const MESSAGE_FILE = process.env.MESSAGE_FILE || '';
-if (!INLINE_MESSAGE && !(MESSAGE_FILE && existsSync(MESSAGE_FILE))) {
-  console.error(
-    `no MESSAGE_TEXT and no readable MESSAGE_FILE: ${MESSAGE_FILE || '(unset)'}`,
+/** The message: MESSAGE_TEXT inline, else the file MESSAGE_FILE names. */
+function statedMessage() {
+  if (process.env.MESSAGE_TEXT) return process.env.MESSAGE_TEXT;
+  return readFileSync(
+    statedText(
+      ['MESSAGE_TEXT', 'MESSAGE_FILE'],
+      'the message posted: inline text, or a file on this machine holding it',
+    ),
+    'utf8',
   );
-  process.exit(2);
 }
-const MESSAGE_BODY = INLINE_MESSAGE || readFileSync(MESSAGE_FILE, 'utf8');
 
-// ---- BOT PATH: wisent-integrations slack/* as swiatowid-bot (no browser) ----
-if (botConfigured()) {
+/** The bot route: the integrations' bot reads the directory and posts. */
+async function botRoute() {
   const who = await slackPost('auth.test', {});
   console.log(
-    `[slack] bot path: bot=${who.user} user_id=${who.user_id} team=${who.team}`,
+    `[${LABEL}] bot route: bot=${who.user} user_id=${who.user_id} team=${who.team}`,
   );
-  const targets = await resolveTargets();
-  let memberCache = false;
-  const loadMembers = async () => {
-    if (!memberCache) memberCache = await listMembers();
-    return memberCache;
+  return {
+    directory: slackDirectory,
+    post: (channel, text) => slackPost('chat.postMessage', { channel, text }),
+    close: async () => {},
   };
-  const plans = [];
+}
+
+/**
+ * The browser route: the signed-in client reads the directory, and a bot app
+ * created from the caller's manifest posts.
+ */
+async function browserRoute() {
+  console.log(
+    `[${LABEL}] wisent-integrations is not configured: signing in to the workspace and creating a bot app`,
+  );
+  const workspace = slackWorkspace();
+  const manifest = botManifest();
+  const login = statedSlackLogin();
+  const { s, shot } = await startSlackSession(LABEL);
+  try {
+    await signInThroughGoogle(s, workspace, login, LABEL);
+    const xoxc = await readClientToken(s.page, workspace);
+    await seatApiSession(s.page, workspace);
+    const bot = await createBotApp({ page: s.page, xoxc, manifest, shot });
+    const slackApi = workspaceApi(s.page.context().request, workspace);
+    return {
+      directory: workspaceDirectory(slackApi, xoxc),
+      post: (channel, text) =>
+        slackApi('chat.postMessage', {
+          token: bot.token,
+          channel,
+          text,
+          mrkdwn: true,
+        }),
+      close: () => s.close(),
+    };
+  } catch (error) {
+    await s.close();
+    throw error;
+  }
+}
+
+const MESSAGE_BODY = statedMessage();
+const route = botConfigured() ? await botRoute() : await browserRoute();
+try {
+  const targets = await resolveTargets(route.directory);
+  let members;
+  const loadMembers = async () => {
+    if (!members) members = await listMembers(route.directory);
+    return members;
+  };
+  const refused = [];
   for (const target of targets) {
     const mentionIds = await mentionIdsForTarget(target, loadMembers);
-    plans.push({
-      target,
-      mentionIds,
-      text: applyMentions(MESSAGE_BODY, mentionIds),
-    });
-  }
-  let posted = 0;
-  for (const plan of plans) {
     try {
-      const post = await slackPost('chat.postMessage', {
-        channel: plan.target,
-        text: plan.text,
-      });
-      console.log(`[slack] ✓ posted to ${plan.target} ts=${post.ts}`);
-      posted++;
-    } catch (e) {
-      console.error(`[slack] post to ${plan.target} failed: ${e.message}`);
+      const post = await route.post(target, applyMentions(MESSAGE_BODY, mentionIds));
+      console.log(`[${LABEL}] posted to ${target} ts=${post.ts}`);
+    } catch (error) {
+      refused.push(`${target}: ${error.message}`);
     }
   }
-  if (!posted) {
-    console.error('[slack] all posts failed');
-    process.exit(5);
-  }
-  console.log(
-    `[slack] ✓ delivered to ${posted}/${targets.length} recipient(s)`,
-  );
-  process.exit(0);
-}
-console.log(
-  '[slack] wisent-integrations is not configured — signing in through the browser and creating the app',
-);
-
-// ---- BROWSER PATH -----------------------------------------------------------
-const { WSession } = await import(`${WELES}/dist/session/wsession.js`);
-const { humanFill } = await import(`${WELES}/dist/human/keyboard.js`);
-const { humanClickLocator, humanIdlePause } = await import(
-  `${WELES}/dist/human/mouse.js`
-);
-const { runRecordingsDir } = await import(
-  `${WELES}/dist/session/run-recordings.js`
-);
-const atoms = { humanFill, humanClickLocator, humanIdlePause };
-
-const headless = process.env.HEADLESS === '1';
-const s = await WSession.start({ label: 'slack-post', headless });
-console.log('[slack] WSession started');
-
-const SHOT_DIR = runRecordingsDir('slack_post');
-mkdirSync(SHOT_DIR, { recursive: true });
-async function shot(label) {
-  const fp = join(SHOT_DIR, `${label}_${Date.now()}.png`);
-  try {
-    await s.page.screenshot({ path: fp, fullPage: true });
-    console.log(`[slack] shot=${fp}`);
-  } catch (e) {
-    console.log(`[slack] screenshot WARN ${label}: ${e.message}`);
-  }
-}
-
-async function safeShutdown() {
-  if (!s.shutdown) return;
-  try {
-    await s.shutdown();
-  } catch (e) {
-    console.log(`[slack] shutdown WARN: ${e.message}`);
-  }
-}
-
-async function fail(code, message) {
-  console.error(message);
-  await safeShutdown();
-  process.exit(code);
-}
-
-const SLACK_EMAIL = process.env.SLACK_EMAIL || '';
-const SLACK_PASS = process.env.SLACK_PASS || '';
-if (!SLACK_EMAIL || !SLACK_PASS)
-  await fail(2, 'SLACK_EMAIL / SLACK_PASS env required');
-
-await signInThroughGoogle(s, {
-  email: SLACK_EMAIL,
-  password: SLACK_PASS,
-  shot,
-  atoms,
-});
-
-// --- Step 2: extract xoxc- + create the Swiatowid bot app + post as bot ---
-// The user wants messages from a "Swiatowid" bot, not from their account.
-// First extract xoxc- (for users.list before posting). Then navigate to
-// api.slack.com/apps → create app via manifest → install + Authorize →
-// scrape xoxb-, post as the bot. api.slack.com auth is per-workspace; we
-// go via wisent-workspace.slack.com/apps/manage to trigger the handoff.
-const xoxc = await readClientToken(s, atoms);
-if (!xoxc)
-  await fail(
-    6,
-    `[slack] no xoxc- in boot_data or localStorage; screenshots in ${SHOT_DIR}`,
-  );
-console.log(`[slack] xoxc token found, length ${xoxc.length}`);
-
-console.log('[slack] step 2b: api.slack.com app creation');
-const { createBotApp } = await import('./steps/create_bot_app.mjs');
-const xoxb = await createBotApp({ page: s.page, weles: WELES, shot });
-if (!xoxb)
-  await fail(
-    7,
-    '[slack] bot created but no xoxb on OAuth page — failing rather than posting as user',
-  );
-console.log(`[slack] ✓ xoxb token found, length ${xoxb.length}`);
-
-// --- Step 3: resolve channel + post via Slack API using browser cookies ----
-const slackApi = workspaceApi(s.page.context().request);
-const workspaceMembers = async () => {
-  const ul = await slackApi('users.list', { token: xoxc, limit: '1000' });
-  return (ul.members || []).filter((u) => !u.deleted && !u.is_bot);
-};
-
-let channelId = TARGET_CHAN;
-if (!channelId) {
-  const list = await slackApi('conversations.list', {
-    token: xoxc,
-    types: 'public_channel,private_channel',
-    limit: '1000',
-  });
-  const named = list.channels.find(
-    (c) => c.name && c.name.toLowerCase() === TARGET_NAME,
-  );
-  // Only the channel asked for: a message meant for one channel is never
-  // posted to #general instead.
-  if (named) channelId = named.id;
-  else
-    console.log(
-      `[slack] ${list.channels.length} channels visible, none named "${TARGET_NAME}": ${list.channels.map((c) => c.name).join(', ')}`,
+  if (refused.length)
+    throw new Error(
+      `SLACK_POST_REFUSED: ${refused.length} of ${targets.length} recipient(s) refused the message: ${refused.join('; ')}`,
     );
+  console.log(`[${LABEL}] delivered to ${targets.length} recipient(s)`);
+} finally {
+  await route.close();
 }
-// Still no channel: a DM with the first member SLACK_TARGET_USER_MATCHERS
-// names, when the caller named people; nobody is messaged by default.
-if (!channelId && process.env.SLACK_TARGET_USER_MATCHERS) {
-  const matchers = parseCsv(
-    process.env.SLACK_TARGET_USER_MATCHERS.toLowerCase(),
-  );
-  console.log(`[slack] users.list to find ${matchers.join('/')}`);
-  const members = await workspaceMembers();
-  const hit = resolveUsersFromMembers(members, [matchers])[0];
-  if (hit) {
-    console.log(
-      `[slack] opening DM with user ${hit.id} (${hit.real_name || hit.name})`,
-    );
-    const dm = await slackApi('conversations.open', {
-      token: xoxc,
-      users: hit.id,
-    });
-    channelId = dm.channel.id;
-  } else
-    console.log(
-      `[slack] no user matched ${matchers.join('/')} in ${members.length} workspace members`,
-    );
-}
-if (!channelId) await fail(4, '[slack] no channel id');
-
-const mentionIds = await mentionIdsForTarget(channelId, workspaceMembers);
-const finalMessageText = applyMentions(MESSAGE_BODY, mentionIds);
-const post = await slackApi('chat.postMessage', {
-  token: xoxb,
-  channel: channelId,
-  text: finalMessageText,
-  mrkdwn: true,
-});
-console.log(
-  `[slack] ✓ posted as Swiatowid bot ts=${post.ts} channel=${channelId}`,
-);
-
-await safeShutdown();
-console.log('[slack] done');

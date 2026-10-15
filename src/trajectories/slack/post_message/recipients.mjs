@@ -1,4 +1,7 @@
-import { slackDirectory } from './api.mjs';
+// Who a Slack message goes to and whom it mentions, read through a Slack
+// directory: `directory(method, key, form)` resolves every entry of one
+// listing (`slackDirectory` as the bot, `workspaceDirectory` as the signed-in
+// client), so both routes resolve recipients the same way.
 
 // Default recipients: one user per matcher group, read from
 // SLACK_RECIPIENT_GROUPS ('name,alias;name,alias'). The people a message goes
@@ -121,8 +124,8 @@ export async function mentionIdsForTarget(target, loadMembers) {
 }
 
 /** Every workspace member that is neither deleted nor a bot. */
-export async function listMembers() {
-  const members = await slackDirectory('users.list', 'members', {
+export async function listMembers(directory) {
+  const members = await directory('users.list', 'members', {
     limit: '1000',
   });
   return members.filter((u) => !u.deleted && !u.is_bot);
@@ -134,14 +137,14 @@ export async function listMembers() {
  * found (or a channel list that could not be read) refuses: a message meant
  * for a channel is never sent to people instead.
  */
-export async function resolveTargets() {
+export async function resolveTargets(directory) {
   if (TARGET_CHAN) return [TARGET_CHAN];
   if (process.env.SLACK_TARGET_USER_IDS)
     return parseCsv(process.env.SLACK_TARGET_USER_IDS);
   if (process.env.SLACK_TARGET_USER_ID)
     return [process.env.SLACK_TARGET_USER_ID];
   if (process.env.SLACK_TARGET_CHANNEL_NAME) {
-    const channels = await slackDirectory('conversations.list', 'channels', {
+    const channels = await directory('conversations.list', 'channels', {
       types: 'public_channel,private_channel',
       limit: '1000',
     });
@@ -158,7 +161,7 @@ export async function resolveTargets() {
   const groups = process.env.SLACK_TARGET_USER_MATCHERS
     ? [parseCsv(process.env.SLACK_TARGET_USER_MATCHERS.toLowerCase())]
     : RECIPIENT_GROUPS;
-  const members = await listMembers();
+  const members = await listMembers(directory);
   const ids = [];
   for (const group of groups) {
     const [hit] = resolveUsersFromMembers(members, [group]);

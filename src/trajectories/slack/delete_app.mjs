@@ -1,140 +1,33 @@
-// Slack-delete trajectory. Drive Google-SSO into wisent-workspace.slack.com,
-// then POST the delete form for SLACK_APP_ID via steps/delete_bot_app.mjs.
+// Delete a Slack app from a workspace.
 //
-// Env: SLACK_EMAIL, SLACK_PASS, SLACK_APP_ID, HEADLESS (optional).
+// Env:
+//   SLACK_WORKSPACE_URL        required: the workspace, https://<name>.slack.com
+//   SLACK_APP_ID               required: the app deleted
+//   PROXY_URL                  required: the proxy the browser goes through, or 'direct'
+//   SLACK_EMAIL, SLACK_PASS    sign in through the workspace's Google SSO; unset,
+//                              the browser must already hold the workspace's session
 
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { mkdirSync } from 'node:fs';
+import { statedText } from '../_shared/inputs/stated.mjs';
+import { deleteApp } from './steps/manifest_app.mjs';
+import {
+  seatApiSession,
+  signInThroughGoogle,
+  slackWorkspace,
+  startSlackSession,
+  statedSlackLogin,
+} from './steps/workspace.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const WELES = join(__dirname, '..', '..', '..');
+const LABEL = 'slack-delete';
+const workspace = slackWorkspace();
+const APP_ID = statedText(['SLACK_APP_ID'], 'the Slack app to delete');
+const login = statedSlackLogin();
 
-const SLACK_EMAIL = process.env.SLACK_EMAIL || '';
-const SLACK_PASS = process.env.SLACK_PASS || '';
-const APP_ID = process.env.SLACK_APP_ID || '';
-if (!SLACK_EMAIL || !SLACK_PASS) {
-  console.error('SLACK_EMAIL / SLACK_PASS env required');
-  process.exit(2);
-}
-if (!APP_ID) {
-  console.error('SLACK_APP_ID env required (e.g. A0B5SUJ9JTB)');
-  process.exit(2);
-}
-
-const { WSession } = await import(`${WELES}/dist/session/wsession.js`);
-const { humanFill } = await import(`${WELES}/dist/human/keyboard.js`);
-const { humanClickLocator, humanIdlePause } = await import(
-  `${WELES}/dist/human/mouse.js`
-);
-const { runRecordingsDir } = await import(
-  `${WELES}/dist/session/run-recordings.js`
-);
-
-const headless = process.env.HEADLESS === '1';
-const s = await WSession.start({ label: 'slack-delete', headless });
-console.log('[slack-delete] WSession started');
-
-// Screenshots go to the run's own recordings, not into the checkout.
-const SHOT_DIR = runRecordingsDir('slack-delete');
-mkdirSync(SHOT_DIR, { recursive: true });
-async function shot(label) {
-  const fp = join(SHOT_DIR, `${label}_${Date.now()}.png`);
-  try {
-    await s.page.screenshot({ path: fp, fullPage: true });
-    console.log(`[slack-delete] shot=${fp}`);
-  } catch (e) {
-    console.log(`[slack-delete] screenshot WARN ${label}: ${e.message}`);
-  }
-}
-
-async function safeShutdown() {
-  if (!s.shutdown) return;
-  try {
-    await s.shutdown();
-  } catch (e) {
-    console.log(`[slack-delete] shutdown WARN: ${e.message}`);
-  }
-}
-
-// --- Step 1: Google SSO ----------------------------------------------------
-console.log(`[slack-delete] step 1: Google SSO as ${SLACK_EMAIL}`);
-await s.page.goto('https://wisent-workspace.slack.com', {
-  waitUntil: 'domcontentloaded',
-});
-await humanIdlePause('deliberate');
-await shot('01-slack-landing');
-
-const googleBtn = s.page
-  .getByRole('button', { name: /^\s*google\s*$/i })
-  .or(s.page.getByRole('link', { name: /^\s*google\s*$/i }));
-await humanClickLocator(s.page, googleBtn.first());
-await humanIdlePause('long');
-
-await humanFill(
-  s.page,
-  s.page.locator('input[type="email"]').first(),
-  SLACK_EMAIL,
-);
-await s.page.keyboard.press('Enter');
-await humanIdlePause('long');
-
-async function fillPasswordWhenAvailable() {
-  const pwd = s.page.locator('input[type="password"]');
-  if ((await pwd.count()) === 0) return false;
-  await humanFill(s.page, pwd, SLACK_PASS);
-  await s.page.keyboard.press('Enter');
-  await humanIdlePause('long');
-  return true;
-}
-if (!(await fillPasswordWhenAvailable())) {
-  // Passkey challenge path: Google presents passkey instead of password
-  // input. "Try another way" → "Enter your password" surfaces the field.
-  const tryOther = s.page
-    .getByRole('button', { name: /try another way/i })
-    .or(s.page.getByRole('link', { name: /try another way/i }));
-  if ((await tryOther.count()) > 0) {
-    await humanClickLocator(s.page, tryOther.first());
-    await humanIdlePause('long');
-    const enterPwd = s.page.getByText(/enter your password/i).first();
-    if ((await enterPwd.count()) > 0) {
-      await humanClickLocator(s.page, enterPwd);
-      await humanIdlePause('long');
-      await fillPasswordWhenAvailable();
-    }
-  }
-}
-
-const continueBtn = s.page.getByRole('button', { name: /^\s*continue\s*$/i });
-if ((await continueBtn.count()) > 0) {
-  await humanClickLocator(s.page, continueBtn.first());
-  await humanIdlePause('long');
-}
-console.log(`[slack-delete] post-signin url=${s.page.url()}`);
-
-// --- Step 2: seat workspace handoff cookie on api.slack.com ----------------
-// api.slack.com auth is per-workspace; visiting /apps/manage on the
-// workspace host triggers the redirect that plants the api.slack.com
-// session for this workspace.
-console.log('[slack-delete] step 2: seat api.slack.com workspace auth');
-await s.page.goto('https://wisent-workspace.slack.com/apps/manage', {
-  waitUntil: 'domcontentloaded',
-});
-await humanIdlePause('long');
-
-// --- Step 3: delete the app ------------------------------------------------
-console.log(`[slack-delete] step 3: deleting app ${APP_ID}`);
-const { deleteBotApp } = await import('./steps/delete_bot_app.mjs');
+const { s } = await startSlackSession(LABEL);
 try {
-  await deleteBotApp({ page: s.page, appId: APP_ID });
-  console.log(`[slack-delete] ✓ app ${APP_ID} deleted`);
-  await shot('99-deleted');
-} catch (e) {
-  console.error(`[slack-delete] DELETE FAILED: ${e.message}`);
-  await shot('99-failed');
-  await safeShutdown();
-  process.exit(7);
+  await signInThroughGoogle(s, workspace, login, LABEL);
+  await seatApiSession(s.page, workspace);
+  await deleteApp(s.page, APP_ID);
+  console.log(`[${LABEL}] deleted app ${APP_ID} from ${workspace}`);
+} finally {
+  await s.close();
 }
-
-await safeShutdown();
-console.log('[slack-delete] done');
