@@ -25,7 +25,7 @@ import {
 import { detectInstagramBanSignals } from '../../../../dist/platforms/instagram/ban_signals.js';
 import { generatePost } from '../../_shared/content/llm.mjs';
 import { generateImageFile } from '../../_shared/content/media.mjs';
-import { writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
 import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
@@ -89,13 +89,35 @@ const imagePath = await generateImageFile({
 });
 console.log(`[instagram:${ACTION}] image file: ${imagePath}`);
 
+/** Write the run's ban signal beside its recordings; a failed write throws. */
+function persistBanSignal(signal) {
+  const dir = runRecordingsDir(`instagram_${ACTION}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, 'ban_signal.json'),
+    JSON.stringify(
+      {
+        account_id: acct.id,
+        username: acct.username,
+        action: `instagram_${ACTION}`,
+        character: character.name,
+        product: product?.name,
+        ...signal,
+        ts: new Date().toISOString(),
+      },
+      null,
+      '  ',
+    ),
+  );
+}
+
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({
   label: `instagram_${ACTION}`,
   proxy: proxyUrl,
   persona,
 });
-let banSignal = null;
+// banSignalOf answers null when detection failed, having logged its cause.
 try {
   // The account's stored jar, limited to the cookies Instagram's host would
   // be sent; an account with no stored jar has none to inject.
@@ -195,46 +217,34 @@ try {
       `Instagram did not report the post as shared on ${s.page.url()}`,
     );
   await pageSettled(s.page);
-  banSignal = await banSignalOf(detectInstagramBanSignals, s, 'after posting');
-  console.log(`[ban-signal] ${banSignal?.signal}  PASS: posted`);
+  const banSignal = await banSignalOf(
+    detectInstagramBanSignals,
+    s,
+    'after posting',
+  );
+  if (!banSignal)
+    throw new Error(
+      'BAN_SIGNAL_UNREAD: the post was shared, but the account health after it could not be read (the detection error is logged above)',
+    );
+  persistBanSignal(banSignal);
+  console.log(`[ban-signal] ${banSignal.signal}  PASS: posted`);
 } catch (e) {
-  banSignal =
-    e.banSignal ??
-    (await banSignalOf(detectInstagramBanSignals, s, 'after the failure'));
+  const banSignal = e.banSignal
+    ? e.banSignal
+    : await banSignalOf(detectInstagramBanSignals, s, 'after the failure');
   console.log(`[ban-signal] ${banSignal?.signal}  FAIL: ${e.message}`);
-  throw e;
-} finally {
   if (banSignal) {
     try {
-      const dir = runRecordingsDir(`instagram_${ACTION}`);
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'ban_signal.json'),
-        JSON.stringify(
-          {
-            account_id: acct.id,
-            username: acct.username,
-            action: `instagram_${ACTION}`,
-            character: character.name,
-            product: product?.name,
-            ...banSignal,
-            ts: new Date().toISOString(),
-          },
-          null,
-          '  ',
-        ),
+      persistBanSignal(banSignal);
+    } catch (writeError) {
+      throw new AggregateError(
+        [e, writeError],
+        `${e.message}; and its ban signal was not written: ${writeError.message}`,
       );
-    } catch (e) {
-      console.log('[ban-signal] persist err:', e.message);
     }
   }
-  try {
-    unlinkSync(imagePath);
-  } catch (e) {
-    // The generated image stays on disk; the log names it so it can be found.
-    console.log(
-      `[instagram:${ACTION}] image removal err: ${imagePath}: ${e.message}`,
-    );
-  }
+  throw e;
+} finally {
+  // The generated image stays in the run's recordings as the post's evidence.
   await s.close();
 }
