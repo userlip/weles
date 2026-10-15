@@ -1,28 +1,32 @@
-// The environment an Apple Ads action arrives as, and the helpers that turn it into `asc ads` arguments.
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+// The environment an Apple Ads action arrives as, and the helpers that turn it
+// into `asc ads` arguments. A missing input, and an unconfirmed change, is
+// refused by name; nothing is assumed.
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { runRecordingsDir } from '../../../../../dist/session/run-recordings.js';
+import { statedText } from '../../../_shared/inputs/stated.mjs';
 
-export const ASC_BIN = process.env.ASC_BIN || 'asc';
-export const action = process.env.APPLE_ADS_ACTION || 'ads_campaigns';
+// `asc` on PATH unless ASC_BIN names the binary.
+export const ASC_BIN = process.env.ASC_BIN ? process.env.ASC_BIN : 'asc';
+export const action = statedText(['APPLE_ADS_ACTION'], 'the Apple Ads verb the run performs (the action name after apple_)');
 export const org = process.env.ASC_ADS_ORG_ID;
 export const adsProfile = process.env.APPLE_ADS_PROFILE_NAME;
 export const confirmed =
-  process.env.APPLE_ADS_CONFIRM === '1' ||
-  process.env.WRITE_CONFIRM === '1' ||
-  process.env.SUBMIT === '1';
+  process.env.APPLE_ADS_CONFIRM === '1' || process.env.WRITE_CONFIRM === '1' || process.env.SUBMIT === '1';
 
-export function value(name, fallback = undefined) {
+/** The input `name`, or undefined when it is unset or empty. */
+export function value(name) {
   const v = process.env[name];
-  return v == null || v === '' ? fallback : v;
+  return v ? v : undefined;
 }
 
-export function requireValue(name, label = name) {
-  const v = value(name);
-  if (!v) {
-    console.log(`FAIL: ${label} is required for ${action}`);
-    process.exit(1);
-  }
+/** The input `name`, refused by its `label` (its own name when none) when missing. */
+export function requireValue(name, label) {
+  return requireValueFrom(value(name), label ? label : name);
+}
+
+export function requireValueFrom(v, label) {
+  if (!v) throw new Error(`${label} is required for ${action}`);
   return v;
 }
 
@@ -33,14 +37,13 @@ export function withOrg(args) {
   return out;
 }
 
+// Every command answers JSON, except the auth commands that only change the
+// stored profile (login, logout, switch), which have no output to shape.
+const PROFILE_COMMANDS = { login: true, logout: true, switch: true };
 export function withOutput(args) {
   if (process.env.APPLE_ADS_NO_OUTPUT === '1') return args;
-  if (
-    args[0] === 'ads' &&
-    args[1] === 'auth' &&
-    ['login', 'logout', 'switch'].includes(args[2])
-  )
-    return args;
+  const [tool, area, verb] = args;
+  if (tool === 'ads' && area === 'auth' && Object.hasOwn(PROFILE_COMMANDS, verb)) return args;
   return args.includes('--output') ? args : [...args, '--output', 'json'];
 }
 
@@ -57,88 +60,57 @@ export function appendPaging(args) {
   return out;
 }
 
-export async function payloadFile() {
+/** The request file: APPLE_ADS_FILE, or APPLE_ADS_PAYLOAD_JSON written into the run's own recordings; null when neither is given. */
+export function payloadFile() {
   const existing = value('APPLE_ADS_FILE');
   if (existing) return existing;
   const json = value('APPLE_ADS_PAYLOAD_JSON');
   if (!json) return null;
-  const dir = await mkdtemp(join(tmpdir(), 'weles-apple-ads-'));
+  const dir = runRecordingsDir(`apple_${action}`);
+  mkdirSync(dir, { recursive: true });
   const file = join(dir, 'request.json');
-  await writeFile(file, json);
+  writeFileSync(file, json);
   return file;
 }
 
+/** APPLE_ADS_CLI_ARGS split as a shell would: whitespace outside quotes, a backslash escaping the next character inside them. */
 export function splitArgs(s) {
   if (!s) return [];
   const out = [];
   let cur = '';
-  let q = null;
-  for (let i = 0; i < s.length; i += 1) {
-    const ch = s[i];
-    if (q) {
-      if (ch === q) q = null;
-      else if (ch === '\\' && i + 1 < s.length) {
-        i += 1;
-        cur += s[i];
+  let quote = null;
+  const chars = [...s][Symbol.iterator]();
+  for (let next = chars.next(); !next.done; next = chars.next()) {
+    const ch = next.value;
+    if (quote) {
+      if (ch === quote) quote = null;
+      else if (ch === '\\') {
+        const escaped = chars.next();
+        if (escaped.done) throw new Error('APPLE_ADS_CLI_ARGS ends in an escape with nothing after it');
+        cur += escaped.value;
       } else cur += ch;
-    } else if (ch === '"' || ch === "'") q = ch;
+    } else if (ch === '"' || ch === "'") quote = ch;
     else if (/\s/.test(ch)) {
-      if (cur) {
-        out.push(cur);
-        cur = '';
-      }
+      if (cur) out.push(cur);
+      cur = '';
     } else cur += ch;
   }
-  if (q) throw new Error('APPLE_ADS_CLI_ARGS has an unterminated quote');
+  if (quote) throw new Error('APPLE_ADS_CLI_ARGS has an unterminated quote');
   if (cur) out.push(cur);
   return out;
 }
 
 export function ensureConfirmed(kind) {
-  if (!confirmed) {
-    console.log(
-      `FAIL: ${action} would ${kind}; set apple_ads_confirm=true, write_confirm=true, or submit=true in params to proceed.`,
+  if (!confirmed)
+    throw new Error(
+      `${action} would ${kind}; set apple_ads_confirm=true, write_confirm=true, or submit=true in params to proceed`,
     );
-    process.exit(2);
-  }
 }
 
+/**
+ * Raw `asc` arguments can do anything asc can, which no reading of their
+ * words can bound, so a run of them is always a confirmed one.
+ */
 export function ensureCliArgsAllowed(args) {
-  const joined = args.join(' ').toLowerCase();
-  const mutating =
-    /\b(create|update|delete|pause|resume|login|logout|token)\b/.test(joined) ||
-    (/\brequest\b/.test(joined) &&
-      /\b--method\s+(post|put|patch|delete)\b/.test(joined));
-  if (mutating)
-    ensureConfirmed(`run mutating/sensitive asc args: ${args.join(' ')}`);
-}
-
-export function reportPresetArgs() {
-  let args = ['ads', 'reports', 'preset'];
-  args = withOptional(args, '--level', 'APPLE_ADS_REPORT_LEVEL');
-  args = withOptional(args, '--from', 'APPLE_ADS_FROM');
-  args = withOptional(args, '--to', 'APPLE_ADS_TO');
-  args = withOptional(args, '--last-days', 'APPLE_ADS_LAST_DAYS');
-  args = withOptional(args, '--fields', 'FIELDS');
-  args = withOptional(args, '--sort', 'APPLE_ADS_SORT');
-  args = withOptional(args, '--granularity', 'APPLE_ADS_GRANULARITY');
-  args = withOptional(args, '--time-zone', 'APPLE_ADS_TIME_ZONE');
-  args = withOptional(args, '--campaign', 'APPLE_ADS_CAMPAIGN_ID');
-  args = withOptional(args, '--ad-group', 'APPLE_ADS_AD_GROUP_ID');
-  args = withOptional(args, '--limit', 'LIMIT');
-  args = withOptional(args, '--offset', 'OFFSET');
-  if (
-    process.env.RETURN_ROW_TOTALS === '1' ||
-    process.env.RETURN_ROW_TOTALS === 'true'
-  )
-    args.push('--return-row-totals');
-  return withOrg(args);
-}
-
-export function requireValueFrom(v, label) {
-  if (!v) {
-    console.log(`FAIL: ${label} is required for ${action}`);
-    process.exit(1);
-  }
-  return v;
+  ensureConfirmed(`run raw asc arguments: ${args.join(' ')}`);
 }

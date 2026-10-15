@@ -1,85 +1,53 @@
+// App Store Connect: edit an app's metadata. Inputs: APP_ID, and any of
+// DESCRIPTION / KEYWORDS / PROMO_TEXT / WHATS_NEW (at least one). Every
+// requested field must be on the page before anything is changed: a field the
+// page does not show refuses the edit, so no request is half saved.
 import { pageSettled } from '../../../_shared/page/settled.mjs';
-// App Store Connect: edit app metadata (description, keywords, promo text).
-// Args: APP_ID, plus any of DESCRIPTION / KEYWORDS / PROMO_TEXT / WHATS_NEW env vars.
-
 import { getSocialAccount } from '../../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../../dist/session/wsession.js';
-import { statedProxy } from '../../../_shared/inputs/stated.mjs';
+import { statedProxy, statedText } from '../../../_shared/inputs/stated.mjs';
+import { openAppStoreConnect } from '../../asc_session.mjs';
 
-const APP_ID = process.env.APP_ID;
-if (!APP_ID) {
-  console.log('FAIL: APP_ID env var required');
-  process.exit(1);
-}
-
+const APP_ID = statedText(['APP_ID'], 'the numeric App Store Connect id of the app');
 const fields = {
   description: process.env.DESCRIPTION,
   keywords: process.env.KEYWORDS,
   promotionalText: process.env.PROMO_TEXT,
   whatsNew: process.env.WHATS_NEW,
 };
-const toUpdate = Object.entries(fields).filter(([, v]) => v);
-if (!toUpdate.length) {
-  console.log(
-    'FAIL: at least one of DESCRIPTION/KEYWORDS/PROMO_TEXT/WHATS_NEW must be set',
-  );
-  process.exit(1);
-}
+const toUpdate = Object.entries(fields).filter(([, value]) => value);
+if (!toUpdate.length)
+  throw new Error('at least one of DESCRIPTION, KEYWORDS, PROMO_TEXT or WHATS_NEW must be set');
 
 const acct = await getSocialAccount('apple');
-if (!acct) {
-  console.log('FAIL: no apple account');
-  process.exit(1);
-}
+if (!acct) throw new Error('ASC_ACCOUNT_ABSENT: no Apple account is stored');
 
 const s = await WSession.start({
   label: 'apple_asc_edit_metadata',
   proxy: statedProxy('the App Store Connect metadata edit'),
 });
 try {
-  await s.goto(
-    `https://appstoreconnect.apple.com/apps/${APP_ID}/distribution/info`,
-  );
-  await pageSettled(s.page);
-  if ((s.page.url?.() ?? '').includes('idmsa.apple.com')) {
-    console.log('FAIL: session expired, rerun apple/login.mjs');
-    process.exit(2);
-  }
-
-  const updated = [];
-  const missing = [];
-  for (const [field, value] of toUpdate) {
-    // ASC uses textareas keyed by data-test-id or name
-    const sel = `textarea[name="${field}"], textarea[data-test-id*="${field}"], textarea[aria-label*="${field}" i]`;
-    const el = s.page.locator(sel).first();
-    if (await el.isVisible().catch(() => false)) {
-      await el.fill(value);
-      updated.push(field);
-      console.log(`[asc-edit] ${field} set (${value.length} chars)`);
-    } else {
-      missing.push(field);
-      console.log(`[asc-edit] WARN: ${field} field not found on page`);
-    }
+  await openAppStoreConnect(s, `/apps/${APP_ID}/distribution/info`);
+  // App Store Connect keys each metadata textarea by its name, test id or label.
+  const editors = toUpdate.map(([field, value]) => ({
+    field,
+    value,
+    textarea: s.page
+      .locator(`textarea[name="${field}"], textarea[data-test-id*="${field}"], textarea[aria-label*="${field}" i]`)
+      .first(),
+  }));
+  const absent = [];
+  for (const editor of editors) if (!(await editor.textarea.isVisible())) absent.push(editor.field);
+  if (absent.length)
+    throw new Error(`ASC_METADATA_FIELD_ABSENT: app ${APP_ID}'s page shows no ${absent.join(', ')}; nothing was changed`);
+  for (const { field, value, textarea } of editors) {
+    await textarea.fill(value);
+    console.log(`[asc-edit] ${field} set (${value.length} chars)`);
   }
   await pageSettled(s.page);
-
-  // Save button
-  await s.page
-    .locator('button:has-text("Save"), button[data-test-id="save"]')
-    .click();
+  await s.page.locator('button:has-text("Save"), button[data-test-id="save"]').click();
   await pageSettled(s.page);
-
-  // A field the page did not show was not changed; the run says which,
-  // rather than listing every requested field as updated.
-  if (missing.length) {
-    throw new Error(
-      `not updated for app ${APP_ID}: ${missing.join(', ')} (no such field on the page); saved: ${updated.join(', ')}`,
-    );
-  }
-  console.log(`PASS: updated ${updated.join(', ')} for app ${APP_ID}`);
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
+  console.log(`PASS: updated ${editors.map((editor) => editor.field).join(', ')} for app ${APP_ID}`);
 } finally {
   await s.close();
 }

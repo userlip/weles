@@ -1,71 +1,53 @@
-import { pageSettled } from '../_shared/page/settled.mjs';
-// App Store Connect analytics scraper: pulls app metrics (downloads, revenue, crashes) for each app.
-// Requires valid session — run apple/login.mjs first to store cookies.
-// Outputs JSON to stdout with per-app metrics.
-
+// App Store Connect analytics: each app's overview metrics (impressions,
+// downloads, sales, crashes), read from its analytics page by the vision model
+// in whatever wording App Store Connect prints them. Requires the Apple
+// session apple/login.mjs stores (./asc_session.mjs refuses an expired one).
+// Prints the per-app metrics as JSON.
+import { shownText } from '../_shared/page/judged/seen.mjs';
 import { getSocialAccount } from '../../../dist/utils/credentials.js';
 import { WSession } from '../../../dist/session/wsession.js';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
+import { openAppStoreConnect } from './asc_session.mjs';
+
+const METRICS = {
+  impressions: 'the Impressions figure',
+  downloads: 'the total downloads figure',
+  sales: 'the sales or proceeds figure',
+  crashes: 'the Crashes figure',
+};
 
 const acct = await getSocialAccount('apple');
-if (!acct) {
-  console.log('FAIL: no apple account');
-  process.exit(1);
-}
+if (!acct) throw new Error('ASC_ACCOUNT_ABSENT: no Apple account is stored');
 
 const s = await WSession.start({
   label: 'apple_asc_analytics',
   proxy: statedProxy('the App Store Connect analytics read'),
 });
 try {
-  await s.goto('https://appstoreconnect.apple.com/apps');
-  await pageSettled(s.page);
-  // If redirected to idmsa, session expired — bail
-  if ((s.page.url?.() ?? '').includes('idmsa.apple.com')) {
-    console.log('FAIL: session expired, rerun apple/login.mjs');
-    process.exit(2);
-  }
-  // Scrape the apps list — each row has data-app-id, app name, bundle id
-  const apps = await s.page
-    .evaluate(`(() => {
-    const rows = Array.from(document.querySelectorAll('tr[data-app-id], a[href*="/apps/"]'));
-    return rows.map(r => {
-      const title = r.querySelector('[class*=name], [class*=title]')?.textContent?.trim();
-      return {
-        id: r.getAttribute('data-app-id') ?? r.href?.match(/apps\\/(\\d+)/)?.[1],
-        name: title ? title : r.textContent?.trim(),
-      };
-    }).filter(a => a.id);
-  })()`)
-    .catch(() => []);
+  await openAppStoreConnect(s, '/apps');
+  // Each app row carries its id (data-app-id, or the /apps/<id> link) and name.
+  const apps = await s.page.evaluate(() =>
+    Array.from(document.querySelectorAll('tr[data-app-id], a[href*="/apps/"]'))
+      .map((row) => {
+        const title = row.querySelector('[class*=name], [class*=title]');
+        const linked = row.href ? row.href.match(/apps\/(?<id>\d+)/) : null;
+        return {
+          id: row.getAttribute('data-app-id') ? row.getAttribute('data-app-id') : linked?.groups.id,
+          name: (title ? title : row).textContent.trim(),
+        };
+      })
+      .filter((app) => app.id),
+  );
   console.log(`[asc-analytics] found ${apps.length} apps`);
   const results = [];
   for (const app of apps) {
-    await s.goto(
-      `https://appstoreconnect.apple.com/analytics/app/${app.id}/overview`,
-    );
-    await pageSettled(s.page);
-    const metrics = await s.page
-      .evaluate(`(() => {
-      const grab = (label) => {
-        const el = Array.from(document.querySelectorAll('*')).find(e => e.textContent?.trim().toLowerCase() === label.toLowerCase());
-        return el?.parentElement?.querySelector('[class*=value], [class*=metric]')?.textContent?.trim() || null;
-      };
-      return {
-        impressions: grab('Impressions'),
-        downloads: grab('Total Downloads') || grab('Downloads'),
-        sales: grab('Sales') || grab('Proceeds'),
-        crashes: grab('Crashes'),
-      };
-    })()`)
-      .catch(() => ({}));
+    await openAppStoreConnect(s, `/analytics/app/${app.id}/overview`);
+    const metrics = {};
+    for (const [name, what] of Object.entries(METRICS)) metrics[name] = await shownText(s.page, what);
     results.push({ ...app, ...metrics });
     console.log(`[asc-analytics] ${app.name}:`, JSON.stringify(metrics));
   }
   console.log('PASS:', JSON.stringify(results));
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
 } finally {
   await s.close();
 }

@@ -3,11 +3,9 @@ import { runOutputPath } from '#run-output';
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { keptProfileDir } from '../../../_shared/profile/persona.mjs';
 
-export const USER_DATA_DIR =
-  process.env.WELES_USER_DATA_DIR ||
-  process.env.ADS_PROFILE_DIR ||
-  join(homedir(), '.weles', 'browser_profiles', 'apple_ads');
+export const USER_DATA_DIR = keptProfileDir('apple_ads');
 export const PUBLIC_KEY_PATH =
   process.env.ASC_ADS_PUBLIC_KEY_PATH ||
   join(homedir(), '.apple-ads', 'public-key.pem');
@@ -18,5 +16,4 @@ export const DIAG_DIR =
   process.env.APPLE_ADS_DIAG_DIR || runOutputPath('apple-ads-api-setup');
 export const CLOSE_AFTER_PROBE =
   process.env.APPLE_ADS_CLOSE_AFTER_PROBE === '1';
-mkdirSync(USER_DATA_DIR, { recursive: true });
 mkdirSync(DIAG_DIR, { recursive: true });

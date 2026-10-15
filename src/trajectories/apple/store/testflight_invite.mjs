@@ -1,95 +1,47 @@
+// TestFlight: invite a tester by email to one group of one app.
+// Inputs: APP_ID (numeric), TESTER_EMAIL and GROUP_NAME, all required: the
+// group a tester joins is the caller's, never whichever is listed first.
+// The invite counts once App Store Connect lists the address in the group.
 import { pageSettled } from '../../_shared/page/settled.mjs';
-import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
-// TestFlight: invite a tester by email to a given app/group.
-// Args: APP_ID (numeric), TESTER_EMAIL, GROUP_NAME (optional, defaults to first group).
-
+import { clickDescribed, clickOffered } from '../../_shared/page/judged/seen.mjs';
 import { getSocialAccount } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
-import { statedProxy } from '../../_shared/inputs/stated.mjs';
+import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
+import { openAppStoreConnect } from '../asc_session.mjs';
 
-const APP_ID = process.env.APP_ID;
-const TESTER_EMAIL = process.env.TESTER_EMAIL;
-const GROUP_NAME = process.env.GROUP_NAME;
-if (!APP_ID || !TESTER_EMAIL) {
-  console.log('FAIL: APP_ID and TESTER_EMAIL env vars required');
-  process.exit(1);
-}
+const APP_ID = statedText(['APP_ID'], 'the numeric App Store Connect id of the app');
+const TESTER_EMAIL = statedText(['TESTER_EMAIL'], 'the email address invited to TestFlight');
+const GROUP_NAME = statedText(['GROUP_NAME'], 'the TestFlight group the tester joins');
 
 const acct = await getSocialAccount('apple');
-if (!acct) {
-  console.log('FAIL: no apple account');
-  process.exit(1);
-}
+if (!acct) throw new Error('ASC_ACCOUNT_ABSENT: no Apple account is stored');
 
 const s = await WSession.start({
   label: 'apple_testflight_invite',
   proxy: statedProxy('the TestFlight invite'),
 });
 try {
-  await s.goto(
-    `https://appstoreconnect.apple.com/apps/${APP_ID}/testflight/groups`,
-  );
-  await pageSettled(s.page);
-  if ((s.page.url?.() ?? '').includes('idmsa.apple.com')) {
-    console.log('FAIL: session expired, rerun apple/login.mjs');
-    process.exit(2);
-  }
-
-  // Click into group (first one if no name specified)
-  if (GROUP_NAME) {
-    await humanClickLocator(
-      s.page,
-      s.page.locator(`a:has-text("${GROUP_NAME}")`).first(),
-    );
-  } else {
-    await humanClickLocator(
-      s.page,
-      s.page.locator('a[href*="/testflight/groups/"]').first(),
-    );
-  }
+  await openAppStoreConnect(s, `/apps/${APP_ID}/testflight/groups`);
+  const group = s.page.locator('a[href*="/testflight/groups/"]').filter({ hasText: GROUP_NAME }).first();
+  if (!(await group.isVisible()))
+    throw new Error(`TESTFLIGHT_GROUP_ABSENT: app ${APP_ID} lists no TestFlight group "${GROUP_NAME}"`);
+  await humanClickLocator(s.page, group);
   await pageSettled(s.page);
 
-  // Go to Testers tab
-  await humanClickLocator(
-    s.page,
-    s.page.locator('a:has-text("Testers"), button:has-text("Testers")').first(),
-  ).catch(() => {});
+  // The group opens on its builds or its testers; the Testers tab, when the
+  // page shows one, leads to the add control.
+  if (await clickOffered(s.page, 'the Testers tab of the group')) await pageSettled(s.page);
+  await clickDescribed(s.page, 'the button that adds testers to the group');
   await pageSettled(s.page);
-
-  // Click + to add
-  await humanClickLocator(
-    s.page,
-    s.page.locator('button:has-text("Add"), button[aria-label*="Add"]').first(),
-  );
+  if (await clickOffered(s.page, 'the option that adds a tester by email address')) await pageSettled(s.page);
+  await s.page.locator('input[type="email"], input[placeholder*="email" i]').fill(TESTER_EMAIL);
   await pageSettled(s.page);
-
-  // Add by email
-  await humanClickLocator(
-    s.page,
-    s.page.locator('button:has-text("Email"), label:has-text("Email")').first(),
-  ).catch(() => {});
+  await clickDescribed(s.page, 'the button that adds or invites the tester with the entered email');
   await pageSettled(s.page);
-  await s.page
-    .locator('input[type="email"], input[placeholder*="email" i]')
-    .fill(TESTER_EMAIL);
-  await pageSettled(s.page);
-  await clickDescribed(
-    s.page,
-    'the button that adds or invites the tester with the entered email',
-  );
-  await pageSettled(s.page);
-  // The invite counts once App Store Connect lists the address in the group;
-  // a click that landed nowhere leaves it absent, and the run fails there.
-  await s.page
-    .getByText(TESTER_EMAIL, { exact: true })
-    .first()
-    .waitFor({ state: 'visible' });
-
-  console.log(`PASS: invited ${TESTER_EMAIL} to app ${APP_ID}`);
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
+  // A click that landed nowhere leaves the address absent, and the run fails here.
+  await s.page.getByText(TESTER_EMAIL, { exact: true }).first().waitFor({ state: 'visible' });
+  console.log(`PASS: invited ${TESTER_EMAIL} to group "${GROUP_NAME}" of app ${APP_ID}`);
 } finally {
   await s.close();
 }

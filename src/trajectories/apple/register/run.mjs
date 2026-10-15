@@ -3,9 +3,10 @@
 // linkedin/github/producthunt for `Sign in with Apple` SSO.
 //
 // Flow: country → name → DOB → email (own wisentmedia.com) → password+confirm
-//   → phone (JuicySMS US) → email-OTP → phone-OTP → land on /manage
+//   → phone (rented in the country Apple's phone field is set to) → email-OTP
+//   → phone-OTP → land on /manage
 // Apple's signup form is rendered inside an iframe hosted at appleid.apple.com
-// (same pattern as appstoreconnect.apple.com — see apple/login.mjs:25).
+// (the same pattern as appstoreconnect.apple.com in apple/login.mjs).
 // Selectors target stable input ids/names rather than label text because the
 // modal re-renders aggressively and labels are i18n-dependent.
 
@@ -16,8 +17,16 @@ import {
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
+import { phoneForField } from '../../_shared/inputs/phone.mjs';
+import { mailedCode } from '../../_shared/inputs/mailed_code.mjs';
 
 const URL = 'https://appleid.apple.com/account';
+
+/** `value` padded with zeros to the width the field's own maxlength states. */
+async function toFieldWidth(field, value) {
+  const width = await field.evaluate((el) => el.maxLength);
+  return width > value.length ? value.padStart(width, '0') : value;
+}
 
 // Apple shows either one box for the whole code or one box per digit of the
 // code it sent; the code's own length says how many boxes that is. A box that
@@ -111,7 +120,7 @@ async function fillCodeBoxes(boxes, code, refusal) {
       )
       .first();
     if (await monthIn.count()) {
-      const tag = await monthIn.evaluate((el) => el.tagName).catch(() => '');
+      const tag = await monthIn.evaluate((el) => el.tagName);
       if (tag === 'SELECT') {
         await monthIn.selectOption(String(id.birthMonth));
         if (await dayIn.count()) await dayIn.selectOption(String(id.birthDay));
@@ -119,10 +128,10 @@ async function fillCodeBoxes(boxes, code, refusal) {
           await yearIn.selectOption(String(id.birthYear));
       } else {
         await humanClickLocator(s.page, monthIn);
-        await humanType(s.page, String(id.birthMonth).padStart(2, '0'));
+        await humanType(s.page, await toFieldWidth(monthIn, String(id.birthMonth)));
         if (await dayIn.count()) {
           await humanClickLocator(s.page, dayIn);
-          await humanType(s.page, String(id.birthDay).padStart(2, '0'));
+          await humanType(s.page, await toFieldWidth(dayIn, String(id.birthDay)));
         }
         if (await yearIn.count()) {
           await humanClickLocator(s.page, yearIn);
@@ -150,33 +159,28 @@ async function fillCodeBoxes(boxes, code, refusal) {
     await pwIn.waitFor({ state: 'visible' });
     await humanClickLocator(s.page, pwIn);
     await humanType(s.page, id.password);
-    const cfIn = frame
+    // The confirm box is the second new-password field the form shows.
+    const [, cfIn] = await frame
       .locator(
         'input[name="confirmPassword"], input[id="confirmPassword"], input[type="password"][autocomplete="new-password"]',
       )
-      .nth(1);
-    if (await cfIn.count()) {
+      .all();
+    if (cfIn) {
       await humanClickLocator(s.page, cfIn);
       await humanType(s.page, id.password);
     }
 
-    // 6. Phone — Apple requires SMS verification. Use JuicySMS US scoped to apple.
-    const phone = await s.checkSms('apple', 'US');
-    if (phone.startsWith('error'))
-      throw new Error(`apple_sms_unavailable: ${phone}`);
-    const digits = s
-      .resolveEnv('$APPLE_NEW_PHONE')
-      .replace(/^\+\d{1,2}/, '')
-      .replace(/\D/g, '');
+    // 6. Phone — Apple requires SMS verification, in the country its phone
+    // field is set to (../../_shared/inputs/phone.mjs).
     const phoneIn = frame
       .locator(
         'input[name="phoneNumber"], input[type="tel"], input[autocomplete="tel"]',
       )
       .first();
-    if (await phoneIn.count()) {
-      await humanClickLocator(s.page, phoneIn);
-      await humanType(s.page, digits);
-    }
+    await phoneIn.waitFor({ state: 'visible' });
+    const digits = await phoneForField(s, frame, 'apple');
+    await humanClickLocator(s.page, phoneIn);
+    await humanType(s.page, digits);
 
     // 7. Submit
     const submit = frame
@@ -186,15 +190,13 @@ async function fillCodeBoxes(boxes, code, refusal) {
     await humanClickLocator(s.page, submit);
     await humanIdlePause('long');
 
-    // 8. Email OTP
-    const emailCode = await s.checkEmail(id.email, 'apple');
-    if (!/^\d+$/.test(emailCode))
-      throw new Error(`apple_email_otp_failed: ${emailCode}`);
-    const emailCodeBoxes = await frame
-      .locator(
-        'input[id*="email-verification" i], input[aria-label*="verification" i][type="tel"], input[aria-label*="digit" i]',
-      )
-      .all();
+    // 8. Email OTP: one digit per box, as many boxes as the code has digits.
+    const emailBoxes = frame.locator(
+      'input[id*="email-verification" i], input[aria-label*="verification" i][type="tel"], input[aria-label*="digit" i]',
+    );
+    await emailBoxes.first().waitFor({ state: 'visible' });
+    const emailCodeBoxes = await emailBoxes.all();
+    const emailCode = await mailedCode(id.email, 'apple', emailCodeBoxes.length);
     await fillCodeBoxes(
       emailCodeBoxes,
       emailCode,
@@ -237,12 +239,7 @@ async function fillCodeBoxes(boxes, code, refusal) {
       status: 'verified',
     });
     console.log(`PASS: apple ${id.email}`);
-    process.exit(0);
-  } catch (e) {
-    console.log(`FAIL: ${e.message}`);
-    await s
-      .close()
-      .catch((e) => console.log(`[session] close failed: ${e.message}`));
-    process.exit(1);
+  } finally {
+    await s.close();
   }
 }

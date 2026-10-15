@@ -25,7 +25,7 @@ function run(args) {
       err += d.toString();
     });
     child.on('error', reject);
-    child.on('close', (code) => resolve({ code, out, err }));
+    child.on('close', (code, signal) => resolve({ code, signal, out, err }));
   });
 }
 
@@ -39,9 +39,9 @@ console.log(
 const result = await run(args);
 if (result.out) console.log(result.out.trim());
 if (result.err) console.error(result.err.trim());
-if (result.code !== 0) {
+if (result.code === null) throw new Error(`asc ads was ended by ${result.signal} before it finished ${action}`);
+if (result.code) {
+  // asc's own status is the run's: the caller reads it as asc wrote it.
   console.log(`FAIL: asc ads exited ${result.code}`);
-  process.exit(result.code || 1);
-}
-
-console.log(`PASS: Apple Ads ${action} completed`);
+  process.exitCode = result.code;
+} else console.log(`PASS: Apple Ads ${action} completed`);
