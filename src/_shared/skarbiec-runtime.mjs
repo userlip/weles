@@ -7,9 +7,12 @@ import {
   readFileSync,
   statSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, networkInterfaces } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+/** The status of a program that did what it was asked. */
+const EXIT_SUCCESS = 0; // https://pubs.opengroup.org/onlinepubs/9799919799/functions/exit.html EXIT_SUCCESS
 
 function executable(path, label, allowSymlink = false) {
   if (!isAbsolute(path)) throw new Error(`${label} path must be absolute`);
@@ -31,44 +34,59 @@ function executable(path, label, allowSymlink = false) {
   return path;
 }
 
-export function stadoBinary() {
-  const configured = String(
-    process.env.WELES_STADO_BIN || process.env.STADO_BIN || '',
-  ).trim();
-  if (configured) return executable(configured, 'Stado binary', true);
-  let failures;
-  for (const candidate of [
-    join(homedir(), '.stado', 'bin', 'stado'),
-    join(homedir(), '.local', 'bin', 'stado'),
-  ]) {
-    try {
-      return executable(candidate, 'Stado binary', true);
-    } catch (error) {
-      (failures ??= []).push(error.message);
-    }
+/**
+ * The value of an environment variable the caller set, trimmed; `undefined`
+ * when it is unset. A variable set but empty is refused by name: read as
+ * unset, it would send the lookup to the next source.
+ */
+function setting(name) {
+  const value = process.env[name];
+  if (value === undefined) return undefined;
+  if (value.trim() === '') {
+    throw new Error(`${name} is set but empty; name the program or unset it`);
   }
-  throw new Error(
-    `Stado binary is unavailable or not executable:\n${failures.join('\n')}`,
+  return value.trim();
+}
+
+/**
+ * The Stado program: the one WELES_STADO_BIN or STADO_BIN names, else the
+ * one Stado installs into the account's ~/.stado/bin.
+ */
+export function stadoBinary() {
+  const configured = setting('WELES_STADO_BIN') ?? setting('STADO_BIN');
+  if (configured !== undefined)
+    return executable(configured, 'Stado binary', true);
+  return executable(
+    join(homedir(), '.stado', 'bin', 'stado'),
+    'Stado binary installed by Stado',
+    true,
   );
 }
 
+/** Every reason a Stado run gave for failing, in its own words. */
+function said(result) {
+  const reasons = [
+    result.error?.message,
+    result.signal ? `ended by ${result.signal}` : undefined,
+    result.stderr?.trim(),
+    result.stdout?.trim(),
+  ].filter(Boolean);
+  return reasons.length
+    ? reasons.join('\n')
+    : 'Stado wrote nothing on stdout or stderr';
+}
+
 function stadoJson(args, operation) {
+  // A Stado answer is read whole: no size is imposed on it.
   const result = spawnSync(stadoBinary(), args, {
     encoding: 'utf8',
     env: process.env,
-    maxBuffer: 1024 * 1024,
+    maxBuffer: Infinity,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  if (result.error || result.status !== 0) {
-    const detail = [
-      result.error?.message,
-      result.stderr?.trim(),
-      result.stdout?.trim(),
-    ]
-      .filter(Boolean)
-      .join('\n');
+  if (result.error || result.status !== EXIT_SUCCESS) {
     throw new Error(
-      `Stado ${operation} failed (exit ${result.status}, signal ${result.signal ?? 'none'}): ${detail || 'no diagnostic output'}`,
+      `Stado ${operation} failed (exit ${result.status}): ${said(result)}`,
     );
   }
   try {
@@ -80,10 +98,15 @@ function stadoJson(args, operation) {
   }
 }
 
+/** A lowercase hex SHA-256 digest, as long as the digest is. */
+const digestLength = createHash('sha256').digest('hex').length;
 const exactDigest = (value) =>
-  typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  typeof value === 'string' &&
+  value.length === digestLength &&
+  /^[\da-f]+$/.test(value);
+/** A name Stado gives a target, version or platform: no separators or spaces. */
 const exactName = (value) =>
-  typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$/.test(value);
+  typeof value === 'string' && /^[A-Za-z\d][\w.-]*$/.test(value);
 const sameKeys = (value, keys) =>
   value &&
   typeof value === 'object' &&
@@ -151,8 +174,8 @@ function declaredProgram(active) {
 
 export function activeSkarbiecBinary() {
   // The managed launcher already resolved this executable through Stado.
-  const inherited = String(process.env.SKARBIEC_BIN || '').trim();
-  if (inherited)
+  const inherited = setting('SKARBIEC_BIN');
+  if (inherited !== undefined)
     return executable(inherited, 'launcher-provided Skarbiec binary');
   const active = stadoJson(
     ['release', 'active', 'binary', 'skarbiec', '--json'],
@@ -167,6 +190,18 @@ export function activeSkarbiecBinary() {
   );
 }
 
+/**
+ * Whether `hostname` is an address this machine holds on its loopback
+ * interface, as the system reports its interfaces (internal ones are the
+ * loopback). A name is not resolved to decide it.
+ */
+function loopbackAddress(hostname) {
+  const address = hostname.replace(/^\[|\]$/g, '');
+  return Object.values(networkInterfaces())
+    .flat()
+    .some((entry) => entry.internal && entry.address === address);
+}
+
 export function skarbiecDirectoryEndpoint() {
   const record = stadoJson(
     ['service', 'directory', 'endpoint', 'skarbiec', '--json'],
@@ -177,22 +212,21 @@ export function skarbiecDirectoryEndpoint() {
     typeof record?.url !== 'string' ||
     !record.url
   ) {
-    throw new Error('Stado service directory has no Skarbiec endpoint');
+    throw new Error(
+      `Stado service directory has no Skarbiec endpoint: ${JSON.stringify(record)}`,
+    );
   }
   let endpoint;
   try {
     endpoint = new URL(record.url);
-  } catch {
+  } catch (error) {
     throw new Error(
-      'Stado service directory returned an invalid Skarbiec endpoint',
+      `Stado service directory returned an invalid Skarbiec endpoint ${JSON.stringify(record.url)}: ${error.message}`,
+      { cause: error },
     );
   }
-  const loopback = new Set(['localhost', '127.0.0.1', '::1', '[::1]']).has(
-    endpoint.hostname,
-  );
   if (
-    (endpoint.protocol !== 'https:' &&
-      !(loopback && endpoint.protocol === 'http:')) ||
+    (endpoint.protocol !== 'https:' && !loopbackAddress(endpoint.hostname)) ||
     endpoint.username ||
     endpoint.password ||
     endpoint.search ||
@@ -200,7 +234,7 @@ export function skarbiecDirectoryEndpoint() {
     (endpoint.pathname !== '/' && endpoint.pathname !== '')
   ) {
     throw new Error(
-      'Stado service directory returned an unsafe Skarbiec endpoint',
+      `Stado service directory returned an unsafe Skarbiec endpoint ${JSON.stringify(record.url)}: it must be HTTPS or on a loopback address of this machine, with no credentials, path, query or fragment`,
     );
   }
   return endpoint.toString().replace(/\/$/, '');
@@ -219,18 +253,27 @@ export function sharedCapabilitySocket() {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const host = self.stdout?.trim();
-  if (self.error || self.status !== 0 || !host) {
+  if (self.error || self.status !== EXIT_SUCCESS || !host) {
     throw new Error(
-      `Stado could not name this host's registry target (exit ${self.status}): ${[self.error?.message, self.stderr?.trim()].filter(Boolean).join('\n') || 'no diagnostic output'}`,
+      `Stado could not name this host's registry target (exit ${self.status}): ${said(self)}`,
     );
   }
   const units = stadoJson(
     ['service', 'env', 'show', 'skarbiec', '--host', host, '--json'],
     `Skarbiec unit environment on ${host}`,
   );
-  const socket = Array.isArray(units)
-    ? units[0]?.environment?.SKARBIEC_CAP_SOCKET
-    : undefined;
+  if (!Array.isArray(units)) {
+    throw new Error(
+      `Stado's Skarbiec unit environment on ${host} is not a list of units: ${JSON.stringify(units)}`,
+    );
+  }
+  const [unit, ...others] = units;
+  if (unit === undefined || others.length) {
+    throw new Error(
+      `Stado declares ${units.length} Skarbiec units on ${host}; the capability socket is read from exactly one`,
+    );
+  }
+  const socket = unit.environment?.SKARBIEC_CAP_SOCKET;
   if (typeof socket !== 'string' || !isAbsolute(socket)) {
     throw new Error(
       `Stado declares no absolute SKARBIEC_CAP_SOCKET for the Skarbiec unit on ${host}`,
@@ -239,11 +282,8 @@ export function sharedCapabilitySocket() {
   return socket;
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
-  const action = process.argv[2];
+const [, script, action] = process.argv;
+if (script && import.meta.url === pathToFileURL(script).href) {
   if (action === 'active-binary') process.stdout.write(activeSkarbiecBinary());
   else if (action === 'endpoint')
     process.stdout.write(skarbiecDirectoryEndpoint());
