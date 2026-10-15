@@ -46,6 +46,7 @@ try {
       'repo-prefix': { type: 'string' },
       'repo-description': { type: 'string' },
       'existing-repo': { type: 'string' },
+      branch: { type: 'string' },
       'file-path': { type: 'string' },
       'append-prefix': { type: 'string' },
       'commit-message': { type: 'string' },
@@ -56,6 +57,7 @@ try {
     'repo-prefix',
     'repo-description',
     'existing-repo',
+    'branch',
     'file-path',
     'append-prefix',
     'commit-message',
@@ -72,6 +74,7 @@ try {
     created_name: createdName,
     description: values['repo-description'],
     existing_repo: values['existing-repo'],
+    branch: values.branch,
     file_path: values['file-path'],
     append,
     commit_message: values['commit-message'],
@@ -89,18 +92,27 @@ try {
     [
       'github_create_repo',
       { repo_name: 'not a name', repo_desc: values['repo-description'] },
-      'REPO_NAME contains unsupported characters',
+      'holds characters GitHub does not take',
     ],
     ['github_commit', {}, 'none of REPO_URL is set'],
     [
       'github_commit',
       { repo_url: `${values.owner}/${values['existing-repo']}` },
+      'none of COMMIT_BRANCH is set',
+    ],
+    [
+      'github_commit',
+      {
+        repo_url: `${values.owner}/${values['existing-repo']}`,
+        commit_branch: values.branch,
+      },
       'none of FILE_PATH is set',
     ],
     [
       'github_commit',
       {
         repo_url: `${values.owner}/${values['existing-repo']}`,
+        commit_branch: values.branch,
         file_path: values['file-path'],
       },
       'none of COMMIT_MESSAGE is set',
@@ -109,6 +121,7 @@ try {
       'github_commit',
       {
         repo_url: `${values.owner}/${values['existing-repo']}`,
+        commit_branch: values.branch,
         file_path: values['file-path'],
         commit_message: values['commit-message'],
       },
@@ -118,6 +131,7 @@ try {
       'github_commit',
       {
         repo_url: 'https://example.invalid/owner/repo',
+        commit_branch: values.branch,
         file_path: values['file-path'],
         commit_message: values['commit-message'],
         file_append: append,
@@ -160,6 +174,7 @@ try {
   const existing = `${values.owner}/${values['existing-repo']}`;
   const committed = await run('github_commit', {
     repo_url: existing,
+    commit_branch: values.branch,
     file_path: values['file-path'],
     file_append: append,
     commit_message: values['commit-message'],
@@ -168,15 +183,17 @@ try {
   assert.equal(committed.ok, true, JSON.stringify(committed));
   assert.ok(
     committed.stdout_tail.includes(
-      `PASS: committed to https://github.com/${existing}/${values['file-path']}`,
+      `PASS: committed to https://github.com/${existing}/${values['file-path']} on ${values.branch}`,
     ),
   );
-  const file = await github(`/repos/${existing}/contents/${values['file-path']}`);
+  const file = await github(
+    `/repos/${existing}/contents/${values['file-path']}?ref=${encodeURIComponent(values.branch)}`,
+  );
   assert.ok(
     Buffer.from(file.content, 'base64').toString('utf8').endsWith(append),
   );
   const commits = await github(
-    `/repos/${existing}/commits?path=${encodeURIComponent(values['file-path'])}`,
+    `/repos/${existing}/commits?sha=${encodeURIComponent(values.branch)}&path=${encodeURIComponent(values['file-path'])}`,
   );
   const latest = commits.shift();
   assert.equal(latest?.commit?.message, values['commit-message']);

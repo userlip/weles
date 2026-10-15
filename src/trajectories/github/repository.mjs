@@ -10,11 +10,27 @@ import { pageSettled } from '../_shared/page/settled.mjs';
 export const GITHUB_ORIGIN = 'https://github.com';
 const SEARCH_ROUTE = '/search';
 
-/** A repository stated as owner/repo or as its URL. */
+/**
+ * A repository stated as owner/repo or as its github.com address, as its
+ * https://github.com/<owner>/<repo> page. Anything else is refused.
+ */
 export function repositoryUrl(raw) {
-  if (URL.canParse(raw)) return raw;
-  if (/^[\w.-]+\/[\w.-]+$/.test(raw)) return `${GITHUB_ORIGIN}/${raw}`;
-  throw new Error(`REPO_URL "${raw}" is neither owner/repo nor a URL`);
+  const address = URL.canParse(raw)
+    ? new URL(raw)
+    : new URL(raw.replace(/^\/+/, ''), `${GITHUB_ORIGIN}/`);
+  const [owner, repo, ...beyond] = address.pathname.split('/').filter(Boolean);
+  if (
+    address.origin !== GITHUB_ORIGIN ||
+    address.username ||
+    address.password ||
+    !owner ||
+    !repo ||
+    beyond.length
+  )
+    throw new Error(
+      `REPO_URL must name a GitHub repository as owner/repo or https://github.com/owner/repo, not "${raw}"`,
+    );
+  return `${GITHUB_ORIGIN}/${owner}/${repo}`;
 }
 
 /** The action-runner config fields that land on the stated repository. */

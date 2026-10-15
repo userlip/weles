@@ -22,7 +22,7 @@ const ISSUE_TITLE = statedText(['ISSUE_TITLE'], "the issue's title");
 const ISSUE_BODY = statedText(['ISSUE_BODY'], "the issue's body");
 const repoBase = repositoryUrl(
   statedText(['REPO_URL'], 'the repository the issue is opened on'),
-).replace(/\/$/, '');
+);
 
 await runAction({
   platform: 'github',

@@ -27,7 +27,7 @@ const repoBase = repositoryUrl(
     ['REPO_URL'],
     'the GitHub repository (URL or owner/name) the commit goes to',
   ),
-).replace(/\/$/, '');
+);
 const BRANCH = statedText(['COMMIT_BRANCH'], 'the branch the commit lands on');
 const FILE_PATH = statedText(
   ['FILE_PATH'],
