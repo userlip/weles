@@ -1,11 +1,8 @@
-// Which vault account performs this scan and how much it has left today. The
-// daily usage ledger and the account choice live together because the choice
-// reads exactly the ledger the recording writes, so two files could never
-// disagree about what an exhausted account means.
-
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+// Which vault account performs this scan. The pool is every Pangram account
+// in Skarbiec (or the one ACCOUNT_ID names), minus those Pangram said are out
+// of credits today, least-used first and newest first among equals, read
+// from the same daily ledger the recording writes (usage_ledger.mjs). An
+// account that cannot scan now is a named rejection, never a swallowed error.
 import {
   getSocialAccount,
   markCookiesStale,
@@ -18,187 +15,67 @@ import {
 } from '../../../_shared/auth/cookie-freshness.mjs';
 import { listAccounts } from '../../../_shared/skarbiec/accounts.mjs';
 import { statedCount } from '../../../_shared/inputs/stated.mjs';
+import {
+  accountDomain,
+  accountKey,
+  exhaustedToday,
+  readUsageLedger,
+  scansToday,
+} from './usage_ledger.mjs';
 
-export function todayKey() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-// The ledger key of one account. An account with neither an id nor a
-// username is refused: keyed "unknown", every such account shared one
-// ledger entry, so one exhausted account read as all of them exhausted.
-function accountKey(acct) {
-  const key = acct?.id || acct?.username;
-  if (!key)
-    throw new Error(
-      'pangram_account_unidentified: an account in the pool has neither an id nor a username',
-    );
-  return String(key);
-}
-
-function accountDomain(acct) {
-  const raw = String(acct?.metadata?.email || acct?.username || '');
-  const hit = raw.toLowerCase().match(/@([^>\s]+)/);
-  return hit ? hit[1] : null;
-}
-
-// Under the user's home (HOME, else the user database): the working directory
-// gave every run started elsewhere an empty ledger, so exhausted accounts read
-// as fresh.
-function usageLedgerPath() {
-  return (
-    process.env.PANGRAM_ACCOUNT_USAGE_FILE ||
-    join(homedir(), '.weles', 'pangram-account-usage.json')
-  );
-}
-
-// A ledger that does not exist is an empty one. Any other read failure is
-// thrown with its path: `existsSync` answers false for a ledger it cannot
-// reach, and every exhausted account then read as fresh.
-function readUsageLedger() {
-  const path = usageLedgerPath();
-  let text;
-  try {
-    text = readFileSync(path, 'utf8');
-  } catch (error) {
-    if (error?.code === 'ENOENT') return {};
-    throw new Error(
-      `cannot read the Pangram account usage ledger ${path}: ${error.message}`,
-    );
-  }
-  const parsed = JSON.parse(text);
-  return parsed && typeof parsed === 'object' ? parsed : {};
-}
-
-function writeUsageLedger(ledger) {
-  const path = usageLedgerPath();
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(ledger, null, 2));
-}
-
-// An account is out for the day when Pangram itself said it has no credits
-// left (markAccountExhausted); no per-account scan count is chosen here.
-function exhaustedToday(ledger, acct) {
-  return Boolean(ledger?.[todayKey()]?.[accountKey(acct)]?.exhausted);
-}
-
-function usageCount(ledger, acct) {
-  return Number(ledger?.[todayKey()]?.[accountKey(acct)]?.scan_attempts || 0);
-}
-
-export function recordAccountUse(acct, stats, pool) {
-  if (!acct) return null;
-  const ledger = readUsageLedger();
-  const day = todayKey();
-  ledger[day] = ledger[day] || {};
-  const key = accountKey(acct);
-  const prev = ledger[day][key] || {};
-  ledger[day][key] = {
-    account_id: acct.id ?? null,
-    username: acct.username ?? null,
-    domain: accountDomain(acct),
-    scan_attempts: Number(prev.scan_attempts || 0) + 1,
-    last_input_sha256: stats.sha256,
-    last_used_at: new Date().toISOString(),
-    pool_available_before_run: pool?.available_count ?? null,
-  };
-  writeUsageLedger(ledger);
-  return ledger[day][key];
-}
-
-export function markAccountExhausted(
-  acct,
-  stats,
-  pool,
-  reason,
-  creditState = null,
-) {
-  if (!acct) return null;
-  const ledger = readUsageLedger();
-  const day = todayKey();
-  ledger[day] = ledger[day] || {};
-  const key = accountKey(acct);
-  const prev = ledger[day][key] || {};
-  ledger[day][key] = {
-    ...prev,
-    account_id: acct.id ?? null,
-    username: acct.username ?? null,
-    domain: accountDomain(acct),
-    exhausted: true,
-    exhausted_reason: reason,
-    credit_state: creditState,
-    last_input_sha256: stats.sha256,
-    last_used_at: new Date().toISOString(),
-    pool_available_before_run: pool?.available_count ?? null,
-  };
-  writeUsageLedger(ledger);
-  return ledger[day][key];
-}
-
+/** How many accounts of the pool have each mail domain. */
 function domainSummary(accounts) {
   const counts = {};
-  for (const acct of accounts || []) {
-    const domain = accountDomain(acct) === null ? 'without_email_domain' : accountDomain(acct);
-    counts[domain] = (counts[domain] || 0) + 1;
+  for (const acct of accounts) {
+    const domain = accountDomain(acct);
+    const name = domain === null ? 'without_email_domain' : domain;
+    counts[name] = Object.hasOwn(counts, name) ? counts[name] : Number();
+    counts[name]++;
   }
   return counts;
 }
 
-async function fetchActivePangramAccounts() {
+// Every account is considered unless the run caps the pool itself.
+function activePangramAccounts() {
   const accounts = listAccounts('pangram');
   const accountId = process.env.ACCOUNT_ID?.trim();
-  const selected = accountId
-    ? accounts.filter((account) => account.id === accountId)
-    : accounts;
-  // Every account is considered unless the run caps the pool itself; a cap
-  // nobody stated left every account past the hundredth unused.
+  const selected = accountId ? accounts.filter((account) => account.id === accountId) : accounts;
   const limit =
     process.env.PANGRAM_ACCOUNT_POOL_LIMIT === undefined
       ? selected.length
-      : statedCount(
-          'PANGRAM_ACCOUNT_POOL_LIMIT',
-          'how many Pangram accounts the rotation considers',
-        );
-  return {
-    accounts: selected.slice(0, limit).map((account) => ({
-      ...account,
-      created_at: account.document.context?.created_at ?? null,
-    })),
-    reason: selected.length ? null : 'no_account',
-  };
+      : statedCount('PANGRAM_ACCOUNT_POOL_LIMIT', 'how many Pangram accounts the rotation considers');
+  return selected.slice(Number(), limit).map((account) => ({
+    ...account,
+    created_at: account.document.context?.created_at,
+  }));
 }
 
 function createdAtMillis(acct) {
-  const raw = acct.created_at;
-  if (!raw) return null;
-  const parsed = Date.parse(raw);
+  if (!acct.created_at) return null;
+  const parsed = Date.parse(acct.created_at);
   if (Number.isNaN(parsed))
     throw new Error(
-      `pangram_account_created_at_unreadable account=${accountKey(acct)} value=${String(raw)}`,
+      `pangram_account_created_at_unreadable account=${accountKey(acct)} value=${String(acct.created_at)}`,
     );
   return parsed;
 }
 
-function sortCandidatesByUsage(accounts, ledger) {
-  return [...accounts].sort((a, b) => {
-    const usageDelta = usageCount(ledger, a) - usageCount(ledger, b);
-    if (usageDelta !== 0) return usageDelta;
+// Least scans today first; among equals the newest account, and an account
+// whose creation is unrecorded after every dated one.
+function byUsage(ledger) {
+  return (a, b) => {
+    const usage = scansToday(ledger, a) - scansToday(ledger, b);
+    if (usage) return usage;
     const createdA = createdAtMillis(a);
     const createdB = createdAtMillis(b);
-    if (createdA === null && createdB === null) return 0;
-    if (createdA === null) return 1;
-    if (createdB === null) return -1;
+    const undated = (createdA === null) - (createdB === null);
+    if (undated || createdA === null) return undated;
     return createdB - createdA;
-  });
+  };
 }
 
-async function selectSingleConfiguredAccount() {
-  const acct = await getSocialAccount('pangram');
-  if (!acct)
-    return {
-      account: null,
-      reason: 'no_account',
-      pool: { available_count: 0, total_accounts: 0 },
-    };
+/** The account the run uses with its fresh session, or why it cannot scan now. */
+async function prepare(acct) {
   const sessionOpts = await resolveAccountSession(acct);
   const cookies = loadFreshCookieJarOrFail(acct, {
     platform: 'pangram',
@@ -206,88 +83,74 @@ async function selectSingleConfiguredAccount() {
     currentProxyUrl: sessionOpts.proxyUrl,
     currentPersona: sessionOpts.persona,
   });
+  return { sessionOpts, cookies };
+}
+
+/** Why `acct` cannot scan now: a stale jar is flagged on the account; any other failure is the run's. */
+async function rejection(acct, error) {
+  if (!(error instanceof CookieJarStaleError)) throw error;
+  if (acct.id) {
+    try {
+      await markCookiesStale(acct.id);
+    } catch (markError) {
+      throw new Error(
+        `pangram account ${accountKey(acct)} cannot scan: ${error.message}; and its cookie jar stayed unmarked: ${markError.message}`,
+        { cause: error },
+      );
+    }
+  }
+  return { account_id: acct.id, username: acct.username, reason: error.details.reason };
+}
+
+async function selectSingleConfiguredAccount() {
+  const acct = await getSocialAccount('pangram');
+  if (!acct) return { account: null, reason: 'no_account', pool: { available_count: Number(), total_accounts: Number() } };
+  const accounts = [acct];
   return {
     account: acct,
-    sessionOpts,
-    cookies,
+    ...(await prepare(acct)),
     reason: null,
-    pool: { available_count: 1, total_accounts: 1 },
+    pool: { available_count: accounts.length, total_accounts: accounts.length },
   };
 }
 
-// An account of the pool either can scan now or it cannot, and "cannot" is a
-// named answer of this module rather than a swallowed error: the reason is
-// recorded in the rejection evidence and a stale jar is flagged on the account.
-async function prepareCandidateAccount(acct) {
-  try {
-    const sessionOpts = await resolveAccountSession(acct);
-    const cookies = loadFreshCookieJarOrFail(acct, {
-      platform: 'pangram',
-      label: LABEL,
-      currentProxyUrl: sessionOpts.proxyUrl,
-      currentPersona: sessionOpts.persona,
-    });
-    return { usable: true, sessionOpts, cookies };
-  } catch (err) {
-    const reason =
-      err instanceof CookieJarStaleError
-        ? err.details?.reason || 'stale_cookies'
-        : err.message || 'account_unusable';
-    if (err instanceof CookieJarStaleError && acct.id) {
-      try {
-        await markCookiesStale(acct.id);
-      } catch (markError) {
-        throw new Error(
-          `pangram account ${accountKey(acct)} cannot scan: ${err.message}; and its cookie jar stayed unmarked: ${markError.message}`,
-          { cause: err },
-        );
-      }
-    }
-    return { usable: false, reason: String(reason) };
-  }
-}
-
 export async function selectPangramAccountForRun() {
-  if (process.env.PANGRAM_ACCOUNT_ROTATION === '0')
-    return selectSingleConfiguredAccount();
+  if (process.env.PANGRAM_ACCOUNT_ROTATION === '0') return selectSingleConfiguredAccount();
 
-  const fetched = await fetchActivePangramAccounts();
+  const accounts = activePangramAccounts();
   const ledger = readUsageLedger();
-  const accounts = fetched.accounts || [];
   const available = accounts.filter((acct) => !exhaustedToday(ledger, acct));
-  const ordered = sortCandidatesByUsage(available, ledger);
+  const ordered = [...available].sort(byUsage(ledger));
   const rejected = [];
 
   for (const acct of ordered) {
-    const prepared = await prepareCandidateAccount(acct);
-    if (prepared.usable) {
-      return {
-        account: acct,
-        sessionOpts: prepared.sessionOpts,
-        cookies: prepared.cookies,
-        reason: null,
-        pool: {
-          total_accounts: accounts.length,
-          available_count: ordered.length,
-          rejected_count: rejected.length,
-          selected_usage_before_run: usageCount(ledger, acct),
-          domains: domainSummary(accounts),
-        },
-      };
+    let prepared;
+    try {
+      prepared = await prepare(acct);
+    } catch (error) {
+      rejected.push(await rejection(acct, error));
+      continue;
     }
-    rejected.push({
-      account_id: acct.id ?? null,
-      username: acct.username ?? null,
-      reason: prepared.reason,
-    });
+    return {
+      account: acct,
+      ...prepared,
+      reason: null,
+      pool: {
+        total_accounts: accounts.length,
+        available_count: ordered.length,
+        rejected_count: rejected.length,
+        selected_usage_before_run: scansToday(ledger, acct),
+        domains: domainSummary(accounts),
+      },
+    };
   }
 
-  const exhaustedByUsage = accounts.length > 0 && available.length === 0;
+  let reason = 'no_fresh_account';
+  if (!accounts.length) reason = 'no_account';
+  else if (!available.length) reason = 'quota_exhausted';
   return {
     account: null,
-    reason: exhaustedByUsage
-      ? 'quota_exhausted'
-      : fetched.reason || 'no_fresh_account',
+    reason,
     pool: {
       total_accounts: accounts.length,
       available_count: ordered.length,

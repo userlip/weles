@@ -13,7 +13,8 @@ import { authRequiredState, collectResult } from './verdict_reading.mjs';
 import { clickAnalyze, dismissCookieBanner, fillInput, readVisibleCreditState } from './dashboard/scan_form.mjs';
 import { waitForPublicVerificationIfNeeded } from './dashboard/human_verification.mjs';
 import { injectCookies } from './account/cookies.mjs';
-import { markAccountExhausted, recordAccountUse, selectPangramAccountForRun } from './account/pool_rotation.mjs';
+import { selectPangramAccountForRun } from './account/pool_rotation.mjs';
+import { markAccountExhausted, recordAccountUse } from './account/usage_ledger.mjs';
 import {
   autoRegisterCountToday,
   autoRegisterPangramAccount,
