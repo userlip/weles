@@ -25,11 +25,9 @@ import {
 import { detectInstagramBanSignals } from '../../../../dist/platforms/instagram/ban_signals.js';
 import { generatePost } from '../../_shared/content/llm.mjs';
 import { generateImageFile } from '../../_shared/content/media.mjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
 import { banSignalOf, HEALTH_UNREAD } from '../../_shared/auth/ban-signal.mjs';
-import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { keepVerdict } from '../../_shared/action/verdict.mjs';
 import {
   accountCharacter,
   findAccount,
@@ -89,26 +87,12 @@ const imagePath = await generateImageFile({
 });
 console.log(`[instagram:${ACTION}] image file: ${imagePath}`);
 
-/** Write the run's ban signal beside its recordings; a failed write throws. */
+/** Keep the run's verdict through the shared writer; a failed write throws. */
 function persistBanSignal(signal) {
-  const dir = runRecordingsDir(`instagram_${ACTION}`);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, 'ban_signal.json'),
-    JSON.stringify(
-      {
-        account_id: acct.id,
-        username: acct.username,
-        action: `instagram_${ACTION}`,
-        character: character.name,
-        product: product?.name,
-        ...signal,
-        ts: new Date().toISOString(),
-      },
-      null,
-      '  ',
-    ),
-  );
+  return keepVerdict(`instagram_${ACTION}`, acct, signal, {
+    character: character.name,
+    product: product?.name,
+  });
 }
 
 const { proxyUrl, persona } = await resolveAccountSession(acct);
@@ -229,7 +213,7 @@ try {
       ),
       { banSignal },
     );
-  persistBanSignal(banSignal);
+  await persistBanSignal(banSignal);
   console.log(`[ban-signal] ${banSignal.signal}  PASS: posted`);
 } catch (e) {
   const banSignal = e.banSignal
@@ -237,7 +221,7 @@ try {
     : await banSignalOf(detectInstagramBanSignals, s, 'after the failure');
   console.log(`[ban-signal] ${banSignal.signal}  FAIL: ${e.message}`);
   try {
-    persistBanSignal(banSignal);
+    await persistBanSignal(banSignal);
   } catch (writeError) {
     throw new AggregateError(
       [e, writeError],
