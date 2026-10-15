@@ -5,6 +5,7 @@ import { clickOffered } from '../page/judged/seen.mjs';
 import { getServiceLogin } from '../../../../dist/utils/credentials.js';
 import { googleSso, getGoogleSsoCreds } from '../services/google_sso.mjs';
 import { UMAMI_BASE, GA_BASE } from './action-catalog.mjs';
+import { onGoogleSignIn } from '../profile/google_session.mjs';
 import {
   pageSettled,
   responseAfterAction,
@@ -87,7 +88,7 @@ async function clickGoogleAccountIfVisible(page, email) {
     .or(page.getByText(email, { exact: true }))
     .filter({ visible: true })
     .first();
-  if (await tile.isVisible().catch(() => false)) {
+  if (await tile.isVisible()) {
     await humanClickLocator(page, tile);
     await pageSettled(page);
     return true;
@@ -98,19 +99,20 @@ async function clickGoogleAccountIfVisible(page, email) {
 async function googleAnalyticsLogin(s) {
   await s.goto(GA_BASE);
   await pageSettled(s.page);
-  let creds =
+  const creds =
     (await getServiceLogin('Google Analytics')) ?? (await getGoogleSsoCreds());
-  const onGoogleSignIn = () =>
-    new URL(s.page.url()).hostname === 'accounts.google.com';
-  if (!onGoogleSignIn() && (await clickOffered(s.page, 'the link to sign in')))
+  if (
+    !onGoogleSignIn(s.page.url()) &&
+    (await clickOffered(s.page, 'the link to sign in'))
+  )
     await pageSettled(s.page);
-  if (onGoogleSignIn()) {
+  if (onGoogleSignIn(s.page.url())) {
     if (!creds)
       throw new Error(
         'no Google Analytics credentials: set service_credentials display_name=Google Analytics or shared Google SSO credentials',
       );
     await clickGoogleAccountIfVisible(s.page, creds.email);
-    if (onGoogleSignIn()) {
+    if (onGoogleSignIn(s.page.url())) {
       const ok = await googleSso(s, creds, {
         originHost: 'analytics.google.com',
       });

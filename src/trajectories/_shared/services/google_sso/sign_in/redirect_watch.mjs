@@ -22,7 +22,12 @@ import {
   clickTryAnotherWay,
   handleGoogleAuthenticatorTotp,
 } from '../authenticator_challenge.mjs';
+import { onGoogleSignIn } from '../../../profile/google_session.mjs';
 
+/** Google's device prompt: approval on the account owner's phone. */
+const DEVICE_PROMPT_ROUTE = '/signin/challenge/dp';
+/** Google's list of second-factor methods. */
+const METHOD_SELECTION_ROUTE = '/signin/challenge/selection';
 /** Google's OAuth consent screens. */
 const CONSENT_ROUTES = ['/signin/oauth/consent', '/signin/oauth/id'];
 /** Google's security challenges this driver does not answer. */
@@ -82,7 +87,7 @@ export async function watchGoogleRedirect(page, session, creds, opts) {
     // not by typing the next one into the same challenge.
     if (
       !totpAttempted &&
-      /signin\/challenge\/selection/.test(u) &&
+      onRoute(u, [METHOD_SELECTION_ROUTE]) &&
       resolveTotpSecret(creds)
     ) {
       if (await handleGoogleAuthenticatorTotp(page, creds)) {
@@ -118,7 +123,7 @@ export async function watchGoogleRedirect(page, session, creds, opts) {
       );
       return false;
     }
-    if (/signin\/challenge\/dp/.test(u)) {
+    if (onRoute(u, [DEVICE_PROMPT_ROUTE])) {
       await logGooglePageDiag(page, 'device_prompt_waiting');
       if (resolveTotpSecret(creds)) {
         const switchedMethod = await clickTryAnotherWay(page);
@@ -146,15 +151,15 @@ export async function watchGoogleRedirect(page, session, creds, opts) {
       console.log('[google_sso] waiting for Google device prompt approval');
       const promptUrl = await urlMatching(
         page,
-        (next) => !/signin\/challenge\/dp/.test(next),
+        (next) => !onRoute(next, [DEVICE_PROMPT_ROUTE]),
       );
-      if (!/accounts\.google\.com/.test(promptUrl)) {
+      if (!onGoogleSignIn(promptUrl)) {
         console.log(
           `[google_sso] device prompt approved; redirected to ${promptUrl}`,
         );
         return true;
       }
-      if (/signin\/challenge\/dp|challenge\/selection/.test(promptUrl)) {
+      if (onRoute(promptUrl, [DEVICE_PROMPT_ROUTE, METHOD_SELECTION_ROUTE])) {
         await logGooglePageDiag(page, 'device_prompt_not_approved');
         if (await clickTryAnotherWay(page)) {
           const methods = await collectGoogleAuthMethods(page);
@@ -180,13 +185,13 @@ export async function watchGoogleRedirect(page, session, creds, opts) {
       continue;
     }
     // Off Google and on the caller's host: the popup or page came back.
-    if (!/accounts\.google\.com/.test(u) && onOrigin(u, originHost)) {
+    if (!onGoogleSignIn(u) && onOrigin(u, originHost)) {
       console.log(
         `[google_sso] ${isPopup ? 'popup' : 'main page'} reached ${originHost}`,
       );
       return true;
     }
-    if (!isPopup && !originHost && !/accounts\.google\.com/.test(u)) {
+    if (!isPopup && !originHost && !onGoogleSignIn(u)) {
       console.log(`[google_sso] redirected off google to ${u}`);
       return true;
     }
@@ -229,7 +234,7 @@ export async function dismissGooglePostLogin(page) {
   for (;;) {
     await pageSettled(page);
     const url = page.url();
-    if (new URL(url).hostname !== 'accounts.google.com') return;
+    if (!onGoogleSignIn(url)) return;
     if (dismissed.has(url)) {
       throw new Error(
         `GOOGLE_POST_LOGIN_STATE_REPEATED: the dismissed offer remained at ${url}`,
