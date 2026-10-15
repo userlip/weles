@@ -21,7 +21,7 @@ export {
   wsFillCredential,
   wsFillIdentity,
 } from './close/credential_fill.js';
-export { wsCheckEmail, wsSaveAccount } from './close/account_record.js';
+export { wsNewestMail, wsSaveAccount } from './close/account_record.js';
 export { wsClose } from './close/session_close.js';
 export { wsFill } from './close/page_fill.js';
 

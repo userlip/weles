@@ -1,8 +1,8 @@
-// Real Skrzynka: a session's check_email reads the code from the mail
-// Skrzynka holds for an address, not from the mail provider. Requires the
-// skrzynka program, an isolated organization whose mailbox already holds a
-// message to --recipient from a sender containing --sender that carries
-// --code, and an address of that organization with no mail (--empty).
+// Real Skrzynka: a session's check_email answers the newest mail Skrzynka
+// holds for an address (its sender, subject and text), not the mail
+// provider's copy. Requires the skrzynka program and an isolated
+// organization whose mailbox already holds a message to --recipient from a
+// sender containing --sender that carries --code.
 // Run after building Weles (dist/); the session object carries only the
 // placeholder resolution check_email uses, the mail path is the real one.
 import assert from 'node:assert/strict';
@@ -18,19 +18,11 @@ const { values } = parseArgs({
     recipient: { type: 'string' },
     sender: { type: 'string' },
     code: { type: 'string' },
-    empty: { type: 'string' },
   },
 });
 const session = { resolveEnv: (value) => value };
 try {
-  for (const name of [
-    'skrzynka',
-    'organization',
-    'recipient',
-    'sender',
-    'code',
-    'empty',
-  ])
+  for (const name of ['skrzynka', 'organization', 'recipient', 'sender', 'code'])
     assert.ok(values[name]?.trim(), `--${name} is required`);
   const stored = JSON.parse(
     command(values.skrzynka, [
@@ -48,31 +40,22 @@ try {
     stored.some((message) => message.body_text.includes(values.code)),
     `Skrzynka holds no message to ${values.recipient} carrying the fixture code`,
   );
-  const { wsCheckEmail } = await import(
-    '../../dist/session/wsession-helpers/close/account_record.js'
-  );
+  const { wsNewestMail } = await import('../../dist/session/wsession-helpers/close/account_record.js');
   process.env.WELES_SKRZYNKA_BIN = values.skrzynka;
 
   delete process.env.WELES_SKRZYNKA_ORGANIZATION;
-  const unconfigured = await wsCheckEmail(
-    session,
-    values.recipient,
-    values.sender,
+  await assert.rejects(
+    wsNewestMail(session, values.recipient, values.sender),
+    /WELES_SKRZYNKA_ORGANIZATION names no Skrzynka organization/,
   );
-  report.operations.push({ check_email: 'unconfigured', answer: unconfigured });
-  assert.match(
-    unconfigured,
-    /^error: WELES_SKRZYNKA_ORGANIZATION names no Skrzynka organization/,
-  );
+  report.operations.push({ check_email: 'unconfigured', refused: true });
 
   process.env.WELES_SKRZYNKA_ORGANIZATION = values.organization;
-  const read = await wsCheckEmail(session, values.recipient, values.sender);
+  const read = await wsNewestMail(session, values.recipient, values.sender);
   report.operations.push({ check_email: 'stored', answer: read });
-  assert.equal(read, values.code, 'check_email answers the stored code');
-
-  const none = await wsCheckEmail(session, values.empty, values.sender);
-  report.operations.push({ check_email: 'empty', answer: none });
-  assert.match(none, /^no email .* has arrived at /);
+  const [newest] = stored;
+  assert.ok(read.includes(`Subject: ${newest.subject}`), 'check_email answers the newest mail with its subject');
+  assert.ok(read.includes(values.code), 'check_email answers the mail text that carries the code');
 
   report.status = 'passed';
 } catch (error) {

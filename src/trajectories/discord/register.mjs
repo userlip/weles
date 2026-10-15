@@ -1,299 +1,208 @@
-import { pageCondition, pageSettled } from '../_shared/page/settled.mjs';
-import { solverTaskResult } from '../_shared/captcha/solver_task.mjs';
+// Discord registration on one sticky exit. The form is filled like a person
+// fills it; the submit's captcha challenge (an enterprise hCaptcha Discord's
+// /auth/register answer carries, which the session intercepts) is solved by
+// the first solving service whose key is configured, its token read once the
+// task is solved, and the registration is sent again with it from the page.
+// An exit Discord flags for hCaptcha rejects every solver token: that exit is
+// marked burned (resolveProxy skips burned IPs) and the run fails naming it,
+// so the next run starts on a fresh exit. After the account is saved, the
+// verify link of Discord's verification mail is opened once the mail arrives.
+import { lookup } from 'node:dns/promises';
+import { networkInterfaces } from 'node:os';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 import { WSession } from '../../../dist/session/wsession.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { humanFill } from '../../../dist/human/keyboard.js';
+// burned.js is CommonJS; its export is read from the default import.
+import burnedMod from '../../../dist/proxy/burned.js';
+import { pageCondition, pageSettled } from '../_shared/page/settled.mjs';
+import { solverTaskResult } from '../_shared/captcha/solver_task.mjs';
 import { autoBindCharacter } from '../lib/character-bind.mjs';
-import { harvestAfterRegister } from '../lib/discord_harvest.mjs';
 import { accountItemFor } from '../_shared/skarbiec/accounts.mjs';
 import { messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
-// burned.js is CommonJS; default-import then destructure (named ESM import
-// of a CJS export is fragile across rebuilds). This lineage exposes
-// markBurned(host,signal,platform) — no multi-level markBurnedIp.
-import burnedMod from '../../../dist/proxy/burned.js';
-const markBurned = burnedMod.markBurned;
 
-const URL = 'https://discord.com/register';
-
-// One registration attempt on one sticky exit. A residential exit that
-// Discord flags for hCaptcha rejects every solver token; that exit is marked
-// burned (resolveProxy skips burned IPs) and the run fails with the named
-// reason, so the next run starts on a fresh exit. targetHost lets
-// resolveProxy map the "residential oxylabs us" filter to a provider row +
-// Discord country policy.
-const s = await WSession.start({
-  label: 'discord_register',
-  proxy: statedProxy('the Discord signup'),
-  targetHost: 'discord.com',
-});
-const exitIp =
-  s.proxyConfig?.exit_ip ||
-  (s.proxyConfig?.server
-    ? new globalThis.URL(s.proxyConfig.server).hostname
-    : null);
-console.log(`[register] exit=${exitIp === null ? 'not read from the proxy config' : exitIp}`);
-
+const { markBurned } = burnedMod;
+const SIGNUP_URL = 'https://discord.com/register';
+// The form's birth-date comboboxes and text inputs, each with the generated
+// identity value it takes.
+const BIRTH_DATE = [
+  { combobox: 'month', value: '$DISCORD_NEW_BIRTHMONTH' },
+  { combobox: 'day', value: '$DISCORD_NEW_BIRTHDAY' },
+  { combobox: 'year', value: '$DISCORD_NEW_BIRTHYEAR' },
+];
+const TEXT_INPUTS = [
+  { name: 'email', value: '$DISCORD_NEW_EMAIL' },
+  { name: 'global_name', value: '$DISCORD_NEW_USERNAME' },
+  { name: 'username', value: '$DISCORD_NEW_USERNAME' },
+  { name: 'password', value: '$DISCORD_NEW_PASSWORD' },
+];
 const SOLVERS = [
-  {
-    name: 'anticaptcha',
-    url: 'https://api.anti-captcha.com',
-    envKey: 'ANTICAPTCHA_API_KEY',
-  },
-  {
-    name: 'capsolver',
-    url: 'https://api.capsolver.com',
-    envKey: 'CAPSOLVER_API_KEY',
-  },
-  {
-    name: 'capmonster',
-    url: 'https://api.capmonster.cloud',
-    envKey: 'CAPMONSTERCLOUD_API_KEY',
-  },
-  {
-    name: '2captcha',
-    url: 'https://api.2captcha.com',
-    envKey: 'TWOCAPTCHA_API_KEY',
-  },
+  { name: 'anticaptcha', url: 'https://api.anti-captcha.com', envKey: 'ANTICAPTCHA_API_KEY' },
+  { name: 'capsolver', url: 'https://api.capsolver.com', envKey: 'CAPSOLVER_API_KEY' },
+  { name: 'capmonster', url: 'https://api.capmonster.cloud', envKey: 'CAPMONSTERCLOUD_API_KEY' },
+  { name: '2captcha', url: 'https://api.2captcha.com', envKey: 'TWOCAPTCHA_API_KEY' },
 ];
 
-// The proxy the solver should use: a public tunnel for a local proxy when
-// CAPTCHA_PROXY_URL is set, the session's own gateway otherwise, or none.
+/** The exit address of the session's proxy: the one resolveProxy recorded, else its gateway host; null without a proxy. */
+function exitAddress(proxy) {
+  if (!proxy) return null;
+  return proxy.exit_ip ? proxy.exit_ip : new URL(proxy.server).hostname;
+}
+
+/** Whether `address` is one of this machine's own internal interface addresses. */
+function onThisMachine(address) {
+  return Object.values(networkInterfaces())
+    .flat()
+    .some((nic) => nic.internal && nic.address === address);
+}
+
+/**
+ * The proxy fields of the solver's task: the session's own gateway by
+ * address, which the services require; a proxy only this machine can reach
+ * is replaced by the public tunnel CAPTCHA_PROXY_URL names, and without one
+ * the task is solved proxyless.
+ */
 async function solverProxyFields(proxy) {
-  const isLocalProxy =
-    proxy &&
-    (proxy.server.includes('127.0.0.1') || proxy.server.includes('localhost'));
-  const captchaProxyUrl = process.env.CAPTCHA_PROXY_URL;
-  if (isLocalProxy && captchaProxyUrl) {
-    const cu = new globalThis.URL(captchaProxyUrl);
-    console.log(
-      `[register] Captcha via tunnel proxy: ${cu.hostname}:${cu.port}`,
-    );
-    return {
-      proxyType: 'http',
-      proxyAddress: cu.hostname,
-      proxyPort: parseInt(cu.port, 10),
-      proxyLogin: cu.username ? decodeURIComponent(cu.username) : undefined,
-      proxyPassword: cu.password ? decodeURIComponent(cu.password) : undefined,
-    };
+  if (!proxy) return null;
+  const gateway = new URL(proxy.server);
+  const { address } = await lookup(gateway.hostname);
+  if (!onThisMachine(address))
+    return { proxyType: 'http', proxyAddress: address, proxyPort: Number(gateway.port), proxyLogin: proxy.username, proxyPassword: proxy.password };
+  const tunnel = process.env.CAPTCHA_PROXY_URL;
+  if (!tunnel) {
+    console.log(`[register] the proxy ${gateway.host} is local and CAPTCHA_PROXY_URL names no tunnel; solving proxyless`);
+    return null;
   }
-  if (proxy && !isLocalProxy) {
-    const u = new globalThis.URL(proxy.server);
-    const dns = await import('node:dns');
-    const { address } = await dns.promises.lookup(u.hostname);
-    console.log(
-      `[register] Proxy for captcha: ${address}:${u.port} user=${proxy.username}`,
-    );
-    return {
-      proxyType: 'http',
-      proxyAddress: address,
-      proxyPort: parseInt(u.port, 10),
-      proxyLogin: proxy.username,
-      proxyPassword: proxy.password,
-    };
-  }
-  if (isLocalProxy)
-    console.log(
-      '[register] Local proxy, no CAPTCHA_PROXY_URL — solving proxyless',
-    );
-  return null;
+  const t = new URL(tunnel);
+  console.log(`[register] captcha via tunnel proxy ${t.host}`);
+  return {
+    proxyType: 'http',
+    proxyAddress: t.hostname,
+    proxyPort: Number(t.port),
+    proxyLogin: decodeURIComponent(t.username),
+    proxyPassword: decodeURIComponent(t.password),
+  };
 }
 
-// Opens the verify link of the Discord verification mail that is in the
-// inbox now: a mail from a discord.com sender to this address whose body
-// carries a click.discord.com link that resolves to /verify. Throws when no
-// such mail has arrived.
-async function verifyEmail(emailAddr) {
-  const fromDiscord = await messagesTo(emailAddr, 'discord.com');
-  if (fromDiscord.length === 0)
-    throw new Error(
-      `discord_register: no mail from discord.com for ${emailAddr} has arrived yet; open its verify link once it is in the inbox`,
-    );
-  for (const mail of fromDiscord) {
-    const links = [
-      ...mail.body_text.matchAll(/https:\/\/click\.discord\.com[^\s"]+/g),
-    ].map((found) => found[0]);
-    for (const link of links) {
-      const r = await fetch(link, { redirect: 'manual' });
-      const loc = r.headers.get('location');
-      if (!loc || !new globalThis.URL(loc).pathname.startsWith('/verify'))
-        continue;
-      console.log('[register] Opening verify link in browser...');
-      await s.goto(loc);
-      await pageSettled(s.page);
-      console.log(`[register] After verify: ${s.page.url?.()}`);
-      return;
-    }
-  }
-  throw new Error(
-    `discord_register: ${fromDiscord.length} mail(s) from discord.com for ${emailAddr} carry no click.discord.com link to /verify`,
-  );
-}
-
-try {
-  // Single deterministic path: hCaptcha solve via service + direct
-  // /api/v9/auth/register POST. No agent loop.
-  const id = await s.generateIdentity('discord');
-  await s.goto(URL);
-  // Discord SPA mounts after Cloudflare lets its JS run.
-  await pageCondition(
-    s.page,
-    () => document.querySelector('#app-mount')?.children?.length > 0,
-  );
-  // Humanized fill — humanFill clicks, clears, then types one char at a
-  // time with trace-derived timing.
-  const fillField = async (name, val) => {
-    const resolved = s.resolveEnv(val);
-    const loc = s.page.locator(`input[name="${name}"]`).first();
-    if (!(await loc.count()))
-      throw new Error(`discord_register: the form has no input "${name}"`);
-    await humanFill(s.page, loc, resolved);
-    console.log(`[register] fill ${name}: len=${resolved.length}`);
-  };
-  // The date-of-birth comboboxes render after the text inputs.
-  await pageCondition(
-    s.page,
-    () => document.querySelectorAll('[role=combobox]').length >= 3,
-  );
-  const select = async (target, value) => {
-    const result = await s.select(target, value);
-    if (!result || result.includes('no-select-found'))
-      throw new Error(
-        `discord_register: date-of-birth ${target} could not be selected (${result})`,
-      );
-  };
-  await select('month', '$DISCORD_NEW_BIRTHMONTH');
-  await select('day', '$DISCORD_NEW_BIRTHDAY');
-  await select('year', '$DISCORD_NEW_BIRTHYEAR');
-  await pageSettled(s.page);
-  // Fill text fields AFTER DOB (DOB selection resets React-controlled inputs)
-  await fillField('email', '$DISCORD_NEW_EMAIL');
-  await fillField('global_name', '$DISCORD_NEW_USERNAME');
-  await fillField('username', '$DISCORD_NEW_USERNAME');
-  await fillField('password', '$DISCORD_NEW_PASSWORD');
-  await pageSettled(s.page);
-  // Terms checkbox — target the checkboxOption wrapper, not just the text.
-  await humanClickLocator(
-    s.page,
-    s.page.locator('[class*="checkboxOption"]').first(),
-  );
-  await pageSettled(s.page);
-  const formState = await s.page.evaluate(`(() => {
-    var inputs = Array.from(document.querySelectorAll('input'));
-    // Field values are logged by length only: a password's first characters are still the password.
-    var vals = inputs.map(i => ({ name: i.name || i.type || i.placeholder, valueLength: i.value.length, type: i.type }));
-    var btn = document.querySelector('button[type="submit"]');
-    return { inputs: vals, hasButton: !!btn, btnDisabled: btn ? btn.disabled : null, btnText: btn?.textContent?.trim() };
-  })()`);
-  console.log(`[register] Form state: ${JSON.stringify(formState)}`);
-  if (!formState.hasButton)
-    throw new Error('discord_register: the form has no submit button');
-  if (formState.btnDisabled)
-    throw new Error(
-      'discord_register: submit button disabled — form validation failed',
-    );
-  await humanClickLocator(
-    s.page,
-    s.page.locator('button[type="submit"]').first(),
-  );
-  await pageSettled(s.page);
-
-  const captchaData = s.captchaResponse;
-  const formData = s.captchaFormData;
-  if (!captchaData || !formData) {
-    if (exitIp) await markBurned(exitIp, 'action_failed', 'discord');
-    throw new Error(
-      `discord_register: the submit produced no captcha challenge to solve, at ${s.page.url()}`,
-    );
-  }
+/** The token the first configured solving service returns for Discord's challenge. */
+async function solveChallenge(s, challenge) {
   const svc = SOLVERS.find((candidate) => process.env[candidate.envKey]);
-  if (!svc)
-    throw new Error('discord_register: no captcha solver key is configured');
+  if (!svc) throw new Error(`discord_register: no captcha solver key is configured (${SOLVERS.map((c) => c.envKey).join(', ')})`);
   const apiKey = process.env[svc.envKey];
-  const ua = await s.page.evaluate('navigator.userAgent');
   const proxyFields = await solverProxyFields(s.proxyConfig);
-  const isCs = svc.name === 'capsolver';
-  // CapSolver requires HCaptchaEnterpriseTaskProxyLess for enterprise sites;
-  // anticaptcha uses HCaptchaTaskProxyless + isEnterprise:true.
-  const taskType = isCs
-    ? proxyFields
-      ? 'HCaptchaEnterpriseTask'
-      : 'HCaptchaEnterpriseTaskProxyLess'
-    : proxyFields
-      ? 'HCaptchaTask'
-      : 'HCaptchaTaskProxyless';
+  // CapSolver names its enterprise tasks; the others take isEnterprise.
+  const capsolver = svc.name === 'capsolver';
+  const proxied = capsolver ? 'HCaptchaEnterpriseTask' : 'HCaptchaTask';
+  const proxyless = capsolver ? 'HCaptchaEnterpriseTaskProxyLess' : 'HCaptchaTaskProxyless';
   const task = {
-    type: taskType,
-    websiteURL: URL,
-    websiteKey: captchaData.captcha_sitekey,
-    enterprisePayload: { rqdata: captchaData.captcha_rqdata },
-    userAgent: ua,
-    ...(proxyFields ?? {}),
-    ...(isCs ? {} : { isEnterprise: true }),
+    type: proxyFields ? proxied : proxyless,
+    websiteURL: SIGNUP_URL,
+    websiteKey: challenge.captcha_sitekey,
+    enterprisePayload: { rqdata: challenge.captcha_rqdata },
+    userAgent: await s.page.evaluate('navigator.userAgent'),
+    ...proxyFields,
+    ...(capsolver ? {} : { isEnterprise: true }),
   };
-  const createRes = await (
-    await fetch(svc.url + '/createTask', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientKey: apiKey, task }),
-    })
-  ).json();
-  if (createRes.errorId)
-    throw new Error(
-      `discord_register: ${svc.name} createTask refused: ${createRes.errorCode}`,
-    );
-  console.log(`[register] ${svc.name} task ${createRes.taskId} created`);
-  formData.captcha_key = await solverTaskResult(svc, apiKey, createRes.taskId);
-  if (captchaData.captcha_rqtoken)
-    formData.captcha_rqtoken = captchaData.captcha_rqtoken;
-  const hdrs = JSON.stringify({
-    'Content-Type': 'application/json',
-    ...s.captchaHeaders,
+  const response = await fetch(`${svc.url}/createTask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientKey: apiKey, task }),
   });
-  const result = await s.page.evaluate(
-    `(async()=>{var r=await fetch('/api/v9/auth/register',{method:'POST',headers:${hdrs},body:${JSON.stringify(JSON.stringify(formData))}});return{status:r.status,data:await r.json()};})()`,
-  );
-  console.log(
-    `[register] ${svc.name}: status=${result.status} response=${JSON.stringify(result.data)}`,
-  );
-  if (
-    !((result.status === 200 || result.status === 201) && result.data?.token)
-  ) {
-    if (result.data?.captcha_rqdata && exitIp) {
-      await markBurned(exitIp, 'captcha_challenge', 'discord');
-      throw new Error(
-        `discord_register: Discord rejected the ${svc.name} token and asked for a new captcha; exit ${exitIp} marked burned`,
-      );
+  const created = await response.json();
+  if (created.errorId) throw new Error(`discord_register: ${svc.name} createTask refused: ${JSON.stringify(created)}`);
+  console.log(`[register] ${svc.name} task ${created.taskId} created`);
+  return { solver: svc.name, token: await solverTaskResult(svc, apiKey, created.taskId) };
+}
+
+/** The /verify address the newest Discord mail to `address` links to, once that mail arrives. */
+async function verifyLink(address) {
+  for (;;) {
+    const [newest] = await messagesTo(address, 'discord.com');
+    if (newest) {
+      for (const [link] of newest.body_text.matchAll(/https:\/\/click\.discord\.com[^\s"]+/g)) {
+        const redirect = await fetch(link, { redirect: 'manual' });
+        const location = redirect.headers.get('location');
+        if (location && new URL(location).pathname.startsWith('/verify')) return location;
+      }
+      throw new Error(`discord_register: the newest mail from discord.com to ${address} ("${newest.subject}") links to no /verify page`);
     }
-    throw new Error(
-      `discord_register: register API answered ${result.status} with ${JSON.stringify(result.data)}`,
-    );
+  }
+}
+
+async function fillSignupForm(s) {
+  await s.goto(SIGNUP_URL);
+  // Discord's app mounts after Cloudflare lets its JS run; the birth-date
+  // comboboxes render after the text inputs.
+  await pageCondition(s.page, () => document.querySelector('#app-mount')?.children?.length > 0);
+  await pageCondition(s.page, (parts) => document.querySelectorAll('[role=combobox]').length >= parts, BIRTH_DATE.length);
+  for (const { combobox, value } of BIRTH_DATE) {
+    const result = await s.select(combobox, value);
+    if (!result.startsWith('selected'))
+      throw new Error(`discord_register: date-of-birth ${combobox} could not be selected (${result})`);
+  }
+  await pageSettled(s.page);
+  // Text fields are filled after the birth date, whose selection resets them.
+  for (const { name, value } of TEXT_INPUTS) {
+    const input = s.page.locator(`input[name="${name}"]`).first();
+    if (!(await input.count())) throw new Error(`discord_register: the form has no input "${name}"`);
+    await humanFill(s.page, input, s.resolveEnv(value));
+  }
+  await pageSettled(s.page);
+  await humanClickLocator(s.page, s.page.locator('[class*="checkboxOption"]').first());
+  await pageSettled(s.page);
+  const submit = s.page.locator('button[type="submit"]').first();
+  if (!(await submit.count())) throw new Error('discord_register: the form has no submit button');
+  if (await submit.isDisabled()) throw new Error('discord_register: the submit button is disabled, so the form did not validate');
+  await humanClickLocator(s.page, submit);
+  await pageSettled(s.page);
+}
+
+const s = await WSession.start({ label: 'discord_register', proxy: statedProxy('the Discord signup'), targetHost: 'discord.com' });
+const exit = exitAddress(s.proxyConfig);
+console.log(`[register] exit=${exit === null ? 'no proxy' : exit}`);
+try {
+  const id = await s.generateIdentity('discord');
+  await fillSignupForm(s);
+  const challenge = s.captchaResponse;
+  const form = s.captchaFormData;
+  if (!challenge || !form) {
+    if (exit) await markBurned(exit, 'action_failed', 'discord');
+    throw new Error(`discord_register: the submit produced no captcha challenge to solve, at ${s.page.url()}`);
+  }
+  const solved = await solveChallenge(s, challenge);
+  form.captcha_key = solved.token;
+  if (challenge.captcha_rqtoken) form.captcha_rqtoken = challenge.captcha_rqtoken;
+  const headers = { 'Content-Type': 'application/json', ...s.captchaHeaders };
+  const result = await s.page.evaluate(
+    async ({ headers, body }) => {
+      const answer = await fetch('/api/v9/auth/register', { method: 'POST', headers, body });
+      return { ok: answer.ok, status: answer.status, data: await answer.json() };
+    },
+    { headers, body: JSON.stringify(form) },
+  );
+  console.log(`[register] ${solved.solver}: status=${result.status} response=${JSON.stringify(result.data)}`);
+  if (!result.ok || !result.data.token) {
+    if (result.data.captcha_rqdata && exit) {
+      await markBurned(exit, 'captcha_challenge', 'discord');
+      throw new Error(`discord_register: Discord rejected the ${solved.solver} token and asked for a new captcha; exit ${exit} marked burned`);
+    }
+    throw new Error(`discord_register: register API answered ${result.status} with ${JSON.stringify(result.data)}`);
   }
   const authToken = result.data.token;
-  await s.page.evaluate(
-    `localStorage.setItem("token", JSON.stringify(${JSON.stringify(authToken)}))`,
-  );
+  await s.page.evaluate((token) => localStorage.setItem('token', JSON.stringify(token)), authToken);
   await s.goto('https://discord.com/channels/@me');
   await pageSettled(s.page);
-  console.log(`[register] Navigated to: ${s.page.url?.()}`);
-  await s.saveAccount('discord', {
-    username: id.username,
-    email: id.email,
-    password: id.password,
-  });
-  // saveAccount creates the Skarbiec item; add Discord's localStorage
-  // token to that exact item because cookies alone do not authenticate.
-  const item = accountItemFor('discord', id.username);
-  await s.patchAccount(item, { metadata: { discord_token: authToken } });
-  console.log('[register] persisted metadata.discord_token to Skarbiec');
-  const bind = await autoBindCharacter(id.username, 'discord');
-  console.log(`[bind] ${JSON.stringify(bind)}`);
-  console.log(`PASS: ${id.username}`);
-  await verifyEmail(s.resolveEnv('$DISCORD_NEW_EMAIL'));
-  await harvestAfterRegister(s, { token: authToken, username: id.username }); // DISCORD_HARVEST_AFTER_REGISTER=1 gates phone-verify + API harvest
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
+  await s.saveAccount('discord', { username: id.username, email: id.email, password: id.password });
+  // Cookies alone do not authenticate Discord's client; its token is kept on the same item.
+  await s.patchAccount(accountItemFor('discord', id.username), { metadata: { discord_token: authToken } });
+  console.log(`[bind] ${JSON.stringify(await autoBindCharacter(id.username, 'discord'))}`);
+  await s.goto(await verifyLink(s.resolveEnv('$DISCORD_NEW_EMAIL')));
+  await pageSettled(s.page);
+  console.log(`PASS: ${id.username} registered and verified (${s.page.url()})`);
+} catch (error) {
+  console.log(`FAIL: ${error.message}`);
+  process.exitCode = exitStatusFor(error);
 } finally {
   await s.close();
 }

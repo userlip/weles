@@ -94,9 +94,7 @@ export async function maybeHandleCode(s, id, variant) {
   if (variant === 'existing_email') {
     await humanFill(s.page, field, await mailedCode(id.email, 'yahoo', await fieldCodeLength(field)));
   } else {
-    const code = await s.pollSmsCode();
-    if (!/^[A-Z\d]+$/i.test(String(code))) throw new Error(`yahoo_sms_otp_failed: ${code}`);
-    await humanFill(s.page, field, code);
+    await humanFill(s.page, field, await s.textedCode());
   }
   await submitStep(s.page);
   return true;

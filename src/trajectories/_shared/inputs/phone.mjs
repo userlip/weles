@@ -40,10 +40,9 @@ export async function phoneForField(s, root, service) {
       `the country the ${service} phone number is rented in (the page shows no country selector)`,
     );
   }
-  const rented = await s.checkSms(service, country.toUpperCase());
-  if (rented.startsWith('error')) throw new Error(`${service}_sms_unavailable: ${rented}`);
-  const number = s.resolveEnv(`$${service.toUpperCase()}_NEW_PHONE`).replace(/[^\d+]/g, '');
-  const international = number.startsWith('+') ? number : `+${number}`;
+  // A number no provider holds is refused by the rent itself, with each provider's answer.
+  await s.checkSms(service, country.toUpperCase());
+  const international = s.resolveEnv(`$${service.toUpperCase()}_NEW_PHONE`);
   if (!callingCode) return international;
   if (!international.startsWith(`+${callingCode}`))
     throw new Error(

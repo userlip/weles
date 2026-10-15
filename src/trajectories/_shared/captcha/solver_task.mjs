@@ -1,9 +1,12 @@
-// One read of a captcha-solver task (anti-captcha / CapSolver getTaskResult
-// API). The solver has no push or blocking answer, so this never waits: a task
-// that is still being worked on is reported as a named error carrying the task
-// id, and the caller decides whether to read again later with that id.
+// The token a captcha-solver task (the anti-captcha / CapSolver getTaskResult
+// API) comes back with, once it is solved. The solvers offer no push or
+// blocking answer and a solve has no clock that ends it, so the task is read
+// again as soon as each reading answers, until the solver hands over its
+// token, refuses the task, or the run is cancelled. A refusal, an answer that
+// is not JSON and a ready task that carries no token each fail the solve with
+// what the solver said.
 
-export async function solverTaskResult(svc, apiKey, taskId) {
+async function readTask(svc, apiKey, taskId) {
   const response = await fetch(`${svc.url}/getTaskResult`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -13,43 +16,29 @@ export async function solverTaskResult(svc, apiKey, taskId) {
   // the error whole.
   const body = await response.text();
   if (!response.ok)
-    throw new Error(
-      `captcha_${svc.name}_http_${response.status}: getTaskResult for task ${taskId} failed: ${body}`,
-    );
-  let res;
+    throw new Error(`captcha_${svc.name}_http_${response.status}: getTaskResult for task ${taskId} failed: ${body}`);
+  let answer;
   try {
-    res = JSON.parse(body);
+    answer = JSON.parse(body);
   } catch (error) {
     throw new Error(
       `captcha_${svc.name}_answer_invalid: getTaskResult for task ${taskId} answered a body that is not JSON (${error.message}): ${body}`,
+      { cause: error },
     );
   }
-  if (res.errorId) {
-    const code =
-      res.errorCode === undefined
-        ? `errorId ${res.errorId} with no errorCode`
-        : res.errorCode;
-    const description =
-      res.errorDescription === undefined
-        ? 'no errorDescription'
-        : res.errorDescription;
-    throw new Error(
-      `captcha_${svc.name}_error: task ${taskId}: ${code}: ${description}`,
-    );
+  if (answer.errorId)
+    throw new Error(`captcha_${svc.name}_error: task ${taskId} was refused: ${body}`);
+  return answer;
+}
+
+export async function solverTaskResult(svc, apiKey, taskId) {
+  for (;;) {
+    const answer = await readTask(svc, apiKey, taskId);
+    if (answer.status === 'ready') {
+      const token = answer.solution?.gRecaptchaResponse ? answer.solution.gRecaptchaResponse : answer.solution?.token;
+      if (!token)
+        throw new Error(`captcha_${svc.name}_no_token: task ${taskId} is ready but its solution carries no token: ${JSON.stringify(answer)}`);
+      return token;
+    }
   }
-  if (res.status !== 'ready') {
-    const stated =
-      res.status === undefined
-        ? 'the answer states no status'
-        : `status ${res.status}`;
-    throw new Error(
-      `captcha_${svc.name}_processing: task ${taskId} has no result yet (${stated}); read it again with this task id`,
-    );
-  }
-  const token = res.solution?.gRecaptchaResponse ?? res.solution?.token;
-  if (!token)
-    throw new Error(
-      `captcha_${svc.name}_no_token: task ${taskId} is ready but its solution carries no token`,
-    );
-  return token;
 }

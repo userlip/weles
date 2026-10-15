@@ -51,12 +51,11 @@ async function state(page) {
 
 /**
  * Types the SMS code Instagram sent into its code field and continues. The
- * session's SMS read answers the code or why it has none; only a code is
- * typed, and anything else ends the run with what the read said.
+ * code is read from the rented number's order once it arrives; a provider
+ * that cancels the order or fails ends the run with what it answered.
  */
 async function enterSmsCode(s, page, step) {
-  const smsCode = await s.pollSmsCode();
-  if (!/^\d+$/.test(smsCode)) throw new Error(`instagram_sms_code_unread: the ${step} code read answered ${smsCode}`);
+  const smsCode = await s.textedCode();
   const code = await codeField(page);
   if (!code) throw new Error(`instagram_code_field_missing: Instagram took the number for the ${step} and shows no code field`);
   await code.fill(smsCode);

@@ -173,8 +173,7 @@ const landed = (url) => LANDINGS.some((route) => url.includes(route));
       await humanIdlePause('deliberate');
       // The code Microsoft texted to the rented number goes into its code
       // field; a code field that does not show fails the signup.
-      const smsCode = await s.pollSmsCode();
-      if (!/^\d+$/.test(smsCode)) throw new Error(`microsoft_sms_otp_failed: ${smsCode}`);
+      const smsCode = await s.textedCode();
       const codeIn = s.page
         .locator(
           'input[name="otc"], input[name="VerificationCode"], input[type="tel"][maxlength], input[autocomplete="one-time-code"]',

@@ -1,69 +1,64 @@
-// What a session records about the account it made: the verification mail
-// it waited for, and the account row it puts to Skarbiec with the profile
-// URL the platform will show. Split out of finalize.ts.
+// What a session records about the account it made: the mail the platform
+// sends it, and the account row it puts to Skarbiec with the profile URL the
+// platform will show and the signatures its cookie jar is bound to.
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { markSignupSuccess } from '../../../utils/email/domain.js';
-import {
-  messagesTo,
-  type InboxMessage,
-} from '../../../utils/email/skrzynka-inbox.js';
+import { messagesTo } from '../../../utils/email/skrzynka-inbox.js';
 import type { WSession } from '../../wsession.js';
 import { putAccount } from '../../../state/skarbiec-records.js';
+import { personaSignature, proxySignature } from '../../cookie-jar/binding.js';
 import { recordingsDir } from './fingerprint_capture.js';
 
-function profileUrl(platform: string, username: string, name?: string): string {
+/** The status a saved account carries when its trajectory states none. */
+const CREATED_STATUS = 'created';
+
+/** The profile address each platform shows an account at, for the platforms whose address the username alone gives. */
+function profileUrl(platform: string, username: string, name: string | undefined): Record<string, string> {
+  const handle = name === undefined ? username : name;
   const urls: Record<string, string> = {
     reddit: `https://reddit.com/u/${username}`,
     tiktok: `https://tiktok.com/@${username}`,
     github: `https://github.com/${username}`,
     discord: `https://discord.com/users/${username}`,
-    linkedin: `https://linkedin.com/in/${(name ?? username).toLowerCase().replace(/\s+/g, '-')}`,
+    linkedin: `https://linkedin.com/in/${handle.toLowerCase().replace(/\s+/g, '-')}`,
     instagram: `https://instagram.com/${username}`,
     twitter: `https://x.com/${username}`,
   };
-  return urls[platform] ?? '';
+  return Object.hasOwn(urls, platform) ? { profile_url: urls[platform] } : {};
 }
 
-export async function wsCheckEmail(
-  s: WSession,
-  email: string,
-  sender: string,
-): Promise<string> {
-  const addr = s.resolveEnv(email).toLowerCase();
-  const senderHint = sender.toLowerCase();
-  // Skrzynka answers the newest first; every branch below returns with the
-  // first message, so the code read is the one most recently mailed.
-  let messages: InboxMessage[];
-  try {
-    messages = await messagesTo(addr, senderHint);
-  } catch (error) {
-    return `error: ${error instanceof Error ? error.message : String(error)}`;
+/**
+ * The newest mail Skrzynka holds for `email` from a sender containing
+ * `sender` (any sender when empty), once it arrives, as its sender, subject
+ * and text: the code, link or instructions in it are the caller's to use. A
+ * mail has no clock that ends its delivery, so the mailbox is read again as
+ * soon as each reading answers, until the mail arrives or the run is
+ * cancelled; a mailbox that fails is refused with what it said.
+ */
+export async function wsNewestMail(s: WSession, email: string, sender: string): Promise<string> {
+  const address = s.resolveEnv(email).toLowerCase();
+  for (;;) {
+    const [newest] = await messagesTo(address, sender.toLowerCase());
+    if (newest) return `From: ${newest.sender}\nSubject: ${newest.subject}\n\n${newest.body_text}`;
   }
-  for (const em of messages) {
-    const content = `${em.subject}\n${em.body_text}`;
-    const verificationMatch = content.match(
-      /https:\/\/api-dashboard\.search\.brave\.com\/verification[^\s"'<>\]]+/,
-    );
-    if (verificationMatch) {
-      const verificationURL = verificationMatch[0]
-        .replace(/&amp;/g, '&')
-        .replace(/[),.;]+$/, '');
-      const target = new URL(verificationURL);
-      if (
-        target.hostname === 'api-dashboard.search.brave.com' &&
-        target.pathname === '/verification'
-      ) {
-        await s.page.goto(target.href, { waitUntil: 'domcontentloaded' });
-        return `verification email opened on ${target.origin}${target.pathname}`;
-      }
-    }
-    const codes = content.match(/\b\d{5,6}\b/g);
-    if (codes) return codes[0];
-    return `email received without numeric code: ${content.replace(/\s+/g, ' ').trim()}`;
-  }
-  return `no email${senderHint ? ` from a sender containing "${senderHint}"` : ''} has arrived at ${addr} yet; call check_email again once the platform has sent it`;
 }
+
+/** The session's cookie jar and the signatures it is bound to. */
+async function jarRecord(s: WSession): Promise<Record<string, unknown>> {
+  const storageState = await s.ctx.storageState();
+  const mintedAt = new Date().toISOString();
+  return {
+    cookies: storageState.cookies,
+    storage_state: storageState,
+    cookies_updated_at: mintedAt,
+    cookies_minted_at: mintedAt,
+    cookies_minted_proxy: proxySignature(s.proxyConfig),
+    cookies_minted_persona: s.personaConfig ? personaSignature(s.personaConfig) : null,
+  };
+}
+
+type Captured = { record: Record<string, unknown>; failure: string | null };
 
 export async function wsSaveAccount(
   s: WSession,
@@ -86,51 +81,29 @@ export async function wsSaveAccount(
   const email = s.resolveEnv(data.email);
   const password = s.resolveEnv(data.password);
   const name = data.name ? s.resolveEnv(data.name) : undefined;
-  let session: Record<string, unknown>;
-  let sessionError: string | null = null;
-  try {
-    const storageState = await s.ctx.storageState();
-    session = {
-      cookies: storageState.cookies,
-      storage_state: storageState,
-      cookies_updated_at: new Date().toISOString(),
-      cookies_minted_at: new Date().toISOString(),
-      cookies_minted_proxy: (s as any)._proxySignature(),
-      cookies_minted_persona: (s as any)._personaSignature(),
-    };
-  } catch (error) {
-    sessionError = error instanceof Error ? error.message : String(error);
-    session = { session_unreadable: sessionError };
-  }
+  const session: Captured = await jarRecord(s).then(
+    (record) => ({ record, failure: null }),
+    (error: Error) => ({ record: { session_unreadable: error.message }, failure: error.message }),
+  );
   const metadata = {
     email,
-    status: data.status ?? 'created',
+    status: data.status === undefined ? CREATED_STATUS : data.status,
     created_via: 'weles',
-    ...session,
-    proxy: s.proxyConfig ?? null,
-    persona: (s as any).personaConfig ?? null,
-    profile_url: profileUrl(platform, username, name),
+    ...session.record,
+    proxy: s.proxyConfig,
+    persona: s.personaConfig,
+    ...profileUrl(platform, username, name),
   };
-  const item = putAccount({
-    platform,
-    username,
-    password,
-    metadata,
-    displayName: name,
-  });
+  const item = putAccount({ platform, username, password, metadata, displayName: name });
   writeFileSync(
-    join(recordingsDir(s.label || undefined), 'account.json'),
-    JSON.stringify({ item, platform, username }, null, 2),
+    join(recordingsDir(s.label ? s.label : undefined), 'account.json'),
+    JSON.stringify({ item, platform, username }, null, ' '),
   );
   // The account is saved either way; a session that was not captured and a
   // signup-success mark that failed are said in the step's answer.
-  const unsession = sessionError
-    ? `; session not captured: ${sessionError}`
-    : '';
-  try {
-    await markSignupSuccess(email, platform);
-  } catch (error) {
-    return `account saved: ${item}${unsession}; signup success not marked for ${email}: ${error instanceof Error ? error.message : String(error)}`;
-  }
-  return `account saved: ${item}${unsession}`;
+  const saved = session.failure ? `account saved: ${item}; session not captured: ${session.failure}` : `account saved: ${item}`;
+  return markSignupSuccess(email, platform).then(
+    () => saved,
+    (error: Error) => `${saved}; signup success not marked for ${email}: ${error.message}`,
+  );
 }

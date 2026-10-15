@@ -1,90 +1,74 @@
-// 2Captcha registration via native form. Bypasses the wCaptcha-gated Google
-// button by using the native registration flow instead.
-import { randomUUID } from 'node:crypto';
+// 2Captcha registration through its native form, which takes an invisible
+// reCAPTCHA instead of the Google sign-in button. The address is the session's
+// generated identity (the domain rotator's mailbox), the reCAPTCHA sitekey is
+// the one the form itself declares, and CapSolver solves it; its token is read
+// once the task is solved (solverTaskResult). The registration counts once
+// 2Captcha leaves the registration page; the credentials are then kept in
+// Skarbiec.
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 import { WSession } from '../../../dist/session/wsession.js';
-import { humanIdlePause } from '../../../dist/human/mouse.js';
 import { registrationPassword } from '../../../dist/utils/identity/password.js';
 import { solverTaskResult } from '../_shared/captcha/solver_task.mjs';
 import { writeServiceCredentials } from '../_shared/skarbiec/accounts.mjs';
+import { pageSettled } from '../_shared/page/settled.mjs';
 
 const REGISTER_URL = 'https://2captcha.com/auth/register';
-const RECAPTCHA_SITEKEY = '6Lfo9qojAAAAAPqqMn9QlAY2RBSVuEW63vDJ442M';
-const EMAIL = `svc.2c.${randomUUID()}@wisentmedia.com`;
-const password = registrationPassword();
+const CAPSOLVER = { name: 'capsolver', url: 'https://api.capsolver.com' };
 
-console.log(`[trajectory] registering: ${EMAIL}`);
-
-// CapSolver has no push or blocking answer: one read of the task's result,
-// a task still being solved is a named error carrying its id.
-async function solveInvisibleRecaptcha() {
-  const key = process.env.CAPSOLVER_API_KEY;
-  if (!key)
-    throw new Error('twocaptcha_register: CAPSOLVER_API_KEY is not configured');
-  const create = await (
-    await fetch('https://api.capsolver.com/createTask', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clientKey: key,
-        task: {
-          type: 'ReCaptchaV2TaskProxyLess',
-          websiteURL: REGISTER_URL,
-          websiteKey: RECAPTCHA_SITEKEY,
-          isInvisible: true,
-        },
-      }),
-    })
-  ).json();
-  if (!create.taskId)
-    throw new Error(
-      `twocaptcha_register: CapSolver refused the task: ${create.errorCode ?? JSON.stringify(create)}`,
-    );
-  return solverTaskResult(
-    { name: 'capsolver', url: 'https://api.capsolver.com' },
-    key,
-    create.taskId,
-  );
+/** The reCAPTCHA sitekey the registration form declares. */
+async function formSitekey(page) {
+  const sitekey = await page.locator('[data-sitekey]').first().getAttribute('data-sitekey');
+  if (!sitekey) throw new Error(`TWOCAPTCHA_SITEKEY_UNREAD: the form at ${page.url()} declares no reCAPTCHA sitekey`);
+  return sitekey;
 }
 
-const s = await WSession.start({
-  label: 'twocaptcha_register',
-  browser: 'chromium',
-});
-try {
-  await s.goto(REGISTER_URL);
-  await humanIdlePause('long');
+async function solveInvisibleRecaptcha(sitekey) {
+  const key = process.env.CAPSOLVER_API_KEY;
+  if (!key) throw new Error('twocaptcha_register: CAPSOLVER_API_KEY is not configured');
+  const response = await fetch(`${CAPSOLVER.url}/createTask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientKey: key,
+      task: { type: 'ReCaptchaV2TaskProxyLess', websiteURL: REGISTER_URL, websiteKey: sitekey, isInvisible: true },
+    }),
+  });
+  const created = await response.json();
+  if (!created.taskId) throw new Error(`twocaptcha_register: CapSolver refused the task: ${JSON.stringify(created)}`);
+  return solverTaskResult(CAPSOLVER, key, created.taskId);
+}
 
-  await s.page.locator('input[name="email"]').fill(EMAIL);
+const s = await WSession.start({ label: 'twocaptcha_register', browser: 'chromium', platform: 'twocaptcha' });
+try {
+  const { email } = s.identity;
+  const password = registrationPassword();
+  console.log(`[trajectory] registering: ${email}`);
+  await s.goto(REGISTER_URL);
+  await pageSettled(s.page);
+  await s.page.locator('input[name="email"]').fill(email);
   await s.page.locator('input[name="password"]').fill(password);
   await s.page.locator('input[name="agreement"]').check({ force: true });
 
-  const token = await solveInvisibleRecaptcha();
+  const token = await solveInvisibleRecaptcha(await formSitekey(s.page));
   await s.page.evaluate((t) => {
-    document
-      .querySelectorAll('textarea[name="g-recaptcha-response"]')
-      .forEach((el) => (el.value = t));
-    if (typeof window.onRecaptchaSubmit === 'function')
-      window.onRecaptchaSubmit(t);
+    for (const field of document.querySelectorAll('textarea[name="g-recaptcha-response"]')) field.value = t;
+    if (typeof window.onRecaptchaSubmit === 'function') window.onRecaptchaSubmit(t);
   }, token);
   console.log('[trajectory] reCAPTCHA token injected');
 
   await s.page.locator('button:has-text("Create account")').click();
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   console.log(`[trajectory] post-register url=${s.page.url()}`);
-
   if (/\/register/.test(s.page.url())) {
-    const err = await s.page.evaluate(() => document.body.innerText);
-    throw new Error(`still on /register. Body: ${err.replace(/\n/g, ' | ')}`);
+    const body = await s.page.evaluate(() => document.body.innerText);
+    throw new Error(`TWOCAPTCHA_REGISTER_REFUSED: still on /register. Body: ${body.replace(/\n/g, ' | ')}`);
   }
 
-  const item = writeServiceCredentials('2Captcha', {
-    username: EMAIL,
-    password,
-  });
-  console.log(`PASS: registered ${EMAIL}; credentials persisted to ${item}`);
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
+  const item = writeServiceCredentials('2Captcha', { username: email, password });
+  console.log(`PASS: registered ${email}; credentials persisted to ${item}`);
+} catch (error) {
+  console.log(`FAIL: ${error.message}`);
+  process.exitCode = exitStatusFor(error);
 } finally {
   await s.close();
 }

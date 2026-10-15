@@ -70,8 +70,7 @@ async function verifyContact(s, id) {
     const number = await phoneForField(s, s.page, 'snapchat');
     await humanFill(s.page, phone, number);
     await continueSignup(s);
-    const code = await s.pollSmsCode();
-    if (!/^\d+$/.test(code)) throw new Error(`SNAPCHAT_SMS_CODE_UNREAD: the rented number ${number} received no code: ${code}`);
+    const code = await s.textedCode();
     await humanFill(s.page, await codeField(), code);
     await continueSignup(s);
     return { email: id.email, phone: number };

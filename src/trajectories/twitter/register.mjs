@@ -187,10 +187,8 @@ async function signup(s) {
     const codeField = oneTime ? oneTime : await field(page, 'verfication_code');
     let code;
     if (contact === 'phone') {
-      // The session's SMS read answers the code, or why it has none; only a
-      // code is typed.
-      code = await s.pollSmsCode();
-      if (!/^\d+$/.test(code)) throw new Error(`twitter_sms_code_unread: ${code}`);
+      // The code X texted to the rented number, once it arrives.
+      code = await s.textedCode();
     } else {
       code = await mailedCode(id.email, 'x.com', await fieldCodeLength(codeField));
     }

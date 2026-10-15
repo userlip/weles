@@ -9,10 +9,10 @@
 // and the account is verified with.
 //
 // The settings, add-phone control and fields are found by the vision model;
-// the SMS order is read once (a code that has not arrived is a named error)
-// and cancelled when the run fails. The verification counts once Discord's
-// own account record (/users/@me) holds the number.
-import { getNumber, readCode, cancelOrder } from '../../../../../dist/utils/identity/sms.js';
+// the code is read from the rented number's order once it arrives, and the
+// order is cancelled when the run fails. The verification counts once
+// Discord's own account record (/users/@me) holds the number.
+import { getNumber, textedCode, cancelOrder } from '../../../../../dist/utils/identity/sms.js';
 import { runDiscordAction } from '../../../_shared/discord/run.mjs';
 import { readDiscordApi } from '../../../_shared/discord/response.mjs';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
@@ -27,7 +27,6 @@ await runDiscordAction({
   run: { country: COUNTRY },
   act: async (s, acct) => {
     const number = await getNumber('discord', COUNTRY);
-    if (!number) throw new Error(`DISCORD_PHONE_UNAVAILABLE: no ${COUNTRY} number could be rented`);
     console.log(`[phone_verify] number=${number.phone} order=${number.orderId} provider=${number.provider}`);
     try {
       await clickDescribed(s.page, 'the user settings button');
@@ -38,7 +37,7 @@ await runDiscordAction({
       await pageSettled(s.page);
       const captcha = await s.solveCaptcha();
       if (captcha === 'captcha failed') throw new Error('DISCORD_PHONE_CAPTCHA_FAILED: the captcha after the number was not solved');
-      const code = await readCode(number.orderId, number.provider);
+      const code = await textedCode(number);
       await fillDescribed(s.page, 'the field that takes the SMS verification code', code);
       await s.page.keyboard.press('Enter');
       await pageSettled(s.page);
@@ -46,7 +45,7 @@ await runDiscordAction({
       if (phone !== number.phone)
         throw new Error(`DISCORD_PHONE_NOT_VERIFIED: Discord's account record holds ${JSON.stringify(phone)} after the code, not ${number.phone}`);
     } catch (error) {
-      await cancelOrder(number.orderId, number.provider).catch((cancelError) => {
+      await cancelOrder(number).catch((cancelError) => {
         throw new AggregateError([error, cancelError], `${error.message}; and the SMS order was not cancelled: ${cancelError.message}`);
       });
       throw error;

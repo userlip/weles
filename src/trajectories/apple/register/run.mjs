@@ -207,9 +207,7 @@ async function fillCodeBoxes(boxes, code, refusal) {
     await humanIdlePause('deliberate');
 
     // 9. Phone OTP
-    const smsCode = await s.pollSmsCode();
-    if (!/^\d+$/.test(smsCode))
-      throw new Error(`apple_sms_otp_failed: ${smsCode}`);
+    const smsCode = await s.textedCode();
     const smsBoxes = await frame
       .locator(
         'input[id*="phone-verification" i], input[aria-label*="phone" i][type="tel"], input[aria-label*="digit" i]',

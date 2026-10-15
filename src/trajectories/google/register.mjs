@@ -189,9 +189,8 @@ async function signup(s) {
   await clickNext(page);
   await pageSettled(page);
 
-  console.log('[google] waiting for SMS code...');
-  const code = await s.pollSmsCode();
-  if (!/^\d+$/.test(code)) throw new Error(`sms code not delivered: ${code}`);
+  console.log('[google] reading the texted code...');
+  const code = await s.textedCode();
   const codeField =
     (await field(page, 'code')) ??
     (await autocompleteField(page, 'one-time-code')) ??

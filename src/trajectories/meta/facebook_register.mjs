@@ -151,9 +151,7 @@ async function signup(s) {
     await humanType(s.page, digits);
     await phoneIn.press('Enter');
     await humanIdlePause('deliberate');
-    const smsCode = await s.pollSmsCode();
-    if (!/^\d+$/.test(smsCode))
-      throw new Error(`fb_sms_otp_failed: ${smsCode}`);
+    const smsCode = await s.textedCode();
     const smsIn = s.page
       .locator(
         'input[name="code"], input[autocomplete="one-time-code"], input[type="tel"][maxlength]',

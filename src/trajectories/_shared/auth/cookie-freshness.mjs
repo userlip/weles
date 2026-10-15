@@ -23,7 +23,7 @@
 //       CookieJarStaleError when the jar is empty, was not stamped by a
 //       verified login, or was minted under another proxy or persona.
 
-import { providerFromHost } from '../../../../dist/proxy/policy.js';
+import { personaSignature, proxySignature } from '../../../../dist/session/cookie-jar/binding.js';
 import { updateAccountMetadata } from '../skarbiec/accounts.mjs';
 
 export class CookieJarStaleError extends Error {
@@ -32,34 +32,6 @@ export class CookieJarStaleError extends Error {
     this.name = 'CookieJarStaleError';
     this.details = details;
   }
-}
-
-/**
- * The egress a jar is bound to: the proxy provider and port when the proxy's
- * username names its provider (a provider's gateway host can change between
- * connections of one session, its username shape does not), else its host
- * and port; 'direct' without a proxy. Accepts a ProxyConfig ({ host, port,
- * username }) or a proxy URL.
- */
-export function proxySignature(proxy) {
-  if (!proxy) return 'direct';
-  const parsed = typeof proxy === 'string' ? new URL(proxy) : undefined;
-  const host = parsed ? parsed.hostname : proxy.host;
-  const port = parsed ? parsed.port : String(proxy.port);
-  const username = parsed ? decodeURIComponent(parsed.username) : proxy.username;
-  const provider = providerFromHost(undefined, username);
-  return [provider ? provider : host, port].filter(Boolean).join(':');
-}
-
-/**
- * The persona a jar is bound to: its canvas seed, which every generated
- * persona carries and keeps in metadata.persona. A persona without one cannot
- * be told from another and is refused.
- */
-export function personaSignature(persona) {
-  if (persona.canvasSeed === undefined || persona.canvasSeed === null)
-    throw new Error('COOKIE_PERSONA_UNSIGNED: the persona carries no canvas seed to bind a cookie jar to');
-  return `cs:${persona.canvasSeed}`;
 }
 
 /** The signature a stored stamp holds: stamps are written as signature strings; an older object stamp is signed now. */
