@@ -1,188 +1,99 @@
-import { pageSettled } from '../_shared/page/settled.mjs';
-// Helpers extracted from tiktok_register.mjs so that file fits under the
-// 300-line cap and can import autoBindCharacter alongside the other 8
-// register trajectories. Each helper here is a verbatim move from the
-// original tiktok_register.mjs flow — same logic, same logging, same
-// return shape. Don't change behavior here without also changing the
-// matching test/integration paths.
+// Steps of the TikTok email signup that tiktok/register/attempt.mjs runs:
+// the React-aware value sync, the passport traffic log kept for diagnosis,
+// and the username step. A failed step throws with its cause.
+import { humanType } from '../../../dist/human/keyboard.js';
+import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
+import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 
 /**
  * React-aware input value sync. React keeps a private value tracker and
- * ignores input events if it believes the value did not change; we reset
- * the tracker before dispatching input/change so the controlled input
- * picks up the value we just set via the descriptor setter.
+ * ignores input events if it believes the value did not change; the tracker
+ * is reset before input/change are dispatched, so the controlled input
+ * picks up the value set through the descriptor setter.
  */
 export async function syncReactInputValue(locator, value) {
-  await locator
-    .evaluate((el, v) => {
-      const proto = Object.getPrototypeOf(el);
-      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-      if (setter) setter.call(el, v);
-      else el.value = v;
-      el._valueTracker?.setValue('');
-      el.dispatchEvent(
-        new InputEvent('input', {
-          bubbles: true,
-          inputType: 'insertText',
-          data: v,
-        }),
-      );
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    }, value)
-    .catch(() => {});
+  await locator.evaluate((el, v) => {
+    const proto = Object.getPrototypeOf(el);
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (setter) setter.call(el, v);
+    else el.value = v;
+    el._valueTracker?.setValue('');
+    el.dispatchEvent(
+      new InputEvent('input', { bubbles: true, inputType: 'insertText', data: v }),
+    );
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
 }
 
+// TikTok's own passport and verification calls, by the paths it serves them on.
+const PASSPORT_TRAFFIC =
+  /send_code|check_code|passport\/web\/region|passport\/web\/email|passport\/web\/user\/register|passport\/web\/register|verification\/age|captcha|verify/;
+// The request headers TikTok signs its passport calls with.
+const SIGNING_HEADERS = /tt-|ticket|passport|csrf|x-ms|x-bogus|signature/i;
+
 /**
- * Install full request+response logging on a WSession's page. Watches
- * send_code / check_code / passport endpoints / register_verify_login.
- * Returns a state object that the caller mutates from outside via shared
- * references (sendCodeSeen, sendCodeSuccess, registerVerifySeen,
- * registerVerifyErrorCode). Logs are exactly as the original inline code
- * produced — TT header diffing, body excerpts, response header excerpts.
+ * Log TikTok's passport traffic on the session's page: each request's
+ * signing headers and body, each response's status, headers and body. The
+ * flow reads every answer it needs from the call its own action sent; this
+ * log is the record of the rest.
  */
 export function installNetworkLogger(s) {
-  const state = {
-    sendCodeSeen: false,
-    sendCodeSuccess: false,
-    registerVerifySeen: false,
-    registerVerifyErrorCode: null,
-  };
-  const interesting = (u) =>
-    /send_code|check_code|passport\/web\/region|passport\/web\/email|passport\/web\/user\/register|passport\/web\/register|verification\/age|captcha|verify/.test(
-      u || '',
-    );
   s.page.on('request', (req) => {
-    const u = req.url();
-    if (!interesting(u)) return;
-    const body = (() => {
-      try {
-        return req.postData() || '';
-      } catch {
-        return '';
-      }
-    })();
-    const h = req.headers();
-    const ttHeaders = Object.keys(h).filter((k) =>
-      /tt-|ticket|passport|csrf|x-ms|x-bogus|signature/i.test(k),
+    const url = req.url();
+    if (!PASSPORT_TRAFFIC.test(url)) return;
+    const headers = req.headers();
+    const signing = Object.keys(headers).filter((k) => SIGNING_HEADERS.test(k));
+    console.log(`[req] ${req.method()} ${url}`);
+    console.log(
+      signing.length
+        ? `[req-tt-hdrs] ${signing.map((k) => `${k}=${headers[k]}`).join(' | ')}`
+        : `[req-tt-hdrs] none; header keys: ${Object.keys(headers).join(',')}`,
     );
-    console.log(`[req] ${req.method()} ${u}`);
-    if (ttHeaders.length)
-      console.log(
-        `[req-tt-hdrs] ${ttHeaders.map((k) => k + '=' + (h[k] || '')).join(' | ')}`,
-      );
-    else
-      console.log(
-        `[req-tt-hdrs] NONE — header keys: ${Object.keys(h).join(',')}`,
-      );
+    const body = req.postData();
     if (body) console.log(`[req-body] ${body}`);
-    if (/email\/send_code/i.test(u)) state.sendCodeSeen = true;
-    if (/register_verify_login/i.test(u)) state.registerVerifySeen = true;
   });
   s.page.on('response', async (resp) => {
-    const u = resp.url();
-    if (!interesting(u)) return;
-    let body = '';
-    try {
-      body = await resp.text();
-    } catch {}
-    const h = resp.headers();
-    const hdrJson = JSON.stringify(h);
-    console.log(`[res] ${resp.status()} ${u}`);
-    console.log(`[res-body] ${body.replace(/\s+/g, ' ')}`);
-    console.log(`[res-hdrs] ${hdrJson}`);
-    if (/email\/send_code/i.test(u)) {
-      try {
-        const parsed = JSON.parse(body);
-        if (parsed?.message === 'success') state.sendCodeSuccess = true;
-        console.log(`[test] send_code message=${parsed?.message ?? 'missing'}`);
-      } catch {}
-    }
-    if (/register_verify_login/i.test(u)) {
-      state.registerVerifySeen = true;
-      try {
-        const parsed = JSON.parse(body);
-        state.registerVerifyErrorCode =
-          parsed?.data?.error_code ?? parsed?.error_code ?? null;
-        console.log(
-          `[test] register_verify_login error_code=${state.registerVerifyErrorCode ?? 'missing'}`,
-        );
-      } catch {}
-    }
+    const url = resp.url();
+    if (!PASSPORT_TRAFFIC.test(url)) return;
+    console.log(`[res] ${resp.status()} ${url}`);
+    console.log(`[res-hdrs] ${JSON.stringify(resp.headers())}`);
+    // A body the browser no longer holds (a redirect, a closed page) is
+    // logged as such with its cause.
+    const body = await resp.text().then(
+      (text) => text.replace(/\s+/g, ' '),
+      (error) => `unreadable: ${error.message}`,
+    );
+    console.log(`[res-body] ${body}`);
   });
-  return state;
 }
 
+const USERNAME_FIELD = 'input[placeholder*="username" i], input[name*="username" i]';
+const USERNAME_PAGE = '/signup/create-username';
+
 /**
- * Username-creation step: fill the username field, read whatever value
- * TikTok actually accepted (it auto-prefixes / truncates / appends digits),
- * and click the submit button. Tries 'Sign up', 'Next', 'Continue', 'Done'
- * in order. Returns the final username TikTok kept (or the typed value if
- * the page didn't echo it back). Caller waits for the redirect away from
- * /signup/create-username afterwards.
+ * Username-creation step: type the identity's username, read back the value
+ * TikTok kept (it may prefix, truncate or append digits), and submit through
+ * the step's own button. Answers the username TikTok kept; the step is done
+ * when TikTok leaves the create-username page.
  */
-export async function runUsernameStep(s, id, humanClickLocator) {
-  console.log('[test] username step detected — filling');
-  const unInfo = await s.page
-    .evaluate(`(() => {
-    const inputs = Array.from(document.querySelectorAll('input')).filter(i => {
-      const r = i.getBoundingClientRect();
-      return r.width > 0 && r.height > 0 && i.offsetParent !== null;
-    }).map(i => ({ placeholder: i.placeholder, name: i.name, type: i.type, valueLen: (i.value || '').length }));
-    const btns = Array.from(document.querySelectorAll('button')).filter(b => {
-      const r = b.getBoundingClientRect();
-      return r.width > 0 && r.height > 0 && b.offsetParent !== null;
-    }).map(b => ({ text: b.textContent.trim(), disabled: b.disabled }));
-    return { inputs, btns };
-  })()`)
-    .catch(() => ({}));
-  console.log(`[test] username step DOM: ${JSON.stringify(unInfo)}`);
+export async function runUsernameStep(s, id) {
+  const field = s.page.locator(USERNAME_FIELD).first();
+  if (!(await field.count()))
+    throw new Error(`TIKTOK_USERNAME_FIELD_MISSING: ${s.page.url()} shows no username field`);
+  await field.focus();
+  await pageSettled(s.page);
+  await s.page.keyboard.press('ControlOrMeta+A');
+  await s.page.keyboard.press('Delete');
+  await humanType(s.page, id.username);
+  await pageSettled(s.page);
 
-  const unLoc = s.page
-    .locator('input[placeholder*="username" i], input[name*="username" i]')
-    .first();
-  if (await unLoc.count()) {
-    const { humanType } = await import('../../../dist/human/keyboard.js');
-    await unLoc.focus();
-    await pageSettled(s.page);
-    await s.page.keyboard.press('ControlOrMeta+A').catch(() => {});
-    await s.page.keyboard.press('Delete').catch(() => {});
-    await humanType(s.page, id.username);
-    await pageSettled(s.page);
-  }
+  const kept = await field.inputValue();
+  if (!kept)
+    throw new Error(`TIKTOK_USERNAME_NOT_KEPT: the username field is empty after typing ${id.username}`);
+  console.log(`[test] username typed=${JSON.stringify(id.username)} kept=${JSON.stringify(kept)}`);
 
-  const acceptedUsername = await s.page
-    .evaluate(`(() => {
-    const inp = document.querySelector('input[placeholder*="username" i], input[name*="username" i]');
-    return inp ? (inp.value || '') : '';
-  })()`)
-    .catch(() => '');
-  const finalUsername = acceptedUsername || id.username;
-  console.log(
-    `[test] username field value=${JSON.stringify(acceptedUsername)} chosen=${JSON.stringify(finalUsername)}`,
-  );
-
-  for (const txt of ['Sign up', 'Next', 'Continue', 'Done']) {
-    try {
-      const btn = s.page
-        .getByRole('button', { name: new RegExp(`^\\s*${txt}\\s*$`, 'i') })
-        .first();
-      if (
-        (await btn.count()) &&
-        (await btn.isVisible().catch(() => false)) &&
-        !(await btn.isDisabled().catch(() => false))
-      ) {
-        await humanClickLocator(s.page, btn);
-        console.log(`[test] clicked ${txt} on username step`);
-        break;
-      }
-    } catch {}
-  }
-
-  // The step is done when TikTok leaves the create-username page.
-  await s.page.waitForURL(
-    (url) => !url.pathname.includes('/signup/create-username'),
-    { timeout: 0 },
-  );
+  await clickDescribed(s.page, 'the button that submits the chosen username');
+  await urlMatching(s.page, (url) => !new URL(url).pathname.includes(USERNAME_PAGE));
   console.log(`[test] left create-username: ${s.page.url()}`);
-  return finalUsername;
+  return kept;
 }
