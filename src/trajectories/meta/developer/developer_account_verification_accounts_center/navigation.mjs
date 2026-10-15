@@ -1,65 +1,43 @@
-// Reaching the right place: the account's stored phone, and the Accounts
-// Center link, found by the vision model from its description
-// (`_shared/page/judged/seen.mjs`). The phone's country is picked where the
-// number is typed (`phone_steps.mjs`), from the number's own dialling code.
+// Reaching the right place: the account's stored phone in the stated
+// country, read off Accounts Center by the vision model, and the Accounts
+// Center link, found by it from its description
+// (`_shared/page/judged/seen.mjs`).
 import { pageSettled } from '../../../_shared/page/settled.mjs';
-import { clickDescribed } from '../../../_shared/page/judged/seen.mjs';
-import { normalizePhone, phoneNationalNumber } from './page.mjs';
+import { clickDescribed, shownText } from '../../../_shared/page/judged/seen.mjs';
+import { statedPhone } from './settings.mjs';
 
-export async function loadAccountPhone(page, preferredCountry) {
+/**
+ * The phone the account lists as a contact point with dialling code
+ * `countryCode`, as `{ countryCode, national }`. Refused when Accounts
+ * Center lists none in that country.
+ */
+export async function loadAccountPhone(page, countryCode) {
   await page.goto(
     'https://accountscenter.facebook.com/youraccount/contact_points/',
-    {
-      waitUntil: 'domcontentloaded',
-    },
+    { waitUntil: 'domcontentloaded' },
   );
   await pageSettled(page);
-  const rawPhones = await page.evaluate(() => {
-    const textOf = (el) =>
-      [
-        el.innerText || '',
-        el.textContent || '',
-        el.getAttribute('aria-label') || '',
-        el.getAttribute('title') || '',
-      ].join(' ');
-    const text = [
-      document.body?.innerText || '',
-      document.body?.textContent || '',
-      ...Array.from(
-        document.querySelectorAll(
-          'button, [role="button"], a, input, [aria-label], [title]',
-        ),
-      ).map(textOf),
-    ].join(' ');
-    const matches = text.match(/\+\d[\d\s().-]{6,}\d/g) || [];
-    return Array.from(new Set(matches));
-  });
-  const candidates = rawPhones
-    .map(normalizePhone)
-    .filter(Boolean)
-    .sort((a, b) => {
-      if (a.country === preferredCountry && b.country !== preferredCountry)
-        return -1;
-      if (b.country === preferredCountry && a.country !== preferredCountry)
-        return 1;
-      return b.digitCount - a.digitCount;
-    });
-  const selected = candidates[0] || null;
-  if (!selected) return null;
-  console.log(
-    JSON.stringify(
-      {
-        stage: 'account_phone_candidate_loaded',
-        country: selected.country,
-        digitCount: selected.digitCount,
-        nationalDigitCount: phoneNationalNumber(selected.phone).length,
-        candidates: candidates.length,
-      },
-      null,
-      2,
-    ),
+  const listed = await shownText(
+    page,
+    `mobile number listed as a contact point whose dialling code is +${countryCode}, written with its + and dialling code`,
   );
-  return selected.phone;
+  if (!listed)
+    throw new Error(
+      `META_ACCOUNT_PHONE_NOT_LISTED: Accounts Center lists no mobile number with dialling code +${countryCode}`,
+    );
+  const phone = statedPhone(
+    listed,
+    countryCode,
+    `the account phone read off Accounts Center for +${countryCode}`,
+  );
+  console.log(
+    JSON.stringify({
+      stage: 'account_phone_loaded',
+      countryCode: phone.countryCode,
+      nationalDigitCount: phone.national.length,
+    }),
+  );
+  return phone;
 }
 
 export async function clickAccountsCenter(page) {
@@ -70,5 +48,4 @@ export async function clickAccountsCenter(page) {
   console.log(
     JSON.stringify({ stage: 'clicked', label: 'accounts_center', ...target }),
   );
-  return true;
 }
