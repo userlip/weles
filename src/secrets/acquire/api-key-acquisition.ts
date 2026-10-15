@@ -20,28 +20,36 @@ import type { AcquireSecretRequest, AcquireSecretResult } from './request.js';
 import type { SecretDefinition } from './catalog.js';
 import { paramsFor, queueAction } from './queued-job.js';
 
+/** A credential operation's request id: a SHA-256 digest in hexadecimal. */
+const REQUEST_ID = /^[a-f0-9]{64}$/i; // https://csrc.nist.gov/pubs/fips/180-4/upd1/final SHA-256 message digest is 256 bits, written as 64 hexadecimal digits
+
+/** The Skarbiec item the assembled constraints say the credential is written to. */
+function constrainedItem(params: Record<string, unknown>, secret: string): string {
+  const constraints = params.constraints;
+  const item =
+    constraints && typeof constraints === 'object' && !Array.isArray(constraints)
+      ? (constraints as Record<string, unknown>).vault_item_id
+      : undefined;
+  if (typeof item !== 'string' || item === '')
+    throw new Error(
+      `the acquisition job for ${secret} names no Skarbiec item in constraints.vault_item_id`,
+    );
+  return item;
+}
+
 export async function queueAcquisition(
   def: SecretDefinition,
   request: AcquireSecretRequest,
   enqueue: typeof queueAction = queueAction,
 ): Promise<AcquireSecretResult> {
   const params = paramsFor(def, request);
-  let vaultItemId: string | undefined;
-  if (
-    params.constraints &&
-    typeof params.constraints === 'object' &&
-    !Array.isArray(params.constraints)
-  ) {
-    const constrainedItemId = (params.constraints as Record<string, unknown>)
-      .vault_item_id;
-    if (typeof constrainedItemId === 'string') vaultItemId = constrainedItemId;
-  }
+  const vaultItemId = constrainedItem(params, def.secret);
   if (request.dryRun === true) {
     return {
       status: 'operation_plan',
       operation: 'acquire',
       secret: def.secret,
-      vaultItemId: vaultItemId ?? def.secret,
+      vaultItemId,
       provider: def.provider,
       url: def.formUrl,
       objective: String(params.objective),
@@ -49,26 +57,23 @@ export async function queueAcquisition(
     };
   }
 
-  const missing = [
-    ...[welesAcquiredSecretWriterProblem(def.secret, request.tenantId)].filter(
-      (problem): problem is string => problem !== null,
-    ),
-    ...(!/^[a-f0-9]{64}$/i.test(request.requestId ?? '')
-      ? ['one exact credential operation request id']
-      : []),
-  ];
-  if (missing.length) {
+  const missing: string[] = [];
+  const writerProblem = welesAcquiredSecretWriterProblem(def.secret, request.tenantId);
+  if (writerProblem !== null) missing.push(writerProblem);
+  const buildId = request.requestId;
+  if (typeof buildId !== 'string' || !REQUEST_ID.test(buildId))
+    missing.push('one exact credential operation request id');
+  if (typeof buildId !== 'string' || missing.length) {
     return {
       status: 'needs_configuration',
       secret: def.secret,
-      vaultItemId: vaultItemId ?? def.secret,
+      vaultItemId,
       provider: def.provider,
       missing,
       message: `Cannot enqueue Weles acquisition without ${missing.join(', ')}`,
     };
   }
 
-  const buildId = request.requestId!;
   const actionLogId = await enqueue(
     'generic_keeper_task',
     '',
@@ -85,7 +90,7 @@ export async function queueAcquisition(
     actionLogId,
     action: 'generic_keeper_task',
     flowName: def.flowName,
-    ...(vaultItemId ? { vaultItemId } : {}),
+    vaultItemId,
     message: `${def.displayName} API key acquisition queued via generic_keeper_task`,
   };
 }
