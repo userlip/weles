@@ -1,15 +1,23 @@
+// Post a comment on the Product Hunt launch the caller names.
+//
+// Env:
+//   PRODUCTHUNT_URL   required: https://www.producthunt.com/products/<slug>,
+//                     the launch the comment is posted on
+//   PH_COMMENT        required: the comment's text, published under the
+//                     account's name
+//
+// Nothing is commented on a launch nobody named, and no words are written
+// here. The account signs in from its fresh cookie jar, or through its X
+// sign-in when the jar is stale or the page shows it signed out; the comment
+// counts as posted only when its text shows outside every editable field.
 import { WSession } from '../../../dist/session/wsession.js';
 import {
   getSocialAccount,
   resolveAccountSession,
   markCookiesStale,
 } from '../../../dist/utils/credentials.js';
-import {
-  injectPHCookies,
-  loginViaTwitter,
-  pickFirstProductLaunchUrl,
-} from './_session.mjs';
-import { humanType, humanFill } from '../../../dist/human/keyboard.js';
+import { injectPHCookies, loginViaTwitter } from './_session.mjs';
+import { humanType } from '../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { assertAuthed, AuthProbeError } from '../_shared/auth/auth-probe.mjs';
 import {
@@ -17,24 +25,20 @@ import {
   CookieJarStaleError,
 } from '../_shared/auth/cookie-freshness.mjs';
 import { statedText } from '../_shared/inputs/stated.mjs';
-
-// Post a comment on a Product Hunt launch.
-// PRODUCTHUNT_URL=https://www.producthunt.com/products/<slug>  -> launch page
-// PH_COMMENT="text"                                            -> required
-// When PRODUCTHUNT_URL is unset, the trajectory navigates to the homepage
-// and selects a /products/<slug> launch page with a comment composer.
-
-const EXPLICIT_TARGET = process.env.PRODUCTHUNT_URL;
-// The comment is published under the account's name; its words are the
-// caller's, never a stock compliment written here.
-const COMMENT_TEXT = statedText(['PH_COMMENT'], 'the comment text to publish');
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { textShownOutsideEditors } from '../_shared/page/shows.mjs';
+import { clickDescribed, pageShows } from '../_shared/page/judged/seen.mjs';
 
-async function postComment(s, acct, sessionMeta) {
-  // Cookie-jar freshness gate — see _shared/auth/cookie-freshness.mjs. On stale,
-  // skip injection and let loginViaTwitter recover below.
-  let cookies = [];
+const TARGET_URL = statedText(
+  ['PRODUCTHUNT_URL'],
+  'the Product Hunt launch page the comment is posted on',
+);
+const COMMENT_TEXT = statedText(['PH_COMMENT'], 'the comment text to publish');
+
+/** Inject the account's saved cookies unless its jar is stale. */
+async function injectFreshCookies(s, acct, sessionMeta) {
+  let cookies;
+  let stale;
   try {
     cookies = loadFreshCookieJarOrFail(acct, {
       platform: 'producthunt',
@@ -44,121 +48,78 @@ async function postComment(s, acct, sessionMeta) {
     });
   } catch (jarErr) {
     if (!(jarErr instanceof CookieJarStaleError)) throw jarErr;
-    console.log(
-      `[ph-comment] ${jarErr.message} — falling through to SSO recovery`,
-    );
-    cookies = [];
+    stale = jarErr;
   }
-  if (cookies.length) {
-    const inj = await injectPHCookies(s, cookies);
-    console.log(`[ph-comment] injected ${inj} saved cookies`);
+  if (stale) {
+    console.log(`[ph-comment] ${stale.message}; signing in through X`);
+    return;
   }
+  const inj = await injectPHCookies(s, cookies);
+  console.log(`[ph-comment] injected ${inj} saved cookies`);
+}
 
-  // Bootstrap to the homepage — establishes session + lets us discover a
-  // launch URL when one isn't supplied. PH forum pages don't redirect
-  // logged-out visitors; they just hide the reply input, so detect via
-  // Sign-in button presence.
-  await s.goto('https://www.producthunt.com/');
+async function postComment(s, acct, sessionMeta) {
+  await injectFreshCookies(s, acct, sessionMeta);
+  await s.goto(TARGET_URL);
   await pageSettled(s.page);
-  const needsLogin = await s.page
-    .evaluate(
-      `(() => !!Array.from(document.querySelectorAll('button,a')).find(e => /^Sign in$/i.test((e.textContent||'').trim())))()`,
+  if (
+    await pageShows(
+      s.page,
+      'Is the visitor signed out of Product Hunt, with the page offering to sign in?',
     )
-    .catch(() => false);
-  if (needsLogin) {
-    console.log('[ph-comment] session not authenticated — running Twitter SSO');
+  ) {
+    console.log('[ph-comment] signed out; running the X sign-in');
     await loginViaTwitter(s);
-    await s.goto('https://www.producthunt.com/');
+    await s.goto(TARGET_URL);
     await pageSettled(s.page);
   }
-
-  // Positive auth probe — see _shared/auth/auth-probe.mjs.
   try {
     await assertAuthed('producthunt', s, { label: 'producthunt_comment' });
   } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      // A jar that could not be marked stale is picked again by the next
-      // run; the failure says so beside the probe's own cause.
-      const marked = await markCookiesStale(acct.id).then(
-        () => '',
-        (markError) =>
-          `; the cookie jar was not marked stale: ${markError.message}`,
-      );
-      throw new Error(`auth_probe_failed: ${probeErr.message}${marked}`);
-    }
-    throw probeErr;
+    if (!(probeErr instanceof AuthProbeError)) throw probeErr;
+    // A jar that could not be marked stale is picked again by the next run;
+    // the failure says so beside the probe's own cause.
+    const marked = await markCookiesStale(acct.id).then(
+      () => '',
+      (markError) =>
+        `; the cookie jar was not marked stale: ${markError.message}`,
+    );
+    throw new Error(`auth_probe_failed: ${probeErr.message}${marked}`);
   }
 
-  // Resolve target launch URL. Caller-supplied PRODUCTHUNT_URL wins; else
-  // pick the first /products/<slug> launch from the authed homepage —
-  // /products is the only page shape with a tiptap composer.
-  const targetUrl = EXPLICIT_TARGET ?? (await pickFirstProductLaunchUrl(s));
-  if (!targetUrl) throw new Error('no_launch_url_discovered');
-  console.log(`[ph-comment] target=${targetUrl}`);
-  await s.goto(targetUrl);
-  await pageSettled(s.page);
-
-  // PH forum comment editor is a TipTap/ProseMirror contenteditable. Target
-  // it, type via keyboard (so Playwright routes real key events), then submit
-  // via Cmd/Ctrl+Enter which TipTap wires up to the reply mutation.
+  // The launch's comment editor is a TipTap contenteditable, typed into
+  // with real key events; the comment is posted with its own button.
   const editor = s.page
     .locator('[contenteditable="true"][role="textbox"].tiptap')
     .first();
   await editor.waitFor();
   await humanClickLocator(s.page, editor);
   await humanType(s.page, COMMENT_TEXT);
+  await clickDescribed(
+    s.page,
+    'the button that posts the comment typed in the comment editor',
+  );
   await pageSettled(s.page);
-  await s.page.keyboard.press('Meta+Enter').catch(() => {});
-  await s.page.keyboard.press('Control+Enter').catch(() => {});
-  await pageSettled(s.page);
-
-  // The editor still holds the typed draft; the comment is posted only when
-  // its text shows outside every editable field.
-  if (await textShownOutsideEditors(s.page, COMMENT_TEXT)) return targetUrl;
-
-  // Otherwise click a submit button by label via Playwright locator.
-  const submitBtn = s.page
-    .locator('button')
-    .filter({ hasText: /^(reply|send|submit)$/i })
-    .first();
-  let btnClicked = null;
-  if (
-    (await submitBtn.count()) &&
-    !(await submitBtn.isDisabled().catch(() => true))
-  ) {
-    btnClicked = ((await submitBtn.innerText().catch(() => '')) ?? '').trim();
-    await humanClickLocator(s.page, submitBtn).catch(() => {});
-  }
-  console.log(`[ph-comment] explicit submit button: ${btnClicked}`);
-  await pageSettled(s.page);
-
   if (!(await textShownOutsideEditors(s.page, COMMENT_TEXT)))
-    throw new Error(`comment_not_found_after_post: url=${s.page.url()}`);
-  return targetUrl;
+    throw new Error(
+      `comment_not_found_after_post: the comment shows nowhere outside the editor at ${s.page.url()}`,
+    );
 }
 
 const acct = await getSocialAccount('producthunt');
-if (!acct) {
-  console.log('FAIL: no_producthunt_account_in_db');
-  process.exit(1);
-}
+if (!acct)
+  throw new Error('no Product Hunt account is recorded; nothing was commented');
 console.log(`[ph-comment] using account: ${acct.username}`);
 
 const sessionOpts = await resolveAccountSession(acct);
-// This trajectory uses the Chromium navigation and input path.
 const s = await WSession.start({
   label: 'producthunt_comment',
   ...sessionOpts,
   browser: 'chromium',
 });
 try {
-  const target = await postComment(s, acct, sessionOpts);
-  console.log(`PASS: ${acct.username} commented on ${target}`);
-} catch (e) {
-  console.log(`FAIL: ${e.message}`);
-  process.exitCode = 1;
+  await postComment(s, acct, sessionOpts);
+  console.log(`PASS: ${acct.username} commented on ${TARGET_URL}`);
 } finally {
-  await s
-    .close()
-    .catch((e) => console.log(`[session] close failed: ${e.message}`));
+  await s.close();
 }
