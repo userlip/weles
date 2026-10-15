@@ -6,30 +6,24 @@ import { isLoginUrl } from './session/login_wall.mjs';
 // logged-in Meta cookies exist, and closes cleanly so Chrome flushes the
 // profile. Future Meta Ads trajectories reuse the same profile + persona.
 
-import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
+import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
 
+const ADS_MANAGER_URL =
+  'https://adsmanager.facebook.com/adsmanager/manage/campaigns';
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
   process.env.ADS_PROFILE_DIR ||
   join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
 mkdirSync(USER_DATA_DIR, { recursive: true });
 
-function stableProfilePersona() {
-  const p = join(USER_DATA_DIR, 'persona.json');
-  if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8'));
-  const persona = generatePersona({ os: 'macos', browser: 'chromium' });
-  writeFileSync(p, JSON.stringify(persona, null, 2));
-  return persona;
-}
-
 async function bringBrowserToFront(s) {
-  await s.page.bringToFront().catch(() => {});
+  await s.page.bringToFront();
   if (process.platform !== 'darwin') return;
   spawnSync('osascript', ['-e', 'tell application "Chromium" to activate'], {
     stdio: 'ignore',
@@ -44,14 +38,14 @@ async function bringBrowserToFront(s) {
   );
 }
 
-function hasMetaAuthCookie(cookies) {
-  const names = new Set(
-    cookies
-      .filter((c) =>
-        /facebook\.com|business\.facebook\.com/.test(c.domain || ''),
-      )
-      .map((c) => c.name),
-  );
+/** The names of the cookies Ads Manager would be sent. */
+async function adsManagerCookieNames(s) {
+  const cookies = await s.ctx.cookies(ADS_MANAGER_URL);
+  return new Set(cookies.map((c) => c.name));
+}
+
+/** Meta's signed-in session is its c_user and xs cookies together. */
+function signedIn(names) {
   return names.has('c_user') && names.has('xs');
 }
 
@@ -60,40 +54,30 @@ console.log(
 );
 const s = await WSession.start({
   label: 'meta_ads_login',
-  browser: 'chromium',
   proxy: statedProxy('the Meta Ads login'),
-  persona: stableProfilePersona(),
+  persona: stableProfilePersona(USER_DATA_DIR),
   userDataDir: USER_DATA_DIR,
 });
 
 try {
   await bringBrowserToFront(s);
-  await s.goto('https://adsmanager.facebook.com/adsmanager/manage/campaigns');
+  await s.goto(ADS_MANAGER_URL);
   await pageSettled(s.page);
-  let cookies = await s.ctx.cookies().catch(() => []);
-  if (!hasMetaAuthCookie(cookies) || isLoginUrl(s.page.url?.() ?? '')) {
+  if (!signedIn(await adsManagerCookieNames(s)) || isLoginUrl(s.page.url())) {
     console.log('[meta-ads-login] waiting for manual login in the open window');
     await bringBrowserToFront(s);
     await s.page.waitForURL((url) => !isLoginUrl(String(url)));
     await pageSettled(s.page);
   }
-  cookies = await s.ctx.cookies().catch(() => []);
-  const metaNames = cookies
-    .filter((c) => /facebook\.com|business\.facebook\.com/.test(c.domain || ''))
-    .map((c) => c.name)
-    .sort();
+  const names = await adsManagerCookieNames(s);
   console.log(
-    `[meta-ads-login] cookie names: ${Array.from(new Set(metaNames)).join(', ')}`,
+    `[meta-ads-login] cookie names: ${Array.from(names).sort().join(', ')}`,
   );
-  if (!hasMetaAuthCookie(cookies)) {
-    console.log(
-      `FAIL: login not persisted; missing c_user/xs (url=${s.page.url?.() ?? ''})`,
+  if (!signedIn(names))
+    throw new Error(
+      `META_LOGIN_NOT_PERSISTED: the profile holds no c_user and xs cookies for Ads Manager (url=${s.page.url()})`,
     );
-    process.exit(2);
-  }
   console.log('PASS: Meta Ads login persisted');
 } finally {
-  await s
-    .close()
-    .catch((e) => console.log(`[session] close failed: ${e.message}`));
+  await s.close();
 }
