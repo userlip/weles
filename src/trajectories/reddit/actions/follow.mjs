@@ -1,175 +1,80 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
+// Follow a Reddit user through the shared action runner: the account's
+// fresh jar, the signed-in gate, the verdict and its record are the
+// runner's.
+//
+// Env (one is required; nobody is followed by default):
+//   TARGET_USER   the user to follow (u/ prefix optional)
+//   SUBREDDIT     a subreddit whose newest post author is followed when
+//                 TARGET_USER is unset (r/ prefix optional)
+//
+// Reddit's follow is the friend toggle on the user's profile subreddit
+// (old.reddit.com/r/u_<name>/): '+ friends' while not followed, '- friends'
+// once followed.
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { detectRedditBanSignals } from '../../../../dist/platforms/reddit/ban_signals.js';
-import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { checkReachable } from '../../_shared/action-runner.mjs';
-import {
-  assertAuthed,
-  AuthProbeError,
-} from '../../_shared/auth/auth-probe.mjs';
-import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { runAction } from '../../_shared/action-runner.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
+import { pageSettled } from '../../_shared/page/settled.mjs';
+import { OLD_REDDIT, switchOn } from '../content/old_reddit.mjs';
 
-// Either a named user is followed, or the newest author in a named
-// subreddit; neither the user nor the subreddit is chosen here.
-const TARGET_USER = process.env.TARGET_USER?.trim()
-  .replace(/^u\//, '')
-  .replace(/^\/u\//, '');
+const TARGET_USER = process.env.TARGET_USER?.trim().replace(/^\/?u\//, '');
 const SUBREDDIT = TARGET_USER
   ? undefined
   : statedText(
       ['SUBREDDIT'],
       'the subreddit whose newest author is followed when TARGET_USER is unset',
-    ).replace(/^r\//, '');
+    ).replace(/^\/?r\//, '');
 
-const acct = await getSocialAccount('reddit');
-if (!acct) {
-  console.log('FAIL: no active reddit account');
-  process.exit(1);
-}
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'reddit_follow',
-  proxy: proxyUrl,
-  persona,
-});
-const _stored = (acct.metadata?.cookies ?? []).filter((c) =>
-  /reddit\.com/.test(c.domain ?? ''),
-);
-// A jar that could not be injected leaves the session signed out; the
-// failure is raised inside the try so it is reported and the session closed.
-let cookieInjectError = null;
-if (_stored.length)
-  await s.ctx
-    .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
-    .catch((e) => {
-      cookieInjectError = e;
+const profileSubreddit = (user) =>
+  `${OLD_REDDIT}/r/u_${encodeURIComponent(user)}/`;
+
+/** The newest post author of SUBREDDIT, as Reddit's own listing names it. */
+async function newestAuthor(page) {
+  const listing = await page.evaluate(async (url) => {
+    const answer = await fetch(url, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
     });
-let ban = null;
-try {
-  if (cookieInjectError)
+    return { ok: answer.ok, status: answer.status, body: await answer.text() };
+  }, `${OLD_REDDIT}/r/${encodeURIComponent(SUBREDDIT)}/new/.json?raw_json=1`);
+  if (!listing.ok)
     throw new Error(
-      `stored cookies could not be injected: ${cookieInjectError.message}`,
+      `REDDIT_LISTING_REFUSED: r/${SUBREDDIT}/new answered ${listing.status}: ${listing.body}`,
     );
-  let author = TARGET_USER;
-  if (!author) {
-    await s.goto('https://old.reddit.com/');
-    checkReachable(s, 'reddit');
-    const data = await s.page
-      .evaluate(
-        async (u) => {
-          try {
-            const r = await fetch(u, {
-              credentials: 'include',
-              headers: { Accept: 'application/json' },
-            });
-            if (!r.ok) return null;
-            return await r.json();
-          } catch {
-            return null;
-          }
-        },
-        `https://old.reddit.com/r/${encodeURIComponent(SUBREDDIT)}/new/.json?limit=50&raw_json=1`,
-      )
-      .catch(() => null);
-    const pick = (data?.data?.children ?? [])
-      .map((c) => c.data)
-      .filter(
-        (p) =>
-          p &&
-          p.author &&
-          p.author !== '[deleted]' &&
-          !/^AutoModerator$/i.test(p.author),
-      )[0];
-    if (pick) author = pick.author;
-    if (!author) throw new Error('no author found to follow');
-  }
-  // Reddit's "follow user" is implemented as "subscribe to r/u_USERNAME"
-  // (the user's profile subreddit) — old.reddit.com surfaces that same
-  // .fancy-toggle-button.add → .remove pattern as join_sub. Visiting the
-  // u_ subreddit directly avoids new-reddit shadow DOM entirely.
-  await s.goto(`https://old.reddit.com/r/u_${encodeURIComponent(author)}/`);
-  checkReachable(s, 'reddit');
-  try {
-    await assertAuthed('reddit', s, { label: 'reddit_follow' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
-    throw probeErr;
-  }
-  // Real structure on old.reddit /r/u_<author>/ (the user's profile-as-subreddit):
-  //   <span class="fancy-toggle-button toggle">
-  //     <a class="option active add login-required">+ friends</a>  (visible if NOT friend)
-  //     <a class="option remove">- friends</a>                      (visible AFTER befriend)
-  //   </span>
-  // Reddit's "follow" implementation IS the friend toggle on the u_ subreddit.
-  // Previous selectors used `a.fancy-toggle-button.add/remove` which match
-  // nothing — fancy-toggle-button is on the parent span, not the <a>.
-  const friendSelector = 'span.fancy-toggle-button.toggle a.option.add';
-  const unfriendSelector =
-    'span.fancy-toggle-button.toggle a.option.remove.active';
-  if (
-    await s.page
-      .locator(unfriendSelector)
-      .first()
-      .isVisible()
-      .catch(() => false)
-  ) {
-    ban = await banSignalOf(
-      detectRedditBanSignals,
-      s,
-      'after finding it followed',
+  const posts = JSON.parse(listing.body).data?.children;
+  const author = Array.isArray(posts)
+    ? posts
+        .map((child) => child.data?.author)
+        .find(
+          (name) => name && name !== '[deleted]' && !/^AutoModerator$/i.test(name),
+        )
+    : undefined;
+  if (!author)
+    throw new Error(
+      `REDDIT_NO_AUTHOR: r/${SUBREDDIT}/new lists no post by a live author to follow`,
     );
-    console.log(
-      `[ban-signal] ${ban?.signal}  PASS: already following u/${author}`,
-    );
-  } else {
-    const joinBtn = s.page.locator(friendSelector).first();
-    await joinBtn.waitFor({ state: 'visible' });
-    await joinBtn.scrollIntoViewIfNeeded();
-    await humanClickLocator(s.page, joinBtn);
-    await s.page
-      .locator(unfriendSelector)
-      .first()
-      .waitFor({ state: 'visible' });
-    ban = await banSignalOf(detectRedditBanSignals, s, 'after following');
-    console.log(`[ban-signal] ${ban?.signal}  PASS: now following u/${author}`);
-  }
-} catch (e) {
-  ban =
-    e.banSignal ??
-    (await banSignalOf(detectRedditBanSignals, s, 'after the failure'));
-  console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
-  process.exitCode = 1;
-} finally {
-  if (ban) {
-    try {
-      const dir = runRecordingsDir('reddit_follow');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'ban_signal.json'),
-        JSON.stringify(
-          {
-            account_id: acct.id,
-            username: acct.username,
-            action: 'reddit_follow',
-            target_user: TARGET_USER,
-            ...ban,
-            ts: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
-      );
-    } catch (e) {
-      console.log('[ban-signal] persist err:', e.message);
-    }
-  }
-  await s.close();
+  return author;
 }
+
+await runAction({
+  platform: 'reddit',
+  action: 'follow',
+  feedUrl: TARGET_USER
+    ? profileSubreddit(TARGET_USER)
+    : `${OLD_REDDIT}/r/${encodeURIComponent(SUBREDDIT)}/new/`,
+  banDetector: detectRedditBanSignals,
+  act: async (s) => {
+    let author = TARGET_USER;
+    if (!author) {
+      author = await newestAuthor(s.page);
+      await s.goto(profileSubreddit(author));
+      await pageSettled(s.page);
+    }
+    const followed = await switchOn(
+      s.page,
+      'span.fancy-toggle-button.toggle',
+      humanClickLocator,
+    );
+    return followed ? `already following u/${author}` : `now following u/${author}`;
+  },
+});
