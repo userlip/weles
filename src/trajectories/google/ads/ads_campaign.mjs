@@ -63,8 +63,8 @@ import {
   ensureCustomer,
   isLoginUrl,
   navigate,
-  stableProfilePersona,
 } from './ads_campaign/page.mjs';
+import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import { humanType } from '../../../../dist/human/keyboard.js';
 import {
   clickDescribed,
@@ -72,10 +72,10 @@ import {
   pageShows,
 } from '../../_shared/page/judged/seen.mjs';
 
-if (!ADS_URL && !CUSTOMER_ID && !WAIT_FOR_LOGIN) {
-  console.log('FAIL: GOOGLE_ADS_CUSTOMER_ID or ADS_URL required');
-  process.exit(1);
-}
+if (!ADS_URL && !CUSTOMER_ID && !WAIT_FOR_LOGIN)
+  throw new Error(
+    'GOOGLE_ADS_CUSTOMER_ID or ADS_URL is required: nothing names the account the campaign is drafted in',
+  );
 
 const acct = await getSocialAccount('google');
 const session = acct
@@ -84,7 +84,7 @@ const session = acct
 const profilePersona =
   process.env.ADS_PROFILE_PERSONA === 'account' && session.persona
     ? session.persona
-    : stableProfilePersona();
+    : stableProfilePersona(USER_DATA_DIR);
 
 const baseUrl =
   ADS_URL ||
@@ -97,7 +97,6 @@ console.log(
 assertGoogleAdsProfileNotAlreadyOpen(USER_DATA_DIR, 'google_ads_campaign');
 const s = await WSession.start({
   label: 'google_ads_campaign',
-  browser: process.env.BROWSER || 'chromium',
   proxy:
     session.proxyUrl && !process.env.PROXY_URL?.trim()
       ? session.proxyUrl
@@ -111,12 +110,12 @@ try {
   await bringBrowserToFront(s);
   await navigate(s, baseUrl);
   await pageSettled(s.page);
-  let url = s.page.url?.() ?? '';
+  let url = s.page.url();
   if (isLoginUrl(url)) {
-    if (!WAIT_FOR_LOGIN) {
-      console.log('FAIL: google session expired / not logged in');
-      process.exit(2);
-    }
+    if (!WAIT_FOR_LOGIN)
+      throw new Error(
+        'GOOGLE_ADS_SESSION_EXPIRED: the profile is not signed in to Google and WAIT_FOR_LOGIN is not set',
+      );
     console.log('[google-ads] waiting for manual login in the open window');
     await bringBrowserToFront(s);
     await s.page.waitForURL((u) => !isLoginUrl(String(u)));
@@ -233,7 +232,7 @@ try {
   }
 } catch (e) {
   console.log('FAIL:', e.message);
-  process.exitCode = 1;
+  throw e;
 } finally {
   if (closeAllowedByEnv('GOOGLE_ADS_CLOSE_AFTER_HARVEST'))
     await closeGoogleAdsSession(s, 'google-ads');
