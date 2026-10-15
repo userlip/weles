@@ -10,7 +10,7 @@
 // on /home.
 import { humanFill } from '../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { deactivateAccount } from '../../../dist/account/state.js';
+import { deactivateAccount, deactivationClause } from '../../../dist/account/state.js';
 import { detectTwitterBanSignals } from '../../../dist/platforms/twitter/ban_signals.js';
 import { runLogin } from '../_shared/action/login.mjs';
 import { pageCondition, pageSettled } from '../_shared/page/settled.mjs';
@@ -52,8 +52,8 @@ async function refuseAnswer(s, acct, answer) {
       banSignal: { signal: 'checkpoint', healthy: false, details: { final_url: url } },
     });
   if (SUSPENDED_ROUTES.some((route) => new URL(url).pathname.startsWith(route))) {
-    await deactivateAccount(acct.id, acct.metadata, 'TWITTER_SUSPENDED');
-    throw Object.assign(new Error(`TWITTER_SUSPENDED: ${url}; ${acct.username} is deactivated`), {
+    const outcome = await deactivateAccount(acct.id, acct.metadata, 'TWITTER_SUSPENDED');
+    throw Object.assign(new Error(`TWITTER_SUSPENDED: ${url}; ${deactivationClause(outcome, acct.username)}`), {
       banSignal: { signal: 'suspended', healthy: false, details: { final_url: url } },
     });
   }

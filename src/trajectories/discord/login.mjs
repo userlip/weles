@@ -11,7 +11,7 @@
 // not seen is authorized from the mail Discord sends for it
 // (./login/new_location.mjs).
 import { pageSettled } from '../_shared/page/settled.mjs';
-import { deactivateAccount } from '../../../dist/account/state.js';
+import { deactivateAccount, deactivationClause } from '../../../dist/account/state.js';
 import { CaptchaSolver } from '../../../dist/captcha/solver.js';
 import { humanFill } from '../../../dist/human/keyboard.js';
 import { detectDiscordBanSignals } from '../../../dist/platforms/discord/ban_signals.js';
@@ -105,9 +105,9 @@ await runLogin({
     await form.evaluate((element) => element.requestSubmit());
     await pageSettled(s.page);
     if (s.authBlocked) {
-      await deactivateAccount(acct.id, acct.metadata, s.authBlocked);
+      const outcome = await deactivateAccount(acct.id, acct.metadata, s.authBlocked);
       throw Object.assign(
-        new Error(`DISCORD_AUTH_BLOCKED: Discord answered ${s.authBlocked}; ${acct.username} is deactivated`),
+        new Error(`DISCORD_AUTH_BLOCKED: Discord answered ${s.authBlocked}; ${deactivationClause(outcome, acct.username)}`),
         { banSignal: { signal: 'suspended', healthy: false, details: { reason: s.authBlocked } } },
       );
     }

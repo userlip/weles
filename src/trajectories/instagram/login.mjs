@@ -8,7 +8,7 @@
 // writer); its suspended routes deactivate the account.
 import { humanType } from '../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { deactivateAccount } from '../../../dist/account/state.js';
+import { deactivateAccount, deactivationClause } from '../../../dist/account/state.js';
 import { detectInstagramBanSignals } from '../../../dist/platforms/instagram/ban_signals.js';
 import { runLogin } from '../_shared/action/login.mjs';
 import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
@@ -56,8 +56,8 @@ await runLogin({
         banSignal: { signal: 'checkpoint', healthy: false, details: { final_url: url } },
       });
     if (routeOf(url, SUSPENDED_ROUTES)) {
-      await deactivateAccount(acct.id, acct.metadata, 'INSTAGRAM_SUSPENDED');
-      throw Object.assign(new Error(`INSTAGRAM_SUSPENDED: ${url}; ${acct.username} is deactivated`), {
+      const outcome = await deactivateAccount(acct.id, acct.metadata, 'INSTAGRAM_SUSPENDED');
+      throw Object.assign(new Error(`INSTAGRAM_SUSPENDED: ${url}; ${deactivationClause(outcome, acct.username)}`), {
         banSignal: { signal: 'suspended', healthy: false, details: { final_url: url } },
       });
     }
