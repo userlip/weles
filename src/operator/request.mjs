@@ -51,7 +51,7 @@ export {
   readOperatorRequest,
 } from './record.mjs';
 
-const MILLISECONDS_PER_SECOND = 1000;
+const MILLISECONDS_PER_SECOND = 1000; // https://www.bipm.org/en/measurement-units/si-prefixes milli = 10^-3
 
 /**
  * Set by the API server on every run it spawns; the run's stderr is the
@@ -99,8 +99,9 @@ export function openRequestFor(kind, account) {
 
 /** The Weles run this process is, when a worker started it. */
 function currentRunId() {
-  const runId = String(process.env[RUN_ID_VARIABLE] || '').trim();
-  return runId.length > 0 ? runId : null;
+  const named = process.env[RUN_ID_VARIABLE];
+  const runId = typeof named === 'string' ? named.trim() : '';
+  return runId === '' ? null : runId;
 }
 
 /**
@@ -155,12 +156,11 @@ export function openOperatorRequest(input) {
 
 /** The open request a Weles run waits on, or null when it waits on nobody. */
 export function openRequestOfRun(runId) {
-  return (
-    listOperatorRequests({ openOnly: true }).find(
-      (request) =>
-        Array.isArray(request.run_ids) && request.run_ids.includes(runId),
-    ) ?? null
+  const waitedOn = listOperatorRequests({ openOnly: true }).find(
+    (request) =>
+      Array.isArray(request.run_ids) && request.run_ids.includes(runId),
   );
+  return waitedOn === undefined ? null : waitedOn;
 }
 
 /**
@@ -176,12 +176,11 @@ export function closeOperatorRequest(id, approved, detail) {
   const closed = new Date();
   request.approved = approved;
   request.closed_at = closed.toISOString();
-  request.waited_seconds = Math.max(
-    0,
-    Math.round(
-      (closed.getTime() - new Date(request.opened_at).getTime()) /
-        MILLISECONDS_PER_SECOND,
-    ),
+  // The wait as the two clock readings measure it; a clock set back between
+  // them shows as a negative wait rather than being rounded up to none.
+  request.waited_seconds = Math.round(
+    (closed.getTime() - new Date(request.opened_at).getTime()) /
+      MILLISECONDS_PER_SECOND,
   );
   request.outcome_detail = flatten(
     required(detail, 'a sentence saying how the wait ended'),
