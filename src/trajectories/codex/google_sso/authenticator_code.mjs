@@ -7,52 +7,43 @@ import { pageCondition } from '../../_shared/page/settled.mjs';
 import { clickOffered } from '../../_shared/page/judged/seen.mjs';
 import { clickTryAnotherWay } from '../../_shared/services/google_sso/authenticator_challenge.mjs';
 import { logGooglePageDiag } from '../../_shared/services/google_sso/page_diagnostics.mjs';
+import { GOOGLE_ACCOUNTS_HOST } from '../../_shared/profile/google_session.mjs';
 
 async function googleChallengeState(page, terminalOnly = false) {
-  const read = (waitForTerminal) => {
+  const read = ({ waitForTerminal, googleHost }) => {
     const observed = {
       host: location.host,
       path: location.pathname,
       // Google's second-factor screens live on its challenge routes.
       challenge:
-        location.hostname === 'accounts.google.com' &&
+        location.hostname === googleHost &&
         /\/challenge(?:\/|$)/.test(location.pathname),
     };
     if (waitForTerminal && observed.challenge) {
-      let invalidInput = null;
-      for (const input of document.querySelectorAll(
-        'input[name="totpPin"][aria-invalid="true"], input[autocomplete="one-time-code"][aria-invalid="true"]',
-      )) {
-        const rect = input.getBoundingClientRect();
-        if (
-          rect.width > 0 &&
-          rect.height > 0 &&
-          getComputedStyle(input).visibility === 'visible'
-        ) {
-          invalidInput = {
-            name: input.name,
-            autocomplete: input.getAttribute('autocomplete'),
-            ariaInvalid: input.getAttribute('aria-invalid'),
-          };
-          break;
-        }
-      }
-      if (!invalidInput) return false;
-      observed.invalidInput = invalidInput;
+      const invalid = Array.from(
+        document.querySelectorAll(
+          'input[name="totpPin"][aria-invalid="true"], input[autocomplete="one-time-code"][aria-invalid="true"]',
+        ),
+      ).find((input) => input.checkVisibility({ visibilityProperty: true }));
+      if (!invalid) return false;
+      observed.invalidInput = {
+        name: invalid.name,
+        autocomplete: invalid.getAttribute('autocomplete'),
+        ariaInvalid: invalid.getAttribute('aria-invalid'),
+      };
     }
     observed.text = (
-      document.querySelector('main')?.innerText ||
-      document.body?.innerText ||
-      ''
-    ).replace(/\s+/g, ' ');
+      document.querySelector('main') ?? document.body
+    ).innerText.replace(/\s+/g, ' ');
     return observed;
   };
-  if (terminalOnly) return pageCondition(page, read, true);
+  const arg = { waitForTerminal: terminalOnly, googleHost: GOOGLE_ACCOUNTS_HOST };
+  if (terminalOnly) return pageCondition(page, read, arg);
   return navEval(
     page,
     read,
     { challenge: null, state: 'navigation in progress' },
-    false,
+    arg,
   );
 }
 
