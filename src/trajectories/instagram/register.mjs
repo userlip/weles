@@ -17,7 +17,6 @@ import { autocompleteField, field } from '../_shared/page/offers.mjs';
 import { clickOffered, pressDescribed } from '../_shared/page/judged/seen.mjs';
 
 const SIGNUP_URL = 'https://www.instagram.com/accounts/emailsignup/';
-const NO_CODE = 'no code received';
 const PATH = {
   passwordReset: '/accounts/password/reset',
   suspended: '/accounts/suspended',
@@ -50,10 +49,14 @@ async function state(page) {
   return 'in';
 }
 
-/** Types the SMS code Instagram sent into its code field and continues; refused when none arrived. */
+/**
+ * Types the SMS code Instagram sent into its code field and continues. The
+ * session's SMS read answers the code or why it has none; only a code is
+ * typed, and anything else ends the run with what the read said.
+ */
 async function enterSmsCode(s, page, step) {
   const smsCode = await s.pollSmsCode();
-  if (!smsCode || smsCode === NO_CODE) throw new Error(`instagram_sms_code_not_received: no SMS code arrived for the ${step}`);
+  if (!/^\d+$/.test(smsCode)) throw new Error(`instagram_sms_code_unread: the ${step} code read answered ${smsCode}`);
   const code = await codeField(page);
   if (!code) throw new Error(`instagram_code_field_missing: Instagram took the number for the ${step} and shows no code field`);
   await code.fill(smsCode);
