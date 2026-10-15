@@ -1,7 +1,9 @@
 // What this run was asked for and how it answers. The Google Ads customer, the
-// keywords to look up, the keeper session whose browser holds the login, the
-// Skarbiec identity the run signs in with, and the single JSON record it writes
-// before exiting with the code that says how far it got.
+// keywords to look up (read by the shared request readers, `../request.mjs`),
+// the keeper session whose browser holds the login, the Skarbiec identity the
+// run signs in with, and the single JSON record it writes. A refusal writes
+// its record with the `blocked` cause and is then thrown, so the run fails
+// with it.
 
 import { runOutputPath } from '#run-output';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -9,7 +11,11 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { readScopedLogin } from '../../../../../_shared/scoped-secrets.mjs';
 import { statedText } from '../../../../_shared/inputs/stated.mjs';
+import { customerIdOf, keywordsOf } from '../request.mjs';
 
+export { squash as norm } from '../request.mjs';
+
+const INDENT = '  ';
 const GOOGLE_ADS_LOGIN = readScopedLogin('googleAds');
 // The keeper session holding the signed-in browser and the customer whose
 // planner is read are the caller's; neither is assumed.
@@ -18,79 +24,70 @@ export const SESSION = statedText(
   'the keeper session (weles keeper) whose browser holds the Google Ads login',
 );
 export const SOCK = join(homedir(), '.weles', 'keeper', SESSION, 'socket');
-export const cid = normalizeCustomerId(
+export const cid = customerIdOf(
   statedText(
     ['GOOGLE_ADS_CUSTOMER_ID'],
     'the Google Ads customer id whose Keyword Planner is read',
   ),
+  'GOOGLE_ADS_CUSTOMER_ID',
 );
 export const DIAG_DIR =
   process.env.GOOGLE_ADS_DIAG_DIR ||
   runOutputPath('google-ads-keyword-planner');
 export const RESULT_FILE =
   process.env.GOOGLE_ADS_RESULT_FILE || join(DIAG_DIR, `keywords-${cid}.json`);
-export const keywords = parseKeywords(
+export const keywords = keywordsOf(
   process.env.GOOGLE_ADS_KEYWORDS ||
     process.env.KEYWORDS ||
-    process.env.KEYWORD ||
-    '',
+    process.env.KEYWORD,
+  'GOOGLE_ADS_KEYWORDS (or KEYWORDS, KEYWORD)',
 );
 
-if (!cid) throw new Error('GOOGLE_ADS_CUSTOMER_ID required');
-if (!keywords.length) throw new Error('GOOGLE_ADS_KEYWORDS required');
 mkdirSync(DIAG_DIR, { recursive: true });
 mkdirSync(dirname(RESULT_FILE), { recursive: true });
-
-export function parseKeywords(value) {
-  return [
-    ...new Set(
-      String(value || '')
-        .split(/[\n,]+/)
-        .map((keyword) => keyword.trim())
-        .filter(Boolean),
-    ),
-  ];
-}
-
-export function normalizeCustomerId(value) {
-  return String(value || '').replace(/\D/g, '');
-}
-
-export function dashedCustomerId(value) {
-  const id = normalizeCustomerId(value);
-  if (id.length !== 10) return id;
-  return `${id.slice(0, 3)}-${id.slice(3, 6)}-${id.slice(6)}`;
-}
-
-export function norm(value) {
-  return String(value || '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 export function preferredEmail() {
   return GOOGLE_ADS_LOGIN.email;
 }
 
-export async function resolveSsoCreds() {
+export function ssoCreds() {
   return { ...GOOGLE_ADS_LOGIN, source: 'skarbiec' };
 }
 
-function redact(text) {
-  return String(text || '')
-    .replace(/[A-Z2-7](?:\s?[A-Z2-7]){15,}/g, '<redacted-base32-secret>')
-    .replace(/"login_password"\s*:\s*"[^"]+"/g, '"login_password":"<redacted>"')
-    .replace(
-      /"google_totp_secret"\s*:\s*"[^"]+"/g,
-      '"google_totp_secret":"<redacted>"',
+/**
+ * The record's JSON text with the login's own secrets blanked: the password
+ * as JSON writes it, and the TOTP secret also as Google prints it, in groups
+ * separated by spaces.
+ */
+function redact(json) {
+  const password = JSON.stringify(GOOGLE_ADS_LOGIN.password).replace(
+    /^"|"$/g,
+    '',
+  );
+  let safe = json.replaceAll(password, '<redacted>');
+  if (GOOGLE_ADS_LOGIN.totpSecret)
+    safe = safe.replace(
+      new RegExp(GOOGLE_ADS_LOGIN.totpSecret.split('').join('\\s?'), 'gi'),
+      '<redacted>',
     );
+  return safe;
 }
 
-export function writeResult(report, code = 0) {
-  const safe = JSON.parse(redact(JSON.stringify(report)));
-  writeFileSync(RESULT_FILE, JSON.stringify(safe, null, 2));
-  console.log(JSON.stringify(safe, null, 2));
-  process.exit(code);
+/** Write the run's record, with the login's secrets blanked. */
+export function writeResult(report) {
+  const safe = redact(JSON.stringify(report, null, INDENT));
+  writeFileSync(RESULT_FILE, safe);
+  console.log(safe);
+}
+
+/** Write a refusal record, then throw it so the run fails with its cause. */
+export function refuse(report) {
+  writeResult({ ok: false, session: SESSION, ...report });
+  const refusal = new Error(
+    `${report.blocked}: Keyword Planner keeper run refused`,
+  );
+  refusal.reported = true;
+  throw refusal;
 }
 
 export function socketReady() {

@@ -8,8 +8,14 @@
 //   GOOGLE_ADS_CUSTOMER_ID       required
 //   GOOGLE_ADS_KEYWORDS          required, comma/newline separated
 //   GOOGLE_ADS_RESULT_FILE       optional JSON output path
-//   SESSION                      optional keeper session, default google_ads
+//   SESSION                      required keeper session (or GOOGLE_ADS_KEEPER_SESSION)
+//   GOOGLE_ADS_AUTHUSER          required Google account index the customer is signed in as
 //   Login identity/password/MFA are read only from the dedicated Google Ads Skarbiec item.
+//
+// Every run writes one record to the result file. A refusal (keeper not
+// running, login without a password, sign-in or planner not reached, no
+// result rows, or any error) is written with its `blocked` cause and then
+// thrown, so the run fails with it.
 
 import {
   SESSION,
@@ -18,8 +24,9 @@ import {
   keywords,
   norm,
   preferredEmail,
-  resolveSsoCreds,
+  refuse,
   socketReady,
+  ssoCreds,
   writeResult,
 } from './keeper/run_brief.mjs';
 import { evalState } from './keeper/keeper_browser.mjs';
@@ -35,105 +42,71 @@ import {
   writeKeywordReport,
 } from './keeper/metrics_report.mjs';
 
-async function main() {
+try {
   if (!socketReady())
-    writeResult(
-      {
-        ok: false,
-        blocked: 'keeper_socket_not_ready',
-        session: SESSION,
-        socket: SOCK,
-      },
-      3,
-    );
-  const creds = await resolveSsoCreds();
-  if (!creds?.password)
-    writeResult(
-      {
-        ok: false,
-        blocked: 'missing_google_ads_password',
-        session: SESSION,
-        email: preferredEmail(),
-      },
-      4,
-    );
-  const steps = [
-    { step: 'sso_creds_resolved', source: creds.source },
-  ];
+    refuse({ blocked: 'keeper_socket_not_ready', socket: SOCK });
+  const creds = ssoCreds();
+  if (!creds.password)
+    refuse({ blocked: 'missing_google_ads_password', email: preferredEmail() });
+  const steps = [{ step: 'sso_creds_resolved', source: creds.source }];
 
   if (!(await ensureAdsReady(creds))) {
     const s = await evalState();
-    writeResult(
-      {
-        ok: false,
-        blocked: 'google_ads_login_not_ready',
-        session: SESSION,
-        url: s.url,
-        text: norm(s.text),
-      },
-      4,
-    );
+    refuse({
+      blocked: 'google_ads_login_not_ready',
+      url: s.url,
+      text: norm(s.text),
+    });
   }
   steps.push({ step: 'ads_ready', url: (await evalState()).url });
 
   const open = await openKeywordPlanner();
   steps.push({ step: 'planner_open', open });
   if (!open.ok)
-    writeResult(
-      {
-        ok: false,
-        blocked: 'keyword_planner_not_opened',
-        session: SESSION,
-        customer: cid,
-        keywords,
-        open,
-        steps,
-      },
-      5,
-    );
+    refuse({
+      blocked: 'keyword_planner_not_opened',
+      customer: cid,
+      keywords,
+      open,
+      steps,
+    });
 
+  // Results this customer's planner already shows for the run's keywords are
+  // the answer; otherwise the keywords are entered and submitted.
   const already = await evalState();
-  const alreadyRows = parseRows(already.text || '');
+  const alreadyRows = parseRows(already.text);
   if (alreadyRows.length) {
     steps.push({ step: 'existing_results_ready', keywords });
     writeKeywordReport({ state: already, rows: alreadyRows }, steps);
-  }
-
-  if (!(await chooseVolumeMode())) {
-    const s = await evalState();
-    writeResult(
-      {
-        ok: false,
+  } else {
+    if (!(await chooseVolumeMode())) {
+      const s = await evalState();
+      refuse({
         blocked: 'keyword_volume_mode_not_opened',
-        session: SESSION,
         customer: cid,
         keywords,
         url: s.url,
         text: norm(s.text),
         steps,
-      },
-      6,
-    );
+      });
+    }
+    steps.push({ step: 'volume_mode_ready', url: (await evalState()).url });
+
+    await submitKeywords();
+    steps.push({ step: 'keywords_submitted', keywords });
+
+    writeKeywordReport(await waitForResults(), steps);
   }
-  steps.push({ step: 'volume_mode_ready', url: (await evalState()).url });
-
-  await submitKeywords();
-  steps.push({ step: 'keywords_submitted', keywords });
-
-  const result = await waitForResults();
-  writeKeywordReport(result, steps);
-}
-
-main().catch((error) => {
-  writeResult(
-    {
+} catch (error) {
+  if (!error.reported) {
+    writeResult({
       ok: false,
       blocked: 'google_ads_keyword_planner_keeper_error',
-      error: String(error?.message || error),
+      error: error.message,
       session: SESSION,
       customer: cid,
       keywords,
-    },
-    1,
-  );
-});
+    });
+  }
+  throw error;
+}
