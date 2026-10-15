@@ -1,7 +1,9 @@
 // Send a 1:1 Discord direct message, through the shared Discord action runner
 // (../../../_shared/discord/run.mjs) and the shared direct-message sender
 // (../../../_shared/discord/direct.mjs). A message into a server channel is
-// comment/organic_message.mjs.
+// comment/organic_message.mjs. Discord's receipt (acknowledgement
+// provider_response, the recipient requested, the conversation and message
+// ids its answer carries) is printed as one JSON line.
 //
 // Env: RECIPIENT_HANDLE (required; @ optional) the username the DM goes to;
 // DM_MESSAGE (required) the text, from a real account to a real person.
@@ -16,5 +18,9 @@ await runDiscordAction({
   action: 'dm',
   url: 'https://discord.com/channels/@me',
   run: { recipient: RECIPIENT },
-  act: async (s) => `sent ${await sendDirectMessage(s, RECIPIENT, MESSAGE)} to ${RECIPIENT}`,
+  act: async (s) => {
+    const receipt = await sendDirectMessage(s, RECIPIENT, MESSAGE);
+    console.log(JSON.stringify(receipt));
+    return `sent ${receipt.url} to ${RECIPIENT}`;
+  },
 });

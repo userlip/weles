@@ -53,6 +53,17 @@ const SCRAPERS: Record<string, true> = {
   volumeleaders: true,
   tradingview: true,
 };
+// Action protocol names mapped to their existing direct-message entry points.
+const DIRECT_MESSAGE_SCRIPTS: Record<string, string> = {
+  discord: 'src/trajectories/discord/actions/engagement/dm.mjs',
+  instagram: 'src/trajectories/instagram/actions/engagement/dm.mjs',
+  linkedin: 'src/trajectories/linkedin/actions/engagement/dm.mjs',
+  reddit: 'src/trajectories/reddit/dm/dm.mjs',
+  snapchat: 'src/trajectories/snapchat/dm.mjs',
+  tiktok: 'src/trajectories/tiktok/dm/dm.mjs',
+  twitter: 'src/trajectories/twitter/actions/engagement/dm.mjs',
+};
+
 
 export const STANDARD_ROUTES: Record<string, (p: string) => string | null> = {
   browser_task: (p) =>
@@ -84,6 +95,8 @@ export const STANDARD_ROUTES: Record<string, (p: string) => string | null> = {
   pull_github: (p) =>
     p === 'overleaf' ? 'src/trajectories/overleaf/pull_github.mjs' : null,
 
+  dm: (p) =>
+    Object.hasOwn(DIRECT_MESSAGE_SCRIPTS, p) ? DIRECT_MESSAGE_SCRIPTS[p] : null,
   health: (p) =>
     p === 'github'
       ? 'src/trajectories/github/health/run.mjs'

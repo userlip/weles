@@ -6,7 +6,11 @@ import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { readDiscordReply } from './response.mjs';
 import { responseAfterAction, urlMatching } from '../page/settled.mjs';
 
-/** Sends `text` to `recipient` (a username, @ optional); answers the message's address. */
+/**
+ * Sends `text` to `recipient` (a username, @ optional); answers Discord's own
+ * receipt of it: the conversation and message ids its answer carries, and
+ * the message's address.
+ */
 export async function sendDirectMessage(s, recipient, text) {
   const handle = recipient.replace(/^@/, '');
   await s.page.keyboard.press('ControlOrMeta+K');
@@ -34,5 +38,11 @@ export async function sendDirectMessage(s, recipient, text) {
   const message = await readDiscordReply(answer, 'direct_message', 'DISCORD_DM');
   if (message.channel_id !== channelId || message.content !== text || !/^\d+$/.test(message.id))
     throw new Error(`DISCORD_DM_UNCONFIRMED: Discord answered the message to ${handle} with ${JSON.stringify(message)}`);
-  return `https://discord.com/channels/@me/${channelId}/${message.id}`;
+  return {
+    acknowledgement: 'provider_response',
+    recipient_requested: handle,
+    channel_id: channelId,
+    message_id: message.id,
+    url: `https://discord.com/channels/@me/${channelId}/${message.id}`,
+  };
 }

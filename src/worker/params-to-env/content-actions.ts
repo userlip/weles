@@ -88,6 +88,12 @@ export function applyContentActionParams(
   // Inline `message` is machine-independent (survives cross-host enqueue);
   // `message_file` is a path, only valid on the enqueuing machine.
   if (typeof params.message === 'string') env.MESSAGE_TEXT = params.message;
+  if (action.endsWith('_dm')) {
+    if (typeof params.recipient_handle === 'string')
+      env.RECIPIENT_HANDLE = params.recipient_handle;
+    if (typeof params.message === 'string') env.DM_MESSAGE = params.message;
+    if (typeof params.subject === 'string') env.DM_SUBJECT = params.subject;
+  }
   if (typeof params.message_file === 'string')
     env.MESSAGE_FILE = params.message_file;
   if (typeof params.slack_channel === 'string')
