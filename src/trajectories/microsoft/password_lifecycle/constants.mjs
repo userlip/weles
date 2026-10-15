@@ -1,16 +1,10 @@
-// The bounds and URLs of microsoft/password_lifecycle.mjs and its steps.
+// The credential shape and URLs of microsoft/password_lifecycle.mjs and its steps.
 
-export const MICROSOFT_PASSWORD_ID =
-  /^weles-microsoft-[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?-password$/;
+// The managed password's credential id: weles-microsoft-<name>-password, the
+// name in lowercase letters, digits and inner hyphens; Skarbiec refuses an id
+// it cannot hold.
+export const MICROSOFT_PASSWORD_ID = /^weles-microsoft-[a-z\d](?:[a-z\d-]*[a-z\d])?-password$/;
 export const PASSWORD_FIELD = 'password';
 export const PASSWORD_CHANGE_URL = 'https://account.live.com/password/Change';
 export const LOGIN_URL = 'https://login.live.com/login.srf';
 export const LOGIN_HOSTS = ['login.live.com', 'login.microsoft.com'];
-
-// The verification-code file the operator drops beside a running lifecycle:
-// owner-only mode; its contents are checked as a code, not by size.
-export const CODE_FILE_MODE = 0o600;
-export const CODE_FILE_MODE_MASK = 0o777;
-
-// Pages Microsoft opens during a change; the second password input marks the form.
-export const SECOND_PASSWORD_INPUT = 1;

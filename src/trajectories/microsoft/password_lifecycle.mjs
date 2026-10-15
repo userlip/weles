@@ -29,15 +29,7 @@ import {
 function pendingReview(reason, page) {
   writeFileSync(
     join(runRecordingsDir(), 'pending_review.json'),
-    JSON.stringify(
-      {
-        status: 'needs_human_approval',
-        reason,
-        url: page.url(),
-      },
-      null,
-      2,
-    ),
+    JSON.stringify({ status: 'needs_human_approval', reason, url: page.url() }, null, ' '),
   );
 }
 
@@ -52,38 +44,16 @@ async function contractAccount(contract) {
   return account;
 }
 
-/** The managed password Skarbiec holds for the contract, or false when it holds none. */
+/** The managed password Skarbiec holds for the contract, or null when it holds none; a read Skarbiec refuses raises with its cause. */
 function managedPassword(contract) {
-  try {
-    return (
-      readWelesManagedCredential(
-        contract.credentialId,
-        PASSWORD_FIELD,
-        contract.tenantId,
-      ) || false
-    );
-  } catch (error) {
-    console.log(
-      `[microsoft] managed password unavailable: ${String(error?.message ?? error)}`,
-    );
-    return false;
-  }
+  const password = readWelesManagedCredential(contract.credentialId, PASSWORD_FIELD, contract.tenantId);
+  return password ? password : null;
 }
 
 async function openSession(account, label) {
   const { proxyUrl, persona } = await resolveAccountSession(account);
   const session = await WSession.start({ label, proxy: proxyUrl, persona });
   return { session, proxyUrl };
-}
-
-async function closeSession(session) {
-  try {
-    await session.close();
-  } catch (error) {
-    console.log(
-      `[microsoft] session close: ${String(error?.message ?? error)}`,
-    );
-  }
 }
 
 async function persistCookies(session, account, proxyUrl) {
@@ -120,7 +90,7 @@ export async function verifyMicrosoftPassword() {
     await persistCookies(session, account, proxyUrl);
     return { status: 'verified' };
   } finally {
-    await closeSession(session);
+    await session.close();
   }
 }
 
@@ -158,7 +128,7 @@ export async function adoptMicrosoftPassword() {
     await persistCookies(session, account, proxyUrl);
     return { status: 'adopted' };
   } finally {
-    await closeSession(session);
+    await session.close();
   }
 }
 
@@ -262,6 +232,6 @@ export async function rotateMicrosoftPassword() {
     await persistCookies(session, account, proxyUrl);
     return { status: 'rotated' };
   } finally {
-    await closeSession(session);
+    await session.close();
   }
 }

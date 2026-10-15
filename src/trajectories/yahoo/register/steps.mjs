@@ -84,9 +84,8 @@ export async function maybeHandlePhone(s) {
  * the form was given when it registered an existing address, to the phone
  * otherwise. The form variant decides it, not words on the code page. The
  * mailed code is read through the shared mailed-code reader at the length
- * the code field states; a texted code is one run of letters and digits,
- * and any other answer is the reader's own account of why it has none, and
- * is refused with it.
+ * the code field states, the texted code from the rented number's order;
+ * each is read once it arrives.
  */
 export async function maybeHandleCode(s, id, variant) {
   const field = await shown(s.page, ['input[autocomplete="one-time-code"]', 'input[name*="code" i]', 'input[id*="code" i]']);
