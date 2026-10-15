@@ -3,8 +3,12 @@
 //
 // Env:
 //   SLACK_WORKSPACE_URL          required: the workspace, https://<name>.slack.com
-//   WELES_SECRET_RESULT_FILE     required: JSON path the raw token is written to;
-//                                stdout carries only its type and length
+//   WELES_CREDENTIAL_CONSTRAINTS the Skarbiec item the token is stored in (the
+//                                worker passes a run's `constraints`); the token
+//                                is captured from the app's OAuth page and
+//                                written by the session's credential store
+//   WELES_SECRET_RESULT_FILE     without those constraints, required: the JSON
+//                                path the raw token is written to
 //   PROXY_URL                    required: the proxy the browser goes through,
 //                                or 'direct'
 //   SLACK_EMAIL, SLACK_PASS      sign in through the workspace's Google SSO;
@@ -19,7 +23,8 @@
 //                                scopes it is granted (comma or space separated)
 //
 // The scopes reported are the ones Slack says the token holds (auth.test's
-// x-oauth-scopes header), not the ones asked for.
+// x-oauth-scopes header), not the ones asked for. Stdout carries only the
+// token's type and length.
 
 import { writeFileSync } from 'node:fs';
 import { statedText } from '../_shared/inputs/stated.mjs';
@@ -39,10 +44,13 @@ import {
 
 const LABEL = 'slack-user-token';
 const workspace = slackWorkspace();
-const RESULT_FILE = statedText(
-  ['WELES_SECRET_RESULT_FILE'],
-  'the JSON file the raw user token is written to',
-);
+const IN_SKARBIEC = Boolean(process.env.WELES_CREDENTIAL_CONSTRAINTS);
+const RESULT_FILE = IN_SKARBIEC
+  ? null
+  : statedText(
+      ['WELES_SECRET_RESULT_FILE'],
+      'the JSON file the raw user token is written to when the run carries no Skarbiec credential constraints (WELES_CREDENTIAL_CONSTRAINTS)',
+    );
 const APP_ID = process.env.SLACK_APP_ID;
 // The app is named and granted before the browser starts, so a run that would
 // create one nobody described is refused before anything happens.
@@ -113,28 +121,31 @@ try {
       `SLACK_TOKEN_SCOPES_UNREAD: auth.test answered no x-oauth-scopes header for app ${appId}`,
     );
 
-  writeFileSync(
-    RESULT_FILE,
-    JSON.stringify(
-      {
-        ok: true,
-        token,
-        app_id: appId,
-        app_created: !APP_ID,
-        scopes: granted.split(','),
-        team: auth.team,
-        team_id: auth.team_id,
-        user: auth.user,
-        user_id: auth.user_id,
-        url: auth.url,
-        created_at: new Date().toISOString(),
-      },
-      null,
-      '  ',
-    ),
-  );
+  const report = {
+    app_id: appId,
+    app_created: !APP_ID,
+    scopes: granted.split(','),
+    team: auth.team,
+    team_id: auth.team_id,
+    user: auth.user,
+    user_id: auth.user_id,
+    url: auth.url,
+  };
+  // The browser is still on the app's OAuth page, where the store captures it.
+  const stored = IN_SKARBIEC
+    ? await s.storeCredential('User OAuth Token', 'token')
+    : `written to ${RESULT_FILE}`;
+  if (!IN_SKARBIEC)
+    writeFileSync(
+      RESULT_FILE,
+      JSON.stringify(
+        { ok: true, token, ...report, created_at: new Date().toISOString() },
+        null,
+        '  ',
+      ),
+    );
   console.log(
-    `[${LABEL}] ready ${JSON.stringify({ type: token.split('-').shift(), length: token.length, app_id: appId, team: auth.team, user: auth.user, scopes: granted, result: RESULT_FILE })}`,
+    `[${LABEL}] ready ${JSON.stringify({ type: token.split('-').shift(), length: token.length, ...report, stored })}`,
   );
 } finally {
   await s.close();
