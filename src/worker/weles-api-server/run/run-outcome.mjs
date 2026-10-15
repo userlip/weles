@@ -5,10 +5,10 @@
 // child is even spawned and again when it settles -- that document is what a
 // caller who lost its socket reads afterwards, and what the diagnostics route
 // serves. Beside it sit the readers of what the run itself produced: the last
-// JSON line the trajectory printed, the result document a generic browser task
-// writes into its recording directory, and the named documents every
-// trajectory leaves in its recording tree (Pangram verdict, ban signal, task
-// result, pending review, ...), keyed the way run callers read them.
+// JSON line the trajectory printed, with every later line that looked like JSON
+// and did not parse, and the named documents every trajectory leaves in its
+// recording tree (Pangram verdict, ban signal, generic task result, pending
+// review, ...), keyed the way run callers read them.
 //
 // Coalescing belongs to the same subject because it decides how many outcomes
 // exist. A browser login costs a real sign-in on a real account, so two callers
@@ -17,6 +17,7 @@
 
 import { createHash } from 'node:crypto';
 import {
+  constants,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -27,16 +28,24 @@ import {
   watch,
   writeFileSync,
 } from 'node:fs';
-import { basename, join, sep } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
 
 import { RECORDINGS_ROOT, RUN_RESULTS_DIR } from '../configuration.mjs';
 
-export const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+// A run id names its result file, so it is one path segment: a letter or
+// digit, then letters, digits, `_` and `-`; the filesystem refuses a name it
+// cannot hold.
+export const SAFE_RUN_ID = /^[^\W_][\w-]*$/;
+
+// Results are the owner's alone: the directory searchable and the files
+// readable and writable by the owner only.
+const OWNER_DIRECTORY = constants.S_IRWXU;
+const OWNER_FILE = constants.S_IRUSR | constants.S_IWUSR;
 
 export function persistRunResult(path, document) {
-  mkdirSync(RUN_RESULTS_DIR, { recursive: true, mode: 0o700 });
+  mkdirSync(RUN_RESULTS_DIR, { recursive: true, mode: OWNER_DIRECTORY });
   const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, JSON.stringify(document), { mode: 0o600 });
+  writeFileSync(temporary, JSON.stringify(document), { mode: OWNER_FILE });
   renameSync(temporary, path);
 }
 
@@ -44,9 +53,9 @@ export function persistRunResult(path, document) {
 // yet, in one exclusive step, so two requests carrying the same run id start
 // one run. Answers false when the run already exists.
 export function claimRunResult(path, document) {
-  mkdirSync(RUN_RESULTS_DIR, { recursive: true, mode: 0o700 });
+  mkdirSync(RUN_RESULTS_DIR, { recursive: true, mode: OWNER_DIRECTORY });
   try {
-    writeFileSync(path, JSON.stringify(document), { mode: 0o600, flag: 'wx' });
+    writeFileSync(path, JSON.stringify(document), { mode: OWNER_FILE, flag: 'wx' });
     return true;
   } catch (error) {
     if (error.code === 'EEXIST') return false;
@@ -144,49 +153,24 @@ export function terminalRunResultFile(runId, signal) {
   });
 }
 
+// The last line of `stdout` that parses as JSON, as `result` (null when none
+// does), and every later line that began like JSON and did not parse, as
+// `unparsed` entries of {line, error}: a reader can tell a run that printed no
+// result from one whose result line could not be read.
 export function lastJsonLine(stdout) {
   const lines = stdout
     .split('\n')
     .map((l) => l.trim())
-    .filter(Boolean);
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (lines[i].startsWith('{') || lines[i].startsWith('[')) {
-      try {
-        return JSON.parse(lines[i]);
-      } catch {
-        /* keep scanning up */
-      }
+    .filter((l) => l.startsWith('{') || l.startsWith('['));
+  const unparsed = [];
+  for (const line of lines.reverse()) {
+    try {
+      return { result: JSON.parse(line), unparsed };
+    } catch (error) {
+      unparsed.unshift({ line, error: String(error?.message || error) });
     }
   }
-  return null;
-}
-
-export function findResultDoc(runId) {
-  const runRoot = join(RECORDINGS_ROOT, runId);
-  const actionRoot = join(runRoot, 'generic_browser_task');
-  const resultPath = join(actionRoot, 'generic_task_result.json');
-  try {
-    const runMetadata = lstatSync(runRoot);
-    const actionMetadata = lstatSync(actionRoot);
-    const resultMetadata = lstatSync(resultPath);
-    if (
-      !runMetadata.isDirectory() ||
-      runMetadata.isSymbolicLink() ||
-      !actionMetadata.isDirectory() ||
-      actionMetadata.isSymbolicLink() ||
-      !resultMetadata.isFile() ||
-      resultMetadata.isSymbolicLink() ||
-      !resultMetadata.size
-    ) {
-      return null;
-    }
-    const realRunRoot = realpathSync(runRoot);
-    const realResult = realpathSync(resultPath);
-    if (!realResult.startsWith(`${realRunRoot}${sep}`)) return null;
-    return JSON.parse(readFileSync(resultPath, 'utf8'));
-  } catch {
-    return null;
-  }
+  return { result: null, unparsed };
 }
 
 // Which recording file a caller reads under which key. The table is the one the
@@ -206,6 +190,21 @@ const RUN_OUTPUT_FILES = Object.freeze({
   'report_harvest.json': 'apple_ads_report_harvest',
 });
 
+// The run's recording tree, resolved inside the recordings directory: none
+// when the run recorded nothing, and an error naming why for a root that is a
+// link, not a directory, resolves elsewhere or cannot be read.
+function recordingTrees(runId) {
+  const runRoot = join(RECORDINGS_ROOT, runId);
+  const metadata = lstatSync(runRoot, { throwIfNoEntry: false });
+  if (!metadata) return [];
+  if (metadata.isSymbolicLink() || !metadata.isDirectory())
+    throw new Error('recording root is a symbolic link or not a directory');
+  const realRunRoot = realpathSync(runRoot);
+  if (!realRunRoot.startsWith(`${realpathSync(RECORDINGS_ROOT)}${sep}`))
+    throw new Error('recording root resolves outside the recordings directory');
+  return [realRunRoot];
+}
+
 // The named documents anywhere under recordings/<run>/, read without following
 // a link out of the run's tree (a symbolic link is never descended). A file that
 // does not parse is reported by name under output_errors rather than dropped,
@@ -213,34 +212,12 @@ const RUN_OUTPUT_FILES = Object.freeze({
 export function runOutputs(runId) {
   const outputs = {};
   const errors = {};
-  const runRoot = join(RECORDINGS_ROOT, runId);
-  let rootMetadata;
-  try {
-    rootMetadata = lstatSync(runRoot);
-  } catch {
-    return { outputs, errors };
-  }
-  if (rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) {
-    errors['.'] = 'recording root is a symbolic link or not a directory';
-    return { outputs, errors };
-  }
-  let realRunRoot;
-  try {
-    realRunRoot = realpathSync(runRoot);
-    if (!realRunRoot.startsWith(`${realpathSync(RECORDINGS_ROOT)}${sep}`))
-      throw new Error(
-        'recording root resolves outside the recordings directory',
-      );
-  } catch (error) {
-    errors['.'] = String(error?.message || error);
-    return { outputs, errors };
-  }
-  const visit = (directory) => {
+  const visit = (root, directory) => {
     let entries;
     try {
       entries = readdirSync(directory, { withFileTypes: true });
     } catch (error) {
-      errors[directory.slice(realRunRoot.length + 1) || '.'] = String(
+      errors[join('.', relative(root, directory))] = String(
         error?.message || error,
       );
       return;
@@ -248,7 +225,7 @@ export function runOutputs(runId) {
     for (const entry of entries) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) {
-        visit(path);
+        visit(root, path);
         continue;
       }
       const key = RUN_OUTPUT_FILES[entry.name];
@@ -256,13 +233,15 @@ export function runOutputs(runId) {
       try {
         outputs[key] = JSON.parse(readFileSync(path, 'utf8'));
       } catch (error) {
-        errors[path.slice(realRunRoot.length + 1)] = String(
-          error?.message || error,
-        );
+        errors[relative(root, path)] = String(error?.message || error);
       }
     }
   };
-  visit(realRunRoot);
+  try {
+    for (const root of recordingTrees(runId)) visit(root, root);
+  } catch (error) {
+    errors['.'] = String(error?.message || error);
+  }
   return { outputs, errors };
 }
 

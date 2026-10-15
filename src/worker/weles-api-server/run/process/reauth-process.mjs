@@ -46,7 +46,12 @@ export const REAUTH_PROVIDERS = new Set(
 // `acquire` (buy a new account and sign it in) and `authorize` (complete one
 // OAuth authorization a harness started). `trajectory` names the file under
 // src/trajectories/<provider>/, `env` adds what that run is told, and the
-// trajectory's last JSON line on stdout is the result's `answer`.
+// trajectory's last JSON line on stdout is the result's `answer`; a later line
+// that began like JSON and did not parse is named in `answer_errors`.
+// The second factor a document reports, or null when it names none.
+const reportedFactor = (document) =>
+  document && typeof document === 'object' && 'second_factor' in document ? document.second_factor : null;
+
 export function runReauth(
   provider,
   account,
@@ -83,20 +88,19 @@ export function runReauth(
       return;
     }
     const processSpec = trajectoryProcess(trajPath);
+    const subscriptionId = account && account.subscriptionId ? account.subscriptionId : null;
     const child = spawn(processSpec.command, processSpec.args, {
       cwd: REPO,
       env: {
         ...process.env,
-        WELES_FULL_DIAGNOSTICS: process.env.WELES_FULL_DIAGNOSTICS ?? '1',
+        ...(process.env.WELES_FULL_DIAGNOSTICS === undefined ? { WELES_FULL_DIAGNOSTICS: '1' } : {}),
         ...runChildIdentity(runId, action),
         ...(account
           ? {
               WELES_LOGIN_ITEM: account.loginItem,
               WELES_ACCOUNT_REVISION: account.accountRevision,
               [`${provider.toUpperCase()}_DISPLAY_NAME`]: account.displayName,
-              ...(account.subscriptionId
-                ? { BRAMA_SUBSCRIPTION_ID: account.subscriptionId }
-                : {}),
+              ...(subscriptionId ? { BRAMA_SUBSCRIPTION_ID: subscriptionId } : {}),
             }
           : {}),
         ...env,
@@ -112,6 +116,7 @@ export function runReauth(
     const stages = [];
     let operatorRequest = null;
     let progressRecordError = null;
+    let progressDeliveryError = null;
     // The run's own record says where it is while it runs, so the diagnostics
     // route answers "what is it doing" for a caller that was not listening.
     const recordProgress = () => {
@@ -130,11 +135,13 @@ export function runReauth(
         progressRecordError = `run progress could not be recorded: ${String(error?.message || error)}`;
       }
     };
+    // A caller that went away does not end the run; the result names why.
     const progress = (event) => {
       try {
         onProgress(event);
-      } catch {
-        /* a caller that went away does not end the run */
+      } catch (error) {
+        if (progressDeliveryError === null)
+          progressDeliveryError = `progress event ${event.event} could not be delivered: ${String(error?.message || error)}`;
       }
     };
     progress({
@@ -144,16 +151,18 @@ export function runReauth(
       started_at: startedAt,
     });
     let pendingLine = '';
+    let lastStage = null;
     const readProgress = (chunk) => {
       const lines = `${pendingLine}${chunk}`.split('\n');
       pendingLine = lines.pop();
       for (const line of lines) {
         const at = new Date().toISOString();
-        const step = /^STEP (\S+)\s*$/.exec(line);
+        const step = /^STEP (?<stage>\S+)\s*$/.exec(line);
         if (step) {
-          stages.push({ stage: step[1], at });
+          lastStage = { stage: step.groups.stage, at };
+          stages.push(lastStage);
           recordProgress();
-          progress({ event: 'stage', run_id: runId, stage: step[1], at });
+          progress({ event: 'stage', run_id: runId, stage: lastStage.stage, at });
           continue;
         }
         if (line.startsWith('OPERATOR_REQUEST ')) {
@@ -188,8 +197,8 @@ export function runReauth(
       describe: () => ({
         provider,
         login_item: account ? account.loginItem : null,
-        subscription_id: account ? account.subscriptionId || null : null,
-        stage: stages.length ? stages[stages.length - 1] : null,
+        subscription_id: subscriptionId,
+        stage: lastStage,
         operator_request: operatorRequest,
         ...liveOutput(stdout, stderr, lastOutputAt),
       }),
@@ -200,9 +209,7 @@ export function runReauth(
       if (cancelDetail !== null) {
         // The operator ended it: nothing about the account was learned, and
         // the next sign-in is free to run.
-        const stage = stages.length
-          ? stages[stages.length - 1].stage
-          : 'identity';
+        const stage = lastStage ? lastStage.stage : 'identity';
         result.ok = false;
         result.failure = {
           code: 'run_cancelled',
@@ -217,11 +224,13 @@ export function runReauth(
       result.failure = result.ok
         ? null
         : (result.failure ?? credentialFailure(result));
-      result.second_factor ??= result.failure?.second_factor ?? null;
+      if (reportedFactor(result) === null) result.second_factor = reportedFactor(result.failure);
       result.stages = stages;
       result.operator_request = operatorRequest;
       if (progressRecordError)
         result.progress_record_error = progressRecordError;
+      if (progressDeliveryError)
+        result.progress_delivery_error = progressDeliveryError;
       settled = true;
       try {
         persistRunResult(runResultPath, {
@@ -254,29 +263,32 @@ export function runReauth(
     child.once('error', (error) => {
       finish({
         ok: false,
-        exitCode: -1,
+        exitCode: null,
+        signal: null,
         provider,
         login_item: account ? account.loginItem : null,
         display_name: account ? account.displayName : null,
-        subscription_id: account ? account.subscriptionId || null : null,
+        subscription_id: subscriptionId,
         run_id: runId,
         stdout_tail: stdout,
         stderr_tail: `${stderr}\n${String(error?.message || error)}`,
       });
     });
-    child.on('close', (code) => {
-      const exitCode = code ?? -1;
+    child.on('close', (code, signal) => {
+      const printed = lastJsonLine(stdout);
+      const ok = !code && signal === null;
       finish({
-        ok: exitCode === 0,
-        exitCode,
-        failure:
-          exitCode === 0 ? null : credentialFailure({ stderr_tail: stderr }),
-        second_factor: lastJsonLine(stdout)?.second_factor ?? null,
-        answer: lastJsonLine(stdout) ?? null,
+        ok,
+        exitCode: code,
+        signal,
+        failure: ok ? null : credentialFailure({ stderr_tail: stderr }),
+        second_factor: reportedFactor(printed.result),
+        answer: printed.result,
+        ...(printed.unparsed.length ? { answer_errors: printed.unparsed } : {}),
         provider,
         login_item: account ? account.loginItem : null,
         display_name: account ? account.displayName : null,
-        subscription_id: account ? account.subscriptionId || null : null,
+        subscription_id: subscriptionId,
         run_id: runId,
         stdout_tail: stdout,
         stderr_tail: stderr,
