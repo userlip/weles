@@ -5,15 +5,13 @@
 //
 // A screen the vision model could not judge never counts as a screen that
 // confirmed or refused anything: it answers 'unavailable' where nothing was
-// submitted yet, and 'ambiguous' where a password had already been sent.
-//
-// Moved out of entra_password_lifecycle.mjs, which keeps the three trajectory
-// entry points.
+// submitted yet, and 'ambiguous' where a password had already been sent. The
+// forms are read by their own password fields: the new password and its
+// confirmation are the last two, and the change form's current password
+// comes before them.
 
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 
 import { fill, signIn } from './authorized_session.mjs';
 import {
@@ -30,39 +28,43 @@ const CHANGE_CONFIRMED =
 const CHANGE_REJECTED =
   'Does the page say the password was not changed (a wrong current password, a password that does not meet the rules, or an error)?';
 
-// 'changed' | 'rejected' | 'ambiguous' | 'challenged' | 'unavailable'
-export async function changeEntraPassword(
-  session,
-  currentPassword,
-  nextPassword,
-) {
-  const page = session.page;
-  await page.goto(CHANGE_PASSWORD_URL, { waitUntil: 'domcontentloaded' });
-  await humanIdlePause('long');
-  const challenged = await judged(page, IDENTITY_CHALLENGE);
-  if (!challenged.ok) return 'unavailable';
-  if (challenged.shows) return 'challenged';
-  const passwordInputs = page.locator('input[type="password"]');
-  const rendered = await appears(passwordInputs.first());
-  const count = await passwordInputs.count().catch(() => 0);
-  if (!rendered || count < 3) return 'unavailable';
-  await fill(page, passwordInputs.nth(0), currentPassword);
-  await fill(page, passwordInputs.nth(count - 2), nextPassword);
-  await fill(page, passwordInputs.nth(count - 1), nextPassword);
-  await humanClickLocator(
-    page,
-    page.locator('input[type="submit"], button[type="submit"]').first(),
-  );
-  await humanIdlePause('long');
+/** The form's password fields: the new one and its confirmation (the last two) and any before them. */
+async function passwordFields(page) {
+  const before = await page.locator('input[type="password"]').all();
+  const confirm = before.pop();
+  const next = before.pop();
+  return { before, next, confirm };
+}
+
+/** Submits the form and answers what the page says of it. */
+async function submitAndJudge(page) {
+  await humanClickLocator(page, page.locator('input[type="submit"], button[type="submit"]').first());
+  await pageSettled(page);
   const confirmed = await judged(page, CHANGE_CONFIRMED);
   if (!confirmed.ok) return 'ambiguous';
   if (confirmed.shows) return 'changed';
   const refused = await judged(page, CHANGE_REJECTED);
   if (!refused.ok) return 'ambiguous';
   if (refused.shows) return 'rejected';
-  return (await visible(page.locator('input[type="password"]')))
-    ? 'rejected'
-    : 'ambiguous';
+  return (await visible(page.locator('input[type="password"]'))) ? 'rejected' : 'ambiguous';
+}
+
+// 'changed' | 'rejected' | 'ambiguous' | 'challenged' | 'unavailable'
+export async function changeEntraPassword(session, currentPassword, nextPassword) {
+  const page = session.page;
+  await page.goto(CHANGE_PASSWORD_URL, { waitUntil: 'domcontentloaded' });
+  await pageSettled(page);
+  const challenged = await judged(page, IDENTITY_CHALLENGE);
+  if (!challenged.ok) return 'unavailable';
+  if (challenged.shows) return 'challenged';
+  if (!(await appears(page.locator('input[type="password"]').first()))) return 'unavailable';
+  const { before, next, confirm } = await passwordFields(page);
+  const [current] = before;
+  if (!current || !next || !confirm) return 'unavailable';
+  await fill(page, current, currentPassword);
+  await fill(page, next, nextPassword);
+  await fill(page, confirm, nextPassword);
+  return submitAndJudge(page);
 }
 
 // 'none' | 'completed' | 'failed' | 'unknown'
@@ -71,22 +73,12 @@ export async function changeEntraPassword(
 // (refused, or never submitted), so it still holds the value this run wrote. A
 // restore whose outcome is ambiguous, and everything after it left unproven,
 // is 'unknown'.
-export async function rollbackEntraPassword(
-  session,
-  contract,
-  changedPassword,
-  previousPassword,
-  sink,
-) {
+export async function rollbackEntraPassword(session, contract, changedPassword, previousPassword, sink) {
   const signedIn = await signIn(session, contract, changedPassword);
   if (signedIn !== 'authenticated') return 'unknown';
   const identity = await assertEntraIdentity(session, contract, sink);
   if (!identity.ok) return 'unknown';
-  const restored = await changeEntraPassword(
-    session,
-    changedPassword,
-    previousPassword,
-  );
+  const restored = await changeEntraPassword(session, changedPassword, previousPassword);
   if (restored === 'ambiguous') return 'unknown';
   if (restored !== 'changed') return 'failed';
   const reauthenticated = await signIn(session, contract, previousPassword);
@@ -109,16 +101,14 @@ export async function openSelfServiceReset(session, contract) {
   const page = session.page;
   await session.ctx.clearCookies();
   await page.goto(SELF_SERVICE_RESET_URL, { waitUntil: 'domcontentloaded' });
-  await humanIdlePause('long');
+  await pageSettled(page);
   const userInput = page
-    .locator(
-      'input#userNameInput, input[name="UserName"], input[type="email"], input[type="text"]',
-    )
+    .locator('input#userNameInput, input[name="UserName"], input[type="email"], input[type="text"]')
     .first();
   if ((await appears(userInput)) && (await visible(userInput))) {
     await fill(page, userInput, contract.accountUpn);
     await userInput.press('Enter');
-    await humanIdlePause('long');
+    await pageSettled(page);
   }
   const ineligible = await judged(
     page,
@@ -132,36 +122,17 @@ export async function openSelfServiceReset(session, contract) {
   );
   if (!verification.ok) return 'unavailable';
   if (verification.shows) return 'identity_verification_required';
-  const captcha = page
-    .locator(
-      'iframe[src*="recaptcha"], iframe[title*="captcha" i], #wCaptchaDiv',
-    )
-    .first();
+  const captcha = page.locator('iframe[src*="recaptcha"], iframe[title*="captcha" i], #wCaptchaDiv').first();
   if (await visible(captcha)) return 'identity_verification_required';
-  const newPasswords = page.locator('input[type="password"]');
-  const count = await newPasswords.count().catch(() => 0);
-  return count >= 2 ? 'password_form' : 'unavailable';
+  const { next, confirm } = await passwordFields(page);
+  return next && confirm ? 'password_form' : 'unavailable';
 }
 
 export async function submitResetPasswordForm(session, nextPassword) {
   const page = session.page;
-  const passwordInputs = page.locator('input[type="password"]');
-  const count = await passwordInputs.count().catch(() => 0);
-  if (count < 2) return 'unavailable';
-  await fill(page, passwordInputs.nth(count - 2), nextPassword);
-  await fill(page, passwordInputs.nth(count - 1), nextPassword);
-  await humanClickLocator(
-    page,
-    page.locator('input[type="submit"], button[type="submit"]').first(),
-  );
-  await humanIdlePause('long');
-  const confirmed = await judged(page, CHANGE_CONFIRMED);
-  if (!confirmed.ok) return 'ambiguous';
-  if (confirmed.shows) return 'changed';
-  const refused = await judged(page, CHANGE_REJECTED);
-  if (!refused.ok) return 'ambiguous';
-  if (refused.shows) return 'rejected';
-  return (await visible(page.locator('input[type="password"]')))
-    ? 'rejected'
-    : 'ambiguous';
+  const { next, confirm } = await passwordFields(page);
+  if (!next || !confirm) return 'unavailable';
+  await fill(page, next, nextPassword);
+  await fill(page, confirm, nextPassword);
+  return submitAndJudge(page);
 }
