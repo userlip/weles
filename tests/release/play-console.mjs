@@ -85,7 +85,7 @@ try {
   assert.match(staged.stdout_tail, /PASS: staged internal release.*not sent/);
   assert.doesNotMatch(
     staged.stdout_tail,
-    /clicked: Start rollout|clicked: confirm rollout/,
+    /clicked: the button that starts the rollout/,
   );
   report.staged = staged;
 

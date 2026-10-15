@@ -2,10 +2,12 @@ import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
 // Google Play Console: publish an Android app release — fully browser-driven.
 //
 // Drives play.google.com/console exactly as a human would: open the app's
-// chosen track -> "Create new release" -> upload the AAB/APK via the file
-// input -> fill release notes -> Next/Save -> "Review release" -> terminal
-// "Start rollout" / "Send for review" -> confirm. Verifies a success/rollout
-// status before reporting PASS.
+// chosen track -> create a new release -> upload the AAB/APK via the file
+// input -> fill the release name and notes -> advance -> review -> start the
+// rollout or send for review -> confirm. Verifies the release status before
+// reporting PASS. Every control and field is found by the vision model
+// (`_shared/page/judged/seen.mjs`) from what the page shows, not from
+// button texts; every refusal is thrown with its cause.
 //
 // Unlike App Store Connect, Play Console DOES expose a web upload form for the
 // app bundle, so this trajectory performs the binary upload too.
@@ -20,7 +22,7 @@ import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
 //   RELEASE_NOTES    (optional) "What's new" notes for the default language
 //   SUBMIT           (optional) "1" makes the terminal rollout/send-for-review
 //                    click; anything else stages the release and stops there.
-//   PROXY_URL        (optional) override proxy
+//   PROXY_URL        (required) proxy URL or provider filter; 'direct' for none
 //
 // Requires a logged-in Google session for an account with Play Console access
 // (run a google login/register trajectory first to seed the cookie jar).
@@ -28,9 +30,14 @@ import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
 import { existsSync } from 'node:fs';
 import { getSocialAccount } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
-import { humanClickLocator } from '../../../../dist/human/mouse.js';
-import { humanFill } from '../../../../dist/human/keyboard.js';
 import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
+import {
+  clickOffered,
+  fillOffered,
+  pageShows,
+  shownText,
+} from '../../_shared/page/judged/seen.mjs';
+import { onGoogleSignIn } from '../../_shared/profile/google_session.mjs';
 
 const BUNDLE_PATH = process.env.BUNDLE_PATH;
 const PACKAGE_NAME = process.env.PACKAGE_NAME;
@@ -44,18 +51,21 @@ const RELEASE_NAME = process.env.RELEASE_NAME;
 const RELEASE_NOTES = process.env.RELEASE_NOTES;
 // A rollout reaches real users, so it happens only when asked for.
 const SUBMIT = process.env.SUBMIT === '1';
+const PLAY_CONSOLE_HOME = 'https://play.google.com/console/u/0/developers';
 
 if (!BUNDLE_PATH || !existsSync(BUNDLE_PATH)) {
-  console.log(
-    `FAIL: BUNDLE_PATH env var must point to an existing .aab/.apk (got: ${BUNDLE_PATH || 'unset'})`,
+  throw new Error(
+    `PLAY_BUNDLE_REQUIRED: BUNDLE_PATH must point to an existing .aab/.apk (got: ${BUNDLE_PATH ? BUNDLE_PATH : 'unset'})`,
   );
-  process.exit(1);
 }
 if (!PACKAGE_NAME && !PLAY_RELEASE_URL) {
-  console.log('FAIL: PACKAGE_NAME or PLAY_RELEASE_URL env var required');
-  process.exit(1);
+  throw new Error(
+    'PLAY_APP_REQUIRED: PACKAGE_NAME or PLAY_RELEASE_URL names the app the release belongs to',
+  );
 }
+const RELEASE_TARGET = PLAY_RELEASE_URL ? PLAY_RELEASE_URL : PACKAGE_NAME;
 
+// The Play Console navigation entry of each track.
 const trackNav = {
   internal: 'Internal testing',
   closed: 'Closed testing',
@@ -68,269 +78,165 @@ if (!Object.hasOwn(trackNav, TRACK))
   );
 const navLabel = trackNav[TRACK];
 
-const acct = await getSocialAccount('google');
-if (!acct) {
-  console.log('FAIL: no google account');
-  process.exit(1);
+if (!(await getSocialAccount('google'))) {
+  throw new Error(
+    'PLAY_GOOGLE_ACCOUNT_REQUIRED: no active google account in the accounts store',
+  );
 }
 
-// Click the first visible match among several selector variants for ONE
-// control (Play Console markup shifts between revisions) once the page has
-// settled. These are alternate selectors for the same button, not a provider
-// rollover; false means the settled page shows none of them.
-async function clickAny(s, selectors, label) {
+/** Click what `description` names, refusing with `code` when the page shows none. */
+async function clickRequired(s, description, code) {
+  if (!(await clickOffered(s.page, description)))
+    throw new Error(`${code}: no ${description} at ${s.page.url()}`);
+  console.log(`[play-submit] clicked: ${description}`);
   await pageSettled(s.page);
-  for (const sel of selectors) {
-    const loc = s.page.locator(sel).first();
-    if (await loc.isVisible()) {
-      await humanClickLocator(s.page, loc);
-      if (label) console.log(`[play-submit] clicked: ${label}`);
-      return true;
-    }
-  }
-  return false;
 }
 
-// Fill the first visible match among selector variants. Returns true if filled.
-async function fillAny(s, selectors, value, label) {
-  for (const sel of selectors) {
-    const loc = s.page.locator(sel).first();
-    if (await loc.isVisible()) {
-      await humanFill(s.page, loc, value);
-      if (label) console.log(`[play-submit] filled: ${label}`);
-      return true;
-    }
-  }
-  return false;
+/** Fill the field `description` names, refusing with `code` when there is none. */
+async function fillRequired(s, description, value, code) {
+  if (!(await fillOffered(s.page, description, value)))
+    throw new Error(`${code}: no ${description} at ${s.page.url()}`);
+  console.log(`[play-submit] filled: ${description}`);
+  await pageSettled(s.page);
 }
 
-async function runRelease() {
-  const s = await WSession.start({
-    label: 'google_play_submit',
-    proxy: statedProxy('the Play Console release'),
-  });
-  try {
-    // 1) Reach the track's release page.
-    if (PLAY_RELEASE_URL) {
-      await s.goto(PLAY_RELEASE_URL);
-    } else {
-      await s.goto('https://play.google.com/console/u/0/developers');
-    }
-    await pageSettled(s.page);
-    if ((s.page.url?.() ?? '').includes('accounts.google.com')) {
-      console.log(
-        'FAIL: session expired / not logged in, run a google login trajectory first',
-      );
-      return 2;
-    }
-
-    // Navigate by package when no direct URL was given: open the app, then the
-    // track in the left nav.
-    if (!PLAY_RELEASE_URL) {
-      const appLink = s.page
-        .locator(
-          `a:has-text("${PACKAGE_NAME}"), tr:has-text("${PACKAGE_NAME}") a, [aria-label*="${PACKAGE_NAME}"]`,
-        )
-        .first();
-      if (await appLink.isVisible()) {
-        await humanClickLocator(s.page, appLink);
-        await pageSettled(s.page);
-      } else {
-        console.log(
-          `FAIL: app "${PACKAGE_NAME}" not found in the Play Console app list`,
-        );
-        return 1;
-      }
-      const navOpened = await clickAny(
-        s,
-        [
-          `a:has-text("${navLabel}")`,
-          `span:has-text("${navLabel}")`,
-          `[aria-label="${navLabel}"]`,
-        ],
-        `${navLabel} nav`,
-      );
-      if (!navOpened) {
-        throw new Error(
-          `PLAY_RELEASE_TRACK_UNAVAILABLE: no ${navLabel} navigation control at ${s.page.url()}`,
-        );
-      }
-      await pageSettled(s.page);
-    }
-
-    // 2) Create a new release.
-    const created = await clickAny(
-      s,
-      [
-        'button:has-text("Create new release")',
-        'button:has-text("Create release")',
-        'a:has-text("Create new release")',
-      ],
-      'Create new release',
-    );
-    if (!created) {
-      console.log('FAIL: "Create new release" control not found on track page');
-      return 1;
-    }
-    await pageSettled(s.page);
-
-    // 3) Upload the bundle through the file input. setInputFiles is the only
-    //    mechanism for a file picker and emits a genuine change event.
-    const fileInput = s.page.locator('input[type="file"]').first();
-    await fileInput.waitFor({ state: 'attached' });
-    await fileInput.setInputFiles(BUNDLE_PATH);
-    console.log(`[play-submit] uploading ${BUNDLE_PATH}`);
-
-    // The bundle is processed once the file input is no longer busy and the
-    // release's artifact table has a row; Play Console marks an upload failure
-    // with an alert in the upload region. The condition reads those, not words.
-    const upload = await pageCondition(s.page, () => {
-      const alert = document.querySelector(
-        '[role="alert"], [role="alertdialog"]',
-      );
-      if (alert && alert.offsetParent !== null) return 'error';
-      const uploading = document.querySelector('[role="progressbar"]');
-      if (uploading && uploading.offsetParent !== null) return false;
-      const artifacts = document.querySelector(
-        'table tbody tr, [role="table"] [role="row"] + [role="row"]',
-      );
-      return artifacts ? 'done' : false;
-    });
-    if (upload === 'error') {
-      const alert = await s.page
-        .locator('[role="alert"], [role="alertdialog"]')
-        .first()
-        .innerText();
-      console.log(`FAIL: Play Console reported an upload error: ${alert}`);
-      return 3;
-    }
-    console.log('[play-submit] bundle processed');
-
-    // 4) Release name + notes (optional).
-    if (RELEASE_NAME) {
-      const named = await fillAny(
-        s,
-        [
-          'input[aria-label*="Release name" i]',
-          'input[id*="release-name" i]',
-          'input[name*="releaseName" i]',
-        ],
-        RELEASE_NAME,
-        'release name',
-      );
-      if (!named)
-        throw new Error(
-          'PLAY_RELEASE_NAME_UNAVAILABLE: no visible release-name input',
-        );
-      await pageSettled(s.page);
-    }
-    if (RELEASE_NOTES) {
-      const notesOk = await fillAny(
-        s,
-        [
-          'textarea[aria-label*="release notes" i]',
-          'textarea[id*="release-notes" i]',
-          'textarea[placeholder*="What" i]',
-          'textarea',
-        ],
-        RELEASE_NOTES,
-        'release notes',
-      );
-      if (!notesOk)
-        throw new Error(
-          'PLAY_RELEASE_NOTES_UNAVAILABLE: no visible release-notes input',
-        );
-      await pageSettled(s.page);
-    }
-
-    // 5) Advance: Next / Save.
-    const advanced = await clickAny(
-      s,
-      ['button:has-text("Next")', 'button:has-text("Save")'],
-      'Next/Save',
-    );
-    if (!advanced)
-      throw new Error(
-        'PLAY_RELEASE_ADVANCE_UNAVAILABLE: no visible Next or Save control',
-      );
-    await pageSettled(s.page);
-
-    if (!SUBMIT) {
-      console.log(
-        `PASS: staged ${TRACK} release for ${PACKAGE_NAME || PLAY_RELEASE_URL} (SUBMIT=0, not sent)`,
-      );
-      return 0;
-    }
-
-    // 6) Review screen then terminal rollout / send-for-review (+ confirm dialog).
-    await clickAny(
-      s,
-      ['button:has-text("Review release")', 'button:has-text("Review")'],
-      'Review release',
-    );
-    await pageSettled(s.page);
-
-    const sent = await clickAny(
-      s,
-      [
-        `button:has-text("Start rollout to ${navLabel}")`,
-        'button:has-text("Start rollout")',
-        'button:has-text("Send for review")',
-        'button:has-text("Send change for review")',
-        'button:has-text("Rollout")',
-      ],
-      'Start rollout / Send for review',
-    );
-    if (!sent) {
-      let labels = [];
-      try {
-        labels = await s.page.evaluate(() =>
-          Array.from(document.querySelectorAll('button'))
-            .map((b) => (b.textContent || '').trim())
-            .filter((t) => t.length),
-        );
-      } catch (e) {
-        console.log('[play-submit] button probe failed:', e.message);
-      }
-      console.log('[play-submit] buttons on page:', JSON.stringify(labels));
-      console.log('FAIL: terminal rollout/send-for-review button not found');
-      return 1;
-    }
-    await pageSettled(s.page);
-    // Confirmation dialog.
-    await clickAny(
-      s,
-      [
-        'button:has-text("Rollout")',
-        'button:has-text("Send for review")',
-        'button:has-text("Confirm")',
-      ],
-      'confirm rollout',
-    );
-    await pageSettled(s.page);
-
-    // 7) Verify a sent/rollout status surfaced.
-    const status = await s.page.evaluate(() => {
-      const m = (document.body?.innerText || '').match(
-        /In review|Sent for review|Rolling out|Live|Available to|Published|Full rollout/i,
-      );
-      return m ? m[0] : '';
-    });
-    if (status) {
-      console.log(
-        `PASS: ${TRACK} release sent for ${PACKAGE_NAME || PLAY_RELEASE_URL} — status "${status}"`,
-      );
-      return 0;
-    }
+const s = await WSession.start({
+  label: 'google_play_submit',
+  proxy: statedProxy('the Play Console release'),
+});
+try {
+  // 1) Reach the track's release page.
+  await s.goto(PLAY_RELEASE_URL ? PLAY_RELEASE_URL : PLAY_CONSOLE_HOME);
+  await pageSettled(s.page);
+  if (onGoogleSignIn(s.page.url())) {
     throw new Error(
-      `PLAY_RELEASE_OUTCOME_UNOBSERVED: no release status observed at ${s.page.url()}`,
+      `PLAY_NOT_SIGNED_IN: the Google session is not signed in (url=${s.page.url()}); run a google login trajectory first`,
     );
-  } catch (e) {
-    console.log('FAIL:', e.message);
-    return 1;
-  } finally {
-    await s.close();
   }
-}
 
-process.exitCode = await runRelease();
+  // Navigate by package when no direct URL was given: open the app, then the
+  // track in the left navigation.
+  if (!PLAY_RELEASE_URL) {
+    await clickRequired(
+      s,
+      `the app whose package name is ${PACKAGE_NAME} in the Play Console app list`,
+      'PLAY_APP_NOT_FOUND',
+    );
+    await clickRequired(
+      s,
+      `the ${navLabel} entry of the Play Console navigation`,
+      'PLAY_RELEASE_TRACK_UNAVAILABLE',
+    );
+  }
+
+  // 2) Create a new release.
+  await clickRequired(
+    s,
+    'the button that creates a new release on this track',
+    'PLAY_CREATE_RELEASE_UNAVAILABLE',
+  );
+
+  // 3) Upload the bundle through the file input. setInputFiles is the only
+  //    mechanism for a file picker and emits a genuine change event.
+  const fileInput = s.page.locator('input[type="file"]').first();
+  await fileInput.waitFor({ state: 'attached' });
+  await fileInput.setInputFiles(BUNDLE_PATH);
+  console.log(`[play-submit] uploading ${BUNDLE_PATH}`);
+
+  // The bundle is processed once the file input is no longer busy and the
+  // release's artifact table has a row; Play Console marks an upload failure
+  // with an alert in the upload region. The condition reads those, not words.
+  const upload = await pageCondition(s.page, () => {
+    const alert = document.querySelector(
+      '[role="alert"], [role="alertdialog"]',
+    );
+    if (alert && alert.offsetParent !== null) return 'error';
+    const uploading = document.querySelector('[role="progressbar"]');
+    if (uploading && uploading.offsetParent !== null) return false;
+    const artifacts = document.querySelector(
+      'table tbody tr, [role="table"] [role="row"] + [role="row"]',
+    );
+    return artifacts ? 'done' : false;
+  });
+  if (upload === 'error') {
+    const alert = await s.page
+      .locator('[role="alert"], [role="alertdialog"]')
+      .first()
+      .innerText();
+    throw new Error(
+      `PLAY_UPLOAD_REFUSED: Play Console reported an upload error: ${alert}`,
+    );
+  }
+  console.log('[play-submit] bundle processed');
+
+  // 4) Release name + notes (optional).
+  if (RELEASE_NAME) {
+    await fillRequired(
+      s,
+      'the release name field',
+      RELEASE_NAME,
+      'PLAY_RELEASE_NAME_UNAVAILABLE',
+    );
+  }
+  if (RELEASE_NOTES) {
+    await fillRequired(
+      s,
+      'the release notes field for the default language',
+      RELEASE_NOTES,
+      'PLAY_RELEASE_NOTES_UNAVAILABLE',
+    );
+  }
+
+  // 5) Advance: Next / Save.
+  await clickRequired(
+    s,
+    'the Next or Save button that advances the release',
+    'PLAY_RELEASE_ADVANCE_UNAVAILABLE',
+  );
+
+  if (!SUBMIT) {
+    console.log(
+      `PASS: staged ${TRACK} release for ${RELEASE_TARGET} (SUBMIT=0, not sent)`,
+    );
+  } else {
+    // 6) Review screen (when the console shows one) then the terminal
+    //    rollout / send-for-review and its confirmation dialog.
+    if (await clickOffered(s.page, 'the button that opens the release review'))
+      await pageSettled(s.page);
+    await clickRequired(
+      s,
+      'the button that starts the rollout or sends the release for review',
+      'PLAY_ROLLOUT_UNAVAILABLE',
+    );
+    if (
+      await clickOffered(
+        s.page,
+        'the button of a confirmation dialog that confirms the rollout or the review',
+      )
+    )
+      await pageSettled(s.page);
+
+    // 7) Verify a sent/rollout status surfaced, and report it as printed.
+    if (
+      !(await pageShows(
+        s.page,
+        'Does the page show the release as in review, sent for review, rolling out, live or published?',
+      ))
+    ) {
+      throw new Error(
+        `PLAY_RELEASE_OUTCOME_UNOBSERVED: no release status observed at ${s.page.url()}`,
+      );
+    }
+    const status = await shownText(s.page, 'status of this release');
+    if (!status) {
+      throw new Error(
+        `PLAY_RELEASE_STATUS_UNREAD: the page shows a sent release but no status could be read at ${s.page.url()}`,
+      );
+    }
+    console.log(
+      `PASS: ${TRACK} release sent for ${RELEASE_TARGET} — status "${status}"`,
+    );
+  }
+} finally {
+  await s.close();
+}

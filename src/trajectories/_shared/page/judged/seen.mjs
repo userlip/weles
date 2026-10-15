@@ -70,6 +70,20 @@ export async function shownAmount(page, what) {
 }
 
 /**
+ * The text the settled page shows for `what` (a status, a name), exactly as
+ * the page prints it, as the vision model reads it; null when the model says
+ * the page shows none.
+ */
+export async function shownText(page, what) {
+  await pageSettled(page);
+  const answer = await askPage(
+    page,
+    `What ${what} does the page show? Answer with it exactly as the page prints it, or NONE when the page shows none.`,
+  );
+  return answer.trim() === 'NONE' ? null : answer.trim();
+}
+
+/**
  * Types `value` into the field `description` names, replacing what it held,
  * and confirms the focused field then holds exactly `value`.
  */
