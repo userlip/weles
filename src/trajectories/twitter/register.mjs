@@ -11,8 +11,9 @@ import {
 } from '../_shared/page/offers.mjs';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
 import { phoneForField } from '../_shared/inputs/phone.mjs';
+import { fieldCodeLength, mailedCode } from '../_shared/inputs/mailed_code.mjs';
 
-const URL = 'https://x.com/i/flow/signup?lang=en';
+const SIGNUP_URL = 'https://x.com/i/flow/signup?lang=en';
 const HOME = 'https://x.com/home';
 const proxy = statedProxy('the X signup');
 
@@ -101,7 +102,7 @@ async function signup(s) {
   await s.ctx.addCookies([
     { name: 'lang', value: 'en', domain: '.x.com', path: '/' },
   ]);
-  await s.goto(URL);
+  await s.goto(SIGNUP_URL);
   await pageSettled(page);
 
   if (await clickFirst(page, 'button', ['Refuse non-essential cookies']))
@@ -182,17 +183,19 @@ async function signup(s) {
   }
 
   if ((await step(page)) === 'code') {
+    const oneTime = await autocompleteField(page, 'one-time-code');
+    const codeField = oneTime ? oneTime : await field(page, 'verfication_code');
+    let code;
     if (contact === 'phone') {
-      console.log('[tw] phone verification...');
-      const code = await s.pollSmsCode();
-      console.log(`[tw] SMS code: ${code}`);
-      await s.fill('code', code);
+      // The session's SMS read answers the code, or why it has none; only a
+      // code is typed.
+      code = await s.pollSmsCode();
+      if (!/^\d+$/.test(code)) throw new Error(`twitter_sms_code_unread: ${code}`);
     } else {
-      console.log('[tw] email verification...');
-      const code = await s.checkEmail(id.email, 'x.com');
-      console.log(`[tw] email code: ${code}`);
-      await s.fill('code', code);
+      code = await mailedCode(id.email, 'x.com', await fieldCodeLength(codeField));
     }
+    console.log(`[tw] ${contact} verification code received`);
+    await s.fill('code', code);
     await pageSettled(page);
     await s.click('Next');
     await pageSettled(page);
