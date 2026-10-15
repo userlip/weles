@@ -3,12 +3,15 @@
  *   platform:            string — 'reddit' | 'twitter' | etc
  *   loggedInUrl:         string | (username) => string — absolute URL; captured response body parsed
  *   loggedInRegex:       RegExp — matches captured response URL to extract the body
- *   loggedOutUrl:        optional (username) => string — the public profile, read signed out
+ *   loggedOutUrl:        optional (username, signedInRead) => string — the public profile, read signed out
  *   loggedOutRegex:      RegExp — matches captured response URL of the signed-out read
  *   banDetector:         async (page, responses) => BanSignal
  *   extractLoggedIn:     (body, response) => { ok, karma, is_suspended }
- *   extractLoggedOut:    optional (response) => whether the public profile is visible
+ *   extractLoggedOut:    optional (response) => true when the public profile is visible,
+ *                        false when it is hidden, null when the read cannot tell
  *   beforeGoto:          optional async (session, acct) => void — auth that is not a cookie
+ *   afterProbe:          optional async (snapshot, acct) => void — the platform's own
+ *                        consequence of a signal, run after the snapshot is written
  *
  * The account's signal is, in order: suspended when the signed-in read says
  * so; the platform detector's verdict on the signed-in page when it is not
@@ -127,7 +130,7 @@ export async function runHealthProbe(cfg) {
     try {
       loggedOut = await probe(
         sOut,
-        cfg.loggedOutUrl(acct.username),
+        cfg.loggedOutUrl(acct.username, loggedIn),
         cfg.loggedOutRegex,
         null,
         'after the signed-out read',
@@ -216,5 +219,6 @@ export async function runHealthProbe(cfg) {
     throw new Error(
       `HEALTH_UNKNOWN: the probe of ${acct.username} read neither a verdict nor a signed-in page (snapshot ${filePath})`,
     );
+  if (cfg.afterProbe) await cfg.afterProbe(snapshot, acct);
   return snapshot;
 }
