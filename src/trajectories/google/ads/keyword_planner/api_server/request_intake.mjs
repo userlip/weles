@@ -2,12 +2,16 @@
 // facade writes back, the whole body it reads (no size is chosen here), the
 // token it demands before doing any work, and the two request shapes it
 // accepts — a bare keyword volume check and a keyword report brief that names
-// a product.
+// a product. The customer id and keywords are read by the shared request
+// readers (`../request.mjs`); a field a request does not carry stays absent.
 
 import { ALLOW_UNAUTH, API_TOKEN, SESSION } from './service_settings.mjs';
+import { customerIdOf, keywordsOf, squash } from '../request.mjs';
+
+const INDENT = '  ';
 
 export function json(res, status, body) {
-  const text = JSON.stringify(body, null, 2);
+  const text = JSON.stringify(body, null, INDENT);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
@@ -21,10 +25,15 @@ export function readJsonBody(req) {
     const chunks = [];
     req.on('data', (chunk) => chunks.push(chunk));
     req.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8');
+      if (!text.trim()) {
+        rejectBody(new Error('the request body is empty: send a JSON object'));
+        return;
+      }
       try {
-        resolveBody(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+        resolveBody(JSON.parse(text));
       } catch (error) {
-        rejectBody(new Error(`invalid JSON body: ${error?.message || error}`));
+        rejectBody(new Error(`invalid JSON body: ${error.message}`));
       }
     });
     req.on('error', rejectBody);
@@ -34,103 +43,85 @@ export function readJsonBody(req) {
 export function authorized(req) {
   if (ALLOW_UNAUTH) return true;
   if (!API_TOKEN) return false;
-  const header = String(req.headers.authorization || '');
-  if (header === `Bearer ${API_TOKEN}`) return true;
-  const apiKey = String(req.headers['x-api-key'] || '');
-  return apiKey === API_TOKEN;
-}
-
-export function parseKeywords(value) {
-  if (Array.isArray(value))
-    return [
-      ...new Set(
-        value.map((item) => String(item || '').trim()).filter(Boolean),
-      ),
-    ];
-  return [
-    ...new Set(
-      String(value || '')
-        .split(/[\n,]+/)
-        .map((item) => item.trim())
-        .filter(Boolean),
-    ),
-  ];
-}
-
-export function normalizeCustomerId(value) {
-  return String(value || '').replace(/\D/g, '');
-}
-
-export function safeSlug(value) {
   return (
-    String(value || 'keywords')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 80) || 'keywords'
+    req.headers.authorization === `Bearer ${API_TOKEN}` ||
+    req.headers['x-api-key'] === API_TOKEN
   );
 }
 
+/** A file-name fragment of `value`: lowercase letters and digits joined by dashes. */
+export function safeSlug(value) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z\d]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+/** One keyword with its whitespace squashed; anything but text is refused. */
 export function normalizeKeyword(value) {
-  return String(value || '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  if (typeof value !== 'string')
+    throw new Error(`keyword ${JSON.stringify(value)} is not text`);
+  return squash(value);
+}
+
+/** The first of `values` that is non-blank text, trimmed; null when none is. */
+function statedField(...values) {
+  const found = values.find(
+    (value) => typeof value === 'string' && value.trim(),
+  );
+  return found ? found.trim() : null;
+}
+
+function requestCustomer(body) {
+  return customerIdOf(
+    body.customerId || body.customer_id || body.googleAdsCustomerId,
+    'the request (customerId)',
+  );
 }
 
 export function validateReportRequest(body) {
-  const customerId = normalizeCustomerId(
-    body.customerId || body.customer_id || body.googleAdsCustomerId,
+  const customerId = requestCustomer(body);
+  const seeds = body.seedKeywords || body.seeds || body.keywords || body.keyword;
+  const seedKeywords = seeds
+    ? keywordsOf(seeds, 'the request (seedKeywords)')
+    : [];
+  const subject = statedField(
+    body.subject,
+    body.product,
+    body.niche,
+    body.brief,
+    body.landingPage,
+    body.url,
   );
-  if (!customerId) throw new Error('customerId required');
-  const seedKeywords = parseKeywords(
-    body.seedKeywords || body.seeds || body.keywords || body.keyword,
-  )
-    .map(normalizeKeyword)
-    .filter(Boolean);
-  const subject = String(
-    body.subject ||
-      body.product ||
-      body.niche ||
-      body.brief ||
-      body.landingPage ||
-      body.url ||
-      '',
-  ).trim();
   if (!subject && !seedKeywords.length)
     throw new Error('subject/product/brief or seedKeywords required');
 
   return {
     customerId,
     subject,
-    product: String(body.product || '').trim(),
-    niche: String(body.niche || '').trim(),
-    audience: String(body.audience || body.targetAudience || '').trim(),
-    landingPage: String(body.landingPage || body.url || '').trim(),
-    goal: String(
-      body.goal ||
-        'Find paid search opportunities with real Google Ads Keyword Planner metrics.',
-    ).trim(),
+    product: statedField(body.product),
+    niche: statedField(body.niche),
+    audience: statedField(body.audience, body.targetAudience),
+    landingPage: statedField(body.landingPage, body.url),
+    goal: statedField(body.goal),
     seedKeywords,
     session: requestSession(body),
   };
 }
 
 export function validateRequest(body) {
-  const customerId = normalizeCustomerId(
-    body.customerId || body.customer_id || body.googleAdsCustomerId,
-  );
-  const keywords = parseKeywords(body.keywords || body.keyword);
-  if (!customerId) throw new Error('customerId required');
-  if (!keywords.length) throw new Error('keywords required');
   return {
-    customerId,
-    keywords,
+    customerId: requestCustomer(body),
+    keywords: keywordsOf(
+      body.keywords || body.keyword,
+      'the request (keywords)',
+    ),
     session: requestSession(body),
   };
 }
 
 // The keeper session whose signed-in browser runs the planner: the request's
-// own, or the one this process was configured with; neither is refused.
+// own, or the one this process was configured with; with neither it is refused.
 function requestSession(body) {
   if (body.session) return String(body.session);
   if (SESSION) return SESSION;

@@ -4,32 +4,33 @@
 // names in WELES_MODEL_ENDPOINT and WELES_MODEL. This module holds the two
 // prompts (open the research, or judge whether the intents are already
 // saturated) and the reading of the JSON the model was asked to answer with.
+// A prompt carries only the facts the request stated; an absent one is left
+// out rather than written as a placeholder.
 
 import { callJeden } from '../../../../../../dist/agent/jeden.js';
 import { normalizeKeyword } from './request_intake.mjs';
 
-// Models wrap their JSON in prose or a code fence. The document is whatever sits
-// between the first opening bracket of the outermost kind and its last closer,
-// so an answer is read once, in one place, and is either that document or an
-// error naming what came back instead.
+// Models wrap their JSON in prose or a code fence. The document is whatever
+// sits between the first opening bracket and the last closing one, so an
+// answer is read once, in one place, and is either that document or an error
+// naming what came back instead.
 function jsonDocument(text) {
-  const brace = text.indexOf('{');
-  const bracket = text.indexOf('[');
-  const isArray = bracket >= 0 && (brace < 0 || bracket < brace);
-  const open = isArray ? bracket : brace;
-  const close = isArray ? text.lastIndexOf(']') : text.lastIndexOf('}');
-  if (open < 0 || close <= open) return text;
-  return text.slice(open, close + 1);
+  const document = text.match(/[[{][\s\S]*[\]}]/);
+  return document ? document.shift() : text;
 }
 
 export function parseKeywordRouterResponse(raw) {
-  const text = String(raw || '').trim();
+  if (typeof raw !== 'string')
+    throw new Error(
+      `model-router answered no text: ${JSON.stringify(raw)}`,
+    );
+  const text = raw.trim();
   let parsed;
   try {
     parsed = JSON.parse(jsonDocument(text));
   } catch (error) {
     throw new Error(
-      `model-router did not answer with the keyword JSON shape: ${error?.message || error}; answer began: ${text}`,
+      `model-router did not answer with the keyword JSON shape: ${error.message}; answer began: ${text}`,
     );
   }
   const list = Array.isArray(parsed) ? parsed : parsed?.keywords;
@@ -47,6 +48,21 @@ export function parseKeywordRouterResponse(raw) {
   };
 }
 
+/** The request's stated facts, one line each; absent ones are left out. */
+function requestFacts(input) {
+  return [
+    ['Subject', input.subject],
+    ['Product', input.product],
+    ['Niche', input.niche],
+    ['Audience', input.audience],
+    ['Landing page', input.landingPage],
+    ['Goal', input.goal],
+    ['Seed keywords', input.seedKeywords.join(', ')],
+  ]
+    .filter(([, value]) => value)
+    .map(([name, value]) => `${name}: ${value}`);
+}
+
 export async function generateKeywordsWithRouter(input, state = null) {
   const prompt = state
     ? [
@@ -56,14 +72,10 @@ export async function generateKeywordsWithRouter(input, state = null) {
         'If coverage is incomplete, return one canonical Google Ads seed keyword for each materially uncovered intent.',
         'Do not include fixed counts, commentary, markdown, metrics, or near-duplicate variants of already checked intents.',
         'Avoid brands not present in the prompt and policy-sensitive/adult-explicit terms.',
-        `Subject: ${input.subject || '(none)'}`,
-        `Product: ${input.product || '(none)'}`,
-        `Niche: ${input.niche || '(none)'}`,
-        `Audience: ${input.audience || '(none)'}`,
-        `Landing page: ${input.landingPage || '(none)'}`,
-        `Goal: ${input.goal}`,
-        `Seed keywords: ${input.seedKeywords.join(', ') || '(none)'}`,
-        `Already checked keywords: ${state.checkedKeywords.join(', ') || '(none)'}`,
+        ...requestFacts(input),
+        ...(state.checkedKeywords.length
+          ? [`Already checked keywords: ${state.checkedKeywords.join(', ')}`]
+          : []),
         `Metric rows found: ${JSON.stringify(
           state.rows.map((row) => ({
             keyword: row.keyword,
@@ -78,13 +90,7 @@ export async function generateKeywordsWithRouter(input, state = null) {
         'Return ONLY valid JSON in this exact shape: {"saturated":false,"keywords":["canonical keyword"],"rationale":"coverage plan"}.',
         'Each keyword must be a canonical Google Ads seed keyword representing a different intent.',
         'Do not include fixed counts, commentary, markdown, metrics, or near-duplicate long-tail variants.',
-        `Subject: ${input.subject || '(none)'}`,
-        `Product: ${input.product || '(none)'}`,
-        `Niche: ${input.niche || '(none)'}`,
-        `Audience: ${input.audience || '(none)'}`,
-        `Landing page: ${input.landingPage || '(none)'}`,
-        `Goal: ${input.goal}`,
-        `Seed keywords: ${input.seedKeywords.join(', ') || '(none)'}`,
+        ...requestFacts(input),
         'Prefer commercial-intent search phrases. Avoid brands not present in the prompt and policy-sensitive/adult-explicit terms.',
       ].join('\n');
   const routed = await callJeden(prompt);
