@@ -51,6 +51,14 @@ function parseRunning(value: unknown): RunningRun {
   return row as RunningRun;
 }
 
+/** A run's record as Weles answered it: an object, or none when Weles holds none. */
+function parseRecord(value: unknown): Record<string, unknown> | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value))
+    throw new Error(`Weles returned a run record that is not an object: ${JSON.stringify(value)}`);
+  return value as Record<string, unknown>;
+}
+
 async function exchange(
   path: string,
   method: 'GET' | 'POST',
@@ -70,9 +78,8 @@ async function exchange(
       const said = [answer.error, answer.message]
         .filter((part) => typeof part === 'string' && part)
         .join(': ');
-      throw new Error(
-        `HTTP ${response.status}: ${said || 'Weles refused the request'}`,
-      );
+      const reason = said === '' ? 'Weles stated no reason' : said;
+      throw new Error(`HTTP ${response.status}: ${reason}`);
     }
     return { status: response.status, body: answer };
   } catch (cause) {
@@ -106,7 +113,7 @@ export async function readRun(
   if (body.run_id !== runId) throw new Error('Weles returned a different run');
   return {
     run_id: runId,
-    record: (body.record ?? null) as Record<string, unknown> | null,
+    record: parseRecord(body.record),
     running: body.running ? parseRunning(body.running) : null,
   };
 }
