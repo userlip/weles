@@ -7,10 +7,7 @@
 // and does render pages, so every content probe passes; it dies when it creates
 // its first window, and Playwright reports only that the browser disconnected.
 //
-// The check used to be a bare "this login needs Aqua" written into each login.
-// That is the shape that cost weeks: the need existed in a comment and in one
-// runner, so no scheduler, no placement decision and no operator could see it.
-// It now comes from `src/trajectories/requirements.json`, the same file
+// The need comes from `src/trajectories/requirements.json`, the same file
 // placement reads, and this module is only its reader on the host that runs.
 //
 // Two readers, deliberately: placement reads the whole file to choose a host, and
@@ -20,6 +17,9 @@
 // existing token needs no window, and refusing it on a display-less host would
 // break the cheap path to protect the expensive one. The login it spawns checks
 // for itself.
+//
+// Every measurement says what it read; a probe that could not run is reported
+// with its own error, never as a value it did not read.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -37,13 +37,35 @@ const REQUIREMENTS_FILE =
   );
 const REQUIREMENTS_SCHEMA = 'wisent.trajectory-requirements.v1';
 
-export function launchdSession() {
+function firstLine(error) {
+  const [line] = String(error instanceof Error ? error.message : error).split('\n');
+  return line;
+}
+
+// A probe that could not run: absent, with what failed and its own error.
+function probeFailed(what, error) {
+  return { present: false, detail: `${what}: ${firstLine(error)}` };
+}
+
+// The launchd session this process belongs to, or why launchctl could not say.
+function launchdSession() {
   try {
-    return execFileSync('/bin/launchctl', ['managername'], {
+    const name = execFileSync('/bin/launchctl', ['managername'], {
       encoding: 'utf8',
     }).trim();
-  } catch {
-    return 'unknown';
+    return { present: true, name, detail: `launchd session ${name}` };
+  } catch (error) {
+    return probeFailed('launchctl managername failed', error);
+  }
+}
+
+// Whether the user's GUI domain exists, or why launchctl could not print it.
+function guiDomain(uid) {
+  try {
+    execFileSync('/bin/launchctl', ['print', `gui/${uid}`], { stdio: 'ignore' });
+    return { present: true, detail: `gui/${uid} present` };
+  } catch (error) {
+    return probeFailed(`gui/${uid} absent`, error);
   }
 }
 
@@ -71,6 +93,57 @@ export function trajectoryRequirements(trajectory) {
   return declared;
 }
 
+const LINUX_REMEDY =
+  "Start it under the deployment's own display: src/worker/deploy/launch.sh " +
+  'execs the worker under xvfb-run, and src/worker/deploy/install-virtual-display-linux.sh ' +
+  'installs that mechanism on a host that lacks it.';
+
+// Whether xdpyinfo got an answer from `display`, or its error.
+function xdpyinfoAnswer(display) {
+  try {
+    execFileSync('xdpyinfo', ['-display', display], { stdio: 'ignore' });
+    return { present: true, detail: `X display ${display} answered xdpyinfo` };
+  } catch (error) {
+    return probeFailed(`xdpyinfo did not answer for ${display}`, error);
+  }
+}
+
+// An X display the worker can reach. xdpyinfo proves a server answered; a bare
+// socket only proves something bound the path, which is what a half-dead Xvfb
+// leaves behind, so the socket is read only when xdpyinfo has no answer, and
+// that answer's error is kept beside it.
+function measureXDisplay(display) {
+  const answer = xdpyinfoAnswer(display);
+  if (answer.present) return { value: true, detail: answer.detail, remedy: LINUX_REMEDY };
+  const screen = display.match(/:(?<number>\d+)/)?.groups.number;
+  const socket = screen ? `/tmp/.X11-unix/X${screen}` : null;
+  const present = Boolean(socket) && existsSync(socket);
+  return {
+    value: present,
+    detail: present
+      ? `${answer.detail}; X socket ${socket} present for DISPLAY=${display}`
+      : `${answer.detail}; no X socket for DISPLAY=${display}`,
+    remedy: LINUX_REMEDY,
+  };
+}
+
+function measureLinuxDisplay() {
+  const { DISPLAY: display, WAYLAND_DISPLAY: wayland, XDG_RUNTIME_DIR: runtimeDir } =
+    process.env;
+  if (display) return measureXDisplay(display);
+  let waylandSocket;
+  if (wayland?.startsWith('/')) waylandSocket = wayland;
+  else if (wayland && runtimeDir) waylandSocket = path.join(runtimeDir, wayland);
+  if (waylandSocket && existsSync(waylandSocket)) {
+    return { value: true, detail: `Wayland socket ${waylandSocket} present`, remedy: LINUX_REMEDY };
+  }
+  return {
+    value: false,
+    detail: 'no DISPLAY and no reachable Wayland socket in this environment',
+    remedy: LINUX_REMEDY,
+  };
+}
+
 // Whether a process started the way this one was can own a window right now.
 // macOS: the launchd session decides, and `launchctl print gui/<uid>` is the
 // second half -- a session can name itself Aqua while its GUI domain is gone.
@@ -79,83 +152,18 @@ export function trajectoryRequirements(trajectory) {
 function measureDisplay() {
   const platform = os.platform();
   if (platform === 'darwin') {
+    const uid = process.getuid();
     const session = launchdSession();
-    const uid = process.getuid?.() ?? -1;
-    let guiDomain = false;
-    try {
-      execFileSync('/bin/launchctl', ['print', `gui/${uid}`], {
-        stdio: 'ignore',
-      });
-      guiDomain = true;
-    } catch {
-      guiDomain = false;
-    }
-    const value = session === 'Aqua' && guiDomain;
+    const gui = guiDomain(uid);
     return {
-      value,
-      detail: `launchd session ${session}; gui/${uid} ${guiDomain ? 'present' : 'absent'}`,
+      value: session.name === 'Aqua' && gui.present,
+      detail: `${session.detail}; ${gui.detail}`,
       remedy:
         'Run it from a logged-in graphical session: a LaunchAgent in ' +
-        `gui/${uid === -1 ? '<uid>' : uid}, not a LaunchDaemon and not a bare SSH command.`,
+        `gui/${uid}, not a LaunchDaemon and not a bare SSH command.`,
     };
   }
-  if (platform === 'linux') {
-    const display = process.env.DISPLAY ?? '';
-    const remedy =
-      "Start it under the deployment's own display: src/worker/deploy/launch.sh " +
-      'execs the worker under xvfb-run, and src/worker/deploy/install-virtual-display-linux.sh ' +
-      'installs that mechanism on a host that lacks it.';
-    if (display) {
-      // xdpyinfo proves a server answered; a bare socket only proves something
-      // bound the path, which is what a half-dead Xvfb leaves behind, so the
-      // socket is read only when xdpyinfo has no answer.
-      try {
-        execFileSync('xdpyinfo', ['-display', display], { stdio: 'ignore' });
-        return {
-          value: true,
-          detail: `X display ${display} answered xdpyinfo`,
-          remedy,
-        };
-      } catch (error) {
-        console.error(
-          `xdpyinfo did not answer for ${display}: ${error.message.split('\n')[0]}`,
-        );
-      }
-      const screen = display.match(/:(\d+)/);
-      const socket = screen ? `/tmp/.X11-unix/X${screen[1]}` : null;
-      if (socket && existsSync(socket)) {
-        return {
-          value: true,
-          detail: `X socket ${socket} present for DISPLAY=${display}`,
-          remedy,
-        };
-      }
-      return {
-        value: false,
-        detail: `DISPLAY=${display} but no X server answered it`,
-        remedy,
-      };
-    }
-    const wayland = process.env.WAYLAND_DISPLAY ?? '';
-    const runtimeDir = process.env.XDG_RUNTIME_DIR ?? '';
-    const waylandSocket = wayland.startsWith('/')
-      ? wayland
-      : wayland && runtimeDir
-        ? path.join(runtimeDir, wayland)
-        : '';
-    if (waylandSocket && existsSync(waylandSocket)) {
-      return {
-        value: true,
-        detail: `Wayland socket ${waylandSocket} present`,
-        remedy,
-      };
-    }
-    return {
-      value: false,
-      detail: 'no DISPLAY and no reachable Wayland socket in this environment',
-      remedy,
-    };
-  }
+  if (platform === 'linux') return measureLinuxDisplay();
   return {
     value: false,
     detail: `platform ${platform} has no display check here`,
