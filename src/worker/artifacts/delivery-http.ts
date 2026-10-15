@@ -2,7 +2,9 @@
 // bodies, the response headers every answer carries, streaming one
 // object out of Stado, and the subscription rows the Oko console reads.
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { constants as http } from 'node:http2';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { posix } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { readSetting } from '../../state/skarbiec-records.js';
@@ -46,7 +48,7 @@ export async function requestJson(request: IncomingMessage): Promise<unknown> {
     return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
   } catch (parseError) {
     throw new RequestFailure(
-      400,
+      http.HTTP_STATUS_BAD_REQUEST,
       `request body must be valid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
     );
   }
@@ -89,6 +91,15 @@ export async function deliverObject(
   uri: string,
   config: ArtifactDeliveryConfig,
 ): Promise<void> {
+  // The object's own name is what the download is saved as; an object URI
+  // that names none cannot be offered as a file.
+  const fileName = posix.basename(uri);
+  if (fileName === '') {
+    jsonResponse(response, http.HTTP_STATUS_BAD_REQUEST, {
+      error: `artifact URI ${JSON.stringify(uri)} names no object`,
+    });
+    return;
+  }
   const headers: Record<string, string> = {
     Authorization: `Bearer ${config.stadoApiToken}`,
   };
@@ -102,11 +113,13 @@ export async function deliverObject(
       redirect: 'error',
     },
   );
-  if (upstream.status === 404) {
-    jsonResponse(response, 404, { error: 'artifact not found' });
+  if (upstream.status === http.HTTP_STATUS_NOT_FOUND) {
+    jsonResponse(response, http.HTTP_STATUS_NOT_FOUND, {
+      error: 'artifact not found',
+    });
     return;
   }
-  if (upstream.status === 416) {
+  if (upstream.status === http.HTTP_STATUS_RANGE_NOT_SATISFIABLE) {
     secureResponseHeaders(response);
     applyAllowedOrigin(request, response, config);
     response.statusCode = upstream.status;
@@ -115,9 +128,17 @@ export async function deliverObject(
     response.end();
     return;
   }
-  if (upstream.status !== 200 && upstream.status !== 206) {
-    jsonResponse(response, 502, {
+  if (
+    upstream.status !== http.HTTP_STATUS_OK &&
+    upstream.status !== http.HTTP_STATUS_PARTIAL_CONTENT
+  ) {
+    // What Stado answered travels with the refusal, so the reader learns
+    // which of a refused token, a missing grant or a failed store it was.
+    const said = (await upstream.text()).trim();
+    jsonResponse(response, http.HTTP_STATUS_BAD_GATEWAY, {
       error: 'private artifact backend unavailable',
+      upstream_status: upstream.status,
+      upstream_detail: said,
     });
     return;
   }
@@ -136,15 +157,14 @@ export async function deliverObject(
     const value = upstream.headers.get(header);
     if (value) response.setHeader(header, value);
   }
-  const contentType =
-    upstream.headers.get('content-type') ?? 'application/octet-stream';
-  const fileName = uri.split('/').at(-1) ?? 'artifact';
-  const disposition = contentType.toLowerCase().startsWith('text/html')
-    ? 'attachment'
-    : 'inline';
+  // HTML is downloaded rather than rendered; an object Stado states no type
+  // for is not claimed to be HTML.
+  const statedType = upstream.headers.get('content-type');
+  const servesHtml =
+    statedType !== null && statedType.toLowerCase().startsWith('text/html');
   response.setHeader(
     'Content-Disposition',
-    `${disposition}; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    `${servesHtml ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(fileName)}`,
   );
   if (!upstream.body) {
     response.end();
@@ -157,10 +177,30 @@ function subscriptionText(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
+/** A field a row may leave out; one it states with the wrong type is refused. */
+function optionalField<T>(
+  row: Record<string, unknown>,
+  field: string,
+  read: (value: unknown) => value is T,
+): T | null {
+  const value = row[field];
+  if (value === undefined || value === null) return null;
+  if (!read(value))
+    throw new RequestFailure(
+      http.HTTP_STATUS_BAD_GATEWAY,
+      `Weles subscription store returned a row whose ${field} is ${JSON.stringify(value)}`,
+    );
+  return value;
+}
+
+function finiteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
 function publicSubscriptionRow(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) {
     throw new RequestFailure(
-      502,
+      http.HTTP_STATUS_BAD_GATEWAY,
       'Weles subscription store returned an invalid row',
     );
   }
@@ -168,16 +208,11 @@ function publicSubscriptionRow(value: unknown): Record<string, unknown> {
   const provider = subscriptionText(value.provider);
   if (!serviceName || !provider) {
     throw new RequestFailure(
-      502,
+      http.HTTP_STATUS_BAD_GATEWAY,
       'Weles subscription store returned an incomplete row',
     );
   }
-  const metadata = isRecord(value.metadata) ? value.metadata : {};
-  const monthlyCost =
-    typeof value.monthly_cost_usd === 'number' &&
-    Number.isFinite(value.monthly_cost_usd)
-      ? value.monthly_cost_usd
-      : null;
+  const metadata = optionalField(value, 'metadata', isRecord);
   return {
     id: subscriptionText(value.id),
     service_name: serviceName,
@@ -185,10 +220,10 @@ function publicSubscriptionRow(value: unknown): Record<string, unknown> {
     account_identifier: subscriptionText(value.account_identifier),
     status: subscriptionText(value.status),
     plan: subscriptionText(value.plan),
-    monthly_cost_usd: monthlyCost,
+    monthly_cost_usd: optionalField(value, 'monthly_cost_usd', finiteNumber),
     expires_at: subscriptionText(value.expires_at),
     last_verified_at: subscriptionText(value.last_verified_at),
-    label: subscriptionText(metadata.note),
+    label: metadata === null ? null : subscriptionText(metadata.note),
   };
 }
 
@@ -198,7 +233,7 @@ export async function listServiceSubscriptions(
   const rows = readSetting<unknown[]>('service_subscriptions', []);
   if (!Array.isArray(rows))
     throw new RequestFailure(
-      502,
+      http.HTTP_STATUS_BAD_GATEWAY,
       'Weles subscription store returned an invalid response',
     );
   return rows
