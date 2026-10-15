@@ -1,4 +1,11 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import {
+  chmodSync,
+  constants,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -63,9 +70,17 @@ export class SessionStore {
     }
   }
 
+  // Saved cookies are logins: the directory and the file are readable and
+  // writable by their owner only, whatever mode a file already held.
   private _writeStore(store: Record<string, CookieParam[]>): void {
-    mkdirSync(dirname(this._persistPath), { recursive: true });
-    writeFileSync(this._persistPath, JSON.stringify(store, null, 2));
+    const directory = dirname(this._persistPath);
+    mkdirSync(directory, { recursive: true, mode: constants.S_IRWXU });
+    chmodSync(directory, constants.S_IRWXU);
+    const ownerOnly = constants.S_IRUSR | constants.S_IWUSR;
+    writeFileSync(this._persistPath, JSON.stringify(store), {
+      mode: ownerOnly,
+    });
+    chmodSync(this._persistPath, ownerOnly);
   }
 
   // -----------------------------------------------------------------------
@@ -86,7 +101,7 @@ export class SessionStore {
    */
   loadCookies(label: string): CookieParam[] | null {
     const store = this._readStore();
-    return store[label] ?? null;
+    return Object.hasOwn(store, label) ? store[label] : null;
   }
 
   /**
@@ -95,7 +110,7 @@ export class SessionStore {
    */
   async inject(context: SessionContext, label: string): Promise<void> {
     const cookies = this.loadCookies(label);
-    if (!cookies || cookies.length === 0) return;
+    if (!cookies?.length) return;
 
     for (const cookie of cookies) {
       await context.send('Network.setCookie', cookie);
@@ -104,12 +119,17 @@ export class SessionStore {
 
   /**
    * Extract all cookies from a browser context and persist them under the
-   * given label.
+   * given label. An answer without a cookies list is refused by name: saved
+   * as empty it would log the account out of every later run.
    */
   async capture(context: SessionContext, label: string): Promise<void> {
     const result = await context.send('Network.getAllCookies');
-    const cookies: CookieParam[] = result?.cookies ?? [];
-    this.saveCookies(label, cookies);
+    if (!Array.isArray(result?.cookies)) {
+      throw new Error(
+        `Network.getAllCookies answered no cookies list for session ${label}; the saved session is kept: ${JSON.stringify(result)}`,
+      );
+    }
+    this.saveCookies(label, result.cookies);
   }
 
   /** Inject cookies into a Playwright BrowserContext (uses addCookies API). */
@@ -118,10 +138,10 @@ export class SessionStore {
     label: string,
   ): Promise<boolean> {
     const cookies = this.loadCookies(label);
-    if (!cookies || cookies.length === 0) return false;
+    if (!cookies?.length) return false;
     const valid = cookies.filter((c) => c.name && c.value && c.domain);
     await context.addCookies(valid);
-    return valid.length > 0;
+    return Boolean(valid.length);
   }
 
   /** Capture cookies from a Playwright BrowserContext and persist them. */
