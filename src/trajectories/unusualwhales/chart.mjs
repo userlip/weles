@@ -12,7 +12,7 @@ import { statedProxy, statedText } from '../_shared/inputs/stated.mjs';
 import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { loginUnusualWhales } from './session/login.mjs';
-import { persistContext } from './_persist.mjs';
+import { persistContext } from '../_shared/market/persist.mjs';
 
 const ticker = statedText(['TICKER'], 'the symbol whose flow overview chart is captured').toUpperCase();
 const tab = statedText(['CHART_TAB'], 'the flow overview tab whose chart is captured, as the page labels it');

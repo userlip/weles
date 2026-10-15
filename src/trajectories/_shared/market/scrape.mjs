@@ -17,7 +17,7 @@ import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { exitStatusFor } from '../../../../dist/cli/usage.js';
 import { statedProxy, statedText } from '../inputs/stated.mjs';
 import { pageSettled } from '../page/settled.mjs';
-import { persistContext } from '../../unusualwhales/_persist.mjs';
+import { persistContext } from './persist.mjs';
 
 /** The symbol and the catalog pages this run is asked for. */
 function marketRequest(site, code, catalog) {
