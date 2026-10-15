@@ -10,7 +10,8 @@
  */
 
 function required(name) {
-  const value = (process.env[name] ?? '').trim();
+  const raw = process.env[name];
+  const value = typeof raw === 'string' ? raw.trim() : '';
   if (!value) {
     throw new Error(
       `${name} is required: an observation trajectory runs only from a declared observation`,
@@ -19,22 +20,33 @@ function required(name) {
   return value;
 }
 
+/** A whole number written in decimal digits, or NaN. */
+function whole(text) {
+  const trimmed = text.trim();
+  return /^\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+}
+
 export function declaredObservation() {
   const observation = required('GENERIC_OBSERVATION');
   const [platform, verb] = observation.split('.');
-  const scrolls = Number.parseInt(required('GENERIC_OBSERVATION_SCROLLS'), 10);
-  if (!Number.isInteger(scrolls) || scrolls < 0) {
+  const scrolls = whole(required('GENERIC_OBSERVATION_SCROLLS'));
+  if (!Number.isInteger(scrolls)) {
     throw new Error(
       `GENERIC_OBSERVATION_SCROLLS must be a whole scroll budget, not ${process.env.GENERIC_OBSERVATION_SCROLLS}`,
     );
   }
-  const dwellMs = required('GENERIC_OBSERVATION_DWELL_MS')
+  // An ascending range: the shortest and the longest dwell, both positive.
+  const [shortest, longest, ...beyond] = required(
+    'GENERIC_OBSERVATION_DWELL_MS',
+  )
     .split(',')
-    .map((part) => Number.parseInt(part, 10));
+    .map(whole);
   if (
-    dwellMs.length !== 2 ||
-    dwellMs.some((ms) => !Number.isInteger(ms) || ms <= 0) ||
-    dwellMs[1] < dwellMs[0]
+    beyond.length ||
+    !Number.isInteger(shortest) ||
+    !Number.isInteger(longest) ||
+    !(shortest > 0) ||
+    longest < shortest
   ) {
     throw new Error(
       `GENERIC_OBSERVATION_DWELL_MS must be an ascending millisecond range, not ${process.env.GENERIC_OBSERVATION_DWELL_MS}`,
@@ -47,6 +59,6 @@ export function declaredObservation() {
     origin: required('GENERIC_OBSERVATION_ORIGIN'),
     reads: required('GENERIC_OBSERVATION_READS'),
     scrolls,
-    dwellMs,
+    dwellMs: [shortest, longest],
   };
 }
