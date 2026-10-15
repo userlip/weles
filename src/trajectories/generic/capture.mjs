@@ -25,7 +25,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 import { parseCaptureParams } from '../../../dist/worker/params/capture-params.js';
-import { pageSettled } from '../_shared/page/settled.mjs';
+import { runStep } from './capture/steps.mjs';
 import {
   captureVideoTools,
   recordCaptureVideo,
@@ -42,88 +42,6 @@ import {
 } from '../_shared/runner/capture-runtime.mjs';
 
 const label = 'generic_capture';
-
-async function runStep(session, step) {
-  if (step.op === 'wait_selector') {
-    // `waitFor` carries no deadline of its own, which is the point of a
-    // `wait_selector` step: the element appearing is what the step waits for.
-    return await session.waitFor(step.value);
-  }
-  if (step.op === 'click') {
-    const outcome = await session.clickSelector(step.value);
-    if (outcome === 'no-element-found')
-      throw new Error(
-        `step click ${JSON.stringify(step.value)} matched no element`,
-      );
-    return outcome;
-  }
-  if (step.op === 'hover') {
-    const { humanHoverLocator } = await import('../../../dist/human/mouse.js');
-    if (typeof humanHoverLocator !== 'function') {
-      throw Object.assign(
-        new Error(
-          'The installed Weles input runtime does not provide humanHoverLocator',
-        ),
-        {
-          code: 'CAPTURE_INPUT_UNAVAILABLE',
-          operation: 'hover',
-          export: 'humanHoverLocator',
-        },
-      );
-    }
-    await humanHoverLocator(
-      session.page,
-      session.page.locator(step.value).first(),
-      { leave: false },
-    );
-    return `hovered ${step.value}`;
-  }
-  if (step.op === 'focus') {
-    const outcome = await session.focus(step.value);
-    if (outcome === 'no-element-found')
-      throw new Error(
-        `step focus ${JSON.stringify(step.value)} matched no element`,
-      );
-    return outcome;
-  }
-  if (step.op === 'press') return session.press(step.value);
-  if (step.op === 'scroll') {
-    const { humanScroll } = await import('../../../dist/human/mouse.js');
-    if (typeof humanScroll !== 'function') {
-      throw Object.assign(
-        new Error(
-          'The installed Weles input runtime does not provide humanScroll',
-        ),
-        {
-          code: 'CAPTURE_INPUT_UNAVAILABLE',
-          operation: 'scroll',
-          export: 'humanScroll',
-        },
-      );
-    }
-    if (!step.value || !Number.isFinite(Number(step.value))) {
-      throw Object.assign(
-        new Error(
-          `step scroll needs a pixel distance (positive down, negative up), got ${JSON.stringify(step.value ?? null)}`,
-        ),
-        {
-          code: 'CAPTURE_STEP_INVALID',
-          operation: 'scroll',
-        },
-      );
-    }
-    await humanScroll(session.page, Number(step.value));
-    return `scrolled ${step.value}`;
-  }
-  if (step.op === 'settle') {
-    // The page has finished what the previous step started: loaded, and the
-    // DOM unchanged across two animation frames.
-    await pageSettled(session.page);
-    return 'settled';
-  }
-  return session.goto(step.value);
-}
-
 const plan = planFromEnv('GENERIC_CAPTURE_PLAN', parseCaptureParams);
 const keyPrefix = captureKeyPrefix(plan.artifact_prefix);
 const signature = createHash('sha256')
@@ -134,8 +52,7 @@ const signature = createHash('sha256')
       record_seconds: plan.record_seconds,
     }),
   )
-  .digest('hex')
-  .slice(0, 8);
+  .digest('hex');
 const base = [
   plan.site_slug,
   plan.axis,
@@ -151,6 +68,7 @@ const closeSession = () => {
   return sessionClosure;
 };
 const stepsExecuted = [];
+let failure = null;
 const artifacts = [];
 try {
   console.log(
@@ -224,7 +142,7 @@ try {
     sidecar_uri: await uploadCaptureObject(
       keyPrefix,
       `${base}.png.json`,
-      JSON.stringify(stillSidecar, null, 2),
+      JSON.stringify(stillSidecar, null, '  '),
       'application/json',
     ),
     media_kind: 'still-png',
@@ -265,7 +183,7 @@ try {
       sidecar_uri: await uploadCaptureObject(
         keyPrefix,
         `${base}.webm.json`,
-        JSON.stringify(videoSidecar, null, 2),
+        JSON.stringify(videoSidecar, null, '  '),
         'application/json',
       ),
       media_kind: 'video-webm',
@@ -291,7 +209,7 @@ try {
         completed_at: new Date().toISOString(),
       },
       null,
-      2,
+      '  ',
     ),
   );
   console.log(
@@ -330,13 +248,12 @@ try {
         completed_at: new Date().toISOString(),
       },
       null,
-      2,
+      '  ',
     ),
   );
   console.error('FAIL:', error);
-  process.exitCode = 1;
+  failure = error;
 } finally {
   if (started) await closeSession();
 }
-
-process.exit(process.exitCode ?? 0);
+if (failure) throw failure;
