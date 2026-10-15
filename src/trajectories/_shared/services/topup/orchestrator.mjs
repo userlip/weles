@@ -4,11 +4,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exitStatusFor } from '../../../../../dist/cli/usage.js';
-import {
-  loadTopupCardEnv,
-  TOPUP_ENV_FILES,
-  TOPUP_REQUIRED,
-} from '../topup_common.mjs';
+import { loadTopupCardEnv, topupCard } from '../topup_common.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const trajectories = join(here, '..', '..', '..');
@@ -36,10 +32,6 @@ export async function runTopupOrchestrator(provider, usd) {
   if (!process.env.TOPUP_CONFIRM)
     throw new Error('TOPUP_CONFIRM is required before a purchase');
   const cardSource = loadTopupCardEnv();
-  if (!cardSource)
-    throw new Error(
-      `no purchase card: TOPUP_CARD_JSON or a card file at ${TOPUP_ENV_FILES.join(' or ')} is required`,
-    );
   const welesEnv = join(here, '..', '..', '..', '..', '..', '.env');
   if (existsSync(welesEnv)) {
     for (const raw of readFileSync(welesEnv, 'utf8').split('\n')) {
@@ -55,19 +47,9 @@ export async function runTopupOrchestrator(provider, usd) {
         process.env[key.trim()] = value;
     }
   }
-  const missing = TOPUP_REQUIRED.filter((key) => !process.env[key]);
-  if (missing.length)
-    throw new Error(
-      `purchase card from ${cardSource} has no ${missing.join(', ')}`,
-    );
-  const cardLast4 = process.env.TOPUP_CARD_NUMBER
-    .replace(/\D/g, '')
-    .match(/(\d\d\d\d)$/)
-    ?.pop();
+  const cardLast4 = topupCard().num.match(/(\d\d\d\d)$/)?.pop();
   if (!cardLast4)
-    throw new Error(
-      `purchase card from ${cardSource} has no usable last four digits`,
-    );
+    throw new Error(`purchase card from ${cardSource} has no usable last four digits`);
   const trajectory = join(trajectories, provider, 'topup.mjs');
   console.log(
     `[orchestrator] provider=${provider} usd=$${dollars} card=****${cardLast4} source=${cardSource}`,

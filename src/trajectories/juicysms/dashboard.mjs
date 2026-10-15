@@ -1,7 +1,8 @@
-// JuicySMS dashboard order-history inspection via Google SSO.
-// Same login flow balance.mjs uses (the auto-account is Google-linked,
-// not password-secured). After SSO, capture the selected account pages
-// and follow the order history's offered pagination links.
+// JuicySMS dashboard order-history inspection via Google SSO (the account is
+// Google-linked, not password-secured; the same sign-in balance.mjs uses).
+// After SSO, the selected account pages are kept as HTML and the order
+// history is read page by page through the paginator's own next link, every
+// order kept once, into all_orders.json and orders_pages.json.
 import { WSession } from '../../../dist/session/wsession.js';
 import { getGoogleSsoCreds } from '../_shared/services/google_sso.mjs';
 import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
@@ -10,202 +11,79 @@ import { runOutputPath } from '#run-output';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// The OAuth round trip lands back on a juicysms.com route other than /login.
-const LANDED = /^https:\/\/(www\.)?juicysms\.com\/(?!login)/;
+const HOST = 'juicysms.com';
 const OUT_DIR = runOutputPath('juicysms_dashboard');
+const INDENT = '  ';
+const PAGES = ['/', '/myaccount', '/addfunds', '/hire-panel', '/webhooks', '/myorders'];
 
 const login = await getGoogleSsoCreds();
-if (!login) {
-  console.log('FAIL: no Google SSO credentials in DB');
-  process.exit(1);
-}
 console.log(`[dash] Using Google SSO: ${login.email}`);
 
-const s = await WSession.start({
-  label: 'juicysms_dashboard',
-  browser: 'chromium',
-});
+const s = await WSession.start({ label: 'juicysms_dashboard', browser: 'chromium' });
 try {
-  if (!(await signInWithGoogle(s, login)))
-    throw new Error('google_sso_did_not_complete');
-
-  // Wait until URL settles on juicysms.com (the OAuth roundtrip lands us
-  // back on a juicysms route eventually). Earlier check `!/login` exited
-  // while still on accounts.google.com, then the next goto raced the
-  // OAuth redirect and threw ERR_ABORTED.
-  await urlMatching(s.page, LANDED);
-  console.log(`[dash] post-SSO URL=${s.page.url()}`);
+  if (!(await signInWithGoogle(s, login))) throw new Error(`JUICYSMS_SSO_INCOMPLETE: observed ${s.page.url()}`);
+  // The OAuth round trip lands back on a juicysms.com route other than
+  // /login; the next page is opened only once it has.
+  await urlMatching(s.page, (url) => new URL(url).hostname.endsWith(HOST) && !new URL(url).pathname.startsWith('/login'));
   await pageSettled(s.page);
-
   mkdirSync(OUT_DIR, { recursive: true });
 
-  // Capture the authenticated application routes, including pages exposed by
-  // its user menu rather than by the public marketing navigation.
-  async function dumpPath(path) {
-    await openJuicyPage(s, `https://juicysms.com${path}`);
-    const slug =
-      path === '/'
-        ? 'home'
-        : path.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  // The signed-in application routes, including the ones its user menu
+  // offers rather than the public navigation.
+  for (const path of PAGES) {
+    await openJuicyPage(s, `https://${HOST}${path}`);
+    const slug = path === '/' ? 'home' : path.replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '');
     const html = await s.page.content();
     writeFileSync(join(OUT_DIR, `${slug}.html`), html);
-    console.log(
-      `[dash] ${path} rendered ${html.length}b at url=${s.page.url()}`,
-    );
+    console.log(`[dash] ${path} rendered ${html.length}b at url=${s.page.url()}`);
   }
 
-  await dumpPath('/');
-  await dumpPath('/myaccount');
-  await dumpPath('/addfunds');
-  await dumpPath('/hire-panel');
-  await dumpPath('/webhooks');
-  // MyOrders renders orders.data keyed by id and follows orders.links URLs.
-  // Inspect those same links instead of assuming a historical page count.
-  await dumpPath('/myorders');
+  // MyOrders renders its Inertia page state (data-page) with the orders as a
+  // paginator: its data, and the next page's address (next_page_url, null on
+  // the last page). The history is read through those addresses.
   const history = await s.page.evaluate(async () => {
     // allow-raw-playwright: read-only fetch loop, no synthetic events
-    const entities = { quot: '"', amp: '&', '#039': "'", lt: '<', gt: '>' };
-    const decode = (text) =>
-      text.replace(/&(quot|amp|#039|lt|gt);/g, (_, key) => entities[key]);
+    const decode = (text) => new DOMParser().parseFromString(text, 'text/html').documentElement.textContent;
     const orders = [];
     const pages = [];
     const ids = new Set();
-    const origin = location.origin;
-    let address = new URL('/myorders?page=1', origin);
-    let pageNumber = 1;
-    const fail = (code, details = {}) => {
-      throw new Error(
-        `${code}: ${JSON.stringify({ page: pageNumber, url: address.href, ...details })}`,
-      );
+    let address = new URL('/myorders', location.origin);
+    const fail = (code, details) => {
+      throw new Error(`${code}: ${JSON.stringify({ url: address.href, ...details })}`);
     };
-    for (;;) {
-      let response;
-      try {
-        response = await fetch(address.href, {
-          credentials: 'include',
-          redirect: 'manual',
-        });
-      } catch (error) {
-        fail('JUICYSMS_ORDERS_FETCH_FAILED', { cause: error.message });
-      }
-      if (response.type === 'opaqueredirect')
-        fail('JUICYSMS_ORDERS_REDIRECTED');
-      if (!response.ok)
-        fail('JUICYSMS_ORDERS_HTTP_ERROR', {
-          status: response.status,
-          responseUrl: response.url,
-        });
-      let html;
-      try {
-        html = await response.text();
-      } catch (error) {
-        fail('JUICYSMS_ORDERS_BODY_FAILED', {
-          status: response.status,
-          cause: error.message,
-        });
-      }
-      const match = html.match(/data-page="([^"]+)"/);
-      if (!match)
-        fail('JUICYSMS_ORDERS_STATE_MISSING', { status: response.status });
-      let data;
-      try {
-        data = JSON.parse(decode(match[1]));
-      } catch (error) {
-        fail('JUICYSMS_ORDERS_STATE_INVALID', { cause: error.message });
-      }
-      const collection = data?.props?.orders;
-      if (
-        !Array.isArray(collection?.data) ||
-        !Array.isArray(collection?.links)
-      ) {
-        fail('JUICYSMS_ORDERS_SHAPE_INVALID', {
-          component: data?.component ?? null,
-        });
-      }
+    while (address) {
+      const response = await fetch(address.href, { credentials: 'include', redirect: 'manual' });
+      if (response.type === 'opaqueredirect') fail('JUICYSMS_ORDERS_REDIRECTED', {});
+      if (!response.ok) fail('JUICYSMS_ORDERS_HTTP_ERROR', { status: response.status, responseUrl: response.url });
+      const state = (await response.text()).match(/data-page="(?<state>[^"]+)"/)?.groups.state;
+      if (!state) fail('JUICYSMS_ORDERS_STATE_MISSING', { status: response.status });
+      const collection = JSON.parse(decode(state)).props?.orders;
+      if (!Array.isArray(collection?.data) || !Object.hasOwn(collection, 'next_page_url'))
+        fail('JUICYSMS_ORDERS_SHAPE_INVALID', { keys: collection ? Object.keys(collection) : null });
       for (const order of collection.data) {
-        const id = order?.id;
-        if (
-          !(typeof id === 'string' && id.length > 0) &&
-          !(Number.isSafeInteger(id) && id > 0)
-        ) {
-          fail('JUICYSMS_ORDER_ID_UNAVAILABLE');
-        }
-        const key = String(id);
+        if (!(typeof order?.id === 'string' && order.id) && !Number.isSafeInteger(order?.id))
+          fail('JUICYSMS_ORDER_ID_UNAVAILABLE', { order });
+        const key = String(order.id);
         if (ids.has(key)) fail('JUICYSMS_ORDER_REPEATED', { orderId: key });
         ids.add(key);
         orders.push(order);
       }
-      let next = null;
-      let hasLaterPage = false;
-      for (const link of collection.links) {
-        if (!link || !Object.hasOwn(link, 'url'))
-          fail('JUICYSMS_ORDERS_LINK_INVALID');
-        if (link.url === null) continue;
-        if (typeof link.url !== 'string' || !link.url)
-          fail('JUICYSMS_ORDERS_LINK_INVALID');
-        let target;
-        try {
-          target = new URL(link.url, address);
-        } catch (error) {
-          fail('JUICYSMS_ORDERS_LINK_INVALID', {
-            target: link.url,
-            cause: error.message,
-          });
-        }
-        if (
-          target.origin !== origin ||
-          target.pathname !== '/myorders' ||
-          target.username ||
-          target.password ||
-          target.hash
-        ) {
-          fail('JUICYSMS_ORDERS_LINK_OUTSIDE_HISTORY', { target: target.href });
-        }
-        const rawPage = target.searchParams.get('page');
-        const number = rawPage === null ? 1 : Number(rawPage);
-        if (
-          (rawPage !== null && !/^[1-9]\d*$/.test(rawPage)) ||
-          !Number.isSafeInteger(number) ||
-          number < 1
-        ) {
-          fail('JUICYSMS_ORDERS_PAGE_INVALID', { target: target.href });
-        }
-        if (number > pageNumber) hasLaterPage = true;
-        if (number === pageNumber + 1 && !next) next = target;
-      }
-      pages.push({
-        page: pageNumber,
-        url: response.url,
-        status: response.status,
-        count: collection.data.length,
-      });
-      if (!next) {
-        if (hasLaterPage) fail('JUICYSMS_ORDERS_PAGINATION_GAP');
-        break;
-      }
-      if (!collection.data.length)
-        fail('JUICYSMS_ORDERS_EMPTY_BEFORE_NEXT_PAGE');
+      pages.push({ url: response.url, status: response.status, count: collection.data.length });
+      if (collection.next_page_url === null) break;
+      if (!collection.data.length) fail('JUICYSMS_ORDERS_EMPTY_BEFORE_NEXT_PAGE', {});
+      const next = new URL(collection.next_page_url, address);
+      if (next.origin !== location.origin || next.pathname !== '/myorders' || next.username || next.password || next.hash)
+        fail('JUICYSMS_ORDERS_LINK_OUTSIDE_HISTORY', { target: next.href });
       address = next;
-      pageNumber += 1;
     }
     return { orders, pages };
   });
-  writeFileSync(
-    join(OUT_DIR, 'all_orders.json'),
-    JSON.stringify(history.orders, null, 2),
-  );
-  writeFileSync(
-    join(OUT_DIR, 'orders_pages.json'),
-    JSON.stringify(history.pages, null, 2),
-  );
+  writeFileSync(join(OUT_DIR, 'all_orders.json'), JSON.stringify(history.orders, null, INDENT));
+  writeFileSync(join(OUT_DIR, 'orders_pages.json'), JSON.stringify(history.pages, null, INDENT));
   console.log(
-    `[dash] aggregated ${history.orders.length} orders across ${history.pages.length} provider-linked page(s) into ${join(OUT_DIR, 'all_orders.json')}`,
+    `[dash] aggregated ${history.orders.length} orders across ${history.pages.length} page(s) into ${join(OUT_DIR, 'all_orders.json')}`,
   );
-
   console.log('[dash] PASS');
-} catch (e) {
-  console.error('[dash] FAIL:', e);
-  process.exitCode = 1;
 } finally {
   await s.close();
 }

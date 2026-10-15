@@ -1,77 +1,10 @@
-// Capsolver topup via Google SSO popup + consent click.
-import { WSession } from '../../../dist/session/wsession.js';
-import {
-  googleSso,
-  getGoogleSsoCreds,
-} from '../_shared/services/google_sso.mjs';
-import { topupOpts } from '../_shared/services/topup_common.mjs';
-import { humanIdlePause } from '../../../dist/human/mouse.js';
-import { urlMatching } from '../_shared/page/settled.mjs';
+// Capsolver top-up of the stated TOPUP_USD from its recharge page
+// (./sign_in.mjs, ../_shared/services/balance/topup.mjs).
+import { runTopup } from '../_shared/services/balance/topup.mjs';
+import { capsolverSignIn } from './sign_in.mjs';
 
-// Any URL that is no longer the passport login page.
-const LEFT_LOGIN = /^(?!.*\/passport\/login)/;
-
-const { usd } = topupOpts();
-const login = await getGoogleSsoCreds();
-if (!login) {
-  console.log('FAIL: no Google SSO creds');
-  process.exit(1);
-}
-
-const s = await WSession.start({
+await runTopup({
   label: 'capsolver_topup',
-  browser: 'chromium',
+  signIn: await capsolverSignIn(),
+  fundsUrl: 'https://dashboard.capsolver.com/dashboard/recharge',
 });
-try {
-  await s.goto('https://dashboard.capsolver.com/passport/login');
-  await humanIdlePause('long');
-  const popupPromise = s.page.waitForEvent('popup');
-  await s.page
-    .locator('button:has-text("Sign In With Google")')
-    .filter({ visible: true })
-    .first()
-    .click();
-  const popup = await popupPromise;
-  await popup.waitForLoadState('domcontentloaded');
-  const ok = await googleSso(s, login, {
-    originHost: 'capsolver.com',
-    page: popup,
-  });
-  if (!ok) throw new Error('Google SSO did not complete');
-
-  await urlMatching(s.page, LEFT_LOGIN);
-
-  // Capsolver's recharge page.
-  // The pay button is looked for on whatever page is open; a top-up that
-  // never reached the recharge page must stop with the cause, not pay elsewhere.
-  await s.page.goto('https://dashboard.capsolver.com/dashboard/recharge', {
-    waitUntil: 'domcontentloaded',
-  });
-  await humanIdlePause('long');
-
-  const amtIn = s.page
-    .locator(
-      'input[type="number"], input[name*="amount" i], input[inputmode="numeric"]',
-    )
-    .filter({ visible: true })
-    .first();
-  if (await amtIn.isVisible().catch(() => false)) {
-    await amtIn.click();
-    await amtIn.fill(String(usd));
-    console.log(`[trajectory] amount filled: $${usd}`);
-  }
-
-  // CONFIRM: Find and click pay button
-  const { findAndClickPayButton } = await import(
-    '../_shared/services/topup_common.mjs'
-  );
-  const clicked = await findAndClickPayButton(s.page);
-  if (!clicked) throw new Error('could not find pay/checkout button');
-  await humanIdlePause('long');
-  console.log(`PASS-CHARGED: checkout initiated, url=${s.page.url()}`);
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}

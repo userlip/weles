@@ -1,151 +1,101 @@
-// Safely add or remove ONE exact host record on a Namecheap-managed domain.
+// Add or remove ONE exact host record on a Namecheap-managed domain.
 // Namecheap's only DNS write API (setHosts) replaces the whole zone, so this
-// reads every record, changes one exact record, re-sends all records, and
-// verifies the count changed by exactly one. Credentials come from injected
-// environment variables, with weles/.env retained only as a local fallback.
+// reads every record, changes one exact record, re-sends all records exactly
+// as Namecheap answered them, and verifies the zone then holds what was sent.
+// A record Namecheap answers without a value the rewrite needs (a TTL, an MX
+// preference) or a zone without its email type is refused: the zone is
+// production DNS and nothing in it is guessed.
 //
-// Env/args (all required; the zone is production DNS, so no domain, host,
-//   address or TTL is ever assumed): DNS_ACTION (add or remove), SLD, TLD,
-//   NEW_HOST, NEW_TYPE, NEW_ADDRESS, NEW_TTL.
-import { existsSync, readFileSync } from 'node:fs';
-import { statedText } from '../_shared/inputs/stated.mjs';
+// Env (all required): the API access the worker hands the run from Skarbiec
+// (NAMECHEAP_API_KEY, NAMECHEAP_API_USER, NAMECHEAP_USERNAME,
+// NAMECHEAP_CLIENT_IP), and DNS_ACTION (add or remove), SLD, TLD, NEW_HOST,
+// NEW_TYPE, NEW_ADDRESS, NEW_TTL, plus NEW_MXPREF for an MX record.
+import { statedChoice, statedText } from '../_shared/inputs/stated.mjs';
 
-const envUrl = new URL('../../../.env', import.meta.url);
-const env = existsSync(envUrl) ? readFileSync(envUrl, 'utf8') : '';
-const cfg = (k) =>
-  (process.env[k] || env.match(new RegExp('^' + k + '=(.*)$', 'm'))?.[1] || '')
-    .trim()
-    .replace(/^"|"$/g, '');
-const AK = cfg('NAMECHEAP_API_KEY'),
-  AU = cfg('NAMECHEAP_API_USER'),
-  UN = cfg('NAMECHEAP_USERNAME'),
-  IP = cfg('NAMECHEAP_CLIENT_IP');
-if (!AK || !AU || !UN || !IP) {
-  console.log('FAIL: missing Namecheap creds');
-  process.exit(1);
-}
-
-const SLD = statedText(
-  ['SLD'],
-  'the domain name, without its TLD, whose zone changes',
-);
+const ACCESS = {
+  ApiKey: statedText(['NAMECHEAP_API_KEY'], 'the Namecheap API key'),
+  ApiUser: statedText(['NAMECHEAP_API_USER'], 'the Namecheap API user'),
+  UserName: statedText(['NAMECHEAP_USERNAME'], 'the Namecheap account the domain is in'),
+  ClientIp: statedText(['NAMECHEAP_CLIENT_IP'], 'the address Namecheap allows API calls from'),
+};
+const SLD = statedText(['SLD'], 'the domain name, without its TLD, whose zone changes');
 const TLD = statedText(['TLD'], 'the TLD of the domain whose zone changes');
+const ACTION = statedChoice(['DNS_ACTION'], { add: true, remove: true }, 'whether the record is added or removed');
 const NEW = {
   Name: statedText(['NEW_HOST'], 'the host name of the record'),
   Type: statedText(['NEW_TYPE'], 'the record type, e.g. A or CNAME'),
   Address: statedText(['NEW_ADDRESS'], 'the address the record points to'),
   TTL: statedText(['NEW_TTL'], 'the record TTL in seconds'),
-  MXPref: '10',
 };
-// The changes this trajectory makes to a zone.
-const ACTIONS = { add: {}, remove: {} };
-const ACTION = statedText(
-  ['DNS_ACTION'],
-  'whether the record is added or removed',
-);
-if (!Object.hasOwn(ACTIONS, ACTION))
-  throw new Error(
-    `DNS_ACTION is "${ACTION}", not one of ${Object.keys(ACTIONS).join(', ')}; the zone was not touched`,
-  );
+if (NEW.Type === 'MX') NEW.MXPref = statedText(['NEW_MXPREF'], 'the preference of the MX record');
 const BASE = 'https://api.namecheap.com/xml.response';
+const errorOf = (xml) => xml.match(/<Error[^>]*>(?<text>[^<]*)/)?.groups.text;
 
-async function getHosts() {
-  const u = `${BASE}?ApiUser=${AU}&ApiKey=${AK}&UserName=${UN}&Command=namecheap.domains.dns.getHosts&ClientIp=${IP}&SLD=${SLD}&TLD=${TLD}`;
-  const xml = await (await fetch(u)).text();
-  if (!/Status="OK"/.test(xml))
-    throw new Error(
-      'getHosts not OK: ' + (xml.match(/<Error[^>]*>([^<]*)/)?.[1] || xml),
-    );
-  const emailType = xml.match(/EmailType="([^"]*)"/)?.[1] || 'MX';
-  const hosts = [];
-  for (const m of xml.matchAll(/<host\b([^>]*?)\/?>/gi)) {
-    const a = Object.fromEntries(
-      [...m[1].matchAll(/(\w+)="([^"]*)"/g)].map((x) => [
-        x[1],
-        x[2].replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
-      ]),
-    );
-    hosts.push({
-      Name: a.Name,
-      Type: a.Type,
-      Address: a.Address,
-      TTL: a.TTL || '1800',
-      MXPref: a.MXPref || '10',
-    });
-  }
-  return { hosts, emailType };
-}
-
-const before = await getHosts();
-console.log(
-  `getHosts: ${before.hosts.length} records, EmailType=${before.emailType}`,
-);
-const matches = (h) =>
-  h.Name === NEW.Name &&
-  h.Type === NEW.Type &&
-  h.Address.replace(/\.$/, '') === NEW.Address.replace(/\.$/, '');
-const exists = before.hosts.some(matches);
-if (ACTION === 'add' && exists) {
-  console.log(`NOOP: ${NEW.Name} ${NEW.Type} ${NEW.Address} already present`);
-  process.exit(0);
-}
-if (ACTION === 'remove' && !exists) {
-  console.log(`NOOP: ${NEW.Name} ${NEW.Type} ${NEW.Address} already absent`);
-  process.exit(0);
-}
-
-const all =
-  ACTION === 'add'
-    ? [...before.hosts, NEW]
-    : before.hosts.filter((host) => !matches(host));
-const body = new URLSearchParams({
-  ApiUser: AU,
-  ApiKey: AK,
-  UserName: UN,
-  Command: 'namecheap.domains.dns.setHosts',
-  ClientIp: IP,
-  SLD,
-  TLD,
-  EmailType: before.emailType,
-});
-all.forEach((h, i) => {
-  const n = i + 1;
-  body.set(`HostName${n}`, h.Name);
-  body.set(`RecordType${n}`, h.Type);
-  body.set(`Address${n}`, h.Address);
-  body.set(`TTL${n}`, h.TTL);
-  if (h.Type === 'MX') body.set(`MXPref${n}`, h.MXPref);
-});
-console.log(
-  `setHosts: sending ${all.length} records (${ACTION === 'add' ? 'adding' : 'removing'} ${NEW.Name} ${NEW.Type} ${NEW.Address})`,
-);
-const resXml = await (
-  await fetch(BASE, {
+/** One Namecheap API call; an answer that is not OK throws with its error. */
+async function namecheap(command, fields) {
+  const body = new URLSearchParams({ ...ACCESS, Command: command, SLD, TLD, ...fields });
+  const answer = await fetch(BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
-  })
-).text();
-const ok =
-  /<DomainDNSSetHostsResult[^>]*IsSuccess="true"/.test(resXml) ||
-  /Status="OK"/.test(resXml);
-if (!ok) {
-  console.log(
-    'FAIL setHosts: ' + (resXml.match(/<Error[^>]*>([^<]*)/)?.[1] || resXml),
-  );
-  process.exit(1);
+  });
+  const xml = await answer.text();
+  if (!answer.ok || !/Status="OK"/.test(xml))
+    throw new Error(`${command} refused (HTTP ${answer.status}): ${errorOf(xml) ? errorOf(xml) : xml}`);
+  return xml;
 }
 
-const after = await getHosts();
-const present = after.hosts.some(matches);
-const expectedCount = before.hosts.length + (ACTION === 'add' ? 1 : -1);
-const expectedPresence = ACTION === 'add';
-console.log(
-  `verify: ${after.hosts.length} records (was ${before.hosts.length}); exact record present=${present}`,
-);
-if (after.hosts.length === expectedCount && present === expectedPresence)
+/** Every host record of the zone, and its email type, as Namecheap answers them. */
+async function getHosts() {
+  const xml = await namecheap('namecheap.domains.dns.getHosts', {});
+  const emailType = xml.match(/EmailType="(?<type>[^"]*)"/)?.groups.type;
+  if (!emailType) throw new Error(`getHosts answered no EmailType for ${SLD}.${TLD}; the zone is not rewritten`);
+  const hosts = Array.from(xml.matchAll(/<host\b(?<attributes>[^>]*?)\/?>/gi), ({ groups }) => {
+    const record = Object.fromEntries(
+      Array.from(groups.attributes.matchAll(/(?<key>\w+)="(?<value>[^"]*)"/g), (attribute) => [
+        attribute.groups.key,
+        attribute.groups.value.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
+      ]),
+    );
+    if (!record.TTL || (record.Type === 'MX' && !record.MXPref))
+      throw new Error(
+        `getHosts answered ${record.Name} ${record.Type} without the TTL or MX preference a rewrite has to send; the zone is not rewritten`,
+      );
+    return { Name: record.Name, Type: record.Type, Address: record.Address, TTL: record.TTL, MXPref: record.MXPref };
+  });
+  return { hosts, emailType };
+}
+
+const sameRecord = (h) =>
+  h.Name === NEW.Name &&
+  h.Type === NEW.Type &&
+  h.Address.replace(/\.$/, '') === NEW.Address.replace(/\.$/, '');
+
+const before = await getHosts();
+console.log(`getHosts: ${before.hosts.length} records, EmailType=${before.emailType}`);
+const exists = before.hosts.some(sameRecord);
+if (exists === (ACTION === 'add')) {
+  console.log(`NOOP: ${NEW.Name} ${NEW.Type} ${NEW.Address} already ${exists ? 'present' : 'absent'}`);
+} else {
+  const all = ACTION === 'add' ? [...before.hosts, NEW] : before.hosts.filter((h) => !sameRecord(h));
+  const fields = { EmailType: before.emailType };
+  // Namecheap numbers the host fields from one.
+  for (const [n, h] of [undefined, ...all].entries()) {
+    if (!h) continue;
+    fields[`HostName${n}`] = h.Name;
+    fields[`RecordType${n}`] = h.Type;
+    fields[`Address${n}`] = h.Address;
+    fields[`TTL${n}`] = h.TTL;
+    if (h.Type === 'MX') fields[`MXPref${n}`] = h.MXPref;
+  }
+  console.log(`setHosts: sending ${all.length} records (${ACTION} ${NEW.Name} ${NEW.Type} ${NEW.Address})`);
+  await namecheap('namecheap.domains.dns.setHosts', fields);
+  const after = await getHosts();
+  const present = after.hosts.some(sameRecord);
+  console.log(`verify: ${after.hosts.length} records (was ${before.hosts.length}); exact record present=${present}`);
+  if (after.hosts.length !== all.length || present !== (ACTION === 'add'))
+    throw new Error(
+      `NAMECHEAP_ZONE_UNEXPECTED: ${SLD}.${TLD} holds ${after.hosts.length} records (sent ${all.length}) and the record is ${present ? 'present' : 'absent'}; check the zone`,
+    );
   console.log('PASS');
-else {
-  console.log('WARN: unexpected record count/state — check zone');
-  process.exit(1);
 }

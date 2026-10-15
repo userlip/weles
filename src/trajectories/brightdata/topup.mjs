@@ -1,72 +1,18 @@
-// Bright Data topup via Google SSO.
-// Charges against the saved Mastercard *1400 when TOPUP_CONFIRM=1.
-import { getScopedGoogleLogin } from '../_shared/services/google_sso.mjs';
-import { WSession } from '../../../dist/session/wsession.js';
-import { googleSso } from '../_shared/services/google_sso.mjs';
-import { topupOpts } from '../_shared/services/topup_common.mjs';
-import { humanIdlePause } from '../../../dist/human/mouse.js';
-import { clickDescribed, clickOffered } from '../_shared/page/judged/seen.mjs';
+// Bright Data top-up (../_shared/services/balance/topup.mjs), signed in
+// through ./sign_in.mjs. The billing flow's first-login survey and onboarding
+// popups, which lie over its form, are each closed; the stated amount
+// (TOPUP_USD, with TOPUP_CONFIRM) is then typed into the amount field and
+// read back before the pay button charges the saved payment method.
+import { clickOffered } from '../_shared/page/judged/seen.mjs';
+import { pageSettled } from '../_shared/page/settled.mjs';
+import { runTopup } from '../_shared/services/balance/topup.mjs';
+import { brightdataSignIn } from './sign_in.mjs';
 
-const { usd } = topupOpts();
-const login = await getScopedGoogleLogin('brightdataDashboard');
-if (!login) {
-  console.log('FAIL: no Bright Data creds');
-  process.exit(1);
-}
-
-const s = await WSession.start({
+await runTopup({
   label: 'brightdata_topup',
-  browser: 'chromium',
+  signIn: brightdataSignIn,
+  fundsUrl: 'https://brightdata.com/cp/billing_flow?type=top_up',
+  clearPage: async (s) => {
+    while (await clickOffered(s.page, 'the button that closes or skips a survey or onboarding popup')) await pageSettled(s.page);
+  },
 });
-try {
-  await s.goto('https://brightdata.com/cp/login');
-  await humanIdlePause('deliberate');
-  await s.page
-    .locator('button:has-text("Log in with Google")')
-    .filter({ visible: true })
-    .first()
-    .click();
-  const ok = await googleSso(s, login, { originHost: 'brightdata.com' });
-  if (!ok) throw new Error('Google SSO did not complete');
-
-  await humanIdlePause('deliberate');
-  // Bright Data's Add Funds modal lives on a dedicated billing_flow page.
-  await s.page.goto('https://brightdata.com/cp/billing_flow?type=top_up', {
-    waitUntil: 'domcontentloaded',
-  });
-  await humanIdlePause('long');
-
-  // First-login survey popups intercept clicks; each shown is dismissed.
-  while (
-    await clickOffered(
-      s.page,
-      'the button that closes or skips a survey or onboarding popup',
-    )
-  )
-    await humanIdlePause('short');
-
-  const amtIn = s.page
-    .locator('input[type="number"]')
-    .filter({ visible: true })
-    .first();
-  await amtIn.waitFor({ state: 'visible' });
-  await amtIn.click();
-  await amtIn.fill(String(usd));
-  console.log(`[trajectory] amount filled: $${usd}`);
-
-  // Submit through the pay button, which carries the amount.
-  console.log(
-    `[trajectory] clicking Pay $${usd} (will charge saved payment method)`,
-  );
-  await clickDescribed(s.page, `the button that pays $${usd}`);
-  await humanIdlePause('long');
-  console.log(`[trajectory] post-charge url=${s.page.url()}`);
-  console.log(
-    `PASS-CHARGED: $${usd} submitted to Bright Data. Verify via brightdata/balance.mjs in 1-2 minutes.`,
-  );
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}

@@ -11,7 +11,7 @@
 // Inputs:
 //   STRIPE_CHECKOUT_URL   the https://checkout.stripe.com/c/pay/cs_... page
 //   STRIPE_PAY_CONFIRM=1  required: this spends real money
-//   TOPUP_CARD_*          card, sourced from the host's topup_card.env
+//   TOPUP_CARD_*          card: TOPUP_CARD_JSON, the host's topup_card.env, or the environment
 //   STRIPE_PAY_NAME       optional cardholder name override
 //   STRIPE_PAY_EMAIL      contact email the hosted page requires
 //
@@ -22,23 +22,12 @@
 // a log.
 
 import { WSession } from '../../../dist/session/wsession.js';
-import {
-  loadTopupCardEnv,
-  TOPUP_ENV_FILES,
-} from '../_shared/services/topup_common.mjs';
+import { loadTopupCardEnv, topupCard } from '../_shared/services/topup_common.mjs';
 import { exitStatusFor } from '../../../dist/cli/usage.js';
-import {
-  CHECKOUT_HOST,
-  payHostedCheckout,
-  topupCard,
-} from './hosted_checkout.mjs';
+import { CHECKOUT_HOST, payHostedCheckout } from './hosted_checkout.mjs';
 
-// One loader, so this works on a host that keeps the card under ~/.weles and
-// on a host that keeps it under ~/.stado.
-const cardFile = loadTopupCardEnv();
-console.log(
-  `[stripe-checkout] card file: ${cardFile ? cardFile : `none of ${TOPUP_ENV_FILES.join(', ')}`}`,
-);
+// One loader, so this works wherever the card is kept; no card at all is refused.
+console.log(`[stripe-checkout] card source: ${loadTopupCardEnv()}`);
 
 let s = null;
 try {

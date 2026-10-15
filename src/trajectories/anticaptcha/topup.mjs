@@ -10,15 +10,14 @@ import {
 import { topupOpts } from '../_shared/services/topup_common.mjs';
 import { humanIdlePause } from '../../../dist/human/mouse.js';
 import { clickDescribed } from '../_shared/page/judged/seen.mjs';
+import { CHECKOUT_HOST } from '../stripe/hosted_checkout.mjs';
 
 const { usd: amount } = topupOpts();
 console.log(`[trajectory] requested $${amount}`);
 
 const login = await getGoogleSsoCreds();
-if (!login) {
-  console.log('FAIL: no Google SSO creds');
-  process.exit(1);
-}
+if (!login)
+  throw new Error('ANTICAPTCHA_SSO_CREDENTIALS_ABSENT: no Google SSO login is stored for the Anti-Captcha sign-in');
 
 const s = await WSession.start({
   label: 'anticaptcha_topup',
@@ -75,14 +74,11 @@ try {
 
   // The amount redirects to Stripe's checkout; anything else is not a charge.
   const url = s.page.url();
-  if (!/stripe\.com|checkout/i.test(url))
+  if (new URL(url).hostname !== CHECKOUT_HOST)
     throw new Error(
-      `clicking $${amount} did not reach a checkout (now on ${url}); nothing was charged`,
+      `clicking $${amount} did not reach Stripe's checkout (now on ${url}); nothing was charged`,
     );
   console.log(`PASS-CHARGED: redirected to ${url} (complete payment there)`);
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
 } finally {
   await s.close();
 }

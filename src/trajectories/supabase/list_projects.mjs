@@ -1,171 +1,39 @@
-// Supabase dashboard project lister.
-//
-// Logs in with email+password, navigates to /dashboard/projects, scrapes
-// every project card and prints { name, ref, org, status, region } as JSON.
-// Project refs are 20-char lowercase strings in the URL path
-// /project/<ref> (e.g. yqizdfkfnmhddfemdxtq).
-//
+// List the Supabase projects the dashboard login can see: signed in through
+// ./sign_in.mjs, the projects page's links to /project/<ref> name each
+// project's ref, and the link's heading (else its own first line) its name.
+// The answer is one PROJECTS_JSON line ([{ ref, name }]); a dashboard that
+// links no project fails with what its page shows.
 // Run: node src/trajectories/supabase/list_projects.mjs
-import { getServiceLogin } from '../../../dist/utils/credentials.js';
 import { WSession } from '../../../dist/session/wsession.js';
-import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { pageSettled, submitAnswered } from '../_shared/page/settled.mjs';
-import { humanFill } from '../../../dist/human/keyboard.js';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
+import { pageSettled } from '../_shared/page/settled.mjs';
+import { signInToSupabase } from './sign_in.mjs';
 
-const SIGNIN_URL = 'https://supabase.com/dashboard/sign-in';
 const PROJECTS_URL = 'https://supabase.com/dashboard/projects';
-const DISPLAY_NAME = 'Supabase';
-const PROJECT_REF_RE = /^[a-z]{20}$/;
 
-const login = await getServiceLogin(DISPLAY_NAME);
-if (!login) {
-  console.log(`FAIL: no '${DISPLAY_NAME}' row in service_credentials`);
-  process.exit(1);
-}
-console.log(`[trajectory] Using service login: ${login.email}`);
-
-const s = await WSession.start({
-  label: 'supabase_list_projects',
-  browser: 'chromium',
-});
+const s = await WSession.start({ label: 'supabase_list_projects', browser: 'chromium' });
 try {
-  await s.goto(SIGNIN_URL);
+  await signInToSupabase(s);
+  await s.goto(PROJECTS_URL);
   await pageSettled(s.page);
-
-  // If we already have a session cookie, sign-in redirects away on its own.
-  if (!/\/dashboard\/sign-in/.test(s.page.url())) {
-    console.log(
-      `[trajectory] already authenticated, skipping login (url=${s.page.url()})`,
-    );
-  } else {
-    const emailInput = s.page
-      .locator('input[name="email"], input[type="email"], input#email')
-      .filter({ visible: true })
-      .first();
-    const pwInput = s.page
-      .locator('input[name="password"], input[type="password"], input#password')
-      .filter({ visible: true })
-      .first();
-    if (
-      !(await emailInput.isVisible().catch(() => false)) ||
-      !(await pwInput.isVisible().catch(() => false))
-    ) {
-      console.log(
-        'FAIL: email/password inputs not visible (account may be GitHub-SSO-only)',
-      );
-      process.exit(1);
+  const projects = await s.page.evaluate(() => {
+    const found = new Map();
+    for (const link of document.querySelectorAll('a[href*="/project/"]')) {
+      const ref = new URL(link.href).pathname.match(/\/project\/(?<ref>[^/?#]+)/)?.groups.ref;
+      if (!ref || found.has(ref)) continue;
+      const heading = link.querySelector('h1, h2, h3, h4, [role="heading"]');
+      const [firstLine] = link.innerText.trim().split('\n');
+      found.set(ref, { ref, name: heading ? heading.textContent.trim() : firstLine });
     }
-    await humanFill(s.page, emailInput, login.email);
-    await pageSettled(s.page);
-    await humanFill(s.page, pwInput, login.password);
-    await pageSettled(s.page);
-    const submitBtn = s.page
-      .locator(
-        'button[type="submit"]:has-text("Sign In"), button[type="submit"]:has-text("Sign in"), button:has-text("Sign in"), button:has-text("Sign In")',
-      )
-      .filter({ visible: true })
-      .first();
-    if (await submitBtn.isVisible().catch(() => false)) {
-      try {
-        await humanClickLocator(s.page, submitBtn);
-      } catch {
-        /* form may have submitted */
-      }
-    } else {
-      console.log('FAIL: submit button not visible');
-      process.exit(1);
-    }
-    const answer = await submitAnswered(
-      s.page,
-      /\/dashboard\/sign-in/,
-      s.page
-        .locator('[role="alert"], p[class*="error" i]')
-        .filter({ hasText: /\S/ })
-        .first(),
-    );
-    if (answer !== 'navigated') {
-      console.log(
-        `FAIL: supabase_login_refused, still on /sign-in url=${s.page.url()}`,
-      );
-      process.exit(1);
-    }
-  }
-
-  await s.page.goto(PROJECTS_URL, { waitUntil: 'domcontentloaded' });
-  await pageSettled(s.page);
-
-  const projects = await s.page.evaluate((PROJECT_REF_PATTERN) => {
-    const refRe = new RegExp(PROJECT_REF_PATTERN);
-    const out = new Map();
-    // Pattern A: anchors to /project/<ref> or /dashboard/project/<ref>.
-    for (const a of document.querySelectorAll('a[href*="/project/"]')) {
-      const href = a.getAttribute('href') || '';
-      const m = href.match(/\/project\/([^/?#]+)/);
-      if (!m) continue;
-      const ref = m[1];
-      if (!refRe.test(ref)) continue;
-      const card =
-        a.closest('[role="row"]') ||
-        a.closest('li') ||
-        a.closest('article') ||
-        a.closest('div');
-      const cardText = (card?.textContent || a.textContent || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      // Project name is usually the largest text inside the card. Heuristic:
-      // pick the first <h1>/<h2>/<h3>/[role=heading] text we find inside the
-      // card, falling back to the anchor text itself.
-      let name = '';
-      if (card) {
-        const heading = card.querySelector('h1, h2, h3, h4, [role="heading"]');
-        if (heading?.textContent?.trim()) name = heading.textContent.trim();
-      }
-      if (!name) name = (a.textContent || '').trim().split('\n')[0] ?? '';
-      // Region / status badges typically have data-state, data-status, or
-      // a tailwind-style "uppercase" class. Best effort.
-      const regionMatch = cardText.match(
-        /\b(us|eu|ap|sa|ca)-(?:east|west|central|north|south|southeast|northeast)-\d\b/i,
-      );
-      const statusMatch = cardText.match(
-        /\b(ACTIVE_HEALTHY|ACTIVE|INACTIVE|PAUSED|COMING_UP|GOING_DOWN|REMOVED|RESTORING|UNKNOWN)\b/,
-      );
-      if (!out.has(ref)) {
-        out.set(ref, {
-          ref,
-          name: name || '(unknown)',
-          region: regionMatch ? regionMatch[0].toLowerCase() : null,
-          status: statusMatch ? statusMatch[1] : null,
-          cardText,
-        });
-      }
-    }
-    return Array.from(out.values());
-  }, PROJECT_REF_RE.source);
-
-  if (!projects.length) {
-    const snippet = await s.page.evaluate(() => document.body.innerText);
-    console.log(
-      `FAIL: no projects found at ${s.page.url()}. First 800 chars: ${snippet.replace(/\n/g, ' | ')}`,
-    );
-    process.exit(1);
-  }
-
-  console.log(`[trajectory] found ${projects.length} project(s)`);
-  for (const p of projects) {
-    console.log(
-      `  - ${p.ref}  ${p.name.padEnd(28)}  region=${p.region ?? '?'}  status=${p.status ?? '?'}`,
-    );
-  }
-  console.log('---');
-  // JSON line so callers can pipe to jq.
-  console.log(
-    'PROJECTS_JSON ' +
-      JSON.stringify(projects.map(({ cardText, ...rest }) => rest)),
-  );
+    return Array.from(found.values());
+  });
+  if (!projects.length)
+    throw new Error(`SUPABASE_NO_PROJECTS: ${s.page.url()} links no project; it shows: ${await s.page.locator('body').innerText()}`);
+  console.log(`PROJECTS_JSON ${JSON.stringify(projects)}`);
   console.log(`PASS: listed ${projects.length} Supabase project(s)`);
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
+} catch (error) {
+  console.error(`FAIL: ${error.message}`);
+  process.exitCode = exitStatusFor(error);
 } finally {
   await s.close();
 }

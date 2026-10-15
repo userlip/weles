@@ -6,10 +6,10 @@
 import { integrationAction } from './integrations.mjs';
 
 /**
- * The newest `limit` messages the provider received (the caller's own page
- * size), in Resend's own shape `{ data: [{ id, from, to, subject,
+ * The newest messages the provider received, one page of the provider's own
+ * size, in Resend's own shape `{ data: [{ id, from, to, subject,
  * created_at }] }`.
  */
-export async function listReceived(limit) {
-  return integrationAction('content', 'resend.receiving.list', { limit });
+export async function listReceived() {
+  return integrationAction('content', 'resend.receiving.list', {});
 }

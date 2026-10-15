@@ -13,10 +13,6 @@ const LANDED = /^https:\/\/(www\.)?juicysms\.com\/(?!login)/;
 const DISPLAY_NAME = 'JuicySMS';
 
 const login = await getGoogleSsoCreds();
-if (!login) {
-  console.log('FAIL: no Google SSO credentials in DB');
-  process.exit(1);
-}
 console.log(`[trajectory] Using Google SSO: ${login.email}`);
 
 const s = await WSession.start({
@@ -42,7 +38,7 @@ try {
       {
         code: 'JUICYSMS_ACCOUNT_MISMATCH',
         expectedAccount: login.email,
-        observedAccount: observedEmail ?? null,
+        observedAccount: observedEmail,
         pageUrl: s.page.url(),
       },
     );
@@ -60,25 +56,21 @@ try {
       {
         code: 'JUICYSMS_BALANCE_UNAVAILABLE',
         pageUrl: s.page.url(),
-        observedBalance: raw ?? null,
+        observedBalance: raw,
       },
     );
   }
-  if (
-    typeof usdRate !== 'number' ||
-    !Number.isFinite(usdRate) ||
-    usdRate <= 0
-  ) {
+  if (typeof usdRate !== 'number' || !Number.isFinite(usdRate) || !(usdRate >= Number.MIN_VALUE)) {
     throw Object.assign(
       new Error('JuicySMS did not provide a usable USD conversion rate'),
       {
         code: 'JUICYSMS_BALANCE_RATE_UNAVAILABLE',
         pageUrl: s.page.url(),
-        observedRate: usdRate ?? null,
+        observedRate: usdRate,
       },
     );
   }
-  const balance = Number((eur * usdRate).toFixed(2));
+  const balance = eur * usdRate;
   if (!Number.isFinite(balance))
     throw Object.assign(new Error('JuicySMS USD balance is not finite'), {
       code: 'JUICYSMS_BALANCE_CONVERSION_INVALID',
@@ -98,9 +90,6 @@ try {
       },
     );
   console.log(`PASS: balance USD=${balance} (persisted)`);
-} catch (e) {
-  console.error('FAIL:', e);
-  process.exitCode = 1;
 } finally {
   await s.close();
 }

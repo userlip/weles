@@ -33,44 +33,6 @@ async function visible(locator) {
   return locator.isVisible();
 }
 
-/** A TOPUP_CARD_* value as the host's card file set it, or null when unset. */
-function cardValue(name) {
-  const value = process.env[name];
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
-}
-
-/**
- * The workspace topup card from the environment the host's card file set
- * (loadTopupCardEnv): number, expiry and CVC are required and refused by
- * name when missing; postal code and cardholder name are given when set.
- */
-export function topupCard() {
-  const num = cardValue('TOPUP_CARD_NUMBER');
-  const exp = cardValue('TOPUP_CARD_EXP');
-  const cvc = cardValue('TOPUP_CARD_CVC');
-  const missing = Object.entries({
-    TOPUP_CARD_NUMBER: num,
-    TOPUP_CARD_EXP: exp,
-    TOPUP_CARD_CVC: cvc,
-  })
-    .filter(([, value]) => value === null)
-    .map(([name]) => name);
-  if (missing.length)
-    throw new Error(
-      `TOPUP_CARD_MISSING: ${missing.join(', ')} not set by the host's card file, so no card can be entered`,
-    );
-  const stated = cardValue('STRIPE_PAY_NAME');
-  return {
-    num: num.replace(/\s+/g, ''),
-    exp: exp.replace(/\D/g, ''),
-    cvc,
-    zip: cardValue('TOPUP_CARD_ZIP'),
-    street: cardValue('TOPUP_CARD_STREET'),
-    city: cardValue('TOPUP_CARD_CITY'),
-    name: stated === null ? cardValue('TOPUP_CARD_NAME') : stated,
-  };
-}
-
 async function typeInto(page, selector, value) {
   const input = page.locator(selector).filter({ visible: true }).first();
   if (!(await visible(input))) return false;
