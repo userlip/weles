@@ -109,17 +109,17 @@ await test('authenticated API observes and stops its real keeper owner', async (
     {
       variable: 'WELES_CHROMIUM_RELEASE_VERSION',
       value: undefined,
-      cause: 'WELES_CHROMIUM_RELEASE_VERSION is not set',
+      cause: 'the deployment pins only one of WELES_CHROMIUM_RELEASE_VERSION and WELES_CHROMIUM_RELEASE_SHA256',
     },
     {
       variable: 'WELES_CHROMIUM_RELEASE_SHA256',
       value: undefined,
-      cause: 'WELES_CHROMIUM_RELEASE_SHA256 is not set',
+      cause: 'the deployment pins only one of WELES_CHROMIUM_RELEASE_VERSION and WELES_CHROMIUM_RELEASE_SHA256',
     },
     {
       variable: 'WELES_CHROMIUM_RELEASE_SHA256',
       value: 'not-a-digest',
-      cause: 'WELES_CHROMIUM_RELEASE_SHA256 is not a SHA-256 digest',
+      cause: 'release names not-a-digest, not a SHA-256 digest',
     },
   ]) {
     const environment = { ...process.env };
