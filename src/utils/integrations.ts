@@ -1,12 +1,19 @@
 // Weles' route to third-party providers: `POST /api/integration/<domain>/<action>`
 // on wisent-integrations, which holds the provider keys. Weles holds only its
 // integration bearer (WELES_STADO_INTEGRATION_TOKEN) and the service origin
-// (STADO_INTEGRATION_API_URL).
+// (STADO_INTEGRATION_API_URL). The trajectories' twin is
+// src/_shared/integrations.mjs; a change to one changes both.
+
+/** A variable as the environment states it, blank read as unset. */
+function stated(name: string): string | null {
+  const value = process.env[name];
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+}
 
 export function integrationsConfigured(): boolean {
-  return Boolean(
-    process.env.STADO_INTEGRATION_API_URL?.trim() &&
-      process.env.WELES_STADO_INTEGRATION_TOKEN?.trim(),
+  return (
+    stated('STADO_INTEGRATION_API_URL') !== null &&
+    stated('WELES_STADO_INTEGRATION_TOKEN') !== null
   );
 }
 
@@ -19,13 +26,13 @@ export async function integrationAction<T>(
   action: string,
   body: Record<string, unknown>,
 ): Promise<T> {
-  const base = process.env.STADO_INTEGRATION_API_URL?.trim();
-  const token = process.env.WELES_STADO_INTEGRATION_TOKEN?.trim();
-  if (!base)
+  const base = stated('STADO_INTEGRATION_API_URL');
+  const token = stated('WELES_STADO_INTEGRATION_TOKEN');
+  if (base === null)
     throw new Error(
       `${domain}/${action}: STADO_INTEGRATION_API_URL is not set, so wisent-integrations cannot be reached`,
     );
-  if (!token)
+  if (token === null)
     throw new Error(
       `${domain}/${action}: WELES_STADO_INTEGRATION_TOKEN is not set, so wisent-integrations would refuse the call`,
     );
@@ -45,15 +52,16 @@ export async function integrationAction<T>(
   let envelope: { ok?: unknown; result?: unknown; error?: unknown };
   try {
     envelope = JSON.parse(text) as typeof envelope;
-  } catch {
+  } catch (error) {
+    const shown = text.trim() === '' ? 'an empty body' : `the body ${text.trim()}`;
     throw new Error(
-      `${endpoint} answered HTTP ${response.status} with a body that is not JSON: ${text.trim() || 'empty'}`,
+      `${endpoint} answered HTTP ${response.status} with ${shown}, which is not JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   if (!response.ok || envelope.ok !== true || !envelope.result) {
-    throw new Error(
-      `${endpoint} answered HTTP ${response.status}: ${JSON.stringify(envelope.error ?? envelope)}`,
-    );
+    // The boundary's own error when it states one, else the whole envelope.
+    const refusal = Object.hasOwn(envelope, 'error') ? envelope.error : envelope;
+    throw new Error(`${endpoint} answered HTTP ${response.status}: ${JSON.stringify(refusal)}`);
   }
   return envelope.result as T;
 }
