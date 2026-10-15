@@ -11,40 +11,53 @@ import { detectTwitterBanSignals } from '../../../../dist/platforms/twitter/ban_
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 
-const TARGET_URL = process.env.TARGET_URL || '';
+// The post to bookmark is the caller's; without it the run is refused rather
+// than bookmarking whatever the home timeline shows first.
+const TARGET_URL = statedText(
+  ['TARGET_URL'],
+  'the X post to bookmark',
+  'TWITTER_BOOKMARK_TARGET_REQUIRED',
+);
+const targetHost = new URL(TARGET_URL).hostname;
 
 const acct = await getSocialAccount('twitter');
-if (!acct) {
-  console.log('FAIL: no active twitter account');
-  process.exit(1);
-}
+if (!acct)
+  throw new Error('no active twitter account to bookmark with; nothing ran');
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({
   label: 'twitter_bookmark',
   proxy: proxyUrl,
   persona,
 });
-const _stored = (acct.metadata?.cookies ?? []).filter((c) =>
-  /x\.com|twitter\.com/.test(c.domain ?? ''),
-);
+// The account's stored jar, limited to the cookies the target's host would
+// be sent (its own domain or a parent domain on a label boundary); an
+// account with no stored jar has none to inject.
+const storedJar = Array.isArray(acct.metadata?.cookies)
+  ? acct.metadata.cookies
+  : [];
+const targetCookies = storedJar.filter((c) => {
+  if (typeof c.domain !== 'string') return false;
+  const domain = c.domain.replace(/^\./, '');
+  return targetHost === domain || targetHost.endsWith(`.${domain}`);
+});
 // A jar that could not be injected leaves the session signed out; the
 // failure is raised inside the try so it is reported and the session closed.
 let cookieInjectError = null;
-if (_stored.length)
-  await s.ctx
-    .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
-    .catch((e) => {
-      cookieInjectError = e;
-    });
+if (targetCookies.length)
+  await s.ctx.addCookies(targetCookies).catch((e) => {
+    cookieInjectError = e;
+  });
 let ban = null;
 try {
   if (cookieInjectError)
     throw new Error(
       `stored cookies could not be injected: ${cookieInjectError.message}`,
     );
-  await s.goto(TARGET_URL || 'https://x.com/home');
+  await s.goto(TARGET_URL);
   checkReachable(s, 'twitter');
   await humanIdlePause('deliberate');
   // Deterministic: data-testid="bookmark" is the un-bookmarked state;
@@ -60,18 +73,14 @@ try {
     .locator('[data-testid="removeBookmark"]')
     .first()
     .waitFor({ state: 'visible' });
-  ban = await detectTwitterBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
+  ban = await banSignalOf(detectTwitterBanSignals, s, 'after the bookmark');
   console.log(`[ban-signal] ${ban?.signal}  PASS: bookmarked`);
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectTwitterBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectTwitterBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
-  process.exitCode = 1;
+  throw e;
 } finally {
   if (ban) {
     try {
@@ -89,7 +98,7 @@ try {
             ts: new Date().toISOString(),
           },
           null,
-          2,
+          '  ',
         ),
       );
     } catch (e) {
