@@ -17,14 +17,18 @@ import {
   loadFreshCookieJarOrFail,
   CookieJarStaleError,
 } from '../../_shared/auth/cookie-freshness.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
-const HOME_URL = 'https://x.com/home';
+// The post to like is the caller's; without TARGET_URL the run is refused
+// rather than liking the home timeline's first post or another account's.
+const TARGET_URL = statedText(
+  ['TARGET_URL'],
+  'the X post to like',
+  'TWITTER_LIKE_TARGET_REQUIRED',
+);
 
 const acct = await getSocialAccount('twitter');
-if (!acct) {
-  console.log('FAIL: no active twitter account in DB');
-  process.exitCode = 1;
-}
+if (!acct) throw new Error('no active twitter account to like with');
 console.log(`[trajectory] Using account: ${acct.username}`);
 
 const { proxyUrl, persona } = await resolveAccountSession(acct);
@@ -35,7 +39,9 @@ const s = await WSession.start({
 });
 
 try {
-  // Cookie freshness gate — see _shared/auth/cookie-freshness.mjs.
+  // Cookie freshness gate — see _shared/auth/cookie-freshness.mjs. A cookie
+  // Playwright cannot set (no name, value, domain or url) is left out; the
+  // ones it can set keep their own path.
   let prepared;
   try {
     const all = loadFreshCookieJarOrFail(acct, {
@@ -50,16 +56,14 @@ try {
         'cookie_jar_missing_auth_token: jar fresh but no auth_token',
         { platform: 'twitter' },
       );
-    prepared = all
-      .filter((c) => c?.name && c?.value && (c.domain || c.url))
-      .map((c) => ({ ...c, path: c.path || '/' }));
+    prepared = all.filter((c) => c?.name && c?.value && (c.domain || c.url));
   } catch (jarErr) {
     if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
     throw jarErr;
   }
   await s.ctx.addCookies(prepared);
 
-  await s.page.goto(HOME_URL, { waitUntil: 'domcontentloaded' });
+  await s.page.goto(TARGET_URL, { waitUntil: 'domcontentloaded' });
   await humanIdlePause('deliberate');
   const url = s.page.url();
   if (/\/i\/flow\/login/.test(url)) {
@@ -68,48 +72,49 @@ try {
   }
 
   // Positive auth probe — auth_token in jar ≠ session is real. Twitter
-  // serves a logged-out shell on x.com/home for cookie-injected sessions
-  // it doesn't trust. URL doesn't bounce, but compose / DM / profile
-  // links are absent. See _shared/auth/auth-probe.mjs.
+  // serves a logged-out shell for cookie-injected sessions it doesn't trust.
+  // URL doesn't bounce, but compose / DM / profile links are absent. See
+  // _shared/auth/auth-probe.mjs.
   try {
     await assertAuthed('twitter', s, { label: 'twitter_like' });
   } catch (probeErr) {
     if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
-
-  // A new account can have no home-timeline posts. Check for a visible action
-  // before using this trajectory's alternate profile timeline.
   await pageSettled(s.page);
-  let likeBtn = s.page
-    .locator('[data-testid="like"]')
-    .filter({ visible: true })
+  // A post's page can show the posts it answers above it and replies below;
+  // the post itself is the article whose timestamp links to its own status
+  // id, and only its control is touched.
+  const statusId = new URL(TARGET_URL).pathname.match(/\/status\/(?<id>\d+)/)
+    ?.groups.id;
+  if (!statusId)
+    throw new Error(`TARGET_URL ${TARGET_URL} is not an X post address`);
+  const post = s.page
+    .locator('article[data-testid="tweet"]')
+    .filter({ has: s.page.locator(`a[href$="/status/${statusId}"] time`) })
     .first();
-  if (!(await likeBtn.isVisible())) {
-    console.log('[trajectory] /home empty — falling to /elonmusk timeline');
-    await s.page.goto('https://x.com/elonmusk', {
-      waitUntil: 'domcontentloaded',
+  await post.waitFor({ state: 'visible' });
+  const likeBtn = post.locator('[data-testid="like"]');
+  const unlikeBtn = post.locator('[data-testid="unlike"]');
+  if (await unlikeBtn.isVisible()) {
+    console.log(`PASS: ${TARGET_URL} is already liked`);
+  } else {
+    if (!(await likeBtn.isVisible()))
+      throw new Error(`${TARGET_URL} shows no like control on its post`);
+    await likeBtn.scrollIntoViewIfNeeded();
+    await humanClickLocator(s.page, likeBtn);
+    // The like is taken when the same control turns into data-testid="unlike".
+    await unlikeBtn.waitFor({ state: 'visible' }).catch((error) => {
+      throw new Error(
+        `clicked like on ${TARGET_URL} but the control never turned to unlike: ${error.message}`,
+        { cause: error },
+      );
     });
-    likeBtn = s.page
-      .locator('[data-testid="like"]')
-      .filter({ visible: true })
-      .first();
-    await likeBtn.waitFor({ state: 'visible' });
+    console.log(`PASS: liked ${TARGET_URL}`);
   }
-  await likeBtn.scrollIntoViewIfNeeded();
-  await humanClickLocator(s.page, likeBtn);
-  await humanIdlePause('deliberate');
-  // Verify like → unlike transition (the same button now exposes data-testid="unlike")
-  const unlikeBtn = s.page.locator('[data-testid="unlike"]').first();
-  const ok = await unlikeBtn.isVisible().catch(() => false);
-  if (!ok)
-    throw new Error(
-      'clicked like but no unlike state — likely shadowbanned or rate-limited',
-    );
-  console.log('PASS: liked tweet');
 } catch (e) {
   console.log('FAIL:', e.message);
-  process.exitCode = 1;
+  throw e;
 } finally {
   await s.close();
 }
