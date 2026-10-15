@@ -75,14 +75,14 @@ export async function changeEntraPassword(session, currentPassword, nextPassword
 // is 'unknown'.
 export async function rollbackEntraPassword(session, contract, changedPassword, previousPassword, sink) {
   const signedIn = await signIn(session, contract, changedPassword);
-  if (signedIn !== 'authenticated') return 'unknown';
+  if (signedIn.verdict !== 'authenticated') return 'unknown';
   const identity = await assertEntraIdentity(session, contract, sink);
   if (!identity.ok) return 'unknown';
   const restored = await changeEntraPassword(session, changedPassword, previousPassword);
   if (restored === 'ambiguous') return 'unknown';
   if (restored !== 'changed') return 'failed';
   const reauthenticated = await signIn(session, contract, previousPassword);
-  if (reauthenticated !== 'authenticated') return 'unknown';
+  if (reauthenticated.verdict !== 'authenticated') return 'unknown';
   const restoredIdentity = await assertEntraIdentity(session, contract, sink);
   return restoredIdentity.ok ? 'completed' : 'unknown';
 }

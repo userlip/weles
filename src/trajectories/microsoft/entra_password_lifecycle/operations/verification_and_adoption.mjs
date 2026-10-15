@@ -63,32 +63,24 @@ export async function verifyManagedPassword(session, account, contract, plan) {
 export async function proveStagedCandidate(session, account, contract, plan) {
   const { candidate, sink, proxyUrl, evidence } = plan;
   const signedIn = await signIn(session, contract, candidate);
-  evidence.push(`fresh_login_verification:${signedIn}`);
-  if (signedIn !== 'authenticated') {
+  const { verdict } = signedIn;
+  evidence.push(`fresh_login_verification:${verdict}`);
+  if (verdict !== 'authenticated') {
+    const challenged = verdict === 'identity_challenge';
+    const rejected = verdict === 'rejected';
+    const said = challenged
+      ? 'the adoption login needs interactive Entra identity approval before the staged candidate can be trusted'
+      : rejected
+        ? 'the Entra directory rejected the staged password candidate at sign-in'
+        : `the Entra password sign-in did not reach a password check (${verdict})`;
     return outcome(contract, {
-      status:
-        signedIn === 'identity_challenge'
-          ? 'needs_human_approval'
-          : 'operation_failed',
-      code:
-        signedIn === 'identity_challenge'
-          ? 'ADOPT_REQUIRES_HUMAN_APPROVAL'
-          : signedIn === 'rejected'
-            ? 'ADOPT_PASSWORD_REJECTED'
-            : 'ENTRA_SIGN_IN_SURFACE_UNAVAILABLE',
-      phase:
-        signedIn === 'identity_challenge'
-          ? 'identity_verification'
-          : 'fresh_login_verification',
-      retryable: signedIn === 'unavailable',
+      status: challenged ? 'needs_human_approval' : 'operation_failed',
+      code: challenged ? 'ADOPT_REQUIRES_HUMAN_APPROVAL' : rejected ? 'ADOPT_PASSWORD_REJECTED' : 'ENTRA_SIGN_IN_SURFACE_UNAVAILABLE',
+      phase: challenged ? 'identity_verification' : 'fresh_login_verification',
+      retryable: verdict === 'unavailable',
       providerEffect: 'none',
       rollbackStatus: 'none',
-      reason:
-        signedIn === 'identity_challenge'
-          ? 'the adoption login needs interactive Entra identity approval before the staged candidate can be trusted'
-          : signedIn === 'rejected'
-            ? 'the Entra directory rejected the staged password candidate at sign-in'
-            : 'the Entra password sign-in surface was unavailable',
+      reason: `${said}: ${signedIn.reason}`,
     });
   }
   const identity = await assertEntraIdentity(session, contract, sink);

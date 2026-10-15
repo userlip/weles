@@ -71,7 +71,23 @@ export function skarbiecCommit(account, contract, password, writeOperation) {
     );
 }
 
-// 'authenticated' | 'rejected' | 'identity_challenge' | 'account_unknown' | 'unavailable'
+/** One sign-in answer: its verdict and what the page showed that decided it. */
+const answer = (verdict, reason) => ({ verdict, reason });
+
+/** The verdict an identity judgement gives, or unavailable with the reason the page offered neither. */
+async function challengeOr(page, absent) {
+  const challenged = await judged(page, IDENTITY_CHALLENGE);
+  if (!challenged.ok) return answer('unavailable', challenged.reason);
+  if (challenged.shows) return answer('identity_challenge', `Microsoft asks to verify identity at ${page.url()}`);
+  return answer('unavailable', absent);
+}
+
+/**
+ * Sign in on the authorized context. Answers { verdict, reason }: verdict is
+ * 'authenticated' | 'rejected' | 'identity_challenge' | 'account_unknown' |
+ * 'unavailable', and reason says what the page showed (or why the model
+ * could not judge it) for that verdict.
+ */
 export async function signIn(session, contract, password) {
   const page = session.page;
   // The token cache of an earlier authorized context has to go before this
@@ -86,7 +102,8 @@ export async function signIn(session, contract, password) {
   await page.goto(AUTHORIZED_CONTEXT_URL, { waitUntil: 'domcontentloaded' });
   await pageSettled(page);
   const emailInput = page.locator('input[name="loginfmt"], input#i0116, input[type="email"]').first();
-  if (!(await appears(emailInput)) || !(await visible(emailInput))) return 'unavailable';
+  if (!(await appears(emailInput)) || !(await visible(emailInput)))
+    return answer('unavailable', `the sign-in page at ${page.url()} shows no email field`);
   // fillVerified proves the field holds the whole UPN before it is sent, so
   // Microsoft's "isn't in our system" answer is about the account, not a
   // truncated submit, and resubmitting the same value cannot change it.
@@ -94,29 +111,27 @@ export async function signIn(session, contract, password) {
   await humanClickLocator(page, page.locator(SUBMIT).first());
   await pageSettled(page);
   const unknown = await judged(page, 'Does the page say this account does not exist or could not be found?');
-  if (!unknown.ok) return 'unavailable';
-  if (unknown.shows) return 'account_unknown';
+  if (!unknown.ok) return answer('unavailable', unknown.reason);
+  if (unknown.shows) return answer('account_unknown', `Microsoft says ${contract.accountUpn} does not exist`);
   await choosePasswordSignIn(page);
   const passwordInput = page.locator('input[name="passwd"], input#i0118, input[type="password"]').first();
-  if (!(await appears(passwordInput)) || !(await visible(passwordInput))) {
-    const challenged = await judged(page, IDENTITY_CHALLENGE);
-    return challenged.ok && challenged.shows ? 'identity_challenge' : 'unavailable';
-  }
+  if (!(await appears(passwordInput)) || !(await visible(passwordInput)))
+    return challengeOr(page, `the sign-in page at ${page.url()} offers no password field`);
   await fillVerified(page, passwordInput, password);
   await humanClickLocator(page, page.locator(SUBMIT).first());
   await pageSettled(page);
   // A refused password leaves Microsoft's password field on screen.
-  if (await visible(page.locator('input[name="passwd"], input#i0118'))) return 'rejected';
-  if (!(await answerStaySignedIn(page)).ok) return 'unavailable';
+  if (await visible(page.locator('input[name="passwd"], input#i0118')))
+    return answer('rejected', 'Microsoft kept the password field on screen after the password was sent');
+  const staySignedIn = await answerStaySignedIn(page);
+  if (!staySignedIn.ok) return answer('unavailable', staySignedIn.reason);
   const challenged = await judged(page, IDENTITY_CHALLENGE);
-  if (!challenged.ok) return 'unavailable';
-  if (challenged.shows) return 'identity_challenge';
+  if (!challenged.ok) return answer('unavailable', challenged.reason);
+  if (challenged.shows) return answer('identity_challenge', `Microsoft asks to verify identity at ${page.url()}`);
   await pageSettled(page);
-  if (!AUTHORIZED_CONTEXT_URL_PATTERN.test(page.url()) || !AUTHORIZED_CONTEXT_HOST.test(new URL(page.url()).hostname)) {
-    const afterwards = await judged(page, IDENTITY_CHALLENGE);
-    return afterwards.ok && afterwards.shows ? 'identity_challenge' : 'unavailable';
-  }
-  return 'authenticated';
+  if (!AUTHORIZED_CONTEXT_URL_PATTERN.test(page.url()) || !AUTHORIZED_CONTEXT_HOST.test(new URL(page.url()).hostname))
+    return challengeOr(page, `the sign-in ended at ${page.url()}, outside the authorized context`);
+  return answer('authenticated', `signed in at ${page.url()}`);
 }
 
 // Shared tail: fresh login with the value the provider now holds, full identity
@@ -125,20 +140,20 @@ export async function signIn(session, contract, password) {
 export async function commitAfterFreshLogin(session, account, contract, plan) {
   const { password, writeOperation, sink, proxyUrl, providerEffect, evidence } = plan;
   const signedIn = await signIn(session, contract, password);
-  evidence.push(`fresh_login_verification:${signedIn}`);
-  if (signedIn !== 'authenticated') {
-    const challenged = signedIn === 'identity_challenge';
+  evidence.push(`fresh_login_verification:${signedIn.verdict}`);
+  if (signedIn.verdict !== 'authenticated') {
+    const challenged = signedIn.verdict === 'identity_challenge';
     return {
       committed: false,
       answer: outcome(contract, {
         status: challenged ? 'needs_human_approval' : 'operation_failed',
         code: challenged ? 'ENTRA_FRESH_LOGIN_REQUIRES_HUMAN_APPROVAL' : 'ENTRA_FRESH_LOGIN_FAILED',
         phase: challenged ? 'identity_verification' : 'fresh_login_verification',
-        retryable: signedIn !== 'rejected',
+        retryable: signedIn.verdict !== 'rejected',
         providerEffect,
         reason: challenged
-          ? 'the fresh Entra login after the password write needs interactive identity approval'
-          : `the fresh Entra login with the newly written password did not authenticate (${signedIn})`,
+          ? `the fresh Entra login after the password write needs interactive identity approval: ${signedIn.reason}`
+          : `the fresh Entra login with the newly written password did not authenticate (${signedIn.verdict}): ${signedIn.reason}`,
       }),
     };
   }

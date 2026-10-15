@@ -29,32 +29,28 @@ export async function rotateDirectoryPassword(
 ) {
   const { currentPassword, nextPassword, sink, proxyUrl, evidence } = plan;
   const signedIn = await signIn(session, contract, currentPassword);
-  evidence.push(`entra_sign_in:${signedIn}`);
-  if (signedIn !== 'authenticated') {
+  const { verdict } = signedIn;
+  evidence.push(`entra_sign_in:${verdict}`);
+  if (verdict !== 'authenticated') {
+    const challenged = verdict === 'identity_challenge';
+    const rejected = verdict === 'rejected';
+    const said = challenged
+      ? 'Entra requires interactive identity approval before the password rotation'
+      : rejected
+        ? 'the managed Entra password was rejected at sign-in'
+        : `the Entra password sign-in did not reach a password check (${verdict})`;
     return outcome(contract, {
-      status:
-        signedIn === 'identity_challenge'
-          ? 'needs_human_approval'
-          : 'operation_failed',
-      code:
-        signedIn === 'identity_challenge'
-          ? 'ENTRA_SIGN_IN_REQUIRES_HUMAN_APPROVAL'
-          : signedIn === 'rejected'
-            ? 'ENTRA_CURRENT_PASSWORD_REJECTED'
-            : 'ENTRA_SIGN_IN_SURFACE_UNAVAILABLE',
-      phase:
-        signedIn === 'identity_challenge'
-          ? 'identity_verification'
-          : 'entra_sign_in',
-      retryable: signedIn !== 'rejected',
+      status: challenged ? 'needs_human_approval' : 'operation_failed',
+      code: challenged
+        ? 'ENTRA_SIGN_IN_REQUIRES_HUMAN_APPROVAL'
+        : rejected
+          ? 'ENTRA_CURRENT_PASSWORD_REJECTED'
+          : 'ENTRA_SIGN_IN_SURFACE_UNAVAILABLE',
+      phase: challenged ? 'identity_verification' : 'entra_sign_in',
+      retryable: !rejected,
       providerEffect: 'none',
       rollbackStatus: 'none',
-      reason:
-        signedIn === 'identity_challenge'
-          ? 'Entra requires interactive identity approval before the password rotation'
-          : signedIn === 'rejected'
-            ? 'the managed Entra password was rejected at sign-in'
-            : 'the Entra password sign-in surface was unavailable',
+      reason: `${said}: ${signedIn.reason}`,
     });
   }
   const identity = await assertEntraIdentity(session, contract, sink);
