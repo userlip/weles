@@ -8,8 +8,9 @@ import { detectYouTubeBanSignals } from '../../../dist/platforms/youtube/ban_sig
 import { runLogin } from '../_shared/action/login.mjs';
 import { googleSso } from '../_shared/services/google_sso.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
+import { googleSignInUrl } from '../_shared/profile/google_session.mjs';
 
-const SIGN_IN = 'https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.youtube.com%2F';
+const SIGN_IN = googleSignInUrl('https://www.youtube.com/');
 
 await runLogin({
   platform: 'youtube',

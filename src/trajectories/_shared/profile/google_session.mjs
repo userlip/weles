@@ -4,6 +4,13 @@
 
 export const GOOGLE_ACCOUNTS_HOST = 'accounts.google.com';
 
+/** Google's sign-in page, returning to `next` once signed in when one is given. */
+export function googleSignInUrl(next) {
+  const url = new URL('/ServiceLogin', `https://${GOOGLE_ACCOUNTS_HOST}`);
+  if (next) url.searchParams.set('continue', next);
+  return url.href;
+}
+
 /** Whether the page at `url` is Google's sign-in host. */
 export function onGoogleSignIn(url) {
   return new URL(url).hostname === GOOGLE_ACCOUNTS_HOST;

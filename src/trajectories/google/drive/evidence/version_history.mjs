@@ -26,6 +26,7 @@ import { googleSso } from '../../../_shared/services/google_sso.mjs';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
 import { clickDescribed } from '../../../_shared/page/judged/seen.mjs';
 import { readScopedLogin } from '../../../../_shared/scoped-secrets.mjs';
+import { googleSignInUrl, onGoogleSignIn } from '../../../_shared/profile/google_session.mjs';
 
 const { values: ARGS } = parseArgs({ options: { archive: { type: 'string' }, out: { type: 'string' } } });
 if (!ARGS.archive || !ARGS.out)
@@ -34,7 +35,6 @@ const ARCHIVE = ARGS.archive;
 const OUT_PATH = ARGS.out;
 const LABEL = 'drive_version_history';
 const INDENT = '  ';
-const GOOGLE_SIGN_IN_HOST = 'accounts.google.com';
 const EDITOR_MIMES = new Set([
   'application/vnd.google-apps.document',
   'application/vnd.google-apps.spreadsheet',
@@ -114,10 +114,10 @@ async function isSignedOut() {
 async function ensureLoggedIn(url) {
   await s.page.goto(url, { waitUntil: 'domcontentloaded' });
   await pageSettled(s.page);
-  const onSignIn = new URL(s.page.url()).hostname === GOOGLE_SIGN_IN_HOST;
+  const onSignIn = onGoogleSignIn(s.page.url());
   if (!onSignIn && !(await isSignedOut())) return;
   if (!onSignIn) {
-    await s.page.goto(`https://${GOOGLE_SIGN_IN_HOST}/ServiceLogin?continue=${encodeURIComponent(url)}`, {
+    await s.page.goto(googleSignInUrl(url), {
       waitUntil: 'domcontentloaded',
     });
     await pageSettled(s.page);

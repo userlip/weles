@@ -4,6 +4,7 @@
 // launchRealChrome will inherit the Google session.
 import { launchRealChrome } from '../../../browser/real_chrome.mjs';
 import { urlMatching } from '../page/settled.mjs';
+import { googleSignInUrl } from '../profile/google_session.mjs';
 
 console.log(
   '[setup] Opening Chrome. Sign in to the shared Google SSO account.',
@@ -17,9 +18,7 @@ console.log(
 
 const s = await launchRealChrome({ label: 'setup_profile' });
 try {
-  await s.page.goto(
-    'https://accounts.google.com/ServiceLogin?continue=https://myaccount.google.com/',
-  );
+  await s.page.goto(googleSignInUrl('https://myaccount.google.com/'));
   // Match the actual landed page HOST only. A regex over the whole URL
   // false-positives on the accounts.google.com sign-in page whose
   // `continue=` param contains "myaccount.google.com". The wait lasts until

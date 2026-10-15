@@ -12,6 +12,7 @@ import { navEval, readAcrossNavigation } from '../../../page/navigation/read.mjs
 import { pageCondition, pageSettled } from '../../../page/settled.mjs';
 import { clickDescribed, pageShows } from '../../../page/judged/seen.mjs';
 import { logGooglePageDiag } from '../page_diagnostics.mjs';
+import { GOOGLE_ACCOUNTS_HOST } from '../../../profile/google_session.mjs';
 import { resolveOtp } from './challenge/seed.mjs';
 import { completeGooglePhoneApproval } from './challenge/phone.mjs';
 import {
@@ -101,10 +102,10 @@ export async function waitForGooglePassword({ page, mark }) {
 export async function waitForGooglePasswordResult(page) {
   const observed = await pageCondition(
     page,
-    (rejectedRoutes) => {
+    ({ rejectedRoutes, googleHost }) => {
       if (!/^https?:$/.test(location.protocol)) return false;
       const state = { host: location.host, path: location.pathname };
-      if (location.hostname !== 'accounts.google.com') return state;
+      if (location.hostname !== googleHost) return state;
       const text = document.body.innerText.replace(/\s+/g, ' ');
       if (rejectedRoutes.some((route) => location.pathname.includes(route)))
         return { ...state, text, code: 'BROWSER_NOT_SECURE' };
@@ -125,7 +126,7 @@ export async function waitForGooglePasswordResult(page) {
       if (password || /\/challenge\/pwd(?:\/|$)/.test(location.pathname)) return false;
       return state;
     },
-    REJECTED_ROUTES,
+    { rejectedRoutes: REJECTED_ROUTES, googleHost: GOOGLE_ACCOUNTS_HOST },
   );
   if (observed.code) {
     const error = new Error(`Google password step reports a refusal: ${JSON.stringify(observed)}`);

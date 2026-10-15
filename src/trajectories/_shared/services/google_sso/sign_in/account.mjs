@@ -10,6 +10,7 @@
 // and reports a phone approval only after Google displays its device prompt.
 import { mkdirSync } from 'node:fs';
 import { keptProfilePath } from '../../../profile/persona.mjs';
+import { googleSignInUrl, onGoogleSignIn as onSignIn } from '../../../profile/google_session.mjs';
 import { humanFill, humanType } from '../../../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../../../dist/human/mouse.js';
 import { readDocument } from '../../../../../../dist/state/skarbiec-records.js';
@@ -22,7 +23,7 @@ import {
   selectAuthenticatorMethod,
   waitForGoogleChallengeExit,
 } from '../../../../codex/google_sso/authenticator_code.mjs';
-import { onSignIn, redactKeys } from '../authenticator_enrol.mjs';
+import { redactKeys } from '../authenticator_enrol.mjs';
 import { generateTotp } from '../totp_secret.mjs';
 import { googlePhonePromptOffered } from './challenge/phone.mjs';
 
@@ -141,9 +142,7 @@ export async function signIn(page, wait, login) {
     return secondFactor(page, login);
   }
   if (!PASSWORD_CHALLENGE.test(page.url())) {
-    await page.goto('https://accounts.google.com/ServiceLogin?hl=en', {
-      waitUntil: 'domcontentloaded',
-    });
+    await page.goto(googleSignInUrl(), { waitUntil: 'domcontentloaded' });
     await wait();
     // The profile is persistent on purpose, so the session an earlier run
     // established may still be live: Google then answers the sign-in address

@@ -12,6 +12,7 @@ import { SessionStore } from '../../../../dist/session/store.js';
 import { googleSso, getGoogleSsoCreds } from './google_sso.mjs';
 import { clickDescribed, clickOffered } from '../page/judged/seen.mjs';
 import { pageSettled } from '../page/settled.mjs';
+import { onGoogleSignIn } from '../profile/google_session.mjs';
 
 const OVERLEAF = 'https://www.overleaf.com';
 const onRoute = (url, route) => new URL(url).pathname.startsWith(route);
@@ -31,7 +32,7 @@ export async function overleafGoogleSignIn(s, login, { label, chooseAnotherAccou
   }
   if (await clickOffered(s.page, 'the button that accepts only essential cookies')) await pageSettled(s.page);
   const popup = s.page.waitForEvent('popup');
-  const inPlace = s.page.waitForURL((url) => url.hostname === 'accounts.google.com').then(() => s.page);
+  const inPlace = s.page.waitForURL((url) => onGoogleSignIn(url.href)).then(() => s.page);
   await clickDescribed(s.page, 'the button or link that logs in to Overleaf with Google');
   const surface = await Promise.any([popup, inPlace]);
   const mode = surface === s.page ? 'in-place' : 'popup';
@@ -41,7 +42,7 @@ export async function overleafGoogleSignIn(s, login, { label, chooseAnotherAccou
     await clickOffered(surface, 'the option to use another Google account');
   const signedIn = await googleSso(s, login, mode === 'popup' ? { originHost: 'overleaf.com', page: surface } : { originHost: 'overleaf.com' });
   if (!signedIn) throw new Error(`OVERLEAF_GOOGLE_SSO_INCOMPLETE: Google SSO for Overleaf did not complete (${mode}) at ${surface.url()}`);
-  await s.page.waitForURL((url) => url.hostname !== 'accounts.google.com');
+  await s.page.waitForURL((url) => !onGoogleSignIn(url.href));
   await pageSettled(s.page);
   const url = s.page.url();
   console.log(`[${label}] settled URL: ${url}`);

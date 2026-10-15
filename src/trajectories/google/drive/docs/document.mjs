@@ -10,6 +10,7 @@ import { humanClickLocator } from '../../../../../dist/human/mouse.js';
 import { humanType } from '../../../../../dist/human/keyboard.js';
 import { googleSso } from '../../../_shared/services/google_sso.mjs';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
+import { onGoogleSignIn } from '../../../_shared/profile/google_session.mjs';
 import { readScopedLogin } from '../../../../_shared/scoped-secrets.mjs';
 
 /** The value after `flag` on the command line, else the first of the environment's `envs` set; refused by name when none is given. */
@@ -35,7 +36,7 @@ export async function openSignedInDocs(label, url) {
   try {
     await s.page.goto(url, { waitUntil: 'domcontentloaded' });
     await pageSettled(s.page);
-    if (new URL(s.page.url()).hostname === 'accounts.google.com') {
+    if (onGoogleSignIn(s.page.url())) {
       console.log(`[${label}] logged out — running googleSso for ${creds.email}`);
       if (!(await googleSso(s, creds))) throw new Error(`DRIVE_DOCUMENT_SIGN_IN_FAILED: ${s.page.url()}`);
       await s.page.goto(url, { waitUntil: 'domcontentloaded' });
