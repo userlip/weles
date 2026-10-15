@@ -26,6 +26,7 @@ import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
 import { gotoAuthorize } from './google_sso/navigation/authorize.mjs';
 import { observeGisPage } from '../claude/google_sso/gis_state/page_reading.mjs';
 import { googleChooser } from './google_sso/chooser.mjs';
+import { GOOGLE_ACCOUNTS_HOST } from '../_shared/profile/google_session.mjs';
 
 export { establishGoogleSession } from './google_sso/google_credentials.mjs';
 
@@ -145,17 +146,18 @@ export async function doGoogleSso({
         // Google asks for consent on its own OAuth consent routes.
         const st = await navEval(
           page,
-          () => ({
+          (googleHost) => ({
             host: location.host,
             pathname: location.pathname,
             href: location.href,
             consent:
-              location.hostname === 'accounts.google.com' &&
+              location.hostname === googleHost &&
               ['/signin/oauth/consent', '/signin/oauth/id'].some((route) =>
                 location.pathname.includes(route),
               ),
           }),
           { host: '', pathname: '', href: '', consent: false },
+          GOOGLE_ACCOUNTS_HOST,
         );
         step(`${st.host}${st.pathname}`);
         if (

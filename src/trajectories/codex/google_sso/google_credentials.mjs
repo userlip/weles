@@ -2,6 +2,7 @@
 // through the shared Google credential entry
 // (../../_shared/services/google_sso/sign_in/credentials.mjs).
 import { enterGoogleCredentials as enterShared } from '../../_shared/services/google_sso/sign_in/credentials.mjs';
+import { GOOGLE_ACCOUNTS_HOST } from '../../_shared/profile/google_session.mjs';
 
 const APPROVAL_LABEL = 'google-sign-in';
 
@@ -19,7 +20,7 @@ export async function establishGoogleSession({
   humanType,
 }) {
   mark('google_prelogin_goto');
-  await page.goto('https://accounts.google.com/ServiceLogin?hl=en', {
+  await page.goto(`https://${GOOGLE_ACCOUNTS_HOST}/ServiceLogin?hl=en`, {
     waitUntil: 'commit',
   });
   await enterGoogleCredentials({ page, login, mark, humanFill, humanClickLocator, humanType });

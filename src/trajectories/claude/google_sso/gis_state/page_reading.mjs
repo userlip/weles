@@ -6,6 +6,7 @@
 // than trusting a coordinate from an earlier poll.
 import { humanClick } from '../../../../../dist/human/mouse.js';
 import { navEval } from '../../../_shared/page/navigation/read.mjs';
+import { GOOGLE_ACCOUNTS_HOST } from '../../../_shared/profile/google_session.mjs';
 
 // A rendered control is one the browser draws: it has an area and is not
 // hidden by display, visibility or opacity. Titles, identifiers and the body
@@ -170,7 +171,7 @@ export const readGisState = (arg) => {
   // (picking the account always precedes confirming it), and only on Google's
   // confirm screens: the account chooser and the OAuth scope routes.
   const confirmScreen =
-    location.hostname === 'accounts.google.com' &&
+    location.hostname === arg.googleHost &&
     ['/signin/accountchooser', '/signin/oauth', '/o/oauth2'].some((route) =>
       location.pathname.includes(route),
     );
@@ -218,5 +219,5 @@ export async function clickGisTarget(page, kind) {
 // Read one live page through that probe. A navigation mid-read means "not ready,
 // look again", which navEval already turns into the null default.
 export async function observeGisPage(p, email) {
-  return navEval(p, readGisState, null, { email });
+  return navEval(p, readGisState, null, { email, googleHost: GOOGLE_ACCOUNTS_HOST });
 }

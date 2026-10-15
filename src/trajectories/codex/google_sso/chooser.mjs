@@ -9,6 +9,7 @@ import {
   clickGisTarget,
   observeGisPage,
 } from '../../claude/google_sso/gis_state/page_reading.mjs';
+import { GOOGLE_ACCOUNTS_HOST } from '../../_shared/profile/google_session.mjs';
 
 // Google's pages that offer an account to sign in with.
 const CHOOSER_PATHS = /accountchooser|oauthchooseaccount|identifier|\/signin\/oauth|\/o\/oauth2/;
@@ -53,7 +54,7 @@ export function googleChooser({ login, mark, humanFill, humanClickLocator, human
   /** Act on the chooser `active` shows; answers whether it is a chooser page. */
   async function advance(active) {
     const view = await observeGisPage(active, login.email);
-    if (!view || view.host !== 'accounts.google.com' || !CHOOSER_PATHS.test(view.pathname))
+    if (!view || view.host !== GOOGLE_ACCOUNTS_HOST || !CHOOSER_PATHS.test(view.pathname))
       return false;
     const current = new URL(active.url());
     if (current.host !== view.host || current.pathname !== view.pathname) return true;
