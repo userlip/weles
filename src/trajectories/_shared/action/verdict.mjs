@@ -57,19 +57,21 @@ export async function verdictAfterFailure(s, cfg, error, known) {
 }
 
 /**
- * Write the verdict to the run's ban_signal.json and, for a checkpoint,
- * mark the account's cookies stale. Throws when either fails.
+ * Write the verdict to the run's ban_signal.json, with the `run` fields the
+ * caller adds, and, for a checkpoint, mark the account's cookies stale. A run
+ * that never found its account records none. Throws when either fails.
  */
-export async function keepVerdict(label, acct, banSignal) {
+export async function keepVerdict(label, acct, banSignal, run = {}) {
   const dir = runRecordingsDir(label);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, 'ban_signal.json'),
     JSON.stringify(
       {
-        account_id: acct.id,
-        username: acct.username,
+        account_id: acct ? acct.id : null,
+        username: acct ? acct.username : null,
         action: label,
+        ...run,
         ...banSignal,
         ts: new Date().toISOString(),
       },
@@ -77,6 +79,6 @@ export async function keepVerdict(label, acct, banSignal) {
       INDENT,
     ),
   );
-  if (banSignal.signal === 'checkpoint' && acct.id)
+  if (banSignal.signal === 'checkpoint' && acct?.id)
     await markCookiesStale(acct.id);
 }
