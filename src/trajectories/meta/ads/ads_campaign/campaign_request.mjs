@@ -15,11 +15,11 @@ import {
   getSocialAccount,
   resolveAccountSession,
 } from '../../../../../dist/utils/credentials.js';
-import { generatePersona } from '../../../../../dist/browser/persona.js';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
+import { stableProfilePersona } from '../../../_shared/profile/persona.mjs';
 
 const ADS_URL = process.env.ADS_URL;
 const RAW_AD_ACCOUNT_ID =
@@ -61,14 +61,6 @@ const USER_DATA_DIR =
   join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
 mkdirSync(USER_DATA_DIR, { recursive: true });
 
-function stableProfilePersona() {
-  const p = join(USER_DATA_DIR, 'persona.json');
-  if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8'));
-  const persona = generatePersona({ os: 'macos', browser: 'chromium' });
-  writeFileSync(p, JSON.stringify(persona, null, 2));
-  return persona;
-}
-
 const acct = await getSocialAccount('facebook');
 const session = acct
   ? await resolveAccountSession(acct)
@@ -76,7 +68,7 @@ const session = acct
 const profilePersona =
   process.env.ADS_PROFILE_PERSONA === 'account' && session.persona
     ? session.persona
-    : stableProfilePersona();
+    : stableProfilePersona(USER_DATA_DIR);
 
 // The objective is picked by the label the request states. Ads Manager speaks
 // the account's language, so the request names the objective as that account
@@ -139,9 +131,11 @@ const CAPABILITIES = {
   ],
 };
 
+// The capability catalog is the whole answer of a capabilities run: printed,
+// then the process ends with no error.
 function printCapabilitiesAndExit() {
-  console.log(JSON.stringify(CAPABILITIES, null, 2));
-  process.exit(0);
+  console.log(JSON.stringify(CAPABILITIES, null, '  '));
+  process.exit();
 }
 
 function guardUnsupportedParams() {
@@ -171,20 +165,17 @@ function guardUnsupportedParams() {
     unsupported.push(`CAMPAIGN_DESTINATION=${CAMPAIGN_DESTINATION}`);
   if (!unsupported.length) return;
   const msg = `unsupported/unverified Meta campaign params: ${unsupported.join(', ')}. Supported verified destination is website traffic draft/configuration.`;
-  if (!ALLOW_UNVERIFIED_META_PARAMS) {
-    console.log(`FAIL: ${msg}`);
-    process.exit(1);
-  }
+  if (!ALLOW_UNVERIFIED_META_PARAMS) throw new Error(msg);
   console.log(`[meta-ads] WARN: ${msg}`);
 }
 
 // Without an account or a direct creation URL there is nothing to open, unless
 // the run is here to wait for a human to log in first.
 function requireCampaignTarget() {
-  if (!ADS_URL && !AD_ACCOUNT_ID && !WAIT_FOR_LOGIN) {
-    console.log('FAIL: AD_ACCOUNT_ID or ADS_URL required');
-    process.exit(1);
-  }
+  if (!ADS_URL && !AD_ACCOUNT_ID && !WAIT_FOR_LOGIN)
+    throw new Error(
+      'AD_ACCOUNT_ID or ADS_URL is required: nothing names the ad account the campaign is drafted in',
+    );
 }
 
 // What creating a campaign needs stated; each missing value is refused by name.
