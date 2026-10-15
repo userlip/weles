@@ -1,6 +1,9 @@
 // Add a phone contact in Accounts Center for Meta developer verification.
-// Requires META_VERIFY_PHONE. If META_VERIFY_CODE is provided, submits the SMS code too.
-// Phone and code values are not printed.
+// Requires META_VERIFY_PHONE. If META_VERIFY_CODE is provided, submits the SMS code too;
+// without it, the run ends once Meta asks for the code, and a second run with
+// META_VERIFY_CODE_ONLY=1 and META_VERIFY_CODE submits it.
+// Phone and code values are not printed; each step's page state is kept with
+// the run (`_shared/diagnostics/page_state.mjs`). A failed step is thrown.
 
 import { WSession } from '../../../../dist/session/wsession.js';
 import {
@@ -10,10 +13,7 @@ import {
 } from './accounts_center_add_phone/settings.mjs';
 import {
   asksForCode,
-  bringBrowserToFront,
   offersPhoneForm,
-  snapshot,
-  stableProfilePersona,
 } from './accounts_center_add_phone/page.mjs';
 import {
   clickControl,
@@ -24,30 +24,31 @@ import {
   selectPhoneAssociationAccount,
 } from './accounts_center_add_phone/steps.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
+import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { bringBrowserToFront } from '../../_shared/action/window.mjs';
+import { recordPageState } from '../../_shared/diagnostics/page_state.mjs';
 
+const RUN = 'meta_accounts_center_add_phone';
 const PASSKEY_OFFERED =
   'Does the page offer to create a passkey, with a way to decline it for now?';
 const DECLINE_PASSKEY =
   'the button that declines creating a passkey for now (not the one that creates it)';
 
 const s = await WSession.start({
-  label: 'meta_accounts_center_add_phone',
-  browser: process.env.BROWSER || 'chromium',
+  label: RUN,
   proxy: statedProxy('the Accounts Center phone step'),
-  persona: stableProfilePersona(),
+  persona: stableProfilePersona(USER_DATA_DIR),
   userDataDir: USER_DATA_DIR,
   headless: process.env.META_VERIFY_HEADLESS === '1',
   pageDiagnostics: process.env.WELES_PAGE_DIAGNOSTICS === '1',
 });
+const snapshot = (page, step) => recordPageState(page, RUN, step);
 
-let exitCode = 0;
 try {
-  await bringBrowserToFront(s);
+  await bringBrowserToFront(s, RUN);
   await s.page.goto(
     'https://accountscenter.facebook.com/youraccount/contact_points/',
-    {
-      waitUntil: 'domcontentloaded',
-    },
+    { waitUntil: 'domcontentloaded' },
   );
   await snapshot(s.page, 'contact_points_initial');
   if (CODE_ONLY) {
@@ -87,14 +88,9 @@ try {
     await snapshot(s.page, 'code_only_filled');
     await clickControl(s.page, 'submit_code_only', SUBMIT_FORM);
     await snapshot(s.page, 'after_code_only_submit');
-    await clickWhenShown(
-      s.page,
-      'skip_passkey',
-      PASSKEY_OFFERED,
-      DECLINE_PASSKEY,
-    );
+    await clickWhenShown(s.page, 'skip_passkey', PASSKEY_OFFERED, DECLINE_PASSKEY);
     await snapshot(s.page, 'after_code_only_passkey_skip');
-    await bringBrowserToFront(s);
+    await bringBrowserToFront(s, RUN);
   } else {
     await clickControl(
       s.page,
@@ -114,36 +110,27 @@ try {
     await snapshot(s.page, 'after_select_account');
     await clickControl(s.page, 'submit_phone', SUBMIT_FORM);
     await snapshot(s.page, 'after_submit');
-    if (await asksForCode(s.page)) {
-      if (!VERIFY_CODE) {
-        console.log(
-          'NEED_CODE: META_VERIFY_CODE is required to submit the confirmation code',
-        );
-      } else if (await fillCode(s.page)) {
-        await snapshot(s.page, 'code_filled');
-        await clickControl(s.page, 'submit_code', SUBMIT_FORM);
-        await snapshot(s.page, 'after_code_submit');
-        await clickWhenShown(
-          s.page,
-          'skip_passkey',
-          PASSKEY_OFFERED,
-          DECLINE_PASSKEY,
-        );
-        await snapshot(s.page, 'after_passkey_skip');
-      } else {
-        throw new Error('No confirmation code input found');
-      }
+    if (!(await asksForCode(s.page))) {
+      await bringBrowserToFront(s, RUN);
+    } else if (!VERIFY_CODE) {
+      console.log(
+        'NEED_CODE: Meta asks for the confirmation code; run again with META_VERIFY_CODE_ONLY=1 and META_VERIFY_CODE',
+      );
     } else {
-      await bringBrowserToFront(s);
+      if (!(await fillCode(s.page)))
+        throw new Error('No confirmation code input found');
+      await snapshot(s.page, 'code_filled');
+      await clickControl(s.page, 'submit_code', SUBMIT_FORM);
+      await snapshot(s.page, 'after_code_submit');
+      await clickWhenShown(
+        s.page,
+        'skip_passkey',
+        PASSKEY_OFFERED,
+        DECLINE_PASSKEY,
+      );
+      await snapshot(s.page, 'after_passkey_skip');
     }
   }
-} catch (error) {
-  exitCode = 1;
-  console.log(`FAIL: ${error.message || String(error)}`);
 } finally {
-  await s
-    .close()
-    .catch((e) => console.log(`[session] close failed: ${e.message}`));
+  await s.close();
 }
-
-if (exitCode) process.exit(exitCode);
