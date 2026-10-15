@@ -9,13 +9,17 @@ export const RECIPIENT_GROUPS = parseMatcherGroups(
   [],
 );
 
-const TARGET_NAME = (process.env.SLACK_TARGET_CHANNEL_NAME || '').toLowerCase();
-const TARGET_CHAN = process.env.SLACK_TARGET_CHANNEL || '';
+const TARGET_NAME = process.env.SLACK_TARGET_CHANNEL_NAME?.toLowerCase();
+const TARGET_CHAN = process.env.SLACK_TARGET_CHANNEL;
 const TAGGING_ENABLED = process.env.SLACK_ENABLE_TAGGING !== '0';
-const MENTION_MODE = (process.env.SLACK_MENTION_MODE || 'prefix').toLowerCase();
+
+/** How mentions join a channel post, as SLACK_MENTION_MODE states it. */
+function mentionMode() {
+  return process.env.SLACK_MENTION_MODE?.trim().toLowerCase();
+}
 
 export function parseCsv(value) {
-  return String(value || '')
+  return value
     .split(',')
     .map((x) => x.trim())
     .filter(Boolean);
@@ -37,8 +41,12 @@ export function parseMatcherGroups(value, defaults) {
 }
 
 function memberFields(user) {
-  const profile = user.profile || {};
-  return [user.name, user.real_name, profile.email, profile.display_name]
+  return [
+    user.name,
+    user.real_name,
+    user.profile?.email,
+    user.profile?.display_name,
+  ]
     .filter(Boolean)
     .map((x) => String(x).toLowerCase());
 }
@@ -61,31 +69,45 @@ export function resolveUsersFromMembers(members, groups) {
 }
 
 export function isChannelTarget(target) {
-  return /^[CG][A-Z0-9]+$/.test(String(target || ''));
+  return typeof target === 'string' && /^[CG][A-Z\d]+$/.test(target);
 }
 
 function alreadyMentioned(text, id) {
   return new RegExp(`<@${id}(?:\\|[^>]+)?>`).test(text);
 }
 
-/** The message with the missing mentions added as a prefix or an appendix. */
+/**
+ * The message with the missing mentions added where SLACK_MENTION_MODE puts
+ * them: prefix, append or none. With someone to mention and the mode unset
+ * or another word, the post is refused by name: guessing it placed mentions
+ * the caller never chose.
+ */
 export function applyMentions(text, ids) {
-  if (!TAGGING_ENABLED || MENTION_MODE === 'none' || !ids.length) return text;
+  if (!TAGGING_ENABLED || !ids.length) return text;
   const missing = ids.filter((id) => !alreadyMentioned(text, id));
   if (!missing.length) return text;
-  const prefix = missing.map((id) => `<@${id}>`).join(' ');
-  if (MENTION_MODE === 'append') return `${text.trimEnd()}\n\n${prefix}\n`;
-  return `${prefix}\n\n${text}`;
+  const tags = missing.map((id) => `<@${id}>`).join(' ');
+  const mode = mentionMode();
+  switch (mode) {
+    case 'prefix':
+      return `${tags}\n\n${text}`;
+    case 'append':
+      return `${text.trimEnd()}\n\n${tags}\n`;
+    case 'none':
+      return text;
+  }
+  throw new Error(
+    `SLACK_MENTION_MODE is ${mode ? `"${mode}"` : 'not set'}: name prefix, append or none for how the mentions of ${missing.join(', ')} join the post; nothing was posted`,
+  );
 }
 
 /** Who to mention in a channel post: explicit ids, else the matcher groups resolved against the members. */
 export async function mentionIdsForTarget(target, loadMembers) {
-  if (!TAGGING_ENABLED || MENTION_MODE === 'none' || !isChannelTarget(target))
+  if (!TAGGING_ENABLED || mentionMode() === 'none' || !isChannelTarget(target))
     return [];
-  const explicit = parseCsv(
-    process.env.SLACK_MENTION_USER_IDS || process.env.SLACK_MENTION_USER_ID,
-  );
-  if (explicit.length) return [...new Set(explicit)];
+  const stated =
+    process.env.SLACK_MENTION_USER_IDS || process.env.SLACK_MENTION_USER_ID;
+  if (stated) return [...new Set(parseCsv(stated))];
 
   const groups = parseMatcherGroups(
     process.env.SLACK_MENTION_USER_MATCHERS,
@@ -101,7 +123,11 @@ export async function mentionIdsForTarget(target, loadMembers) {
 /** Every workspace member that is neither deleted nor a bot. */
 export async function listMembers() {
   const ul = await slackPost('users.list', { limit: '1000' });
-  return (ul.members || []).filter((u) => !u.deleted && !u.is_bot);
+  if (!Array.isArray(ul.members))
+    throw new Error(
+      `users.list answered without a members list: ${JSON.stringify(ul)}`,
+    );
+  return ul.members.filter((u) => !u.deleted && !u.is_bot);
 }
 
 /**
@@ -121,6 +147,10 @@ export async function resolveTargets() {
       types: 'public_channel,private_channel',
       limit: '1000',
     });
+    if (!Array.isArray(list.channels))
+      throw new Error(
+        `conversations.list answered without a channels list: ${JSON.stringify(list)}`,
+      );
     const c = list.channels.find(
       (x) => x.name && x.name.toLowerCase() === TARGET_NAME,
     );
@@ -137,7 +167,7 @@ export async function resolveTargets() {
   const members = await listMembers();
   const ids = [];
   for (const group of groups) {
-    const hit = resolveUsersFromMembers(members, [group])[0];
+    const [hit] = resolveUsersFromMembers(members, [group]);
     if (hit && !ids.includes(hit.id)) {
       ids.push(hit.id);
       console.log(
@@ -147,7 +177,7 @@ export async function resolveTargets() {
   }
   if (!ids.length)
     throw new Error(
-      `no channel "${TARGET_NAME}" and no recipients matched: set SLACK_TARGET_CHANNEL, SLACK_TARGET_USER_IDS or SLACK_RECIPIENT_GROUPS`,
+      'no channel was named and nobody matched the recipient groups: set SLACK_TARGET_CHANNEL, SLACK_TARGET_CHANNEL_NAME, SLACK_TARGET_USER_IDS or SLACK_RECIPIENT_GROUPS',
     );
   return ids;
 }
