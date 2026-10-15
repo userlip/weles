@@ -1,209 +1,95 @@
-// Read the GCP Console "Credits" page using the user's signed-in Chrome profile.
+// Capture a Google Cloud billing account's Credits page in a Weles browser
+// session.
 //
 // Run: node src/trajectories/google/gcp_credits.mjs <BILLING_ACCOUNT_ID>
 //
-// Resolves the right Chrome profile from ~/.weles/chrome_profiles.json (which
-// stores user policy: default email + forbidden_emails) plus Chrome's own
-// Local State (which stores user_name + gaia_id per profile dir). Picks the
-// profile where `user_name == email AND gaia_id != ""` so stale empty-shell
-// profiles (e.g. an old "Profile 34" with the email assigned but never
-// actually signed in) get skipped.
+// Env:
+//   GCP_LOGIN_SERVICE   required: the Weles scoped Google login (for example
+//                       googleSso or googleWorkspaceAdmin) whose account
+//                       administers the billing account
+//   GCP_CREDITS_TAB     required: 'issued' captures the Issued credits tab,
+//                       'first' the tab the page opens on
+//   PROXY_URL           required: the proxy the browser goes through, or 'direct'
 //
-// Flow:
-//   1. Quit any running Chrome (releases user-data-dir lock)
-//   2. Launch Chrome.app via macOS `open` with --profile-directory and the URL
-//   3. Wait until Chrome reports the tab loaded (AppleScript `loading`),
-//      screencapture the window
-//   4. Quit Chrome again so the user can restart their normal session
-//
-// We do NOT drive Chrome via CDP/Playwright here — Chrome.app bundle launching
-// fights Playwright's persistent-context handshake. Direct `open` works.
-import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+// The browser signs in through Google's own steps (the shared Google sign-in,
+// driven in process), and the capture is the credits page of that session,
+// kept in the run's recordings. A page that is not the requested account's
+// credits page, or an Issued credits tab that does not show selected,
+// refuses the capture.
 import { join } from 'node:path';
+import { WSession } from '../../../dist/session/wsession.js';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
-import { statedText } from '../_shared/inputs/stated.mjs';
+import { readScopedLogin } from '../../_shared/scoped-secrets.mjs';
+import {
+  statedChoice,
+  statedProxy,
+  statedText,
+} from '../_shared/inputs/stated.mjs';
+import { signInThroughKeeper } from '../_shared/keeper/google_sign_in.mjs';
+import { sessionAct } from '../_shared/keeper/session_act.mjs';
+import { clickDescribed, pageShows } from '../_shared/page/judged/seen.mjs';
+import { pageSettled } from '../_shared/page/settled.mjs';
 
+const LABEL = 'gcp_credits';
 // Whose credits are read is the caller's: a billing account written here
 // would read another account's credits.
-const ACCOUNT = process.argv[2];
+const [, , ACCOUNT] = process.argv;
 if (!ACCOUNT)
   throw new Error(
     'no billing account given: run with <BILLING_ACCOUNT_ID>; nothing was opened',
   );
-const TAB = statedText(
+const TAB = statedChoice(
   ['GCP_CREDITS_TAB'],
-  "the credits tab captured: 'issued' for Issued credits, anything else for the page's first tab",
+  Object.freeze({
+    issued: 'the Issued credits tab',
+    first: 'the tab the credits page opens on',
+  }),
+  'the credits tab captured',
 );
-const URL = `https://console.cloud.google.com/billing/${ACCOUNT}/credits`;
-// The capture is kept with this run's recordings, not in a shared /tmp file
-// the next run overwrites.
-const OUT_PNG = join(runRecordingsDir('gcp_credits'), 'gcp_credits.png');
-const PROFILES_CFG = join(homedir(), '.weles', 'chrome_profiles.json');
-
-function loadProfilesConfig() {
-  if (!existsSync(PROFILES_CFG)) {
-    throw new Error(
-      `Profile config missing: ${PROFILES_CFG}. See ~/.weles/chrome_profiles.json template.`,
-    );
-  }
-  return JSON.parse(readFileSync(PROFILES_CFG, 'utf8'));
-}
-
-const cfg = loadProfilesConfig();
-const USER_DATA_DIR = cfg.user_data_dir.startsWith('~/')
-  ? join(homedir(), cfg.user_data_dir.slice(2))
-  : cfg.user_data_dir;
-const LOCAL_STATE = join(USER_DATA_DIR, 'Local State');
-
-function discoverProfileDir(email) {
-  if (!existsSync(LOCAL_STATE)) {
-    throw new Error(`Local State missing at ${LOCAL_STATE}`);
-  }
-  const data = JSON.parse(readFileSync(LOCAL_STATE, 'utf8'));
-  const cache = data?.profile?.info_cache || {};
-  const target = email.toLowerCase();
-  const matches = [];
-  for (const [dir, info] of Object.entries(cache)) {
-    const userName = (info?.user_name || '').toLowerCase();
-    const gaiaId = info?.gaia_id || '';
-    if (userName === target && gaiaId !== '') {
-      matches.push({ dir, active: info.active_time || 0 });
-    }
-  }
-  matches.sort((a, b) => b.active - a.active);
-  return matches[0]?.dir || null;
-}
-
-const forbidden = new Set(
-  (cfg.forbidden_emails || []).map((s) => s.toLowerCase()),
+const login = readScopedLogin(
+  statedText(
+    ['GCP_LOGIN_SERVICE'],
+    'the Weles scoped Google login whose account administers the billing account',
+  ),
 );
-const requestedEmail = (
-  process.env.GCP_PROFILE_EMAIL ||
-  cfg.default_email ||
-  ''
-).toLowerCase();
-const explicitDir = process.env.GCP_PROFILE_DIR;
+const CREDITS_URL = new URL(
+  `https://console.cloud.google.com/billing/${encodeURIComponent(ACCOUNT)}/credits`,
+);
+const OUT_PNG = join(runRecordingsDir(LABEL), 'gcp_credits.png');
 
-let PROFILE;
-if (explicitDir) {
-  PROFILE = explicitDir;
-  console.log(`[gcp_credits] using explicit profile dir from env: ${PROFILE}`);
-} else {
-  if (forbidden.has(requestedEmail)) {
-    throw new Error(
-      `Email "${requestedEmail}" is in forbidden_emails (${PROFILES_CFG}).`,
-    );
-  }
-  const dir = discoverProfileDir(requestedEmail);
-  if (!dir) {
-    throw new Error(
-      `No Chrome profile found for "${requestedEmail}" with non-empty gaia_id in ${LOCAL_STATE}. Profile may not be signed in.`,
-    );
-  }
-  PROFILE = dir;
-  console.log(
-    `[gcp_credits] discovered ${requestedEmail} -> ${PROFILE} (Local State)`,
+/** Whether the page is the requested account's credits page. */
+function onCreditsPage(address) {
+  const url = new URL(address);
+  return (
+    url.hostname === CREDITS_URL.hostname &&
+    url.pathname.startsWith(CREDITS_URL.pathname)
   );
 }
 
-function chromeAlive() {
-  return spawnSync('pgrep', ['-x', 'Google Chrome']).status === 0;
-}
-
-// AppleScript's `quit` returns once Chrome has quit; whatever is still running
-// afterwards is killed, and a Chrome that survives that is the error.
-function quitChrome() {
-  if (!chromeAlive()) return;
-  console.log('[gcp_credits] quitting Chrome (graceful)...');
-  spawnSync('osascript', ['-e', 'tell application "Google Chrome" to quit']);
-  if (!chromeAlive()) return;
-  console.log(
-    '[gcp_credits] Chrome still running after quit, forcing pkill -9',
-  );
-  spawnSync('pkill', ['-9', '-f', 'Google Chrome']);
-  if (chromeAlive())
-    throw new Error('Chrome still running after pkill — abort');
-}
-
-// Blocks until Chrome reports the active tab of its front window as loaded.
-function waitForTabLoaded() {
-  const r = spawnSync('osascript', [
-    '-e',
-    'tell application "Google Chrome"',
-    '-e',
-    'repeat until (exists front window)',
-    '-e',
-    'end repeat',
-    '-e',
-    'repeat while (loading of active tab of front window)',
-    '-e',
-    'end repeat',
-    '-e',
-    'end tell',
-  ]);
-  if (r.status !== 0)
+const s = await WSession.start({
+  label: LABEL,
+  browser: 'chromium',
+  proxy: statedProxy('the Google Cloud credits read'),
+});
+try {
+  const act = sessionAct(s, LABEL);
+  await act({ action: 'nav', url: CREDITS_URL.href });
+  await act({ action: 'settle' });
+  const steps = await signInThroughKeeper(act, login);
+  await pageSettled(s.page);
+  if (!onCreditsPage(s.page.url()))
     throw new Error(
-      `gcp_credits: Chrome did not report the tab state: ${r.stderr?.toString().trim()}`,
+      `GCP_CREDITS_UNREACHED: the session is at ${s.page.url()}, not ${CREDITS_URL.href}; Google steps: ${JSON.stringify(steps)}`,
     );
+  if (TAB === 'issued') {
+    await clickDescribed(s.page, 'the Issued credits tab');
+    if (!(await pageShows(s.page, 'Is the Issued credits tab the selected tab?')))
+      throw new Error(
+        `GCP_CREDITS_TAB: the Issued credits tab does not show selected at ${s.page.url()}; no capture was taken`,
+      );
+  }
+  await s.page.screenshot({ path: OUT_PNG, fullPage: true });
+  console.log(`[gcp_credits] ${TAB} credits of ${ACCOUNT} captured to ${OUT_PNG}`);
+} finally {
+  await s.close();
 }
-
-quitChrome();
-
-console.log(
-  `[gcp_credits] launching Chrome.app (profile=${PROFILE}) -> ${URL}`,
-);
-
-const r = spawnSync('open', [
-  '-na',
-  'Google Chrome',
-  '--args',
-  `--profile-directory=${PROFILE}`,
-  '--no-first-run',
-  '--no-default-browser-check',
-  URL,
-]);
-if (r.status !== 0) {
-  throw new Error(`open failed: ${r.stderr?.toString()}`);
-}
-
-console.log('[gcp_credits] waiting for Chrome to report the page loaded...');
-waitForTabLoaded();
-
-if (TAB === 'issued') {
-  console.log('[gcp_credits] clicking Issued credits tab via injected JS');
-  const clickJs = `
-    (function(){
-      var nodes = Array.from(document.querySelectorAll('a,button,[role="tab"],[role="link"]'));
-      var hit = nodes.find(function(n){
-        return n.textContent.trim().toLowerCase().startsWith('issued');
-      });
-      if (hit) { hit.click(); return 'clicked: ' + hit.textContent.trim(); }
-      return 'no match';
-    })();`.replace(/\s+/g, ' ');
-  const r = spawnSync('osascript', [
-    '-e',
-    `tell application "Google Chrome" to tell active tab of front window to execute javascript "${clickJs.replace(/"/g, '\\"')}"`,
-  ]);
-  const answer = r.stdout.toString().trim();
-  // A capture of the wrong tab would be read as the issued credits.
-  if (!answer.startsWith('clicked'))
-    throw new Error(
-      `the Issued credits tab was not clicked (${answer} ${r.stderr.toString().trim()}); no capture was taken`,
-    );
-  console.log(`[gcp_credits] tab click result: ${answer}`);
-  waitForTabLoaded();
-}
-
-spawnSync('osascript', ['-e', 'tell application "Google Chrome" to activate']);
-
-const cap = spawnSync('screencapture', ['-x', OUT_PNG]);
-if (cap.status !== 0) {
-  throw new Error(`screencapture failed: ${cap.stderr?.toString()}`);
-}
-console.log(`[gcp_credits] screenshot saved to ${OUT_PNG}`);
-
-console.log('[gcp_credits] quitting Chrome...');
-quitChrome();
-console.log('[gcp_credits] done.');
