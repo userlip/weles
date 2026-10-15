@@ -1,131 +1,101 @@
+// React to a Discord message with an emoji, as the active Discord account.
+//
+// Env (all required; nothing is reacted to by default):
+//   SERVER_CHANNEL_PATH   the channel, as <server id>/<channel id> (or @me/<dm id>)
+//   DISCORD_MESSAGE_ID    the message reacted to
+//   DISCORD_REACTION      the emoji, as Discord takes it in a reaction (a
+//                         Unicode emoji, or name:id for a custom one)
+//
+// The account signs in with its stored cookies and its web token; a jar or
+// token that cannot be set up fails the run. The reaction is the PUT the
+// web client sends when an emoji is picked, authorised by the token the
+// page holds, and counts only when Discord answers it with success. The
+// verdict is read through the shared ban-signal reader and kept through the
+// shared verdict writer.
 import {
   getSocialAccount,
   resolveAccountSession,
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { detectDiscordBanSignals } from '../../../../dist/platforms/discord/ban_signals.js';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
 import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
-import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { keepVerdict } from '../../_shared/action/verdict.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
+import { seatDiscordAccount } from '../../_shared/discord/session.mjs';
 
+const LABEL = 'discord_react';
 const channelPath = statedText(
   ['SERVER_CHANNEL_PATH'],
   'the Discord channel to react in, as <server id>/<channel id> (or @me/<dm id>)',
 );
+const MESSAGE_ID = statedText(
+  ['DISCORD_MESSAGE_ID'],
+  'the Discord message to react to',
+);
+const REACTION = statedText(
+  ['DISCORD_REACTION'],
+  'the emoji the reaction carries (a Unicode emoji, or name:id for a custom one)',
+);
+const [, channelId] = channelPath.split('/');
+if (!channelId)
+  throw new Error(
+    `SERVER_CHANNEL_PATH "${channelPath}" names no channel after its server`,
+  );
+
 const acct = await getSocialAccount('discord');
-if (!acct) {
-  console.log('FAIL: no active discord account');
-  process.exit(1);
-}
+if (!acct) throw new Error('no active discord account to react with');
+const run = { channel: channelPath, message_id: MESSAGE_ID, reaction: REACTION };
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({
-  label: 'discord_react',
+  label: LABEL,
   proxy: proxyUrl,
   persona,
 });
-const _stored = (acct.metadata?.cookies ?? []).filter((c) =>
-  /discord\.com/.test(c.domain ?? ''),
-);
-// Without its stored session the run lands on the login wall and reports a
-// failed reaction with no word of why, so a failed injection fails the run.
-let unauthenticated = null;
-if (_stored.length)
-  await s.ctx
-    .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
-    .catch((error) => {
-      unauthenticated = `the stored discord cookies could not be injected: ${error}`;
-    });
-if (acct.metadata?.discord_token)
-  await s.ctx
-    .addInitScript(
-      `localStorage.setItem("token",${JSON.stringify(JSON.stringify(acct.metadata.discord_token))})`,
-    )
-    .catch((error) => {
-      const token = `the stored discord token could not be injected: ${error}`;
-      unauthenticated = unauthenticated ? `${unauthenticated}; ${token}` : token;
-    });
-let ban = null;
 try {
-  if (unauthenticated) throw new Error(unauthenticated);
+  await seatDiscordAccount(s, acct);
   await s.goto(`https://discord.com/channels/${channelPath}`);
   checkReachable(s, 'discord');
-  // Wait for chat messages to render — each message <li id="chat-messages-{channelId}-{messageId}">.
-  await s.page
-    .locator('li[id^="chat-messages-"]')
-    .first()
-    .waitFor({ state: 'visible' });
-  // Pick the most recent message — last in document order with non-empty content.
-  const targetId = await s.page.evaluate(() => {
-    const items = Array.from(
-      document.querySelectorAll('li[id^="chat-messages-"]'),
-    ).reverse();
-    for (const li of items) {
-      const m = li.id.match(/^chat-messages-(\d+)-(\d+)$/);
-      if (m) return { channelId: m[1], messageId: m[2] };
-    }
-    return null;
-  });
-  if (!targetId) throw new Error('no message id found in rendered chat');
-  // PUT reaction via Discord's web API. localStorage.token carries the
-  // Authorization header (matches every other web-client request); this is
-  // exactly what the picker UI does once you click an emoji.
-  const result = await s.page.evaluate(async ({ channelId, messageId }) => {
-    const tk = (() => {
-      try {
-        return JSON.parse(localStorage.token);
-      } catch {
-        return null;
-      }
-    })();
-    if (!tk) return { error: 'no_token_in_localstorage' };
-    const emoji = encodeURIComponent('\u{1F44D}'); // 👍
-    const r = await fetch(
-      `/api/v9/channels/${channelId}/messages/${messageId}/reactions/${emoji}/%40me`,
-      {
-        method: 'PUT',
-        headers: { Authorization: tk },
-      },
-    );
-    return { status: r.status };
-  }, targetId);
-  if (result?.error) throw new Error(`react failed: ${result.error}`);
-  if (result?.status !== 204 && result?.status !== 200)
-    throw new Error(`react PUT returned ${result?.status}`);
-  ban = await banSignalOf(detectDiscordBanSignals, s, 'after the reaction');
-  console.log(
-    `[ban-signal] ${ban?.signal}  PASS: reacted on message ${targetId.messageId}`,
-  );
-} catch (e) {
-  ban =
-    e.banSignal ??
-    (await banSignalOf(detectDiscordBanSignals, s, 'after the failure'));
-  console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
-  process.exitCode = 1;
-} finally {
-  if (ban) {
-    try {
-      const dir = runRecordingsDir('discord_react');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'ban_signal.json'),
-        JSON.stringify(
-          {
-            account_id: acct.id,
-            username: acct.username,
-            action: 'discord_react',
-            ...ban,
-            ts: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
+  const result = await s.page.evaluate(
+    async ({ channel, message, emoji }) => {
+      const stored = localStorage.token;
+      if (!stored) return { error: 'the page holds no Discord token' };
+      const answer = await fetch(
+        `/api/v9/channels/${channel}/messages/${message}/reactions/${encodeURIComponent(emoji)}/%40me`,
+        { method: 'PUT', headers: { Authorization: JSON.parse(stored) } },
       );
-    } catch (e) {
-      console.log('[ban-signal] persist err:', e.message);
-    }
+      return { ok: answer.ok, status: answer.status, body: await answer.text() };
+    },
+    { channel: channelId, message: MESSAGE_ID, emoji: REACTION },
+  );
+  if (result.error)
+    throw new Error(`DISCORD_REACT_UNAUTHORISED: ${result.error}`);
+  if (!result.ok)
+    throw new Error(
+      `DISCORD_REACT_REFUSED: Discord answered the reaction ${result.status}: ${result.body}`,
+    );
+  const banSignal = await banSignalOf(detectDiscordBanSignals, s, 'after the reaction');
+  if (!banSignal.healthy)
+    throw Object.assign(
+      new Error(`the page reads ${banSignal.signal} after the reaction`),
+      { banSignal },
+    );
+  await keepVerdict(LABEL, acct, banSignal, run);
+  console.log(`[ban-signal] ${banSignal.signal}  PASS: reacted ${REACTION} on message ${MESSAGE_ID}`);
+} catch (e) {
+  const banSignal = e.banSignal
+    ? e.banSignal
+    : await banSignalOf(detectDiscordBanSignals, s, 'after the failure');
+  console.log(`[ban-signal] ${banSignal.signal}  FAIL: ${e.message}`);
+  try {
+    await keepVerdict(LABEL, acct, banSignal, run);
+  } catch (writeError) {
+    throw new AggregateError(
+      [e, writeError],
+      `${e.message}; and its ban signal was not kept: ${writeError.message}`,
+    );
   }
+  throw e;
+} finally {
   await s.close();
 }

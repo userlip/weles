@@ -32,6 +32,10 @@ export function applyContentActionParams(
   if (typeof params.issue_url === 'string') env.ISSUE_URL = params.issue_url;
   if (typeof params.server_channel_path === 'string')
     env.SERVER_CHANNEL_PATH = params.server_channel_path;
+  if (typeof params.message_id === 'string')
+    env.DISCORD_MESSAGE_ID = params.message_id;
+  if (typeof params.reaction === 'string')
+    env.DISCORD_REACTION = params.reaction;
   if (typeof params.search_query === 'string')
     env.SEARCH_QUERY = params.search_query;
   if (typeof params.pangram_text === 'string')
