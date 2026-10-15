@@ -7,6 +7,7 @@ import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
 import { phoneForField } from '../../_shared/inputs/phone.mjs';
+import { fieldCodeLength, mailedCode } from '../../_shared/inputs/mailed_code.mjs';
 
 /** The first of `selectors` the page shows, or null. */
 async function shown(page, selectors) {
@@ -81,18 +82,22 @@ export async function maybeHandlePhone(s) {
 /**
  * A code step: the code Yahoo sent for this signup, to the email address
  * the form was given when it registered an existing address, to the phone
- * otherwise. The form variant decides it, not words on the code page. A
- * code is one run of letters and digits; any other answer is the reader's
- * own account of why it has none, and is refused with it.
+ * otherwise. The form variant decides it, not words on the code page. The
+ * mailed code is read through the shared mailed-code reader at the length
+ * the code field states; a texted code is one run of letters and digits,
+ * and any other answer is the reader's own account of why it has none, and
+ * is refused with it.
  */
 export async function maybeHandleCode(s, id, variant) {
   const field = await shown(s.page, ['input[autocomplete="one-time-code"]', 'input[name*="code" i]', 'input[id*="code" i]']);
   if (!field) return false;
-  const viaEmail = variant === 'existing_email';
-  const code = viaEmail ? await s.checkEmail(id.email, 'yahoo') : await s.pollSmsCode();
-  if (!/^[A-Z\d]+$/i.test(String(code)))
-    throw new Error(`yahoo_${viaEmail ? 'email' : 'sms'}_otp_failed: ${code}`);
-  await humanFill(s.page, field, code);
+  if (variant === 'existing_email') {
+    await humanFill(s.page, field, await mailedCode(id.email, 'yahoo', await fieldCodeLength(field)));
+  } else {
+    const code = await s.pollSmsCode();
+    if (!/^[A-Z\d]+$/i.test(String(code))) throw new Error(`yahoo_sms_otp_failed: ${code}`);
+    await humanFill(s.page, field, code);
+  }
   await submitStep(s.page);
   return true;
 }
