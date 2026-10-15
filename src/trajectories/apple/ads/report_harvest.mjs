@@ -20,12 +20,12 @@ import {
 } from './report_harvest/settings.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
+import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import {
   ensureReportPage,
   gotoAndWait,
   installNetworkCapture,
   requireAuthenticatedSession,
-  stableProfilePersona,
 } from './report_harvest/session.mjs';
 import {
   clickDatePreset,
@@ -44,75 +44,62 @@ import {
   summarizeExactReports,
 } from './report_harvest/exact_reports.mjs';
 
-async function main() {
+const OUT_PATH = join(DIAG_DIR, 'report_harvest.json');
+
+async function harvest() {
   const acct = await getSocialAccount('apple');
-  if (!acct) {
-    console.log('FAIL: no active apple account in DB');
-    process.exit(1);
-  }
+  if (!acct) throw new Error('no active apple account to harvest with');
 
   const { proxyUrl } = await resolveAccountSession(acct);
-  const persona = stableProfilePersona();
   const s = await WSession.start({
     label: SESSION_LABEL,
-    browser: process.env.BROWSER || 'chromium',
     proxy:
       proxyUrl ??
       statedProxy('the Apple Ads report harvest, whose account names no proxy,'),
-    persona,
+    persona: stableProfilePersona(USER_DATA_DIR),
     userDataDir: USER_DATA_DIR,
     record: false,
     pageDiagnostics: false,
   });
 
-  let exitCode = 0;
   let completed = false;
   try {
     const network = installNetworkCapture(s.page);
-    if (!(await gotoAndWait(s.page, REPORT_URL))) {
-      throw new Error(`navigation to ${REPORT_URL} left the page blank`);
-    }
+    await gotoAndWait(s.page, REPORT_URL);
     console.log(
-      `[apple-ads-report-harvest] before login check url=${s.page.url?.() || ''}`,
+      `[apple-ads-report-harvest] before login check url=${s.page.url()}`,
     );
     const loggedIn = await requireAuthenticatedSession(s);
     console.log(
-      `[apple-ads-report-harvest] login check loggedIn=${loggedIn} url=${s.page.url?.() || ''}`,
+      `[apple-ads-report-harvest] login check loggedIn=${loggedIn} url=${s.page.url()}`,
     );
-    if (!loggedIn) {
-      exitCode = 2;
-      return;
-    }
-    await s
-      .saveCookies()
-      .catch((e) =>
-        console.log('[apple-ads-report-harvest] cookie save err:', e.message),
+    if (!loggedIn)
+      throw new Error(
+        `APPLE_ADS_SIGN_IN_REQUIRED: the profile is not signed in to Apple Ads at ${s.page.url()}; run an explicitly authorized apple_login first`,
       );
-    if (!/\/report/i.test(s.page.url?.() || '')) {
+    // The signed-in session is kept for the next run; a session that cannot
+    // be saved is said now, not met as an expired login next time.
+    await s.saveCookies();
+    if (!/\/report/i.test(s.page.url())) {
       await gotoAndWait(s.page, REPORT_URL);
     } else {
       await pageSettled(s.page);
     }
-    if (!(await ensureReportPage(s.page))) {
-      const currentUrl = s.page.url?.() || '';
-      console.log(`FAIL: Apple Ads report page not loaded (${currentUrl})`);
-      exitCode = 4;
-      return;
-    }
+    if (!(await ensureReportPage(s.page)))
+      throw new Error(
+        `APPLE_ADS_REPORT_PAGE_UNLOADED: the Apple Ads report page did not load (${s.page.url()})`,
+      );
     // Apple signs in on its own identity host, so the reports route on the
     // Apple Ads host, which ensureReportPage just confirmed, is a signed-in
     // page.
     const protectedUrl = new URL(s.page.url());
     const authenticatedProtectedPage =
-      protectedUrl.hostname === 'app-ads.apple.com' &&
+      protectedUrl.hostname === new URL(REPORT_URL).hostname &&
       /\/report(?:\/|$)/i.test(protectedUrl.pathname);
-    if (!authenticatedProtectedPage) {
-      console.log(
-        'FAIL_CLOSED: authenticated Apple Ads report page was not confirmed; run an explicitly authorized apple_login before retrying.',
+    if (!authenticatedProtectedPage)
+      throw new Error(
+        `APPLE_ADS_REPORT_PAGE_UNCONFIRMED: ${s.page.url()} is not the signed-in Apple Ads report page; run an explicitly authorized apple_login before retrying`,
       );
-      exitCode = 4;
-      return;
-    }
 
     const snapshots = [];
     const current = await collectPageState(s.page);
@@ -120,10 +107,7 @@ async function main() {
       label: 'initial',
       click: null,
       page: current,
-      summary: summarizeReport(
-        current,
-        sanitizeResponses(s.capturedResponses || []),
-      ),
+      summary: summarizeReport(current, sanitizeResponses(s.capturedResponses)),
     });
 
     for (const preset of DATE_PRESETS) {
@@ -134,10 +118,7 @@ async function main() {
         label: preset,
         click,
         page,
-        summary: summarizeReport(
-          page,
-          sanitizeResponses(s.capturedResponses || []),
-        ),
+        summary: summarizeReport(page, sanitizeResponses(s.capturedResponses)),
       });
     }
 
@@ -149,12 +130,13 @@ async function main() {
       EXACT_RANGES,
     );
     const exactSummary = summarizeExactReports(exactReports);
-    const responses = sanitizeResponses(s.capturedResponses || []);
+    const responses = sanitizeResponses(s.capturedResponses);
     const observedRequests = network.requests.slice();
     const observedResponses = network.responses.slice();
+    const [initialSnapshot, ...presetSnapshots] = snapshots;
     const summary = {
-      initial: snapshots[0].summary,
-      presets: snapshots.slice(1).map((snapshot) => ({
+      initial: initialSnapshot.summary,
+      presets: presetSnapshots.map((snapshot) => ({
         label: snapshot.label,
         click: snapshot.click,
         summary: snapshot.summary,
@@ -171,37 +153,32 @@ async function main() {
       responses,
       observedRequests,
       observedResponses,
+      captureFailures: network.failures,
       exactReports,
       summary,
     };
-    const outPath = join(DIAG_DIR, 'report_harvest.json');
-    writeFileSync(outPath, JSON.stringify(output, null, 2));
-    await s
-      .saveCookies()
-      .catch((e) =>
-        console.log('[apple-ads-report-harvest] cookie save err:', e.message),
-      );
-    console.log(`[apple-ads-report-harvest] json=${outPath}`);
-    console.log(JSON.stringify(summary, null, 2));
+    writeFileSync(OUT_PATH, JSON.stringify(output, null, '  '));
+    await s.saveCookies();
+    console.log(`[apple-ads-report-harvest] json=${OUT_PATH}`);
+    console.log(JSON.stringify(summary, null, '  '));
     completed = true;
   } finally {
-    process.exitCode = exitCode;
     await keepOpen(s, completed);
   }
 }
 
-main().catch((error) => {
-  const message = String(error);
-  console.error('FAIL:', message);
+try {
+  await harvest();
+} catch (error) {
+  console.error('FAIL:', String(error));
   try {
-    const outPath = join(DIAG_DIR, 'report_harvest.json');
-    writeFileSync(
-      outPath,
-      JSON.stringify({ ok: false, error: message }),
-    );
-    console.error(`[apple-ads-report-harvest] json=${outPath}`);
+    writeFileSync(OUT_PATH, JSON.stringify({ ok: false, error: String(error) }));
+    console.error(`[apple-ads-report-harvest] json=${OUT_PATH}`);
   } catch (writeError) {
-    console.error('[apple-ads-report-harvest] failed to write report:', writeError);
+    console.error(
+      '[apple-ads-report-harvest] failed to write report:',
+      writeError,
+    );
   }
-  process.exit(1);
-});
+  throw error;
+}
