@@ -2,11 +2,16 @@
 // NCBR_CORRECTION_PLAN_FILE selects JSON; NCBR_CORRECTION_MODE states apply, verify or inspect.
 // The run's recordings directory retains complete before/expected/actual values and screenshots.
 // Never edits reviewer recommendations, uploads attachments or submits an application.
+// The run attaches to the signed-in browser over DevTools and detaches at the
+// end without closing it; a failure is recorded in the report and ends the
+// run through its exit status.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import { statedText } from '../_shared/inputs/stated.mjs';
 import { loadPlan } from './correction/plan.mjs';
 import {
   fillPrepared,
@@ -18,7 +23,6 @@ import {
 } from './correction/fields.mjs';
 import {
   closeDrawer,
-  gotoSafe,
   identity,
   openRow,
   openScope,
@@ -27,10 +31,7 @@ import {
 
 const { plan, mode, projectUrl, planSha256 } = loadPlan();
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
-const runId =
-  process.env.WELES_RUN_ID ||
-  `ncbr-correction-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-process.env.WELES_RUN_ID = runId;
+const runId = statedText(['WELES_RUN_ID'], 'the run whose recordings keep the correction report');
 const reportDir = runRecordingsDir(`ncbr_${mode}_correction`);
 mkdirSync(reportDir, { recursive: true });
 const reportPath = join(reportDir, 'correction-report.json');
@@ -42,124 +43,110 @@ const report = {
   projectId: plan.project.id,
   applicationNumber: plan.project.applicationNumber,
   planSha256,
-  sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], {
-    encoding: 'utf8',
-  }).trim(),
+  sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   startedAt: new Date().toISOString(),
   submissionClicked: false,
   results,
 };
 const retain = (status, error) => {
-  Object.assign(report, {
-    status,
-    error: error ? String(error.message || error) : null,
-  });
-  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  Object.assign(report, { status, error: error ? error.message : null });
+  writeFileSync(reportPath, `${JSON.stringify(report, null, ' ')}\n`);
 };
 const scopeFilter = process.env.SECTION;
 const selected = (scope) => !scopeFilter || scope.label === scopeFilter;
+
+/** The open page of the declared project in the signed-in browser. */
+function projectPage(browser) {
+  const [context] = browser.contexts();
+  const page = context?.pages().find((candidate) => candidate.url().startsWith(projectUrl));
+  if (!page) throw new Error('No existing browser page belongs to the declared project');
+  return page;
+}
+
+async function correctSection(page, section) {
+  await openScope(page, section, projectUrl);
+  const result = { scope: section.label, beforeFields: await snapshotFields(page) };
+  results.push(result);
+  if (mode === 'inspect') {
+    retain('inspecting');
+    return;
+  }
+  result.fields = await prepareFields(page, section.fields, plan, section.label);
+  retain('prepared');
+  // LSI2 drops text typed into a second field before the first is saved; save every changed field separately.
+  const changed = mode === 'apply' ? result.fields.filter((field) => field.before !== field.expected) : [];
+  for (const [index, field] of changed.entries()) {
+    if (index) await openScope(page, section, projectUrl);
+    await fillPrepared(page, [field]);
+    await save(page, false, [field], section.saveButton);
+  }
+  await openScope(page, section, projectUrl);
+  await verifyPrepared(page, result.fields);
+  result.afterFields = await snapshotFields(page);
+  result.screenshot = join(reportDir, `section-${section.label.replace(/[^a-z0-9.-]/gi, '_')}.png`);
+  await page.screenshot({ path: result.screenshot, fullPage: true });
+  retain('verified');
+}
+
+async function correctRow(page, collection, row) {
+  await openRow(page, collection, row, projectUrl);
+  const result = { scope: collection.label, rowNeedle: row.rowNeedle, beforeFields: await snapshotFields(page) };
+  results.push(result);
+  if (mode === 'inspect') {
+    await closeDrawer(page);
+    retain('inspecting');
+    return;
+  }
+  result.fields = await prepareFields(page, await nestedFields(page, row), plan, collection.label);
+  retain('prepared');
+  const choices = result.fields.filter((field) => field.control && field.before !== field.expected);
+  const texts = result.fields.filter((field) => !field.control);
+  if (mode === 'apply' && choices.length) {
+    await fillPrepared(page, choices);
+    await save(page, true, choices);
+    await openRow(page, collection, row, projectUrl);
+    for (const field of texts) field.before = await (await oneField(page, field.name)).inputValue();
+  }
+  const changedTexts = mode === 'apply' ? texts.filter((field) => field.before !== field.expected) : [];
+  if (!changedTexts.length) await closeDrawer(page);
+  for (const [index, field] of changedTexts.entries()) {
+    if (index) await openRow(page, collection, row, projectUrl);
+    await fillPrepared(page, [field]);
+    await save(page, true, [field]);
+  }
+  await openRow(page, collection, row, projectUrl);
+  await verifyPrepared(page, result.fields);
+  result.afterFields = await snapshotFields(page);
+  result.screenshot = join(reportDir, `row-${results.length}.png`);
+  await page.screenshot({ path: result.screenshot, fullPage: true });
+  await closeDrawer(page);
+  retain('verified');
+}
+
+async function recordFailure(page, error) {
+  if (page) {
+    report.failedUrl = page.url();
+    report.failureScreenshot = join(reportDir, 'failure.png');
+    try {
+      await page.screenshot({ path: report.failureScreenshot, fullPage: true });
+    } catch (captureError) {
+      report.failureScreenshotError = captureError.message;
+    }
+  }
+  retain('failed', error);
+  console.error(JSON.stringify({ status: report.status, error: report.error, reportPath }, null, ' '));
+}
+
+const browser = await chromium.connectOverCDP(endpoint);
 let page;
 try {
-  const browser = await chromium.connectOverCDP(endpoint);
-  page = browser
-    .contexts()[0]
-    ?.pages()
-    .find((candidate) => candidate.url().startsWith(projectUrl));
-  if (!page)
-    throw new Error('No existing browser page belongs to the declared project');
+  page = projectPage(browser);
   report.identity = await identity(page, projectUrl, plan.project);
   retain('inspecting');
-  for (const section of plan.sections.filter(selected)) {
-    await openScope(page, section, projectUrl);
-    const result = {
-      scope: section.label,
-      beforeFields: await snapshotFields(page),
-    };
-    results.push(result);
-    if (mode === 'inspect') {
-      retain('inspecting');
-      continue;
-    }
-    result.fields = await prepareFields(
-      page,
-      section.fields,
-      plan,
-      section.label,
-    );
-    retain('prepared');
-    // LSI2 drops text typed into a second field before the first is saved; save every changed field separately.
-    const changed =
-      mode === 'apply'
-        ? result.fields.filter((field) => field.before !== field.expected)
-        : [];
-    for (const [index, field] of changed.entries()) {
-      if (index) await openScope(page, section, projectUrl);
-      await fillPrepared(page, [field]);
-      await save(page, false, [field], section.saveButton || null);
-    }
-    await openScope(page, section, projectUrl);
-    await verifyPrepared(page, result.fields);
-    result.afterFields = await snapshotFields(page);
-    result.screenshot = join(
-      reportDir,
-      `section-${section.label.replace(/[^a-z0-9.-]/gi, '_')}.png`,
-    );
-    await page.screenshot({ path: result.screenshot, fullPage: true });
-    retain('verified');
-  }
-  for (const collection of plan.collections.filter(selected)) {
-    for (const row of collection.rows) {
-      await openRow(page, collection, row, projectUrl);
-      const result = {
-        scope: collection.label,
-        rowNeedle: row.rowNeedle,
-        beforeFields: await snapshotFields(page),
-      };
-      results.push(result);
-      if (mode === 'inspect') {
-        await closeDrawer(page);
-        retain('inspecting');
-        continue;
-      }
-      result.fields = await prepareFields(
-        page,
-        await nestedFields(page, row),
-        plan,
-        collection.label,
-      );
-      retain('prepared');
-      const choices = result.fields.filter(
-        (field) => field.control && field.before !== field.expected,
-      );
-      const texts = result.fields.filter((field) => !field.control);
-      if (mode === 'apply' && choices.length) {
-        await fillPrepared(page, choices);
-        await save(page, true, choices);
-        await openRow(page, collection, row, projectUrl);
-        for (const field of texts)
-          field.before = await (await oneField(page, field.name)).inputValue();
-      }
-      const changedTexts =
-        mode === 'apply'
-          ? texts.filter((field) => field.before !== field.expected)
-          : [];
-      if (!changedTexts.length) await closeDrawer(page);
-      for (const [index, field] of changedTexts.entries()) {
-        if (index) await openRow(page, collection, row, projectUrl);
-        await fillPrepared(page, [field]);
-        await save(page, true, [field]);
-      }
-      await openRow(page, collection, row, projectUrl);
-      await verifyPrepared(page, result.fields);
-      result.afterFields = await snapshotFields(page);
-      result.screenshot = join(reportDir, `row-${results.length}.png`);
-      await page.screenshot({ path: result.screenshot, fullPage: true });
-      await closeDrawer(page);
-      retain('verified');
-    }
-  }
-  if (!results.length)
-    throw new Error('The requested scope selected no sections or rows');
+  for (const section of plan.sections.filter(selected)) await correctSection(page, section);
+  for (const collection of plan.collections.filter(selected))
+    for (const row of collection.rows) await correctRow(page, collection, row);
+  if (!results.length) throw new Error('The requested scope selected no sections or rows');
   report.finalIdentity = await identity(page, projectUrl, plan.project);
   report.finishedAt = new Date().toISOString();
   retain('complete');
@@ -172,37 +159,17 @@ try {
         results: results.map((result) => ({
           scope: result.scope,
           rowNeedle: result.rowNeedle,
-          fields: result.fields?.map(({ name, persisted, sha256 }) => ({
-            name,
-            persisted,
-            sha256,
-          })),
+          fields: result.fields?.map(({ name, persisted, sha256 }) => ({ name, persisted, sha256 })),
         })),
       },
       null,
-      2,
+      ' ',
     ),
   );
 } catch (error) {
-  if (page) {
-    report.failedUrl = page.url();
-    report.failureScreenshot = join(reportDir, 'failure.png');
-    try {
-      await page.screenshot({ path: report.failureScreenshot, fullPage: true });
-    } catch (captureError) {
-      report.failureScreenshotError = String(
-        captureError.message || captureError,
-      );
-    }
-  }
-  retain('failed', error);
-  console.error(
-    JSON.stringify(
-      { status: report.status, error: report.error, reportPath },
-      null,
-      2,
-    ),
-  );
-  process.exitCode = 1;
+  await recordFailure(page, error);
+  process.exitCode = exitStatusFor(error);
+} finally {
+  // Detaches from the signed-in browser; its pages stay open.
+  await browser.close();
 }
-process.exit(process.exitCode || 0);
