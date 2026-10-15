@@ -61,22 +61,49 @@ async function emailPassword(session, login) {
   await session.press('Enter');
 }
 
+// The provider hosts whose device or consent pages this walk answers.
+const PROVIDER_HOSTS = new Set([
+  'auth.openai.com',
+  'chatgpt.com',
+  'www.kimi.com',
+  'kimi.com',
+  'auth.kimi.com',
+]);
+
+/**
+ * Walk the device approval across every page of the session until the
+ * provider ends it: consent granted, a success page, or a refusal (including
+ * an expired device code) that it states on the page. Each step is answered
+ * once per page address; a step still shown at the same address after its
+ * answer settled is refused, and so is a settled pass over all pages that
+ * shows no step this walk answers.
+ */
 async function approveDevice(session, transaction, login, mark) {
   const context = session.page.context();
   let codeSubmitted = false;
-  const googleDispatches = new WeakMap();
-  // The provider ends this walk: consent granted, a success page, or a refusal
-  // (including an expired device code) that it states on the page.
+  const answered = new Set();
+  const answerOnce = (step, address) => {
+    if (answered.has(`${step} ${address}`))
+      throw new AuthenticationFailure(
+        'step_repeated',
+        step,
+        `The ${step} step is still shown at ${address} after it was answered`,
+      );
+    answered.add(`${step} ${address}`);
+  };
   for (;;) {
+    await pageSettled(session.page);
+    let acted = false;
     for (const page of context.pages()) {
       if (page.isClosed()) continue;
-      const url = new URL(page.url());
-      if (onGoogleSignIn(page.url())) {
+      const address = page.url();
+      if (onGoogleSignIn(address)) {
         const emailField = page
           .locator('input[name="identifier"],input[type="email"]')
           .filter({ visible: true })
           .first();
         if (await emailField.isVisible()) {
+          answerOnce('google_credentials', address);
           await enterGoogleCredentials({
             page,
             login,
@@ -85,9 +112,11 @@ async function approveDevice(session, transaction, login, mark) {
             humanClickLocator,
             humanType,
           });
+          acted = true;
         } else {
           const view = await observeGisPage(page, login.email);
           if (view?.host === GOOGLE_ACCOUNTS_HOST && view.accountRow) {
+            answerOnce('google_account_chooser', address);
             const hit = await clickGisTarget(page, 'account_row');
             if (!hit.clicked) {
               throw new AuthenticationFailure(
@@ -96,20 +125,12 @@ async function approveDevice(session, transaction, login, mark) {
                 `The requested Google account row was not clicked: ${hit.reason}`,
               );
             }
+            acted = true;
           }
         }
         continue;
       }
-      if (
-        ![
-          'auth.openai.com',
-          'chatgpt.com',
-          'www.kimi.com',
-          'kimi.com',
-          'auth.kimi.com',
-        ].includes(url.hostname)
-      )
-        continue;
+      if (!PROVIDER_HOSTS.has(new URL(address).hostname)) continue;
       const codeField = page
         .locator(
           'input[name="user_code"],input[name="usercode"],input[autocomplete="one-time-code"]',
@@ -122,14 +143,15 @@ async function approveDevice(session, transaction, login, mark) {
         codeSubmitted = true;
         await page.keyboard.press('Enter');
         await pageSettled(page);
+        acted = true;
       }
       if (
-        googleDispatches.get(page) !== page.url() &&
+        !answered.has(`google_dispatch ${page.url()}`) &&
         (await pageShows(page, 'Does the page offer to continue with Google?'))
       ) {
-        const dispatchedFrom = page.url();
+        answerOnce('google_dispatch', page.url());
         await clickDescribed(page, 'the button to continue with Google');
-        googleDispatches.set(page, dispatchedFrom);
+        acted = true;
         continue;
       }
       if (
@@ -161,7 +183,16 @@ async function approveDevice(session, transaction, login, mark) {
         );
       }
     }
-    await pageSettled(session.page);
+    if (!acted)
+      throw new AuthenticationFailure(
+        'provider_state_unanswered',
+        'provider_consent',
+        `No page shows a step this walk answers: ${context
+          .pages()
+          .filter((page) => !page.isClosed())
+          .map((page) => page.url())
+          .join(', ')}`,
+      );
   }
 }
 
