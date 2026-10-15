@@ -1,104 +1,60 @@
-// Linear login probe via Google Workspace SSO (Wisent org uses Workspace).
+// Linear sign-in through Google: linear.app/login → the Google button →
+// Google's sign-in steps (`_shared/keeper/google_sign_in.mjs`, driven in
+// process) → back on Linear. The login is the Linear dashboard's scoped
+// Skarbiec grant.
 //
-// Resolves the exact Linear Workspace login through its scoped Skarbiec grant.
+// Signed in is read from where Linear sends the browser: a signed-in session
+// is taken off the login route to its workspace, a signed-out one stays on
+// it. Every refusal is thrown with the address and the Google steps seen.
 //
-// Drives linear.app/login → "Continue with Google" → Google OAuth →
-// Workspace landing. Exits 0 on a Linear-workspace URL, 1 otherwise.
+// Env: PROXY_URL (required: the proxy the browser goes through, or 'direct').
 //
 // Run: node src/trajectories/linear/login.mjs
 import { readScopedLogin } from '../../_shared/scoped-secrets.mjs';
 import { WSession } from '../../../dist/session/wsession.js';
-import {
-  humanIdlePause,
-  humanClickLocator,
-} from '../../../dist/human/mouse.js';
-import { humanFill } from '../../../dist/human/keyboard.js';
+import { statedProxy } from '../_shared/inputs/stated.mjs';
+import { signInThroughKeeper } from '../_shared/keeper/google_sign_in.mjs';
+import { sessionAct } from '../_shared/keeper/session_act.mjs';
 
-const LOGIN_URL = 'https://linear.app/login';
-const SUCCESS_URL_RE = /linear\.app\/[^/]+\/(team|my|issues|inbox|settings)/;
-const DISPLAY_NAME = 'Linear';
+const LABEL = 'linear_login';
+const LOGIN_URL = new URL('https://linear.app/login');
+const login = readScopedLogin('linearDashboard');
+console.log(`[linear-login] credentials from skarbiec: ${login.email}`);
 
-async function resolveCreds() {
-  return { ...readScopedLogin('linearDashboard'), source: 'skarbiec' };
+/** Whether the browser is on Linear, off its login route. */
+function signedIn(address) {
+  const url = new URL(address);
+  return (
+    url.hostname === LOGIN_URL.hostname &&
+    !url.pathname.startsWith(LOGIN_URL.pathname)
+  );
 }
 
-const creds = await resolveCreds();
-if (!creds) {
-  throw new Error('scoped Linear credentials are unavailable');
-}
-console.log(`[linear-login] credentials from ${creds.source}: ${creds.email}`);
-
-const s = await WSession.start({ label: 'linear_login', browser: 'chromium' });
+const s = await WSession.start({
+  label: LABEL,
+  browser: 'chromium',
+  proxy: statedProxy('the Linear sign-in'),
+});
 try {
-  await s.goto(LOGIN_URL);
-  await humanIdlePause('deliberate');
-
-  // If already logged in, Linear redirects /login → workspace home.
-  if (SUCCESS_URL_RE.test(s.page.url())) {
-    console.log(`PASS: already logged in, landed on ${s.page.url()}`);
+  const act = sessionAct(s, LABEL);
+  await act({ action: 'nav', url: LOGIN_URL.href });
+  await act({ action: 'settle' });
+  if (signedIn(s.page.url())) {
+    console.log(`PASS: already signed in, landed on ${s.page.url()}`);
   } else {
-    const googleBtn = s.page
-      .getByRole('button', { name: /continue with google/i })
-      .or(s.page.getByRole('link', { name: /continue with google/i }));
-    if (
-      !(await googleBtn
-        .first()
-        .isVisible()
-        .catch(() => false))
-    )
-      throw new Error('Continue with Google button not visible');
-    await humanClickLocator(s.page, googleBtn.first());
-    await humanIdlePause('long');
-
-    // Google email step. The popup may inherit the prior workspace SSO cookie
-    // and skip straight to consent — handle both.
-    const emailInput = s.page.locator('input[type="email"]').first();
-    if (await emailInput.isVisible().catch(() => false)) {
-      await humanFill(s.page, emailInput, creds.email);
-      await s.page.keyboard.press('Enter');
-      await humanIdlePause('long');
-    }
-
-    // Password step (Workspace SSO; passkey path mirrors slack/create_app.mjs).
-    async function fillPasswordWhenAvailable() {
-      const pwd = s.page.locator('input[type="password"]');
-      if ((await pwd.count()) === 0) return false;
-      await humanFill(s.page, pwd, creds.password);
-      await s.page.keyboard.press('Enter');
-      await humanIdlePause('long');
-      return true;
-    }
-    if (!(await fillPasswordWhenAvailable())) {
-      const tryOther = s.page
-        .getByRole('button', { name: /try another way/i })
-        .or(s.page.getByRole('link', { name: /try another way/i }));
-      if ((await tryOther.count()) > 0) {
-        await humanClickLocator(s.page, tryOther.first());
-        await humanIdlePause('long');
-        const enterPwd = s.page.getByText(/enter your password/i).first();
-        if ((await enterPwd.count()) > 0) {
-          await humanClickLocator(s.page, enterPwd);
-          await humanIdlePause('long');
-          await fillPasswordWhenAvailable();
-        }
-      }
-    }
-
-    const continueBtn = s.page.getByRole('button', {
-      name: /^\s*continue\s*$/i,
+    await act({
+      action: 'click_described',
+      description: 'the button that continues to Linear with Google',
     });
-    if ((await continueBtn.count()) > 0) {
-      await humanClickLocator(s.page, continueBtn.first());
-      await humanIdlePause('long');
-    }
-
-    // The sign-in is over when the page reaches a Linear workspace URL.
-    await s.page.waitForURL((url) => SUCCESS_URL_RE.test(String(url)));
+    await act({ action: 'settle' });
+    const steps = await signInThroughKeeper(act, login);
+    await act({ action: 'settle' });
+    if (!signedIn(s.page.url()))
+      throw new Error(
+        `LINEAR_NOT_SIGNED_IN: Google let the browser go but Linear left it at ${s.page.url()}; Google steps: ${JSON.stringify(steps)}`,
+      );
     console.log(`PASS: landed on ${s.page.url()}`);
   }
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
 } finally {
   await s.close();
 }
