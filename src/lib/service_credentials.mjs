@@ -1,23 +1,25 @@
 // Weles service credential administration through Skarbiec.
+//
+// A credential is a Skarbiec login item whose context Weles owns. Every value
+// is read as the item states it: a field the item does not carry is absent
+// from the row, never filled in, and Skarbiec is run against the vault its own
+// configuration names.
 import { execFileSync } from 'node:child_process';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { activeSkarbiecBinary } from '../_shared/skarbiec-runtime.mjs';
 
 let resolvedSkarbiecBinary;
-const SKARBIEC_VAULT_FILE =
-  process.env.SKARBIEC_VAULT_FILE ??
-  join(homedir(), '.stado', 'skarbiec.vault.json');
+
+/** The status of a command that did not do what it was asked. */
+const EXIT_FAILURE = 1; // https://pubs.opengroup.org/onlinepubs/9799919799/functions/exit.html EXIT_FAILURE
+
+/** The indentation the command's JSON is printed with, for a person to read. */
+const PRINTED_INDENT = '  ';
 
 function skarbiec(args, input) {
   return execFileSync(
     (resolvedSkarbiecBinary ??= activeSkarbiecBinary()),
     args,
-    {
-      input,
-      encoding: 'utf8',
-      env: { ...process.env, SKARBIEC_VAULT_FILE },
-    },
+    { input, encoding: 'utf8', env: process.env },
   );
 }
 
@@ -25,11 +27,28 @@ function readItem(id) {
   return JSON.parse(skarbiec(['get', String(id)]));
 }
 
-function allCredentialItems() {
+/** The name Skarbiec lists an item under, or a refusal naming the row. */
+function listedName(row) {
+  const name = typeof row.name === 'string' && row.name ? row.name : row.id;
+  if (typeof name !== 'string' || !name) {
+    throw new Error(
+      `Skarbiec listed an item with neither a name nor an id: ${JSON.stringify(row)}`,
+    );
+  }
+  return name;
+}
+
+function listedNames() {
   return JSON.parse(skarbiec(['list']))
     .filter((row) => !row.deleted)
-    .map((row) => String(row.name ?? row.id ?? ''))
-    .filter(Boolean)
+    .map(listedName);
+}
+
+/** The record kinds Weles writes into a credential item's context. */
+const CREDENTIAL_RECORD_KINDS = new Set(['service-credential', 'service-login']);
+
+function allCredentialItems() {
+  return listedNames()
     .map((id) => {
       // An item that cannot be read is named; returning null here broke the
       // destructuring filter below with a TypeError that named nothing.
@@ -41,24 +60,38 @@ function allCredentialItems() {
         );
       }
     })
-    .filter(({ document } = {}) => {
-      const kind = String(document?.context?.record_kind ?? '');
-      return kind === 'service-credential' || kind === 'service-login';
-    });
+    .filter(({ document }) =>
+      CREDENTIAL_RECORD_KINDS.has(document?.context?.record_kind),
+    );
 }
 
+/**
+ * The row a credential item reads as. The login identifier is the login
+ * item's username field; what the item does not carry is left out.
+ */
 function rowFromItem(id, document) {
-  const fields = document.fields ?? {};
-  const context = document.context ?? {};
+  const fields = document.fields;
+  const context = document.context;
+  if (
+    !fields ||
+    typeof fields !== 'object' ||
+    !context ||
+    typeof context !== 'object'
+  ) {
+    throw new Error(
+      `Skarbiec credential item ${id} carries no fields or no context object`,
+    );
+  }
   return {
     id,
-    category: context.category ?? '',
-    display_name: context.display_name ?? context.service ?? id,
-    login_method: context.login_method ?? 'email_password',
-    login_email: fields.username ?? fields.email ?? null,
-    login_password: fields.password ?? null,
-    metadata: context.metadata ?? {},
-    updated_at: context.updated_at ?? null,
+    category: context.category,
+    display_name:
+      typeof context.display_name === 'string' ? context.display_name : id,
+    login_method: context.login_method,
+    login_email: fields.username,
+    login_password: fields.password,
+    metadata: context.metadata,
+    updated_at: context.updated_at,
   };
 }
 
@@ -78,11 +111,14 @@ function redacted(row) {
 }
 
 export async function listCredentialSummaries({ search } = {}) {
-  const terms = String(search ?? '')
-    .toLowerCase()
-    .split(',')
-    .map((term) => term.trim())
-    .filter(Boolean);
+  const terms =
+    typeof search === 'string'
+      ? search
+          .toLowerCase()
+          .split(',')
+          .map((term) => term.trim())
+          .filter(Boolean)
+      : [];
   return allCredentialItems()
     .map(({ id, document }) => rowFromItem(id, document))
     .filter(
@@ -98,17 +134,14 @@ export async function listCredentialSummaries({ search } = {}) {
 // read (vault locked, Skarbiec unreachable) throws its cause instead of
 // reading as a credential that does not exist.
 export async function getCredential(id) {
-  const listed = JSON.parse(skarbiec(['list'])).some(
-    (item) => !item.deleted && String(item.name ?? item.id) === String(id),
-  );
-  if (!listed) return null;
+  if (!listedNames().includes(String(id))) return null;
   return rowFromItem(String(id), readItem(id));
 }
 
 export async function patchCredential(id, patch) {
   const document = readItem(id);
-  document.fields = { ...(document.fields ?? {}) };
-  document.context = { ...(document.context ?? {}) };
+  document.fields = { ...document.fields };
+  document.context = { ...document.context };
   if (Object.hasOwn(patch, 'login_email'))
     document.fields.username = patch.login_email;
   if (Object.hasOwn(patch, 'login_password'))
@@ -121,50 +154,50 @@ export async function patchCredential(id, patch) {
   return [rowFromItem(String(id), document)];
 }
 
+/** The login fields a row states, and only those. */
+function statedFields(row) {
+  const fields = {};
+  if (typeof row.login_email === 'string') fields.username = row.login_email;
+  if (typeof row.login_password === 'string')
+    fields.password = row.login_password;
+  return fields;
+}
+
 export async function upsertCredential(row) {
-  const id = String(row.id ?? '');
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,190}$/.test(id))
+  if (typeof row.id !== 'string' || !/^[a-zA-Z\d][\w:.-]*$/.test(row.id))
     throw new Error('invalid Skarbiec credential item id');
+  if (typeof row.login_method !== 'string' || !row.login_method)
+    throw new Error(
+      `credential ${row.id} states no login_method; say how the account signs in`,
+    );
+  const id = row.id;
   // Only an item Skarbiec does not list is created. A listed item that cannot
   // be read (vault locked, Skarbiec unreachable) fails here instead of a fresh
   // item being written over its fields and context.
-  const listed = JSON.parse(skarbiec(['list'])).some(
-    (item) => !item.deleted && String(item.name ?? item.id) === id,
-  );
-  let document;
-  if (listed) {
-    document = readItem(id);
-  } else {
-    const fields = {
-      username: String(row.login_email ?? ''),
-      password: String(row.login_password ?? ''),
-    };
+  if (!listedNames().includes(id)) {
     skarbiec(
       ['set-json', id, '--type', 'login'],
       JSON.stringify({
         schema: 'skarbiec.item.v2',
         kind: 'login',
-        fields,
+        fields: statedFields(row),
         context: {},
       }),
     );
-    document = readItem(id);
   }
-  document.fields = {
-    ...(document.fields ?? {}),
-    username: String(row.login_email ?? document.fields?.username ?? ''),
-    password: String(row.login_password ?? document.fields?.password ?? ''),
-  };
-  document.context = {
-    ...(document.context ?? {}),
+  const document = readItem(id);
+  document.fields = { ...document.fields, ...statedFields(row) };
+  const context = {
+    ...document.context,
     owner: 'weles',
     record_kind: 'service-credential',
-    category: row.category ?? '',
-    display_name: row.display_name ?? id,
-    login_method: row.login_method ?? 'email_password',
-    metadata: row.metadata ?? {},
+    display_name: typeof row.display_name === 'string' ? row.display_name : id,
+    login_method: row.login_method,
     updated_at: new Date().toISOString(),
   };
+  if (Object.hasOwn(row, 'category')) context.category = row.category;
+  if (Object.hasOwn(row, 'metadata')) context.metadata = row.metadata;
+  document.context = context;
   skarbiec(['set-json', id], JSON.stringify(document));
   return [rowFromItem(id, document)];
 }
@@ -182,52 +215,58 @@ export async function ensureKimiGoogleSso({
   const source = sourceCredentialId
     ? await getCredential(sourceCredentialId)
     : null;
-  email = email || source?.login_email;
-  if (!email) {
+  const address =
+    typeof email === 'string' && email ? email : source?.login_email;
+  if (typeof address !== 'string' || !address) {
     throw new Error(
       'ensure-kimi-google-sso needs the Google account address: pass it, or name a source credential that carries login_email',
     );
   }
-  return upsertCredential({
+  const row = {
     id,
     category: 'ai_cli',
     display_name: 'Kimi',
     login_method: 'google_sso',
-    login_email: email,
-    login_password: source?.login_password || '',
+    login_email: address,
     metadata: {
-      account_identifier: email,
+      account_identifier: address,
       configured_for: 'kimi-code',
-      source_credential_id: source?.id || null,
+      source_credential_id: source ? source.id : null,
       updated_by: 'src/lib/service_credentials.mjs ensure-kimi-google-sso',
       updated_at: new Date().toISOString(),
     },
-  });
+  };
+  if (typeof source?.login_password === 'string')
+    row.login_password = source.login_password;
+  return upsertCredential(row);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const cmd = process.argv[2];
+const [, script, cmd, first, second, third] = process.argv;
+if (import.meta.url === `file://${script}`) {
+  const print = (value) =>
+    console.log(JSON.stringify(value, null, PRINTED_INDENT));
   if (cmd === 'list') {
-    const rows = await listCredentialSummaries({
-      search: process.argv[3] || '',
-    });
-    console.log(JSON.stringify(rows, null, 2));
+    print(await listCredentialSummaries({ search: first }));
   } else if (cmd === 'patch') {
-    const id = process.argv[3];
-    const patch = JSON.parse(process.argv[4] || '{}');
-    const rows = await patchCredential(id, patch);
-    console.log(JSON.stringify(rows.map(redacted), null, 2));
+    if (typeof first !== 'string' || typeof second !== 'string') {
+      console.error(
+        'Usage: node src/lib/service_credentials.mjs patch <id> <json>',
+      );
+      process.exitCode = EXIT_FAILURE;
+    } else {
+      print((await patchCredential(first, JSON.parse(second))).map(redacted));
+    }
   } else if (cmd === 'ensure-kimi-google-sso') {
     const rows = await ensureKimiGoogleSso({
-      id: process.argv[3],
-      sourceCredentialId: process.argv[4],
-      email: process.argv[5],
+      id: first,
+      sourceCredentialId: second,
+      email: third,
     });
-    console.log(JSON.stringify(rows.map(redacted), null, 2));
+    print(rows.map(redacted));
   } else {
     console.error(
       'Usage: node src/lib/service_credentials.mjs list [term,term] | patch <id> <json> | ensure-kimi-google-sso <id> [source_credential_id] [email]',
     );
-    process.exit(1);
+    process.exitCode = EXIT_FAILURE;
   }
 }
