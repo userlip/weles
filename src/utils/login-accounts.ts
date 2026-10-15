@@ -35,6 +35,16 @@ const LISTED_PROVIDER_TAGS: Readonly<Record<string, true>> = {
   kimi: true,
 };
 
+/**
+ * Whether `provider` (as Weles names it, the directory its sign-in
+ * trajectories live in) is one whose Brama subscriptions Weles lists.
+ */
+export function listsSubscriptionsFor(provider: string): boolean {
+  return Object.keys(LISTED_PROVIDER_TAGS).some(
+    (listed) => providerName(listed) === provider,
+  );
+}
+
 /** Resolve an exact subscription from the live vault before any browser starts. */
 export function selectLoginAccount(
   provider: string,
@@ -50,7 +60,8 @@ export function selectLoginAccount(
       providerName(tag(item, 'brama:provider:')) === providerName(provider) &&
       (!wanted || tag(item, 'brama:id:') === wanted),
   );
-  if (subscriptions.length !== 1)
+  const [only, ...others] = subscriptions;
+  if (!only || others.length)
     fail(
       subscriptions.length
         ? 'subscription_identity_ambiguous'
@@ -58,11 +69,11 @@ export function selectLoginAccount(
       `Skarbiec lists ${subscriptions.length} subscriptions for ${provider}${wanted ? ` with id ${wanted}` : ''}; an exact subscription is required`,
       {
         provider,
-        subscription_id: wanted || null,
+        subscription_id: wanted,
         subscription_items: subscriptions.map(itemId),
       },
     );
-  return resolveAccount(subscriptions[0], inventory, loginItem);
+  return resolveAccount(only, inventory, loginItem);
 }
 
 /** How one login item signs in, from its own declaration: its context's
@@ -113,7 +124,16 @@ export function readLoginMaterial(account: LoginAccount): {
   totpSecret?: string;
 } {
   const document = readDocument(account.loginItem);
-  const fields = document.fields ?? {};
+  const { fields } = document;
+  if (!fields)
+    fail(
+      'login_fields_missing',
+      `Skarbiec login ${account.loginItem} holds no fields to sign in with`,
+      {
+        subscription_id: account.subscriptionId,
+        login_item: account.loginItem,
+      },
+    );
   const email = text(fields.username);
   if (!sameAccount(email, account.accountRef))
     fail(

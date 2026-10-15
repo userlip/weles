@@ -14,12 +14,14 @@ export { paramsToEnv } from './params/params-to-env.js';
 
 const analyticsServicePath = 'src/trajectories/_shared/analytics-service.mjs';
 
+/** `<platform>_<verb>`: the platform before the first underscore, the verb after it. */
+const ACTION_NAME = /^(?<plat>[^_]+)_(?<verb>.+)$/;
+
 export function resolveTrajectory(action: string): string | null {
-  const firstUnderscore = action.indexOf('_');
-  if (firstUnderscore < 0) return null;
+  const named = ACTION_NAME.exec(action);
+  if (!named) return null;
   if (ANALYTICS_SERVICE_ACTIONS.has(action)) return analyticsServicePath;
-  const plat = action.slice(0, firstUnderscore);
-  const verb = action.slice(firstUnderscore + 1);
+  const { plat, verb } = named.groups as { plat: string; verb: string };
   // Cross-login: collapse every login_via_<provider> verb onto a single
   // parametric runner. The provider is parsed out in paramsToEnv into PROVIDER.
   if (verb.startsWith('login_via_')) {
@@ -33,4 +35,4 @@ export function resolveTrajectory(action: string): string | null {
 export {
   validateAccountSecurityParams,
   validateAppPasswordParams,
-} from './params-to-env/account-and-task-admission.js';
+} from './params/google-login.js';

@@ -3,102 +3,57 @@
 //
 // This is the front of the translation: the blocks that decide the *target* of
 // a run — the vault login item for a subscription sign-in, the URL/objective of
-// a generic or keeper task, the credential constraints of a Microsoft password
-// run, the Gmail search, the declared engagement or observation, the capture
-// plan, the Semantic Scholar follow-up and the Overleaf project. It is separate
-// because it changes whenever the fleet gains a new way to *name* what a run
-// should act on, while the action families in the sibling modules change when a
-// platform's own verbs change.
+// a generic or keeper task, the credential constraints of a run that stores
+// what it acquires, the Gmail search, the declared engagement or observation,
+// the capture plan, the Semantic Scholar follow-up and the Overleaf project. It
+// is separate because it changes whenever the fleet gains a new way to *name*
+// what a run should act on, while the action families in the sibling modules
+// change when a platform's own verbs change. The Google login readers live in
+// ../params/google-login.ts.
 //
 // Every refusal here is deliberate: a payload naming the wrong account or a
 // malformed capture plan throws before anything is spawned, so the caller gets
 // the exact sentence instead of a browser launched to discover the problem.
 
-import { selectLoginAccount } from '../../utils/login-accounts.js';
-import { itemPlayingRole } from '../../state/skarbiec-records.js';
+import { basename, dirname } from 'node:path';
+import {
+  listsSubscriptionsFor,
+  selectLoginAccount,
+} from '../../utils/login-accounts.js';
 import {
   parseAccessibilityAuditParams,
   parseCaptureParams,
 } from '../params/capture-params.js';
+import {
+  googleLogin,
+  validateAccountSecurityParams,
+  validateAppPasswordParams,
+} from '../params/google-login.js';
 import { applyDeclaredEnv } from '../declared/declarations.js';
 
 /**
- * The Skarbiec login a Google account action works on. An operator asks by
- * role (`login_role`, the item carrying stado:role:<role>); a caller that
- * found the item at run time in a vault listing — Stado's seed enrolment
- * walks every login — passes the id it found (`login_item`). Exactly one of
- * the two. `accepted`, when given, is the whole set of keys the action takes.
+ * The trajectories that store what they acquire in Skarbiec under the run's
+ * own credential constraints.
  */
-function googleLogin(
-  params: Record<string, unknown>,
-  accepted?: string[],
-): string {
-  if (!params || typeof params !== 'object' || Array.isArray(params)) {
-    throw new Error(
-      'login_role or login_item must name the Skarbiec Google login',
-    );
-  }
-  if (accepted && Object.keys(params).some((key) => !accepted.includes(key))) {
-    throw new Error(`this action accepts only ${accepted.join(' or ')}`);
-  }
-  const role = params.login_role;
-  const item = params.login_item;
-  if ((role === undefined) === (item === undefined)) {
-    throw new Error('provide exactly one of login_role or login_item');
-  }
-  if (typeof role === 'string' && role.trim())
-    return itemPlayingRole(role.trim());
-  if (typeof item === 'string' && item.trim()) return item.trim();
-  throw new Error('login_role or login_item must be a nonempty string');
-}
-
-export function validateAccountSecurityParams(
-  params: Record<string, unknown>,
-): string {
-  return googleLogin(params, ['login_role', 'login_item']);
-}
-
-/**
- * An app password ends in Skrzynka, which files the mailbox under one
- * organization; the caller names it, nothing is assumed.
- */
-export function validateAppPasswordParams(params: Record<string, unknown>): {
-  loginItem: string;
-  organization: string;
-  expectedAccount: string;
-} {
-  if (!params || typeof params !== 'object' || Array.isArray(params)) {
-    throw new Error(
-      'app-password params must declare the login, organization and expected_account',
-    );
-  }
-  const { organization, expected_account: expectedAccount, ...login } = params;
-  if (typeof organization !== 'string' || !organization.trim()) {
-    throw new Error(
-      'organization must name the Skrzynka organization the mailbox is declared in',
-    );
-  }
-  if (typeof expectedAccount !== 'string' || !expectedAccount.trim()) {
-    throw new Error(
-      'expected_account must name the Gmail account the mailbox belongs to',
-    );
-  }
-  return {
-    loginItem: googleLogin(login, ['login_role', 'login_item']),
-    organization: organization.trim(),
-    expectedAccount: expectedAccount.trim(),
-  };
-}
+const CREDENTIAL_STORING_RUNS = [
+  '/microsoft/recover/reset_password.mjs',
+  '/microsoft/recover/verify_password.mjs',
+  '/microsoft/recover/adopt_password.mjs',
+  '/microsoft/entra/adopt_password.mjs',
+  '/microsoft/entra/reset_password.mjs',
+  '/microsoft/entra/verify_password.mjs',
+  '/slack/provision_user_token.mjs',
+];
 
 export function applyAccountAndTaskAdmission(
   params: Record<string, unknown>,
   trajPath: string,
   env: Record<string, string>,
 ): void {
-  const subscriptionLogin = trajPath.match(
-    /\/(claude|codex|kimi)\/(login|reauth)\.mjs$/,
-  );
-  if (subscriptionLogin) {
+  // A run in the directory of a provider whose Brama subscriptions Weles
+  // lists signs one of those subscriptions in, so it names the exact one.
+  const provider = basename(dirname(trajPath));
+  if (listsSubscriptionsFor(provider)) {
     const requested = params.login_item;
     const subscriptionId = params.subscription_id;
     if (typeof subscriptionId !== 'string' || !subscriptionId.trim()) {
@@ -110,7 +65,7 @@ export function applyAccountAndTaskAdmission(
       throw new Error('login_item must name an exact Skarbiec login item');
     }
     const account = selectLoginAccount(
-      subscriptionLogin[1],
+      provider,
       requested as string | undefined,
       subscriptionId,
     );
@@ -192,14 +147,7 @@ export function applyAccountAndTaskAdmission(
     if (taskEnv && typeof taskEnv === 'object')
       env.GENERIC_TASK_ENV = JSON.stringify(taskEnv);
   }
-  if (
-    trajPath.endsWith('/microsoft/recover/reset_password.mjs') ||
-    trajPath.endsWith('/microsoft/recover/verify_password.mjs') ||
-    trajPath.endsWith('/microsoft/recover/adopt_password.mjs') ||
-    trajPath.endsWith('/microsoft/entra/adopt_password.mjs') ||
-    trajPath.endsWith('/microsoft/entra/reset_password.mjs') ||
-    trajPath.endsWith('/microsoft/entra/verify_password.mjs')
-  ) {
+  if (CREDENTIAL_STORING_RUNS.some((run) => trajPath.endsWith(run))) {
     const constraints = params.constraints;
     if (constraints && typeof constraints === 'object') {
       env.WELES_CREDENTIAL_CONSTRAINTS = JSON.stringify(constraints);
@@ -220,7 +168,7 @@ export function applyAccountAndTaskAdmission(
       env.GM_CREDENTIAL_SERVICE = credentialService;
     const max = countText(params.max);
     if (max !== undefined) env.GM_MAX = max;
-    if (params.open === false || params.open === 0 || params.open === '0')
+    if (params.open === false || String(params.open) === '0')
       env.GM_OPEN = '0';
     else env.GM_OPEN = '1';
   }

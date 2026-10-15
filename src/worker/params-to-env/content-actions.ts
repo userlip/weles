@@ -108,12 +108,4 @@ export function applyContentActionParams(
     env.SLACK_BOT_APP_NAME = params.bot_app_name;
   if (typeof params.bot_scopes === 'string')
     env.SLACK_BOT_SCOPES = params.bot_scopes;
-  // The user token a provisioning run mints is stored in the Skarbiec item the
-  // run's credential constraints name.
-  if (
-    trajPath.endsWith('/slack/provision_user_token.mjs') &&
-    params.constraints &&
-    typeof params.constraints === 'object'
-  )
-    env.WELES_CREDENTIAL_CONSTRAINTS = JSON.stringify(params.constraints);
 }
