@@ -3,13 +3,17 @@ import { humanType, humanFill } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { detectRedditBanSignals } from '../../../../dist/platforms/reddit/ban_signals.js';
 import { fitsField } from '../../_shared/page/fits.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
 const ACTION = process.env.POST_PROMOTE === '1' ? 'post_promote' : 'post';
-const SUBREDDIT = (process.env.SUBREDDIT || '').replace(/^r\//, '');
-if (!SUBREDDIT) {
-  console.log('FAIL: SUBREDDIT required for reddit submit');
-  process.exit(1);
-}
+// The community the post goes to is the caller's; r/ before it is accepted.
+const SUBREDDIT = statedText(
+  ['SUBREDDIT'],
+  'the subreddit the post is submitted to',
+  'REDDIT_SUBREDDIT_REQUIRED',
+).replace(/^r\//, '');
+if (!SUBREDDIT)
+  throw new Error('SUBREDDIT is "r/" alone: it names no subreddit');
 
 await runAction({
   platform: 'reddit',
@@ -37,7 +41,12 @@ await runAction({
       .locator('textarea[name="text"]')
       .filter({ visible: true })
       .first();
-    if ((await bodyIn.count()) && body) {
+    if (body) {
+      // A body with nowhere to go would post the title alone.
+      if (!(await bodyIn.count()))
+        throw new Error(
+          `r/${SUBREDDIT}'s submit form offers no text field for the post body`,
+        );
       await humanClickLocator(s.page, bodyIn);
       await humanType(s.page, body);
     }
