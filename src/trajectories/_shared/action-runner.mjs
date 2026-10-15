@@ -1,15 +1,19 @@
 /**
  * Shared action runner. Drives browse / organic_comment / promote / post
- * across every platform from a per-platform config.
+ * across every platform from a per-platform config, and any single-target
+ * action (save, like, follow, star...) a config's `act` performs.
  *
  * Config shape:
  *   platform:       string ('twitter' | 'instagram' | ...)
- *   action:         'browse' | 'organic_comment' | 'promote' | 'post' | 'post_promote'
+ *   action:         'browse' | 'organic_comment' | 'promote' | 'post' | 'post_promote',
+ *                   or the name of the config's own `act`
  *   feedUrl:        string | (username) => string — landing URL for this action
  *   scrolls:        number — how many idle scrolls for browse
  *   banDetector:    async (page, responses) => BanSignal
  *   submitComment:  async (s, text) => void — deterministic Playwright path for comment/promote
  *   submitPost:     async (s, text) => void — deterministic Playwright path for post/post_promote
+ *   act:            optional async (s, ctx) => result — the action itself, on the
+ *                   signed-in landing page; it speaks with no character or product
  *   inlineRelogin:  optional async (s, acct) => { ok, reason } — mints fresh cookies on this session
  *
  * Reads character + product context from Skarbiec as needed. Writes
@@ -41,6 +45,7 @@ const HEADLESS =
 
 /** The character and product the action speaks with, refused when missing. */
 function actionContext(cfg, acct) {
+  if (cfg.act) return { character: null, product: null };
   const vaultAccount = findAccount(cfg.platform, acct.username);
   const character =
     cfg.action === 'browse' ? null : accountCharacter(vaultAccount);
@@ -139,7 +144,8 @@ export async function runAction(cfg) {
       targetedMode,
     };
     let resultValue;
-    if (cfg.action === 'browse') resultValue = await handleBrowse(s, cfg);
+    if (cfg.act) resultValue = await cfg.act(s, ctx);
+    else if (cfg.action === 'browse') resultValue = await handleBrowse(s, cfg);
     else if (cfg.action === 'post' || cfg.action === 'post_promote')
       resultValue = await handlePost(s, cfg, ctx);
     else resultValue = await handleComment(s, cfg, ctx);

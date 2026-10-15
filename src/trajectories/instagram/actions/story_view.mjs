@@ -1,112 +1,43 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
+// Watch the stories in the account's Instagram story tray, through the
+// shared action runner: the account's fresh jar, the signed-in gate, the
+// verdict and its record are the runner's.
+//
+// The tray's first entry opens the stories viewer (/stories/<user>/<id>),
+// which plays every story of the tray and closes itself after the last one;
+// the viewer leaving /stories/ is Instagram's own statement that the tray
+// was shown, so no count of pauses decides how many register as views. A
+// feed with no stories in its tray is refused.
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { detectInstagramBanSignals } from '../../../../dist/platforms/instagram/ban_signals.js';
-import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { checkReachable } from '../../_shared/action-runner.mjs';
-import {
-  assertAuthed,
-  AuthProbeError,
-} from '../../_shared/auth/auth-probe.mjs';
-import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { runAction } from '../../_shared/action-runner.mjs';
+import { urlMatching } from '../../_shared/page/settled.mjs';
 
-const acct = await getSocialAccount('instagram');
-if (!acct) {
-  console.log('FAIL: no active instagram account');
-  process.exit(1);
+const STORIES_ROUTE = '/stories/';
+
+/** Whether `address` is inside Instagram's stories viewer. */
+function inStoriesViewer(address) {
+  return new URL(address).pathname.startsWith(STORIES_ROUTE);
 }
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'instagram_story_view',
-  proxy: proxyUrl,
-  persona,
-});
-const _stored = (acct.metadata?.cookies ?? []).filter((c) =>
-  /instagram\.com/.test(c.domain ?? ''),
-);
-// A jar that could not be injected leaves the session signed out; the
-// failure is raised inside the try so it is reported and the session closed.
-let cookieInjectError = null;
-if (_stored.length)
-  await s.ctx
-    .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
-    .catch((e) => {
-      cookieInjectError = e;
-    });
-let ban = null;
-try {
-  if (cookieInjectError)
-    throw new Error(
-      `stored cookies could not be injected: ${cookieInjectError.message}`,
-    );
-  await s.goto('https://www.instagram.com/');
-  checkReachable(s, 'instagram');
-  await humanIdlePause('deliberate');
-  try {
-    await assertAuthed('instagram', s, { label: 'instagram_story_view' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
-    throw probeErr;
-  }
-  // Story tray entries are <li role="menuitem" tabindex="0"> with anchored
-  // story-ring image. Click the first one to enter the stories viewer.
-  // Once inside, /stories/{user}/{id} is the URL and auto-advance plays every
-  // story in the tray; Instagram closes the viewer itself after the last one.
-  const story = s.page
-    .locator(
-      'li[role="menuitem"], button[aria-label^="Story by"], div[role="menuitem"]:has(canvas), a[href^="/stories/"]',
-    )
-    .filter({ visible: true })
-    .first();
-  if (!(await story.count())) throw new Error('no stories in tray');
-  await story.scrollIntoViewIfNeeded().catch(() => {});
-  await humanClickLocator(s.page, story);
-  await s.page.waitForURL(/\/stories\//);
-  // Watched to the end: the viewer leaving /stories/ is Instagram's own
-  // statement that every story of the tray was shown, so no count of pauses
-  // decides how many register as views.
-  await s.page.waitForURL((url) => !/\/stories\//.test(url.pathname), {
-    timeout: 0,
-  });
-  ban = await banSignalOf(detectInstagramBanSignals, s, 'after viewing');
-  console.log(`[ban-signal] ${ban?.signal}  PASS: viewed`);
-} catch (e) {
-  ban =
-    e.banSignal ??
-    (await banSignalOf(detectInstagramBanSignals, s, 'after the failure'));
-  console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
-  process.exitCode = 1;
-} finally {
-  if (ban) {
-    try {
-      const dir = runRecordingsDir('instagram_story_view');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'ban_signal.json'),
-        JSON.stringify(
-          {
-            account_id: acct.id,
-            username: acct.username,
-            action: 'instagram_story_view',
-            ...ban,
-            ts: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
+
+await runAction({
+  platform: 'instagram',
+  action: 'story_view',
+  feedUrl: 'https://www.instagram.com/',
+  banDetector: detectInstagramBanSignals,
+  act: async (s) => {
+    const story = s.page
+      .locator(
+        `li[role="menuitem"], button[aria-label^="Story by"], div[role="menuitem"]:has(canvas), a[href^="${STORIES_ROUTE}"]`,
+      )
+      .filter({ visible: true })
+      .first();
+    if (!(await story.count()))
+      throw new Error(
+        `INSTAGRAM_NO_STORIES: the story tray at ${s.page.url()} holds no story to watch`,
       );
-    } catch (e) {
-      console.log('[ban-signal] persist err:', e.message);
-    }
-  }
-  await s.close();
-}
+    await humanClickLocator(s.page, story);
+    await urlMatching(s.page, inStoriesViewer);
+    await urlMatching(s.page, (address) => !inStoriesViewer(address));
+    return 'viewed the story tray';
+  },
+});

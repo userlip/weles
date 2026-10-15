@@ -1,146 +1,49 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
+// Save (bookmark) the Instagram post the caller names, through the shared
+// action runner: the account's fresh jar, the signed-in gate, the verdict
+// and its record are the runner's.
+//
+// Env: TARGET_URL (required): the post to save.
+//
+// The post is read from the page's own controls: its Save button flips to
+// Remove once saved. A page that shows neither (a profile, a feed) is not a
+// post, and nothing on it is saved in its place.
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { detectInstagramBanSignals } from '../../../../dist/platforms/instagram/ban_signals.js';
-import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { checkReachable } from '../../_shared/action-runner.mjs';
-import {
-  assertAuthed,
-  AuthProbeError,
-} from '../../_shared/auth/auth-probe.mjs';
-import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { runAction } from '../../_shared/action-runner.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 
-// The page the save lands on is the caller's; no feed is assumed.
-const TARGET_URL = process.env.TARGET_URL;
-if (!TARGET_URL) {
-  console.log(
-    'FAIL: TARGET_URL env var required: the Instagram page the save lands on',
-  );
-  process.exit(1);
-}
-
-const acct = await getSocialAccount('instagram');
-if (!acct) {
-  console.log('FAIL: no active instagram account');
-  process.exit(1);
-}
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'instagram_save',
-  proxy: proxyUrl,
-  persona,
-});
-const _stored = (acct.metadata?.cookies ?? []).filter((c) =>
-  /instagram\.com/.test(c.domain ?? ''),
-);
-// A jar that could not be injected leaves the session signed out; the
-// failure is raised inside the try so it is reported and the session closed.
-let cookieInjectError = null;
-if (_stored.length)
-  await s.ctx
-    .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
-    .catch((e) => {
-      cookieInjectError = e;
-    });
-let ban = null;
-try {
-  if (cookieInjectError)
-    throw new Error(
-      `stored cookies could not be injected: ${cookieInjectError.message}`,
-    );
-  await s.goto(TARGET_URL);
-  checkReachable(s, 'instagram');
-  await humanIdlePause('deliberate');
-  try {
-    await assertAuthed('instagram', s, { label: 'instagram_save' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
-    throw probeErr;
-  }
-  if (!/\/p\/|\/reel\//.test(s.page.url())) {
-    const thumb = s.page
-      .locator('a[href*="/p/"], a[href*="/reel/"]')
-      .filter({ visible: true })
-      .first();
-    await thumb.waitFor({ state: 'visible' });
-    const href = await thumb.getAttribute('href');
-    if (href) {
-      const postUrl = href.startsWith('http')
-        ? href
-        : `https://www.instagram.com${href}`;
-      await s.goto(postUrl);
-      await humanIdlePause('deliberate');
-    } else {
-      await humanClickLocator(s.page, thumb);
-      await humanIdlePause('deliberate');
-    }
-  }
-  // Bookmark/save: <svg aria-label="Save"> flips to "Remove" once saved.
-  // Click the ancestor button/role-button (svg has pointer-events:none).
-  const saveSvg = s.page
-    .locator('svg[aria-label="Save"]')
+/** The post's Save control, or its Remove control once saved. */
+function postControl(page, label) {
+  return page
+    .locator(`svg[aria-label="${label}"]`)
     .filter({ visible: true })
     .first();
-  if (!(await saveSvg.count())) {
-    ban = await banSignalOf(
-      detectInstagramBanSignals,
-      s,
-      'after finding it saved',
-    );
-    console.log(`[ban-signal] ${ban?.signal}  PASS: already saved`);
-  } else {
-    const saveBtn = saveSvg
-      .locator(
-        'xpath=ancestor::*[self::button or self::div[@role="button"] or @role="button"][1]',
-      )
-      .first();
-    await saveBtn.scrollIntoViewIfNeeded().catch(() => {});
-    await humanClickLocator(s.page, saveBtn);
-    await s.page
-      .locator('svg[aria-label="Remove"]')
-      .first()
-      .waitFor({ state: 'visible' });
-    ban = await banSignalOf(detectInstagramBanSignals, s, 'after saving');
-    console.log(`[ban-signal] ${ban?.signal}  PASS: saved`);
-  }
-} catch (e) {
-  ban =
-    e.banSignal ??
-    (await banSignalOf(detectInstagramBanSignals, s, 'after the failure'));
-  console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
-  process.exitCode = 1;
-} finally {
-  if (ban) {
-    try {
-      const dir = runRecordingsDir('instagram_save');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'ban_signal.json'),
-        JSON.stringify(
-          {
-            account_id: acct.id,
-            username: acct.username,
-            action: 'instagram_save',
-            target_url: TARGET_URL,
-            ...ban,
-            ts: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
-      );
-    } catch (e) {
-      console.log('[ban-signal] persist err:', e.message);
-    }
-  }
-  await s.close();
 }
+
+await runAction({
+  platform: 'instagram',
+  action: 'save',
+  feedUrl: () => statedText(['TARGET_URL'], 'the Instagram post to save'),
+  banDetector: detectInstagramBanSignals,
+  act: async (s) => {
+    const save = postControl(s.page, 'Save');
+    const saved = postControl(s.page, 'Remove');
+    if (!(await save.count())) {
+      if (await saved.count()) return 'already saved';
+      throw new Error(
+        `INSTAGRAM_NOT_A_POST: ${s.page.url()} shows no post Save control; nothing was saved`,
+      );
+    }
+    // The svg takes no pointer events; its button does.
+    await humanClickLocator(
+      s.page,
+      save
+        .locator(
+          'xpath=ancestor::*[self::button or self::div[@role="button"] or @role="button"][1]',
+        )
+        .first(),
+    );
+    await saved.waitFor({ state: 'visible' });
+    return 'saved';
+  },
+});
