@@ -79,13 +79,13 @@ function actionFeed(cfg, acct) {
     return { feed: cfg.resolveUserUrl(TARGET_USER), targetedMode: true };
   if (SEARCH_QUERY && cfg.resolveSearchUrl)
     return { feed: cfg.resolveSearchUrl(SEARCH_QUERY), targetedMode: true };
-  return {
-    feed:
-      typeof cfg.feedUrl === 'function'
-        ? cfg.feedUrl(acct.username)
-        : cfg.feedUrl,
-    targetedMode: false,
-  };
+  const feed =
+    typeof cfg.feedUrl === 'function' ? cfg.feedUrl(acct.username) : cfg.feedUrl;
+  if (!feed)
+    throw new Error(
+      `ACTION_TARGET_REQUIRED: ${cfg.platform} ${cfg.action} names no page to act on (TARGET_URL${cfg.resolveUserUrl ? ', TARGET_USER' : ''}${cfg.resolveSearchUrl ? ', SEARCH_QUERY' : ''})`,
+    );
+  return { feed, targetedMode: false };
 }
 
 export async function runAction(cfg) {
@@ -174,12 +174,14 @@ export async function runAction(cfg) {
     try {
       if (banSignal) await keepVerdict(label, acct, banSignal);
     } catch (keepError) {
-      // A run that already failed keeps its own cause; a passed run whose
-      // verdict cannot be kept fails with this one.
-      if (!failure) failure = keepError;
-      console.error(
-        `[ban-signal] the verdict could not be kept: ${keepError.message}`,
-      );
+      // A passed run whose verdict cannot be kept fails with that cause; a
+      // failed one carries both.
+      failure = failure
+        ? new AggregateError(
+            [failure, keepError],
+            `${failure.message}; and its verdict was not kept: ${keepError.message}`,
+          )
+        : keepError;
     }
     await s.close();
   }
