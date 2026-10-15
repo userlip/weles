@@ -108,10 +108,12 @@ export async function appPasswordRun(
     const body = await operatorJson(response);
     if (!response.ok)
       throw new Error(
-        `HTTP ${response.status}: ${typeof body.error === 'string' ? body.error : 'Weles refused the app-password request'}`,
+        `HTTP ${response.status}: ${typeof body.error === 'string' ? body.error : JSON.stringify(body)}`,
       );
     if (creating && body.ok !== true)
-      throw new Error('Weles did not accept the app-password request');
+      throw new Error(
+        `Weles did not accept the app-password request: ${JSON.stringify(body)}`,
+      );
     const row = parseRun(
       creating
         ? {
@@ -129,27 +131,34 @@ export async function appPasswordRun(
             action: body.action,
             params: body.params,
             status: body.status,
-            completed_at: body.completed_at ?? null,
+            completed_at:
+              typeof body.completed_at === 'string' ? body.completed_at : null,
             ok: typeof body.ok === 'boolean' ? body.ok : null,
             stdout: typeof body.stdout === 'string' ? body.stdout : null,
+            // A failed run is said by its own error, else by its stderr;
+            // one that recorded neither is said as that, with the record.
             error:
-              body.error ??
-              (body.ok === false
-                ? (body.stderr_tail ?? 'App password execution failed')
-                : null),
+              typeof body.error === 'string'
+                ? body.error
+                : body.ok !== false
+                  ? null
+                  : typeof body.stderr_tail === 'string'
+                    ? body.stderr_tail
+                    : `the run failed and recorded neither error nor stderr_tail: ${JSON.stringify(body)}`,
           },
     );
-    if (
-      selector === 'run_id' ? row.id !== value : row.params[selector] !== value
-    )
-      throw new Error('Weles returned a different app-password request');
+    const answered = selector === 'run_id' ? row.id : row.params[selector];
+    if (answered !== value)
+      throw new Error(
+        `Weles returned a different app-password request: asked ${selector}=${JSON.stringify(value)}, answered ${JSON.stringify(answered)}`,
+      );
     if (
       creating &&
       (row.params.organization !== organization ||
         row.params.expected_account !== expectedAccount)
     )
       throw new Error(
-        'Weles returned a different app-password organization or expected account',
+        `Weles returned a different app-password organization or expected account: asked ${JSON.stringify({ organization, expected_account: expectedAccount })}, answered ${JSON.stringify({ organization: row.params.organization, expected_account: row.params.expected_account })}`,
       );
     return row;
   } catch (cause) {
