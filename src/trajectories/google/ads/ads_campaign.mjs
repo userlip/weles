@@ -61,10 +61,10 @@ import {
 import {
   bringBrowserToFront,
   ensureCustomer,
-  isLoginUrl,
   navigate,
 } from './ads_campaign/page.mjs';
 import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { onGoogleSignIn } from '../../_shared/profile/google_session.mjs';
 import { humanType } from '../../../../dist/human/keyboard.js';
 import {
   clickDescribed,
@@ -111,14 +111,14 @@ try {
   await navigate(s, baseUrl);
   await pageSettled(s.page);
   let url = s.page.url();
-  if (isLoginUrl(url)) {
+  if (onGoogleSignIn(url)) {
     if (!WAIT_FOR_LOGIN)
       throw new Error(
         'GOOGLE_ADS_SESSION_EXPIRED: the profile is not signed in to Google and WAIT_FOR_LOGIN is not set',
       );
     console.log('[google-ads] waiting for manual login in the open window');
     await bringBrowserToFront(s);
-    await s.page.waitForURL((u) => !isLoginUrl(String(u)));
+    await s.page.waitForURL((u) => !onGoogleSignIn(String(u)));
     await navigate(s, baseUrl);
     await pageSettled(s.page);
   }

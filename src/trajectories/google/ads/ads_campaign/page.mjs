@@ -1,12 +1,9 @@
 import { pageSettled } from '../../../_shared/page/settled.mjs';
-// The Google Ads page as the campaign trajectory drives it: navigation, the
-// sign-in route and the customer switch. Controls and fields are found by
-// the vision model in the trajectory itself.
+// The Google Ads page as the campaign trajectory drives it: navigation and
+// the customer switch. Controls and fields are found by the vision model in
+// the trajectory itself; the sign-in route is read by the shared Google
+// session reader (`_shared/profile/google_session.mjs`).
 import { CUSTOMER_ID } from './settings.mjs';
-
-// Google signs every product in on its accounts host; a page there is the
-// sign-in route, wherever on the host it stands.
-const GOOGLE_ACCOUNTS_HOST = 'accounts.google.com';
 
 export async function navigate(s, url) {
   await s.page.goto(url, { waitUntil: 'domcontentloaded' });
@@ -16,21 +13,19 @@ export async function bringBrowserToFront(s) {
   await s.page.bringToFront();
 }
 
-export function isLoginUrl(url) {
-  return new URL(url).hostname === GOOGLE_ACCOUNTS_HOST;
-}
-
 export function normalizeCustomerId(id) {
   return id ? String(id).replace(/\D/g, '') : null;
 }
 
-/** The customer a Google Ads page URL names, or null when it names none. */
+/**
+ * The customer a Google Ads page URL names, or null when it names none.
+ * `authuser` is the index of the signed-in Google account, not a customer,
+ * so it is not read.
+ */
 export function currentCustomerId(url) {
   const u = new URL(url);
   return normalizeCustomerId(
-    u.searchParams.get('ocid') ||
-      u.searchParams.get('customerId') ||
-      u.searchParams.get('authuser'),
+    u.searchParams.get('ocid') || u.searchParams.get('customerId'),
   );
 }
 

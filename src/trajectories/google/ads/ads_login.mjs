@@ -20,10 +20,12 @@ import { closeGoogleAdsSession } from './_close_session.mjs';
 import { readScopedLogin } from '../../../_shared/scoped-secrets.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
 import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import {
+  holdsGoogleSession,
+  onGoogleSignIn,
+} from '../../_shared/profile/google_session.mjs';
 
 const GOOGLE_ADS_URL = 'https://ads.google.com/aw/campaigns';
-// Google signs every product in on its accounts host.
-const GOOGLE_ACCOUNTS_HOST = 'accounts.google.com';
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
   process.env.ADS_PROFILE_DIR ||
@@ -33,38 +35,21 @@ const USER_DATA_DIR =
 const GOOGLE_ADS_LOGIN = readScopedLogin('googleAds');
 mkdirSync(USER_DATA_DIR, { recursive: true });
 
+/** Ask macOS to raise Chromium, reporting what it answered when it refuses. */
+function activateChromium(script) {
+  const run = spawnSync('osascript', ['-e', script], { encoding: 'utf8' });
+  if (run.error || run.status)
+    console.log(
+      `[google-ads-login] could not raise Chromium: ${run.error ? run.error.message : run.stderr.trim()}`,
+    );
+}
+
 async function bringBrowserToFront(s) {
   await s.page.bringToFront();
   if (process.platform !== 'darwin') return;
-  spawnSync('osascript', ['-e', 'tell application "Chromium" to activate'], {
-    stdio: 'ignore',
-  });
-  spawnSync(
-    'osascript',
-    [
-      '-e',
-      'tell application "System Events" to set frontmost of every process whose name is "Chromium" to true',
-    ],
-    { stdio: 'ignore' },
-  );
-}
-
-function onSignInPage(url) {
-  return new URL(url).hostname === GOOGLE_ACCOUNTS_HOST;
-}
-
-/** The names of the cookies Google Ads would be sent. */
-async function adsCookieNames(s) {
-  const cookies = await s.ctx.cookies(GOOGLE_ADS_URL);
-  return new Set(cookies.map((c) => c.name));
-}
-
-/** Google's signed-in session: its SID cookie in any of its forms. */
-function signedIn(names) {
-  return (
-    names.has('SID') ||
-    names.has('__Secure-1PSID') ||
-    names.has('__Secure-3PSID')
+  activateChromium('tell application "Chromium" to activate');
+  activateChromium(
+    'tell application "System Events" to set frontmost of every process whose name is "Chromium" to true',
   );
 }
 
@@ -83,7 +68,10 @@ try {
   await bringBrowserToFront(s);
   await s.goto(GOOGLE_ADS_URL);
   await pageSettled(s.page);
-  if (!signedIn(await adsCookieNames(s)) || onSignInPage(s.page.url())) {
+  if (
+    !(await holdsGoogleSession(s.ctx, GOOGLE_ADS_URL)) ||
+    onGoogleSignIn(s.page.url())
+  ) {
     console.log(
       `[google-ads-login] running automated Google SSO for ${GOOGLE_ADS_LOGIN.email} source=skarbiec`,
     );
@@ -95,11 +83,9 @@ try {
     await s.goto(GOOGLE_ADS_URL);
     await pageSettled(s.page);
   }
-  const names = await adsCookieNames(s);
-  console.log(
-    `[google-ads-login] cookie names: ${Array.from(names).sort().join(', ')}`,
-  );
-  if (!signedIn(names))
+  const names = (await s.ctx.cookies(GOOGLE_ADS_URL)).map((c) => c.name);
+  console.log(`[google-ads-login] cookie names: ${names.sort().join(', ')}`);
+  if (!(await holdsGoogleSession(s.ctx, GOOGLE_ADS_URL)))
     throw new Error(
       `GOOGLE_ADS_LOGIN_NOT_PERSISTED: the profile holds no Google session cookie for Ads (url=${s.page.url()})`,
     );

@@ -1,77 +1,69 @@
-import { pageSettled } from '../../_shared/page/settled.mjs';
 // Google Ads browser access verifier.
 //
 // Reuses the persistent Weles Google Ads profile and reports what the logged-in
 // browser can see. This is intentionally browser-first so access can be checked
-// even when REST credentials are absent or unavailable.
+// even when REST credentials are absent or unavailable. Whether the profile is
+// signed in is read by the shared Google session reader; a signed-out profile
+// fails the run with the address it landed on.
 
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { generatePersona } from '../../../../dist/browser/persona.js';
+import { basename, join } from 'node:path';
 import { WSession } from '../../../../dist/session/wsession.js';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 import {
   assertGoogleAdsProfileNotAlreadyOpen,
   closeAllowedByEnv,
 } from './_profile_guard.mjs';
 import { closeGoogleAdsSession } from './_close_session.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
+import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import {
+  holdsGoogleSession,
+  onGoogleSignIn,
+} from '../../_shared/profile/google_session.mjs';
 
+const INDENT = '  ';
+const GOOGLE_ADS_CAMPAIGNS = 'https://ads.google.com/aw/campaigns';
 const SOURCE_USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
   process.env.ADS_PROFILE_DIR ||
   join(homedir(), '.weles', 'browser_profiles', 'google_ads');
 const WAIT_FOR_LOGIN = process.env.WAIT_FOR_LOGIN === '1';
-const CUSTOMER_ID = (
-  process.env.GOOGLE_ADS_CUSTOMER_ID ||
-  process.env.CUSTOMER_ID ||
-  ''
-).replace(/\D/g, '');
+const STATED_CUSTOMER =
+  process.env.GOOGLE_ADS_CUSTOMER_ID || process.env.CUSTOMER_ID;
+const CUSTOMER_ID = STATED_CUSTOMER
+  ? STATED_CUSTOMER.replace(/\D/g, '')
+  : null;
+const USE_PROFILE_CLONE = process.env.GOOGLE_VERIFY_USE_PROFILE_CLONE !== '0';
 mkdirSync(SOURCE_USER_DATA_DIR, { recursive: true });
 
-function stableProfilePersona() {
-  const p = join(SOURCE_USER_DATA_DIR, 'persona.json');
-  if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8'));
-  const persona = generatePersona({ os: 'macos', browser: 'chromium' });
-  writeFileSync(p, JSON.stringify(persona, null, 2));
-  return persona;
-}
+// Chromium's lock files and the caches it rebuilds on start; the clone
+// leaves them behind so a second Chromium can open it beside the first.
+const REBUILT_ON_START = new Set([
+  'Crashpad',
+  'Crash Reports',
+  'Cache',
+  'Code Cache',
+  'GPUCache',
+  'ShaderCache',
+  'GrShaderCache',
+  'GraphiteDawnCache',
+  'DawnGraphiteCache',
+  'DawnWebGPUCache',
+  'Safe Browsing',
+  'optimization_guide_model_store',
+  'component_crx_cache',
+  'extensions_crx_cache',
+]);
 
 function profileCopyFilter(src) {
-  const base = src.split('/').pop() || '';
-  if (/^Singleton/.test(base)) return false;
-  if (
-    [
-      'Crashpad',
-      'Crash Reports',
-      'Cache',
-      'Code Cache',
-      'GPUCache',
-      'ShaderCache',
-      'GrShaderCache',
-      'GraphiteDawnCache',
-      'DawnGraphiteCache',
-      'DawnWebGPUCache',
-      'Safe Browsing',
-      'optimization_guide_model_store',
-      'component_crx_cache',
-      'extensions_crx_cache',
-    ].includes(base)
-  )
-    return false;
-  return true;
+  const base = basename(src);
+  return !base.startsWith('Singleton') && !REBUILT_ON_START.has(base);
 }
 
 function prepareUserDataDir() {
-  if (process.env.GOOGLE_VERIFY_USE_PROFILE_CLONE === '0') {
+  if (!USE_PROFILE_CLONE) {
     return { dir: SOURCE_USER_DATA_DIR, cleanup: () => {} };
   }
   const cloneParent = mkdtempSync(
@@ -90,35 +82,26 @@ function prepareUserDataDir() {
   };
 }
 
-function isLoginUrl(url) {
-  return /accounts\.google\.com|ServiceLogin|signin/i.test(url);
-}
-
-function hasGoogleAuthCookie(cookies) {
-  const names = new Set(
-    cookies
-      .filter((c) => /google\.com$|\.google\.com$/.test(c.domain || ''))
-      .map((c) => c.name),
-  );
-  return (
-    names.has('SID') ||
-    names.has('__Secure-1PSID') ||
-    names.has('__Secure-3PSID')
-  );
-}
-
 function targetUrl() {
   if (process.env.ADS_URL) return process.env.ADS_URL;
-  const params = new URLSearchParams();
-  if (CUSTOMER_ID) params.set('ocid', CUSTOMER_ID);
-  const qs = params.toString();
-  return `https://ads.google.com/aw/campaigns${qs ? `?${qs}` : ''}`;
+  if (!CUSTOMER_ID) return GOOGLE_ADS_CAMPAIGNS;
+  return `${GOOGLE_ADS_CAMPAIGNS}?ocid=${encodeURIComponent(CUSTOMER_ID)}`;
 }
 
-async function waitForOptionalLogin(s) {
-  if (!WAIT_FOR_LOGIN) return;
-  await s.page.waitForURL((u) => !isLoginUrl(String(u)));
-  await pageSettled(s.page);
+/** What the signed-in Google Ads page shows: its title, headings and rows. */
+function pageDetails() {
+  const squash = (node) => node.innerText.replace(/\s+/g, ' ').trim();
+  return {
+    title: document.title,
+    headings: Array.from(document.querySelectorAll('h1, h2, [role="heading"]'))
+      .map(squash)
+      .filter(Boolean),
+    rows: Array.from(
+      document.querySelectorAll('[role="row"], material-list-item, tr'),
+    )
+      .map(squash)
+      .filter(Boolean),
+  };
 }
 
 assertGoogleAdsProfileNotAlreadyOpen(
@@ -127,121 +110,55 @@ assertGoogleAdsProfileNotAlreadyOpen(
 );
 const preparedProfile = prepareUserDataDir();
 console.log(
-  `[google-ads-verify-access] sourceProfile=${SOURCE_USER_DATA_DIR} clonedProfile=${process.env.GOOGLE_VERIFY_USE_PROFILE_CLONE !== '0'} customer=${CUSTOMER_ID || 'auto'}`,
+  `[google-ads-verify-access] sourceProfile=${SOURCE_USER_DATA_DIR} clonedProfile=${USE_PROFILE_CLONE} customer=${CUSTOMER_ID ? CUSTOMER_ID : 'not stated'}`,
 );
 const s = await WSession.start({
   label: 'google_ads_verify_access',
-  browser: process.env.BROWSER || 'chromium',
   proxy: statedProxy('the Google Ads access check'),
-  persona: stableProfilePersona(),
+  persona: stableProfilePersona(SOURCE_USER_DATA_DIR),
   userDataDir: preparedProfile.dir,
   headless: process.env.GOOGLE_VERIFY_HEADLESS !== '0',
   pageDiagnostics: process.env.WELES_PAGE_DIAGNOSTICS === '1',
 });
 
-let exitCode = 0;
 try {
   await s.goto(targetUrl());
   await pageSettled(s.page);
-  await waitForOptionalLogin(s);
-  await pageSettled(s.page);
-
-  const current = s.page.url?.() ?? '';
-  const cookies = await s.ctx.cookies().catch(() => []);
-  const text = await s.page
-    .evaluate(() => document.body?.innerText || '')
-    .catch(() => '');
-  const loggedIn = hasGoogleAuthCookie(cookies) && !isLoginUrl(current);
-  if (!loggedIn) {
-    console.log(
-      JSON.stringify(
-        { platform: 'google_ads', loggedIn, url: current },
-        null,
-        2,
-      ),
-    );
-    console.log(
-      `FAIL: Google Ads browser session is not logged in (${current})`,
-    );
-    exitCode = 2;
-  } else {
-    const details = await s.page
-      .evaluate(() => {
-        const bodyText = document.body?.innerText || '';
-        const rows = Array.from(
-          document.querySelectorAll('[role="row"], material-list-item, tr'),
-        )
-          .map((row) =>
-            (row.innerText || row.textContent || '')
-              .replace(/\s+/g, ' ')
-              .trim(),
-          )
-          .filter(Boolean);
-        const headings = Array.from(
-          document.querySelectorAll('h1, h2, [role="heading"]'),
-        )
-          .map((node) =>
-            (node.innerText || node.textContent || '')
-              .replace(/\s+/g, ' ')
-              .trim(),
-          )
-          .filter(Boolean);
-        return {
-          title: document.title || null,
-          headings,
-          rows,
-          accountHints: Array.from(
-            new Set(
-              (bodyText.match(/\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b/g) || []).map(
-                (m) => m.replace(/\D/g, ''),
-              ),
-            ),
-          ),
-        };
-      })
-      .catch(() => ({
-        title: null,
-        headings: [],
-        rows: [],
-        empty: false,
-        accountHints: [],
-      }));
-
-    let selectedCustomer = CUSTOMER_ID || null;
-    try {
-      const parsed = new URL(current);
-      selectedCustomer =
-        selectedCustomer ||
-        parsed.searchParams.get('ocid') ||
-        parsed.searchParams.get('customerId');
-    } catch {
-      selectedCustomer = selectedCustomer || null;
-    }
-
-    console.log(
-      JSON.stringify(
-        {
-          platform: 'google_ads',
-          loggedIn,
-          selectedCustomer,
-          url: current,
-          ...details,
-        },
-        null,
-        2,
-      ),
-    );
-    console.log('PASS: Google Ads browser access verified');
+  if (WAIT_FOR_LOGIN) {
+    await s.page.waitForURL((u) => !onGoogleSignIn(String(u)));
+    await pageSettled(s.page);
   }
-} finally {
+
+  const current = s.page.url();
   if (
-    preparedProfile.dir !== SOURCE_USER_DATA_DIR ||
-    closeAllowedByEnv('GOOGLE_VERIFY_CLOSE_AFTER')
-  )
-    await closeGoogleAdsSession(s, 'google-ads-verify-access');
-  else
+    onGoogleSignIn(current) ||
+    !(await holdsGoogleSession(s.ctx, GOOGLE_ADS_CAMPAIGNS))
+  ) {
+    throw new Error(
+      `GOOGLE_ADS_NOT_SIGNED_IN: the Google Ads browser session is not signed in (url=${current})`,
+    );
+  }
+  const parsed = new URL(current);
+  console.log(
+    JSON.stringify(
+      {
+        platform: 'google_ads',
+        loggedIn: true,
+        selectedCustomer: CUSTOMER_ID
+          ? CUSTOMER_ID
+          : (parsed.searchParams.get('ocid') ??
+            parsed.searchParams.get('customerId')),
+        url: current,
+        ...(await s.page.evaluate(pageDetails)),
+      },
+      null,
+      INDENT,
+    ),
+  );
+  console.log('PASS: Google Ads browser access verified');
+} finally {
+  if (!USE_PROFILE_CLONE && !closeAllowedByEnv('GOOGLE_VERIFY_CLOSE_AFTER'))
     console.log('[google-ads-verify-access] leaving Google Ads profile open');
+  else await closeGoogleAdsSession(s, 'google-ads-verify-access');
   preparedProfile.cleanup();
 }
-
-if (exitCode) process.exit(exitCode);

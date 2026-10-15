@@ -1,4 +1,3 @@
-import { pageSettled } from '../../../_shared/page/settled.mjs';
 // Google Ads UI fallback: collect Keyword Planner keyword volume without
 // REST keyword-planning service access.
 //
@@ -8,9 +7,14 @@ import { pageSettled } from '../../../_shared/page/settled.mjs';
 //   GOOGLE_ADS_RESULT_FILE       optional JSON output path
 //   PROXY_URL                    required proxy URL or provider filter; 'direct' for none
 //   Login identity/password/MFA are read only from the dedicated Google Ads Skarbiec item.
+//
+// Every run writes its report to the result file. A refusal (signed out,
+// verification required, planner not opened, or any error) is written with
+// its `blocked` cause and then thrown, so the run fails with it.
 
 import { writeFileSync } from 'node:fs';
 import { WSession } from '../../../../../dist/session/wsession.js';
+import { pageSettled } from '../../../_shared/page/settled.mjs';
 import { assertGoogleAdsProfileNotAlreadyOpen } from '../_profile_guard.mjs';
 import { closeGoogleAdsSession } from '../_close_session.mjs';
 import {
@@ -24,9 +28,7 @@ import {
 import {
   continueFromAccountChooser,
   ensurePreferredGoogleAccount,
-  isLoginUrl,
   lastAuthFailure,
-  stableProfilePersona,
 } from './planner/sign_in.mjs';
 import {
   campaignsUrl,
@@ -35,121 +37,113 @@ import {
 import { collectKeywordPlanner, openKeywordPlanner } from './planner/page.mjs';
 import { pageShows } from '../../../_shared/page/judged/seen.mjs';
 import { statedProxy } from '../../../_shared/inputs/stated.mjs';
+import { stableProfilePersona } from '../../../_shared/profile/persona.mjs';
+import { onGoogleSignIn } from '../../../_shared/profile/google_session.mjs';
 
-async function main() {
-  console.log(
-    `[google-ads-keyword-planner] customer=${cid} keywords=${JSON.stringify(keywords)}`,
+const INDENT = '  ';
+
+function writeReport(report) {
+  writeFileSync(RESULT_FILE, JSON.stringify(report, null, INDENT));
+  console.log(JSON.stringify(report, null, INDENT));
+}
+
+/** Write a refusal report, then throw it so the run fails with its cause. */
+function refuse(report) {
+  writeReport({ ok: false, customer: cid, keywords, ...report });
+  const refusal = new Error(
+    `${report.blocked}: Keyword Planner run refused (url=${report.url})`,
   );
-  const startUrl = campaignsUrl('cid', cid);
+  refusal.reported = true;
+  throw refusal;
+}
+
+/** Whether the page asks for 2-step verification before Google Ads opens. */
+async function verificationRequired(page) {
+  const url = new URL(page.url());
+  return (
+    url.pathname.toLowerCase().includes('multifactorauthalert') ||
+    url.searchParams.get('block') === 'true' ||
+    (await pageShows(
+      page,
+      'Does the page say 2-step verification or multi-factor authentication is required?',
+    ))
+  );
+}
+
+console.log(
+  `[google-ads-keyword-planner] customer=${cid} keywords=${JSON.stringify(keywords)}`,
+);
+const startUrl = campaignsUrl('cid', cid);
+let s;
+try {
   assertGoogleAdsProfileNotAlreadyOpen(
     USER_DATA_DIR,
     'google_ads_keyword_planner',
   );
-  const s = await WSession.start({
+  s = await WSession.start({
     label: 'google_ads_keyword_planner',
-    browser: process.env.BROWSER || 'chromium',
     proxy: statedProxy('Keyword Planner'),
-    persona: stableProfilePersona(),
+    persona: stableProfilePersona(USER_DATA_DIR),
     userDataDir: USER_DATA_DIR,
     pageDiagnostics: process.env.WELES_PAGE_DIAGNOSTICS === '1',
   });
   const captured = installKeywordPlannerCapture(s.page);
-  try {
-    await s.page
-      .goto(startUrl, { waitUntil: 'domcontentloaded' })
-      .catch((error) => {
-        console.log(
-          `[google-ads-keyword-planner] WARN: initial navigation failed ${String(error?.message || error)}`,
-        );
-      });
-    await pageSettled(s.page);
-    await ensurePreferredGoogleAccount(s, startUrl);
-    await continueFromAccountChooser(s);
-    await pageSettled(s.page);
+  await s.page.goto(startUrl, { waitUntil: 'domcontentloaded' });
+  await pageSettled(s.page);
+  await ensurePreferredGoogleAccount(s, startUrl);
+  await continueFromAccountChooser(s);
+  await pageSettled(s.page);
 
-    const current = s.page.url?.() || '';
-    const text = await s.page
-      .evaluate(() => document.body?.innerText || '')
-      .catch(() => '');
-    if (isLoginUrl(current)) {
-      const report = {
-        ok: false,
-        blocked:
-          lastAuthFailure()?.blocked ||
-          'google_ads_browser_session_not_logged_in',
-        customer: cid,
-        keywords,
-        url: current,
-        authFailure: lastAuthFailure(),
-        textPreview: norm(text),
-      };
-      writeFileSync(RESULT_FILE, JSON.stringify(report, null, 2));
-      console.log(JSON.stringify(report, null, 2));
-      process.exit(2);
-    }
-    if (
-      current.toLowerCase().includes('multifactorauthalert') ||
-      new URL(current).searchParams.get('block') === 'true' ||
-      (await pageShows(
-        s.page,
-        'Does the page say 2-step verification or multi-factor authentication is required?',
-      ))
-    ) {
-      const report = {
-        ok: false,
-        blocked: 'google_ads_mfa_required',
-        customer: cid,
-        keywords,
-        url: current,
-        textPreview: norm(text),
-      };
-      writeFileSync(RESULT_FILE, JSON.stringify(report, null, 2));
-      console.log(JSON.stringify(report, null, 2));
-      process.exit(3);
-    }
-
-    const open = await openKeywordPlanner(s);
-    if (!open.ok) {
-      const report = {
-        ok: false,
-        blocked: 'keyword_planner_not_opened',
-        customer: cid,
-        keywords,
-        open,
-        url: s.page.url?.() || '',
-      };
-      writeFileSync(RESULT_FILE, JSON.stringify(report, null, 2));
-      console.log(JSON.stringify(report, null, 2));
-      process.exit(4);
-    }
-
-    const report = await collectKeywordPlanner(s, captured);
-    report.open = open;
-    report.ok =
-      report.parsedRows.length > 0 || report.rpc.keywordMentions.length > 0;
-    writeFileSync(RESULT_FILE, JSON.stringify(report, null, 2));
-    console.log(`GOOGLE_ADS_KEYWORD_PLANNER_REPORT ${JSON.stringify(report)}`);
-    console.log(JSON.stringify(report, null, 2));
-    console.log('PASS: Google Ads keyword planner read completed (browser)');
-  } finally {
-    if (CLOSE_AFTER_HARVEST)
-      await closeGoogleAdsSession(s, 'google-ads-keyword-planner');
-    else
-      console.log(
-        '[google-ads-keyword-planner] leaving Google Ads profile open',
-      );
+  const current = s.page.url();
+  const text = await s.page.evaluate(() => document.body.innerText);
+  if (onGoogleSignIn(current)) {
+    const authFailure = lastAuthFailure();
+    refuse({
+      blocked: authFailure
+        ? authFailure.blocked
+        : 'google_ads_browser_session_not_logged_in',
+      url: current,
+      authFailure,
+      textPreview: norm(text),
+    });
   }
-}
+  if (await verificationRequired(s.page)) {
+    refuse({
+      blocked: 'google_ads_mfa_required',
+      url: current,
+      textPreview: norm(text),
+    });
+  }
 
-main().catch((error) => {
-  const report = {
-    ok: false,
-    blocked: 'google_ads_keyword_planner_error',
-    customer: cid,
-    keywords,
-    error: String(error?.message || error),
-  };
-  writeFileSync(RESULT_FILE, JSON.stringify(report, null, 2));
-  console.log(JSON.stringify(report, null, 2));
-  process.exit(1);
-});
+  const open = await openKeywordPlanner(s);
+  if (!open.ok) {
+    refuse({ blocked: 'keyword_planner_not_opened', url: s.page.url(), open });
+  }
+
+  const report = await collectKeywordPlanner(s, captured);
+  report.open = open;
+  report.ok = Boolean(
+    report.parsedRows.length || report.rpc.keywordMentions.length,
+  );
+  writeFileSync(RESULT_FILE, JSON.stringify(report, null, INDENT));
+  console.log(`GOOGLE_ADS_KEYWORD_PLANNER_REPORT ${JSON.stringify(report)}`);
+  console.log(JSON.stringify(report, null, INDENT));
+  console.log('PASS: Google Ads keyword planner read completed (browser)');
+} catch (error) {
+  if (!error.reported) {
+    writeReport({
+      ok: false,
+      blocked: 'google_ads_keyword_planner_error',
+      customer: cid,
+      keywords,
+      error: error.message,
+    });
+  }
+  throw error;
+} finally {
+  // A session that never opened has nothing to close or leave open.
+  if (s && CLOSE_AFTER_HARVEST)
+    await closeGoogleAdsSession(s, 'google-ads-keyword-planner');
+  else if (s)
+    console.log('[google-ads-keyword-planner] leaving Google Ads profile open');
+}
