@@ -13,26 +13,50 @@ import { detectLinkedInBanSignals } from '../../../../dist/platforms/linkedin/ba
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 import { openLinkedinAuthed } from '../../_shared/linkedin/authed_open.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 
+// Whom to endorse and for which skill are the caller's: the profile in
+// TARGET_URL, the skill in ENDORSE_SKILL (or the request's text). Without
+// either the run is refused rather than endorsing the first connection's
+// first skill.
+const TARGET_URL = statedText(
+  ['TARGET_URL'],
+  'the LinkedIn profile to endorse',
+  'LINKEDIN_ENDORSE_TARGET_REQUIRED',
+);
+const SKILL = statedText(
+  ['ENDORSE_SKILL', 'SVC_TEXT'],
+  'the skill on that profile to endorse, as the profile lists it',
+  'LINKEDIN_ENDORSE_SKILL_REQUIRED',
+);
+const targetHost = new URL(TARGET_URL).hostname;
+
 const acct = await getSocialAccount('linkedin');
-if (!acct) {
-  console.log('FAIL: no active linkedin account');
-  process.exit(1);
-}
+if (!acct)
+  throw new Error('no active linkedin account to endorse with; nothing ran');
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({
   label: 'linkedin_endorse',
   proxy: proxyUrl,
   persona,
 });
-const _stored = (acct.metadata?.cookies ?? []).filter((c) =>
-  /linkedin\.com/.test(c.domain ?? ''),
-);
-if (_stored.length)
+// The account's stored jar, limited to the cookies the profile's host would
+// be sent (its own domain or a parent domain on a label boundary); an
+// account with no stored jar has none to inject.
+const storedJar = Array.isArray(acct.metadata?.cookies)
+  ? acct.metadata.cookies
+  : [];
+const targetCookies = storedJar.filter((c) => {
+  if (typeof c.domain !== 'string') return false;
+  const domain = c.domain.replace(/^\./, '');
+  return targetHost === domain || targetHost.endsWith(`.${domain}`);
+});
+if (targetCookies.length)
   await s.ctx
-    .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
+    .addCookies(targetCookies)
     .catch((e) =>
       console.log(
         `[linkedin_endorse] stored cookies not injected: ${e.message}; the auth gate signs in again`,
@@ -45,10 +69,7 @@ try {
     acct,
     'linkedin_endorse',
     async () => {
-      await s.page.goto(
-        'https://www.linkedin.com/mynetwork/invite-connect/connections/',
-        { waitUntil: 'domcontentloaded' },
-      );
+      await s.page.goto(TARGET_URL, { waitUntil: 'domcontentloaded' });
       checkReachable(s, 'linkedin');
       await humanIdlePause('deliberate');
     },
@@ -57,63 +78,21 @@ try {
     await markCookiesStale(acct.id);
     throw new Error(`inline relogin failed: ${opened.reason}`);
   }
-  // First connection card has an anchor pointing to /in/<vanity>/. Pick it.
-  // data-test-app-aware-link is gone in the new design system —
-  // use plain a[href*="/in/"] which matches both old and new markup. Detect
-  // empty-connections state explicitly and exit with a clear precondition
-  // message instead of a 30s locator timeout (fresh accounts have 0
-  // connections, so endorse is a no-op for them — caller must wait for
-  // accepted invitations first).
-  const profileLink = s.page
-    .locator('a[href*="/in/"]')
-    .filter({ visible: true })
-    .first();
-  const visibleCount = await s.page
-    .locator('a[href*="/in/"]')
-    .count()
-    .catch(() => 0);
-  if (visibleCount === 0) {
-    console.log(
-      'FAIL: no_connections_to_endorse — account has 0 accepted connections',
-    );
-    await s
-      .close()
-      .catch((e) => console.log(`[session] close failed: ${e.message}`));
-    process.exit(0); // benign exit, not a code error
-  }
-  await profileLink.waitFor({ state: 'visible' });
-  const href = await profileLink.getAttribute('href');
-  if (!href) throw new Error('no connection profile href found');
-  const profileUrl = href.startsWith('http')
-    ? href
-    : `https://www.linkedin.com${href}`;
-  await s.page.goto(profileUrl, { waitUntil: 'domcontentloaded' });
-  checkReachable(s, 'linkedin');
-  await humanIdlePause('deliberate');
-  // Skills section is anchored by section[id="skills"]. Inside, each skill
-  // row exposes a button with aria-label="Endorse <skill>" — clicking it
-  // flips to aria-label="Endorsed <skill>" (or removes the button if
-  // already endorsed). Pick the first not-yet-endorsed skill.
-  await s.page
-    .evaluate(() => {
-      const el = document.querySelector(
-        'section[id="skills"], div[id="skills"]',
-      );
-      el?.scrollIntoView({ block: 'center' });
-    })
-    .catch(() => {});
-  await humanIdlePause('short');
-  const endorseBtn = s.page
-    .locator('button[aria-label^="Endorse "]:not([aria-pressed="true"])')
-    .filter({ visible: true })
-    .first();
+  // Each listed skill carries a button labelled "Endorse <skill>"; once
+  // endorsed it reads "Endorsed <skill>" or is pressed.
+  const endorseBtn = s.page.getByRole('button', {
+    name: `Endorse ${SKILL}`,
+    exact: true,
+    pressed: false,
+  });
   if (!(await endorseBtn.count()))
-    throw new Error('no endorseable skill found on profile');
-  await endorseBtn.scrollIntoViewIfNeeded().catch(() => {});
+    throw new Error(
+      `the profile shows no "Endorse ${SKILL}" button: the skill is not listed there or is already endorsed`,
+    );
+  await endorseBtn.scrollIntoViewIfNeeded();
   await humanClickLocator(s.page, endorseBtn);
-  // After endorse, button label flips to "Endorsed " or aria-pressed=true,
-  // OR a confirmation modal appears asking proficiency. Click "Endorse" in
-  // modal if present.
+  // A confirmation modal may ask for proficiency; its Endorse button
+  // completes the endorsement.
   const modalConfirm = s.page
     .locator('div.artdeco-modal button:has-text("Endorse")')
     .first();
@@ -122,25 +101,27 @@ try {
     await humanClickLocator(s.page, modalConfirm);
     await pageSettled(s.page);
   }
-  const endorsed = await s.page
-    .locator('button[aria-label^="Endorsed "]')
-    .count();
-  if (endorsed === 0)
-    throw new Error(
-      'linkedin_endorse: no Endorsed button after the endorse click',
+  const endorsed = s.page
+    .getByRole('button', { name: `Endorsed ${SKILL}`, exact: true })
+    .or(
+      s.page.getByRole('button', {
+        name: `Endorse ${SKILL}`,
+        exact: true,
+        pressed: true,
+      }),
     );
-  ban = await detectLinkedInBanSignals(s.page, s.capturedResponses).catch(
-    () => null,
-  );
-  console.log(`[ban-signal] ${ban?.signal}  PASS: endorsed`);
+  if (!(await endorsed.count()))
+    throw new Error(
+      `linkedin_endorse: "${SKILL}" does not read as endorsed after the endorse click`,
+    );
+  ban = await banSignalOf(detectLinkedInBanSignals, s, 'after the endorsement');
+  console.log(`[ban-signal] ${ban?.signal}  PASS: endorsed ${SKILL}`);
 } catch (e) {
   ban =
     e.banSignal ??
-    (await detectLinkedInBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectLinkedInBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
-  process.exitCode = 1;
+  throw e;
 } finally {
   if (ban) {
     try {
@@ -153,11 +134,13 @@ try {
             account_id: acct.id,
             username: acct.username,
             action: 'linkedin_endorse',
+            target_url: TARGET_URL,
+            skill: SKILL,
             ...ban,
             ts: new Date().toISOString(),
           },
           null,
-          2,
+          '  ',
         ),
       );
     } catch (e) {
