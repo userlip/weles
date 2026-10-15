@@ -68,12 +68,9 @@ export function autoRegisterCountToday(ledger) {
 function runRegisterChild(script, reason, mode, ledger) {
   const { promise, resolve, reject } = Promise.withResolvers();
   const runId = `pangram-auto-register-${randomUUID()}`;
-  // The register trajectory's DIAG switch dumps the form and exits without
-  // registering, so the child never inherits it.
-  const { DIAG: _diagnosticDump, ...inherited } = process.env;
   const child = spawn(process.execPath, [script], {
     env: {
-      ...inherited,
+      ...process.env,
       PANGRAM_AUTO_REGISTER_RUN: '1',
       WELES_RUN_ID: runId,
       ACTION: `pangram_auto_register_${mode}`,
