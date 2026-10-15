@@ -11,7 +11,6 @@ import { dismissGooglePostLogin } from '../../_shared/services/google_sso/sign_i
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import {
   assertGoogleAdsProfileNotAlreadyOpen,
   closeAllowedByEnv,
@@ -24,6 +23,7 @@ import {
   holdsGoogleSession,
   onGoogleSignIn,
 } from '../../_shared/profile/google_session.mjs';
+import { bringBrowserToFront } from '../../_shared/action/window.mjs';
 
 const GOOGLE_ADS_URL = 'https://ads.google.com/aw/campaigns';
 const USER_DATA_DIR =
@@ -34,24 +34,6 @@ const USER_DATA_DIR =
 // ungranted item ends the run with Skarbiec's own refusal.
 const GOOGLE_ADS_LOGIN = readScopedLogin('googleAds');
 mkdirSync(USER_DATA_DIR, { recursive: true });
-
-/** Ask macOS to raise Chromium, reporting what it answered when it refuses. */
-function activateChromium(script) {
-  const run = spawnSync('osascript', ['-e', script], { encoding: 'utf8' });
-  if (run.error || run.status)
-    console.log(
-      `[google-ads-login] could not raise Chromium: ${run.error ? run.error.message : run.stderr.trim()}`,
-    );
-}
-
-async function bringBrowserToFront(s) {
-  await s.page.bringToFront();
-  if (process.platform !== 'darwin') return;
-  activateChromium('tell application "Chromium" to activate');
-  activateChromium(
-    'tell application "System Events" to set frontmost of every process whose name is "Chromium" to true',
-  );
-}
 
 console.log(
   `[google-ads-login] profile=${USER_DATA_DIR} viewport=${process.env.WELES_VIEWPORT}`,
@@ -65,7 +47,7 @@ const s = await WSession.start({
 });
 
 try {
-  await bringBrowserToFront(s);
+  await bringBrowserToFront(s, 'google-ads-login');
   await s.goto(GOOGLE_ADS_URL);
   await pageSettled(s.page);
   if (

@@ -1,245 +1,150 @@
-import { pageSettled } from '../../_shared/page/settled.mjs';
-import { isLoginUrl } from './session/login_wall.mjs';
 // Meta Ads browser access verifier.
 //
-// Reuses the persistent Weles Meta Ads profile and reports the selected account
-// plus visible campaign rows. This path does not require a Marketing API token.
+// Reuses the persistent Weles Meta Ads profile and reports the selected
+// account plus visible campaign rows. This path does not require a Marketing
+// API token. Whether the profile is signed in is Meta's session cookies and
+// its sign-in routes; which ad account Ads Manager opened is the `act`
+// parameter of its address, and the account's name is read off the page by
+// the vision model. A signed-out profile or a different account than the one
+// stated fails the run.
 
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
+import { pageSettled } from '../../_shared/page/settled.mjs';
+import { shownText } from '../../_shared/page/judged/seen.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
+import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import { profileForCheck } from '../../_shared/profile/clone.mjs';
+import { holdsMetaSession } from '../../_shared/profile/meta_session.mjs';
+import { isLoginUrl } from './session/login_wall.mjs';
 
+const INDENT = '  ';
+const ADS_MANAGER_CAMPAIGNS =
+  'https://adsmanager.facebook.com/adsmanager/manage/campaigns';
 const SOURCE_USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
   process.env.ADS_PROFILE_DIR ||
   join(homedir(), '.weles', 'browser_profiles', 'meta_ads');
 const WAIT_FOR_LOGIN = process.env.WAIT_FOR_LOGIN === '1';
-const AD_ACCOUNT_ID = (
-  process.env.AD_ACCOUNT_ID ||
-  process.env.META_ADS_COMPANY_ACCOUNT_ID ||
-  ''
-).replace(/^act_/, '');
-const BUSINESS_ID =
-  process.env.BUSINESS_ID || process.env.META_BUSINESS_ID || '';
+const STATED_ACCOUNT =
+  process.env.AD_ACCOUNT_ID || process.env.META_ADS_COMPANY_ACCOUNT_ID;
+const AD_ACCOUNT_ID = STATED_ACCOUNT
+  ? STATED_ACCOUNT.replace(/^act_/, '')
+  : null;
+const BUSINESS_ID = process.env.BUSINESS_ID || process.env.META_BUSINESS_ID;
 const AD_ACCOUNT_NAME =
-  process.env.AD_ACCOUNT_NAME || process.env.META_ADS_ACCOUNT_NAME || '';
+  process.env.AD_ACCOUNT_NAME || process.env.META_ADS_ACCOUNT_NAME;
+const USE_PROFILE_CLONE = process.env.META_VERIFY_USE_PROFILE_CLONE !== '0';
 mkdirSync(SOURCE_USER_DATA_DIR, { recursive: true });
-
-function stableProfilePersona() {
-  const p = join(SOURCE_USER_DATA_DIR, 'persona.json');
-  if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8'));
-  const persona = generatePersona({ os: 'macos', browser: 'chromium' });
-  writeFileSync(p, JSON.stringify(persona, null, 2));
-  return persona;
-}
-
-function profileCopyFilter(src) {
-  const base = src.split('/').pop() || '';
-  if (/^Singleton/.test(base)) return false;
-  if (
-    [
-      'Crashpad',
-      'Crash Reports',
-      'Cache',
-      'Code Cache',
-      'GPUCache',
-      'ShaderCache',
-      'GrShaderCache',
-      'GraphiteDawnCache',
-      'DawnGraphiteCache',
-      'DawnWebGPUCache',
-      'Safe Browsing',
-      'optimization_guide_model_store',
-      'component_crx_cache',
-      'extensions_crx_cache',
-    ].includes(base)
-  )
-    return false;
-  return true;
-}
-
-function prepareUserDataDir() {
-  if (process.env.META_VERIFY_USE_PROFILE_CLONE === '0') {
-    return { dir: SOURCE_USER_DATA_DIR, cleanup: () => {} };
-  }
-  const cloneParent = mkdtempSync(join(tmpdir(), 'weles-meta-verify-profile-'));
-  const cloneDir = join(cloneParent, 'profile');
-  cpSync(SOURCE_USER_DATA_DIR, cloneDir, {
-    recursive: true,
-    force: true,
-    errorOnExist: false,
-    filter: profileCopyFilter,
-  });
-  return {
-    dir: cloneDir,
-    cleanup: () => rmSync(cloneParent, { recursive: true, force: true }),
-  };
-}
-
-function hasMetaAuthCookie(cookies) {
-  const names = new Set(
-    cookies
-      .filter((c) =>
-        /facebook\.com|business\.facebook\.com/.test(c.domain || ''),
-      )
-      .map((c) => c.name),
-  );
-  return names.has('c_user') && names.has('xs');
-}
 
 function targetUrl() {
   if (process.env.ADS_URL) return process.env.ADS_URL;
-  const params = new URLSearchParams();
-  if (AD_ACCOUNT_ID) params.set('act', AD_ACCOUNT_ID);
-  if (BUSINESS_ID) params.set('business_id', BUSINESS_ID);
-  const qs = params.toString();
-  return `https://adsmanager.facebook.com/adsmanager/manage/campaigns${qs ? `?${qs}` : ''}`;
+  const url = new URL(ADS_MANAGER_CAMPAIGNS);
+  if (AD_ACCOUNT_ID) url.searchParams.set('act', AD_ACCOUNT_ID);
+  if (BUSINESS_ID) url.searchParams.set('business_id', BUSINESS_ID);
+  return url.toString();
 }
 
-async function waitForOptionalLogin(s) {
-  if (!WAIT_FOR_LOGIN) return;
-  await s.page.waitForURL((url) => !isLoginUrl(String(url)));
-  await pageSettled(s.page);
+/** What the signed-in Ads Manager page shows: its title, headings and rows. */
+function pageDetails() {
+  const squash = (node) => node.innerText.replace(/\s+/g, ' ').trim();
+  return {
+    title: document.title,
+    headings: Array.from(document.querySelectorAll('h1, h2, [role="heading"]'))
+      .map(squash)
+      .filter(Boolean),
+    rows: Array.from(document.querySelectorAll('[role="row"], tr'))
+      .map(squash)
+      .filter(Boolean),
+  };
 }
 
-const preparedProfile = prepareUserDataDir();
+function report(fields) {
+  console.log(
+    JSON.stringify({ platform: 'meta_ads', ...fields }, null, INDENT),
+  );
+}
+
+const preparedProfile = profileForCheck(
+  SOURCE_USER_DATA_DIR,
+  'meta-verify',
+  USE_PROFILE_CLONE,
+);
 console.log(
-  `[meta-ads-verify-access] sourceProfile=${SOURCE_USER_DATA_DIR} clonedProfile=${process.env.META_VERIFY_USE_PROFILE_CLONE !== '0'} account=${AD_ACCOUNT_ID || 'auto'}`,
+  `[meta-ads-verify-access] sourceProfile=${SOURCE_USER_DATA_DIR} clonedProfile=${USE_PROFILE_CLONE} account=${AD_ACCOUNT_ID ? AD_ACCOUNT_ID : 'not stated'}`,
 );
 const s = await WSession.start({
   label: 'meta_ads_verify_access',
-  browser: process.env.BROWSER || 'chromium',
   proxy: statedProxy('the Meta Ads access check'),
-  persona: stableProfilePersona(),
+  persona: stableProfilePersona(SOURCE_USER_DATA_DIR),
   userDataDir: preparedProfile.dir,
   headless: process.env.META_VERIFY_HEADLESS !== '0',
   pageDiagnostics: process.env.WELES_PAGE_DIAGNOSTICS === '1',
 });
 
-let exitCode = 0;
 try {
   await s.goto(targetUrl());
   await pageSettled(s.page);
-  await waitForOptionalLogin(s);
-  await pageSettled(s.page);
-
-  const current = s.page.url?.() ?? '';
-  const cookies = await s.ctx.cookies().catch(() => []);
-  const text = await s.page
-    .evaluate(() => document.body?.innerText || '')
-    .catch(() => '');
-  const loggedIn = hasMetaAuthCookie(cookies) && !isLoginUrl(current);
-  if (!loggedIn) {
-    console.log(
-      JSON.stringify({ platform: 'meta_ads', loggedIn, url: current }, null, 2),
-    );
-    console.log(`FAIL: Meta Ads browser session is not logged in (${current})`);
-    exitCode = 2;
-  } else {
-    const details = await s.page.evaluate(() => {
-      const bodyText = document.body?.innerText || '';
-      const visibleAccount = bodyText.match(/([^\n]*\((\d{6,})\))/);
-      const rows = Array.from(document.querySelectorAll('[role="row"], tr'))
-        .map((row) =>
-          (row.innerText || row.textContent || '').replace(/\s+/g, ' ').trim(),
-        )
-        .filter(Boolean);
-      const headings = Array.from(
-        document.querySelectorAll('h1, h2, [role="heading"]'),
-      )
-        .map((node) =>
-          (node.innerText || node.textContent || '')
-            .replace(/\s+/g, ' ')
-            .trim(),
-        )
-        .filter(Boolean);
-      // An empty account is read from the rows themselves, not guessed from
-      // the wording of an empty-state banner.
-      return {
-        title: document.title,
-        headings,
-        rows,
-        visibleAccountLabel: visibleAccount?.[1]?.trim() || null,
-        visibleAccountId: visibleAccount?.[2] || null,
-      };
-    });
-
-    if (
-      AD_ACCOUNT_ID &&
-      details.visibleAccountId &&
-      details.visibleAccountId !== AD_ACCOUNT_ID
-    ) {
-      console.log(
-        JSON.stringify(
-          {
-            platform: 'meta_ads',
-            loggedIn,
-            expectedAccountId: AD_ACCOUNT_ID,
-            visibleAccountId: details.visibleAccountId,
-            visibleAccountLabel: details.visibleAccountLabel,
-            url: current,
-          },
-          null,
-          2,
-        ),
-      );
-      console.log('FAIL: wrong Meta ad account selected');
-      exitCode = 1;
-    } else if (
-      AD_ACCOUNT_NAME &&
-      details.visibleAccountLabel &&
-      !details.visibleAccountLabel
-        .toLowerCase()
-        .includes(AD_ACCOUNT_NAME.toLowerCase())
-    ) {
-      console.log(
-        JSON.stringify(
-          {
-            platform: 'meta_ads',
-            loggedIn,
-            expectedAccountName: AD_ACCOUNT_NAME,
-            visibleAccountLabel: details.visibleAccountLabel,
-            url: current,
-          },
-          null,
-          2,
-        ),
-      );
-      console.log('FAIL: wrong Meta ad account label');
-      exitCode = 1;
-    } else {
-      console.log(
-        JSON.stringify(
-          {
-            platform: 'meta_ads',
-            loggedIn,
-            expectedAccountId: AD_ACCOUNT_ID || null,
-            url: current,
-            ...details,
-          },
-          null,
-          2,
-        ),
-      );
-      console.log('PASS: Meta Ads browser access verified');
-    }
+  if (WAIT_FOR_LOGIN) {
+    await s.page.waitForURL((url) => !isLoginUrl(String(url)));
+    await pageSettled(s.page);
   }
+
+  const current = s.page.url();
+  if (
+    isLoginUrl(current) ||
+    !(await holdsMetaSession(s.ctx, ADS_MANAGER_CAMPAIGNS))
+  ) {
+    report({ loggedIn: false, url: current });
+    throw new Error(
+      `META_ADS_NOT_SIGNED_IN: the Meta Ads browser session is not signed in (url=${current})`,
+    );
+  }
+  const visibleAccountId = new URL(current).searchParams.get('act');
+  if (AD_ACCOUNT_ID && visibleAccountId !== AD_ACCOUNT_ID) {
+    report({
+      loggedIn: true,
+      expectedAccountId: AD_ACCOUNT_ID,
+      visibleAccountId,
+      url: current,
+    });
+    throw new Error(
+      `META_ADS_WRONG_ACCOUNT: Ads Manager opened account ${visibleAccountId} instead of ${AD_ACCOUNT_ID}`,
+    );
+  }
+  const visibleAccountName = await shownText(
+    s.page,
+    'name of the ad account Ads Manager has selected',
+  );
+  if (
+    AD_ACCOUNT_NAME &&
+    !(
+      visibleAccountName &&
+      visibleAccountName.toLowerCase().includes(AD_ACCOUNT_NAME.toLowerCase())
+    )
+  ) {
+    report({
+      loggedIn: true,
+      expectedAccountName: AD_ACCOUNT_NAME,
+      visibleAccountName,
+      url: current,
+    });
+    throw new Error(
+      `META_ADS_WRONG_ACCOUNT: the selected account reads ${JSON.stringify(visibleAccountName)}, not ${JSON.stringify(AD_ACCOUNT_NAME)}`,
+    );
+  }
+  report({
+    loggedIn: true,
+    expectedAccountId: AD_ACCOUNT_ID,
+    visibleAccountId,
+    visibleAccountName,
+    url: current,
+    ...(await s.page.evaluate(pageDetails)),
+  });
+  console.log('PASS: Meta Ads browser access verified');
 } finally {
-  await s
-    .close()
-    .catch((e) => console.log(`[session] close failed: ${e.message}`));
+  await s.close();
   preparedProfile.cleanup();
 }
-
-if (exitCode) process.exit(exitCode);

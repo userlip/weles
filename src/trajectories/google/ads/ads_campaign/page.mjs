@@ -9,10 +9,6 @@ export async function navigate(s, url) {
   await s.page.goto(url, { waitUntil: 'domcontentloaded' });
 }
 
-export async function bringBrowserToFront(s) {
-  await s.page.bringToFront();
-}
-
 export function normalizeCustomerId(id) {
   return id ? String(id).replace(/\D/g, '') : null;
 }

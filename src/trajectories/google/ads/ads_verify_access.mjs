@@ -6,9 +6,9 @@
 // signed in is read by the shared Google session reader; a signed-out profile
 // fails the run with the address it landed on.
 
-import { cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import {
@@ -22,6 +22,7 @@ import {
   holdsGoogleSession,
   onGoogleSignIn,
 } from '../../_shared/profile/google_session.mjs';
+import { profileForCheck } from '../../_shared/profile/clone.mjs';
 
 const INDENT = '  ';
 const GOOGLE_ADS_CAMPAIGNS = 'https://ads.google.com/aw/campaigns';
@@ -37,50 +38,6 @@ const CUSTOMER_ID = STATED_CUSTOMER
   : null;
 const USE_PROFILE_CLONE = process.env.GOOGLE_VERIFY_USE_PROFILE_CLONE !== '0';
 mkdirSync(SOURCE_USER_DATA_DIR, { recursive: true });
-
-// Chromium's lock files and the caches it rebuilds on start; the clone
-// leaves them behind so a second Chromium can open it beside the first.
-const REBUILT_ON_START = new Set([
-  'Crashpad',
-  'Crash Reports',
-  'Cache',
-  'Code Cache',
-  'GPUCache',
-  'ShaderCache',
-  'GrShaderCache',
-  'GraphiteDawnCache',
-  'DawnGraphiteCache',
-  'DawnWebGPUCache',
-  'Safe Browsing',
-  'optimization_guide_model_store',
-  'component_crx_cache',
-  'extensions_crx_cache',
-]);
-
-function profileCopyFilter(src) {
-  const base = basename(src);
-  return !base.startsWith('Singleton') && !REBUILT_ON_START.has(base);
-}
-
-function prepareUserDataDir() {
-  if (!USE_PROFILE_CLONE) {
-    return { dir: SOURCE_USER_DATA_DIR, cleanup: () => {} };
-  }
-  const cloneParent = mkdtempSync(
-    join(tmpdir(), 'weles-google-verify-profile-'),
-  );
-  const cloneDir = join(cloneParent, 'profile');
-  cpSync(SOURCE_USER_DATA_DIR, cloneDir, {
-    recursive: true,
-    force: true,
-    errorOnExist: false,
-    filter: profileCopyFilter,
-  });
-  return {
-    dir: cloneDir,
-    cleanup: () => rmSync(cloneParent, { recursive: true, force: true }),
-  };
-}
 
 function targetUrl() {
   if (process.env.ADS_URL) return process.env.ADS_URL;
@@ -108,7 +65,11 @@ assertGoogleAdsProfileNotAlreadyOpen(
   SOURCE_USER_DATA_DIR,
   'google_ads_verify_access',
 );
-const preparedProfile = prepareUserDataDir();
+const preparedProfile = profileForCheck(
+  SOURCE_USER_DATA_DIR,
+  'google-verify',
+  USE_PROFILE_CLONE,
+);
 console.log(
   `[google-ads-verify-access] sourceProfile=${SOURCE_USER_DATA_DIR} clonedProfile=${USE_PROFILE_CLONE} customer=${CUSTOMER_ID ? CUSTOMER_ID : 'not stated'}`,
 );

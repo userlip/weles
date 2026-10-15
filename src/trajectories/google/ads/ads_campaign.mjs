@@ -58,13 +58,10 @@ import {
   USER_DATA_DIR,
   WAIT_FOR_LOGIN,
 } from './ads_campaign/settings.mjs';
-import {
-  bringBrowserToFront,
-  ensureCustomer,
-  navigate,
-} from './ads_campaign/page.mjs';
+import { ensureCustomer, navigate } from './ads_campaign/page.mjs';
 import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import { onGoogleSignIn } from '../../_shared/profile/google_session.mjs';
+import { bringBrowserToFront } from '../../_shared/action/window.mjs';
 import { humanType } from '../../../../dist/human/keyboard.js';
 import {
   clickDescribed,
@@ -107,7 +104,7 @@ const s = await WSession.start({
   userDataDir: USER_DATA_DIR,
 });
 try {
-  await bringBrowserToFront(s);
+  await bringBrowserToFront(s, 'google-ads');
   await navigate(s, baseUrl);
   await pageSettled(s.page);
   let url = s.page.url();
@@ -117,7 +114,7 @@ try {
         'GOOGLE_ADS_SESSION_EXPIRED: the profile is not signed in to Google and WAIT_FOR_LOGIN is not set',
       );
     console.log('[google-ads] waiting for manual login in the open window');
-    await bringBrowserToFront(s);
+    await bringBrowserToFront(s, 'google-ads');
     await s.page.waitForURL((u) => !onGoogleSignIn(String(u)));
     await navigate(s, baseUrl);
     await pageSettled(s.page);
