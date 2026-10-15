@@ -5,8 +5,9 @@
  * caption + share.
  *
  * Organic vs promote is controlled by env POST_PROMOTE (same as other posts).
- * The generated image prompt pulls from the character's niche so the media
- * matches the persona visually.
+ * The image is drawn from IMAGE_PROMPT, or from the character's niche so the
+ * media matches the persona visually; a character without a niche and no
+ * IMAGE_PROMPT is refused rather than given a theme nobody chose.
  */
 import {
   getSocialAccount,
@@ -27,6 +28,7 @@ import { generateImageFile } from '../../_shared/content/media.mjs';
 import { writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
+import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import {
   accountCharacter,
@@ -34,33 +36,41 @@ import {
   findProduct,
 } from '../../_shared/skarbiec/accounts.mjs';
 
+const INSTAGRAM_ORIGIN = 'https://www.instagram.com/';
 const ACTION = process.env.POST_PROMOTE === '1' ? 'post_promote' : 'post';
 
-const acct = await getSocialAccount('instagram');
-if (!acct) {
-  console.log('FAIL: no active instagram account');
-  process.exit(1);
+/**
+ * What the post's image shows: IMAGE_PROMPT as stated, else a candid photo
+ * of the character's niche. With neither, nothing says what to draw.
+ */
+function imagePromptFor(character) {
+  if (process.env.IMAGE_PROMPT) return process.env.IMAGE_PROMPT;
+  if (!character.niche)
+    throw new Error(
+      `IMAGE_PROMPT is not set and character ${character.name} states no niche: nothing says what the post's image shows`,
+    );
+  return `${character.niche} photo, authentic amateur aesthetic, natural lighting, mobile phone camera, candid composition, no text or logos`;
 }
+
+const acct = await getSocialAccount('instagram');
+if (!acct) throw new Error('no active instagram account to post with');
 
 const vaultAccount = findAccount('instagram', acct.username);
 const character = accountCharacter(vaultAccount);
-if (!character) {
-  console.log('FAIL: no character linked');
-  process.exit(1);
-}
+if (!character)
+  throw new Error(
+    `instagram account ${acct.username} has no linked character to post as`,
+  );
 
 let product = null;
 if (ACTION === 'post_promote') {
   const productId = process.env.PRODUCT_ID || character.promoted_product_id;
-  if (!productId) {
-    console.log('FAIL: no product configured for post_promote');
-    process.exit(1);
-  }
+  if (!productId)
+    throw new Error(
+      'post_promote names no product: set PRODUCT_ID or the character promoted_product_id',
+    );
   product = findProduct(productId);
-  if (!product) {
-    console.log('FAIL: product not found');
-    process.exit(1);
-  }
+  if (!product) throw new Error(`product ${productId} was not found`);
 }
 
 const personaCtx = {
@@ -74,10 +84,9 @@ const caption =
   (await generatePost({ persona: personaCtx, surface: 'instagram', product }));
 console.log(`[instagram:${ACTION}] caption: ${caption}...`);
 
-const imagePrompt =
-  process.env.IMAGE_PROMPT ||
-  `${character.niche ?? 'casual lifestyle'} photo, authentic amateur aesthetic, natural lighting, mobile phone camera, candid composition, no text or logos`;
-const imagePath = await generateImageFile({ prompt: imagePrompt });
+const imagePath = await generateImageFile({
+  prompt: imagePromptFor(character),
+});
 console.log(`[instagram:${ACTION}] image file: ${imagePath}`);
 
 const { proxyUrl, persona } = await resolveAccountSession(acct);
@@ -88,11 +97,19 @@ const s = await WSession.start({
 });
 let banSignal = null;
 try {
-  const cookies = (acct.metadata?.cookies ?? []).filter((c) =>
-    (c.domain ?? '').includes('instagram.com'),
-  );
+  // The account's stored jar, limited to the cookies Instagram's host would
+  // be sent; an account with no stored jar has none to inject.
+  const instagramHost = new URL(INSTAGRAM_ORIGIN).hostname;
+  const storedJar = Array.isArray(acct.metadata?.cookies)
+    ? acct.metadata.cookies
+    : [];
+  const cookies = storedJar.filter((c) => {
+    if (typeof c.domain !== 'string') return false;
+    const domain = c.domain.replace(/^\./, '');
+    return instagramHost === domain || instagramHost.endsWith(`.${domain}`);
+  });
   if (cookies.length) await s.ctx.addCookies(cookies);
-  await s.goto('https://www.instagram.com/');
+  await s.goto(INSTAGRAM_ORIGIN);
   checkReachable(s, 'instagram');
   await pageSettled(s.page);
   const loggedOut = await s.page.evaluate(() =>
@@ -105,17 +122,20 @@ try {
 
   // Hook filechooser: the Create modal calls input[type=file].click() once
   // we click "Select from computer" — Playwright catches the dialog event
-  // and we feed it the generated image path directly.
+  // and we feed it the generated image path directly. A refused file is
+  // kept, so the preview that never shows is reported with its cause.
+  let fileChooserError = null;
   s.page.on('filechooser', async (chooser) => {
     try {
       await chooser.setFiles(imagePath);
       console.log(`[instagram] filechooser accepted ${imagePath}`);
     } catch (e) {
+      fileChooserError = e;
       console.log(`[instagram] filechooser err: ${e.message}`);
     }
   });
 
-  // 1. Click "Create" in left sidebar (svg aria-label="New post").
+  // Click "Create" in the left sidebar (svg aria-label="New post").
   const createBtn = s.page
     .locator(
       'a[href="#"]:has(svg[aria-label="New post"]), div[role="button"]:has(svg[aria-label="New post"])',
@@ -127,8 +147,8 @@ try {
   await pageSettled(s.page);
   // Some IG variants split creation into a Post / Reel / Story submenu.
   await clickOffered(s.page, 'the Post option of the create menu');
-  // 2. The create dialog's file selection triggers the filechooser, which
-  //    the hook above answers with the image path.
+  // The create dialog's file selection triggers the filechooser, which the
+  // hook above answers with the image path.
   await clickDescribed(
     s.page,
     'the button in the create dialog that selects a file from the computer',
@@ -139,10 +159,18 @@ try {
       'div[role="dialog"] img[alt*="image" i], div[role="dialog"] canvas, div[role="dialog"] [style*="background-image"]',
     )
     .first()
-    .waitFor({ state: 'visible' });
+    .waitFor({ state: 'visible' })
+    .catch((error) => {
+      if (fileChooserError)
+        throw new Error(
+          `the create dialog showed no preview because the file chooser refused ${imagePath}: ${fileChooserError.message}`,
+          { cause: fileChooserError },
+        );
+      throw error;
+    });
   await pageSettled(s.page);
-  // 3. Next through Instagram's own steps (crop, filter) until the caption
-  //    box shows: Instagram decides how many there are.
+  // Next through Instagram's own steps (crop, filter) until the caption box
+  // shows: Instagram decides how many there are.
   const captionBox = s.page
     .locator(
       'div[role="dialog"] textarea[aria-label*="caption" i], div[role="dialog"] div[contenteditable="true"][aria-label*="caption" i], div[role="dialog"] textarea',
@@ -156,30 +184,25 @@ try {
     );
     await pageSettled(s.page);
   }
-  // 5. Fill caption textarea.
+  // Fill the caption.
   await humanClickLocator(s.page, captionBox);
   await humanType(s.page, caption);
   await pageSettled(s.page);
-  // 6. Share, then confirm Instagram reports the post as shared.
+  // Share, then confirm Instagram reports the post as shared.
   await clickDescribed(s.page, 'the button that shares the new post');
   if (!(await pageShows(s.page, 'Does the page say the post has been shared?')))
     throw new Error(
       `Instagram did not report the post as shared on ${s.page.url()}`,
     );
   await pageSettled(s.page);
-  banSignal = await detectInstagramBanSignals(
-    s.page,
-    s.capturedResponses,
-  ).catch(() => null);
+  banSignal = await banSignalOf(detectInstagramBanSignals, s, 'after posting');
   console.log(`[ban-signal] ${banSignal?.signal}  PASS: posted`);
 } catch (e) {
   banSignal =
     e.banSignal ??
-    (await detectInstagramBanSignals(s.page, s.capturedResponses).catch(
-      () => null,
-    ));
+    (await banSignalOf(detectInstagramBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${banSignal?.signal}  FAIL: ${e.message}`);
-  process.exitCode = 1;
+  throw e;
 } finally {
   if (banSignal) {
     try {
@@ -198,7 +221,7 @@ try {
             ts: new Date().toISOString(),
           },
           null,
-          2,
+          '  ',
         ),
       );
     } catch (e) {
