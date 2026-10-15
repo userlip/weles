@@ -30,11 +30,13 @@ import {
 } from './api_server/service_settings.mjs';
 import {
   authorized,
-  json,
-  readJsonBody,
   validateReportRequest,
   validateRequest,
 } from './api_server/request_intake.mjs';
+import {
+  json,
+  readBody,
+} from '../../../../worker/weles-api-server/http-exchange.mjs';
 import { runKeywordPlanner } from './api_server/keeper_harvest.mjs';
 import { generateKeywordsWithRouter } from './api_server/model_router.mjs';
 import {
@@ -81,7 +83,7 @@ export async function respondToKeywordPlanner(req, res, url) {
       return;
     }
 
-    const body = await readJsonBody(req);
+    const body = await readBody(req);
     const startedAt = new Date().toISOString();
 
     if (url.pathname === KEYWORD_VOLUME) {

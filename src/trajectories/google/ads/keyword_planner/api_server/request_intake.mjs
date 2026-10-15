@@ -1,44 +1,13 @@
-// What arrives on the wire and what counts as a request: the JSON envelope this
-// facade writes back, the whole body it reads (no size is chosen here), the
-// token it demands before doing any work, and the two request shapes it
-// accepts — a bare keyword volume check and a keyword report brief that names
-// a product. The customer id and keywords are read by the shared request
-// readers (`../request.mjs`); a field a request does not carry stays absent.
+// What counts as a Keyword Planner request: the facade's own token, demanded
+// before any work, and the two request shapes it accepts — a bare keyword
+// volume check and a keyword report brief that names a product. Bodies are
+// read and answers written by the API's shared exchange
+// (`src/worker/weles-api-server/http-exchange.mjs`). The customer id and
+// keywords are read by the shared request readers (`../request.mjs`); a field
+// a request does not carry stays absent.
 
 import { ALLOW_UNAUTH, API_TOKEN, SESSION } from './service_settings.mjs';
 import { customerIdOf, keywordsOf, squash } from '../request.mjs';
-
-const INDENT = '  ';
-
-export function json(res, status, body) {
-  const text = JSON.stringify(body, null, INDENT);
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'content-length': Buffer.byteLength(text),
-  });
-  res.end(text);
-}
-
-export function readJsonBody(req) {
-  return new Promise((resolveBody, rejectBody) => {
-    const chunks = [];
-    req.on('data', (chunk) => chunks.push(chunk));
-    req.on('end', () => {
-      const text = Buffer.concat(chunks).toString('utf8');
-      if (!text.trim()) {
-        rejectBody(new Error('the request body is empty: send a JSON object'));
-        return;
-      }
-      try {
-        resolveBody(JSON.parse(text));
-      } catch (error) {
-        rejectBody(new Error(`invalid JSON body: ${error.message}`));
-      }
-    });
-    req.on('error', rejectBody);
-  });
-}
 
 export function authorized(req) {
   if (ALLOW_UNAUTH) return true;
