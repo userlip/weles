@@ -23,15 +23,14 @@ export function signalRunProcess(child, signal) {
     try {
       process.kill(-child.pid, signal);
       return;
-    } catch {
-      // The group may already be gone while the direct child still exits.
+    } catch (error) {
+      // A group that already exited answers ESRCH; its direct child may
+      // still be running. Any other refusal is the caller's to see.
+      if (error.code !== 'ESRCH') throw error;
     }
   }
-  try {
-    child.kill(signal);
-  } catch {
-    /* already exited */
-  }
+  // A child that already exited takes no signal; kill answers false for it.
+  child.kill(signal);
 }
 
 export function trajectoryProcess(trajPath) {
@@ -85,10 +84,6 @@ export function trajectoryProcess(trajPath) {
   };
 }
 
-// The exit code a run reports when its child produced none (it failed to
-// spawn or ended without one); the same value the close handlers write.
-export const NO_EXIT_CODE = Math.sign(-Infinity);
-
 // What a running run has said so far, as `GET /runs` reports it: both
 // streams whole, as the finished record will keep them, and when the child
 // last wrote anything. A run whose last output is an hour old is waiting on
@@ -113,7 +108,7 @@ export function recordedOutputs(runId) {
 
 // What every trajectory child is told about its run, whichever path started
 // it. The child writes recordings where this server reads them back
-// (findResultDoc, runOutputs, diagnostics); without it a trajectory falls to
+// (runOutputs, diagnostics); without it a trajectory falls to
 // <cwd>/recordings and every recorded output reads as absent. And a run's
 // verdict does not wait on a detection probe: the probe a closing session
 // runs (page script, then a third-party TLS echo) sent a signed-in browser to
