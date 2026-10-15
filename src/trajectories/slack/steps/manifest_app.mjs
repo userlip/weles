@@ -142,9 +142,11 @@ export async function appToken(page, appId, prefix) {
 export async function installManifestApp({ page, xoxc, manifest, label, shot }) {
   await manifestCall(page, 'apps.manifest.validate', xoxc, manifest);
   const created = await manifestCall(page, 'apps.manifest.create', xoxc, manifest);
+  // The answer carries the new app's credentials (client secret, signing
+  // secret, verification token), so only the fields it holds are named.
   if (!created.app_id)
     throw new Error(
-      `SLACK_MANIFEST_REFUSED: apps.manifest.create answered no app_id: ${JSON.stringify(created)}`,
+      `SLACK_MANIFEST_REFUSED: apps.manifest.create answered no app_id; its answer holds ${Object.keys(created).join(', ')}`,
     );
   console.log(`[${label}] app created: id=${created.app_id}`);
   await shot('app-created');
