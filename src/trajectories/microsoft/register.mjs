@@ -16,8 +16,18 @@ import {
   humanIdlePause,
 } from '../../../dist/human/mouse.js';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
+import { phoneForField } from '../_shared/inputs/phone.mjs';
 
 const URL = 'https://signup.live.com';
+// Where a finished signup lands: the account, the OAuth hand-off, the mailbox
+// or the signup's own welcome page.
+const LANDINGS = [
+  'account.microsoft.com',
+  'login.live.com/oauth20',
+  'outlook.live.com',
+  'signup.live.com/welcome',
+];
+const landed = (url) => LANDINGS.some((route) => url.includes(route));
 
 {
   const s = await WSession.start({
@@ -99,13 +109,8 @@ const URL = 'https://signup.live.com';
       await humanIdlePause('deliberate');
     }
 
-    // 4. Country + DOB. A country select that refuses US fails the signup, as
-    // the birth-date selects below do: an account registered in another
-    // country is not the identity generated for it.
-    const countrySel = s.page
-      .locator('select#Country, select[name="Country"]')
-      .first();
-    if (await countrySel.count()) await countrySel.selectOption('US');
+    // 4. DOB. The country select keeps the country Microsoft set for the
+    // connection; the run names none of its own.
     const monthSel = s.page
       .locator('select#BirthMonth, select[name="BirthMonth"]')
       .first();
@@ -131,37 +136,23 @@ const URL = 'https://signup.live.com';
     );
     await humanIdlePause('long');
 
-    // 5. Arkose / "Press and Hold" captcha. Microsoft is moving from a
-    // visual-puzzle Arkose to a per-puzzle "press and hold" challenge that
-    // Capsolver can solve via funcaptcha solver (same pattern as
-    // github/captcha/funcaptcha.mjs). For now, surface a deterministic blocker so the
-    // operator can plug in the solver path if needed.
+    // 5. Arkose / "Press and Hold" captcha, through the session's solver; a
+    // challenge it does not solve fails the signup with the solver's answer.
     const arkose = await s.page
       .locator(
         'iframe[src*="arkoselabs.com"], iframe[src*="enforcement.arkoselabs"], #enforcementFrame',
       )
       .first()
-      .isVisible()
-      .catch(() => false);
+      .isVisible();
     if (arkose) {
-      console.log(
-        '[ms] Arkose challenge detected — solver hookup needed (funcaptcha)',
-      );
-      const solved = await s.solveCaptcha().catch(() => 'no-target-found');
-      if (typeof solved === 'string' && solved.startsWith('error')) {
+      const solved = await s.solveCaptcha();
+      if (solved !== 'captcha solved')
         throw new Error(`microsoft_arkose_unsolved: ${solved}`);
-      }
       await humanIdlePause('deliberate');
     }
 
-    // 6. Phone verification
-    const phone = await s.checkSms('microsoft', 'US');
-    if (phone.startsWith('error'))
-      throw new Error(`microsoft_sms_unavailable: ${phone}`);
-    const digits = s
-      .resolveEnv('$MICROSOFT_NEW_PHONE')
-      .replace(/^\+\d{1,2}/, '')
-      .replace(/\D/g, '');
+    // 6. Phone verification, rented in the country the phone field is set to
+    // (../_shared/inputs/phone.mjs).
     const phoneIn = s.page
       .locator(
         'input[name="phoneNumber"], input[type="tel"], input#phoneNumber',
@@ -169,6 +160,7 @@ const URL = 'https://signup.live.com';
       .filter({ visible: true })
       .first();
     if (await phoneIn.count()) {
+      const digits = await phoneForField(s, s.page, 'microsoft');
       await humanClickLocator(s.page, phoneIn);
       await humanType(s.page, digits);
       await humanClickLocator(
@@ -179,41 +171,32 @@ const URL = 'https://signup.live.com';
           .first(),
       );
       await humanIdlePause('deliberate');
-    }
-    const smsCode = await s.pollSmsCode();
-    if (!smsCode || /^no code|^error/i.test(smsCode))
-      throw new Error(`microsoft_sms_otp_failed: ${smsCode}`);
-    const codeIn = s.page
-      .locator(
-        'input[name="otc"], input[name="VerificationCode"], input[type="tel"][maxlength], input[autocomplete="one-time-code"]',
-      )
-      .filter({ visible: true })
-      .first();
-    if (await codeIn.count()) {
+      // The code Microsoft texted to the rented number goes into its code
+      // field; a code field that does not show fails the signup.
+      const smsCode = await s.pollSmsCode();
+      if (!/^\d+$/.test(smsCode)) throw new Error(`microsoft_sms_otp_failed: ${smsCode}`);
+      const codeIn = s.page
+        .locator(
+          'input[name="otc"], input[name="VerificationCode"], input[type="tel"][maxlength], input[autocomplete="one-time-code"]',
+        )
+        .filter({ visible: true })
+        .first();
+      await codeIn.waitFor({ state: 'visible' });
       await humanClickLocator(s.page, codeIn);
       await humanType(s.page, smsCode);
       await humanClickLocator(
         s.page,
-        s.page
-          .locator('input[type="submit"], button[type="submit"]')
-          .filter({ visible: true })
-          .first(),
+        s.page.locator('input[type="submit"], button[type="submit"]').filter({ visible: true }).first(),
       );
       await humanIdlePause('long');
     }
 
-    // 7. Land on account.microsoft.com or login.live.com/oauth20.* on success.
-    const finalUrl = s.page.url?.() ?? '';
-    if (
-      !/account\.microsoft\.com|login\.live\.com\/oauth20|outlook\.live\.com|signup\.live\.com\/welcome/i.test(
-        finalUrl,
-      )
-    ) {
+    // 7. Land on one of LANDINGS; a "save your login" interstitial may stand
+    // in front of it until the page settles.
+    if (!landed(s.page.url())) {
       await humanIdlePause('deliberate');
-      const settled = s.page.url?.() ?? '';
-      if (!/microsoft\.com|live\.com|outlook\.com/i.test(settled)) {
-        throw new Error(`microsoft_register_no_landing: ${settled}`);
-      }
+      if (!landed(s.page.url()))
+        throw new Error(`microsoft_register_no_landing: ${s.page.url()}`);
     }
 
     const email = `${id.username}@outlook.com`;
@@ -225,10 +208,7 @@ const URL = 'https://signup.live.com';
       status: 'verified',
     });
     console.log(`PASS: microsoft ${email}`);
-    process.exit(0);
-  } catch (e) {
-    console.log(`FAIL: ${e.message}`);
+  } finally {
     await s.close();
-    process.exit(1);
   }
 }

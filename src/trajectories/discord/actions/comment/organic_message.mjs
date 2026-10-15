@@ -1,5 +1,10 @@
+// Send a message in a Discord channel in the account character's voice,
+// through the shared action runner; the text answers the channel's newest
+// message (../../submit.mjs discordNewestMessage).
+//
+// Env: SERVER_CHANNEL_PATH (required): <server id>/<channel id> or @me/<dm id>.
 import { runAction } from '../../../_shared/action-runner.mjs';
-import { discordSubmitMessage } from '../../submit.mjs';
+import { discordNewestMessage, discordSubmitMessage } from '../../submit.mjs';
 import { detectDiscordBanSignals } from '../../../../../dist/platforms/discord/ban_signals.js';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
 
@@ -12,20 +17,7 @@ await runAction({
   action: 'organic_message',
   feedUrl: `https://discord.com/channels/${channelPath}`,
   surfaceLabel: 'discord channel',
-  pickPost: async (s) => {
-    try {
-      const text = await s.page.evaluate(() => {
-        const messages = Array.from(
-          document.querySelectorAll('[class*="messageContent"]'),
-        ).slice(-5);
-        const last = messages[messages.length - 1];
-        return last?.textContent?.trim() ?? '';
-      });
-      return { postTitle: text || '', postBody: '' };
-    } catch {
-      return { postTitle: '', postBody: '' };
-    }
-  },
+  pickPost: discordNewestMessage,
   submitComment: discordSubmitMessage,
   banDetector: detectDiscordBanSignals,
 });

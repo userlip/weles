@@ -1,335 +1,129 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../dist/utils/credentials.js';
+// Sign the active LinkedIn account in and keep its session.
+//
+// The proxy is the account's own, resolved by resolveAccountSession (its
+// pinned exit, or a fresh static ISP exit for an account without one), so
+// the login leaves from the address the account was registered from; a login
+// page the proxy cannot reach rotates to a working sticky
+// (gotoLoginRotating). The account's stored PerimeterX
+// storage is restored before the page hydrates. An edge checkpoint before
+// the form, or after the submit, goes through the captcha solver; a degraded
+// shell with no form is refused. The account signs in with its password, or
+// through Google when it has none or LINKEDIN_LOGIN_GOOGLE_SSO=1. The login
+// counts once LinkedIn sets its li_at cookie; the session's cookies (with
+// the proxy they were minted under) and PerimeterX storage are then kept,
+// and an unconfirmed email is confirmed from the inbox. Every outcome is
+// kept as the run's verdict through the shared verdict writer (a checkpoint
+// marks the account's cookies stale); a failure is thrown.
+import { getSocialAccount, resolveAccountSession } from '../../../dist/utils/credentials.js';
 import { WSession } from '../../../dist/session/wsession.js';
 import { generatePersona } from '../../../dist/browser/persona.js';
-import { humanType } from '../../../dist/human/keyboard.js';
-import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
+import { pageSettled } from '../_shared/page/settled.mjs';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
-import {
-  solveLinkedinCheckpoint,
-  injectV3LoginToken,
-  confirmLinkedinEmail,
-} from '../_shared/linkedin/checkpoint.mjs';
-import {
-  captureLinkedinPxStorage,
-  restoreLinkedinPxStorage,
-} from '../_shared/linkedin/signup/px_storage.mjs';
+import { keepVerdict } from '../_shared/action/verdict.mjs';
+import { solveLinkedinCheckpoint, confirmLinkedinEmail } from '../_shared/linkedin/checkpoint.mjs';
+import { onCheckpointRoute, submitLinkedinPassword } from '../_shared/linkedin/sign_in.mjs';
+import { captureLinkedinPxStorage, restoreLinkedinPxStorage } from '../_shared/linkedin/signup/px_storage.mjs';
 import { gotoLoginRotating } from '../_shared/linkedin/signup/proxy_rotation.mjs';
-import { chooseLoginProxy } from './login/proxy_choice.mjs';
 import { loginWithGoogleSso } from './login/google_sso.mjs';
 import {
-  CHECKPOINT_RE,
-  classifyLoginError,
   currentWelesFingerprintTag,
-  markStaleAndFail,
+  failedVerdict,
   reapWelesFingerprintTag,
-  writeBan,
+  unsignedVerdict,
 } from './login/outcome.mjs';
 
-if (
-  process.env.WELES_INPUT === 'native' &&
-  process.env.LINKEDIN_LOGIN_ALLOW_NATIVE !== '1'
-) {
-  console.error(
-    'FAIL: native OS input is blocked for linkedin_login. Set LINKEDIN_LOGIN_ALLOW_NATIVE=1 only during an observed, isolated run.',
+const LABEL = 'linkedin_login';
+if (process.env.WELES_INPUT === 'native' && process.env.LINKEDIN_LOGIN_ALLOW_NATIVE !== '1')
+  throw new Error(
+    'LINKEDIN_NATIVE_INPUT_BLOCKED: native OS input is blocked for linkedin_login; set LINKEDIN_LOGIN_ALLOW_NATIVE=1 only during an observed, isolated run',
   );
-  process.exit(2);
-}
-
 const acct = await getSocialAccount('linkedin');
-if (!acct) {
-  console.log('FAIL: no active linkedin account in DB');
-  process.exitCode = 1;
-}
-process.env.SVC_EMAIL = acct.metadata.email ?? acct.username;
-process.env.SVC_PASSWORD = acct.metadata.password ?? '';
-const HEADLESS =
-  process.env.HEADLESS === '1' ||
-  process.env.AB_HEADLESS === '1' ||
-  process.env.LINKEDIN_LOGIN_HEADLESS === '1';
-const USE_GOOGLE_SSO =
-  process.env.LINKEDIN_LOGIN_GOOGLE_SSO === '1' || !process.env.SVC_PASSWORD;
-console.log(`[trajectory] Using account: ${acct.username}`);
+if (!acct) throw new Error('LINKEDIN_ACCOUNT_UNAVAILABLE: no active LinkedIn account in Skarbiec');
+const login = acct.metadata.email ? acct.metadata.email : acct.username;
+const password = acct.metadata.password;
+const HEADLESS = ['HEADLESS', 'AB_HEADLESS', 'LINKEDIN_LOGIN_HEADLESS'].some((name) => process.env[name] === '1');
+const USE_GOOGLE_SSO = process.env.LINKEDIN_LOGIN_GOOGLE_SSO === '1' || !password;
+// The NopeCha extension stays off: it never auto-solves without a key set in
+// its own storage, and loading it hung persistent contexts; the NopeCha API
+// path in src/captcha does the solving.
+if (process.env.WELES_NOPECHA_EXT === undefined) process.env.WELES_NOPECHA_EXT = '0';
 
-// No WELES_DISABLE_HTTP2 or WELES_USE_STOCK_CHROMIUM defaults: HTTP/1.1 and
-// stock chromium break the fingerprint stack.
-// The NopeCha browser extension stays off: it never auto-solves
-// because chrome.storage.local.settings.key is empty (no programmatic
-// init). Loading it caused 2/5 launchPersistentContext hangs and the
-// trajectory's 90s extension-wait yields nothing. The NopeCha API
-// recognition path in src/captcha/recaptcha.ts does the actual solving
-// via direct API calls — no extension needed.
-if (process.env.WELES_NOPECHA_EXT == null) process.env.WELES_NOPECHA_EXT = '0';
-
-// Sticky proxy URL per call. Prefer Oxylabs: Oxylabs/PacketStream/direct
-// return HTTP 200 on linkedin.com/login while BrightData returns HTTP 000
-// (LinkedIn edge-blocks brightdata residential for this customer's IP
-// range). There is no unconditional fresh-sticky override: one would ALWAYS
-// pick a new Oxylabs sticky session, bypassing metadata.proxy, so every
-// login would hit LinkedIn from a different exit IP than the registration session,
-// which LinkedIn's risk model treats as account-takeover-in-progress and
-// pushes to /checkpoint regardless of credentials. resolveAccountSession
-// (src/account/session.ts) already prefers metadata.proxy when it's not
-// burned/legacy/capability-failed; chooseLoginProxy only replaces a stored
-// proxy that is not a static ISP host.
 let { proxyUrl, persona } = await resolveAccountSession(acct);
-// No OS/browser pin — reuse the account's resolved persona; only generate a
-// fresh, naturally-rolled one if the account has none.
+// The account's own persona; a naturally rolled one only when it has none.
 if (!persona) persona = generatePersona();
-proxyUrl = await chooseLoginProxy(proxyUrl, acct.username);
-console.log(`[linkedin_login:dbg] before WSession.start`);
-let s = await WSession.start({
-  label: 'linkedin_login',
-  proxy: proxyUrl,
-  persona,
-  headless: HEADLESS,
-  pageDiagnostics: false,
-});
-console.log(
-  `[linkedin_login:dbg] after WSession.start, s.page=${s?.page ? 'ok' : 'null'} url=${s?.page?.url?.() ?? 'unknown'}`,
-);
+const startSession = (proxy, sessionPersona) =>
+  WSession.start({ label: LABEL, proxy, persona: sessionPersona, headless: HEADLESS, pageDiagnostics: false });
+let s = await startSession(proxyUrl, persona);
 
-async function gotoLogin() {
-  // Rotation-aware. On stripped_login_shell or goto_chrome_error,
-  // gotoLoginRotating curl-probes fresh stickies via PROVIDER_ROTATION,
-  // tears down the WSession, and restarts with a working proxy. Returns
-  // the (possibly fresh) session + the proxyUrl actually in use, which
-  // we persist in captureCookies via metadata.proxy.
-  const r = await gotoLoginRotating({
-    session: s,
-    persona,
-    restartFn: async (url, p) =>
-      WSession.start({
-        label: 'linkedin_login',
-        proxy: url,
-        persona: p,
-        headless: HEADLESS,
-        pageDiagnostics: false,
-      }),
+/** Solve the checkpoint the page shows; answers what the solver reached. */
+async function solveCheckpoint(stage) {
+  const solved = await solveLinkedinCheckpoint(s, stage, login);
+  return { liAt: solved.liAt, finalUrl: solved.finalUrl };
+}
+
+/** What keeping the signed-in session found, for the verdict. */
+async function keepSession(finalUrl) {
+  const kept = await persistFreshCookieJar(acct, await s.ctx.cookies(), {
+    currentProxyUrl: proxyUrl,
+    currentPersona: persona,
+    persistProxy: true,
   });
-  s = r.session;
-  if (r.proxyUrl) proxyUrl = r.proxyUrl;
+  if (!kept.ok)
+    throw new Error(`LINKEDIN_SESSION_NOT_KEPT: ${kept.reason}${kept.body ? ` (${kept.body})` : ''}`);
+  const px = await captureLinkedinPxStorage(s, acct);
+  // An unconfirmed email keeps LinkedIn's banner on the feed; the
+  // confirmation reads the link LinkedIn mailed, and its answer is recorded.
+  const emailConfirmation = await confirmLinkedinEmail(s.page, login);
+  return {
+    signal: 'healthy',
+    healthy: true,
+    details: { final_url: finalUrl, px_storage: px, email_confirmation: emailConfirmation },
+  };
 }
 
-async function captureCookies() {
-  if (!acct.id) return;
-  try {
-    const cookies = await s.ctx.cookies();
-    await persistFreshCookieJar(acct, cookies, {
-      currentProxyUrl: proxyUrl,
-      currentPersona: persona,
-      persistProxy: true,
-    });
-  } catch (e) {
-    console.log('[cookie-capture] err:', e.message);
-  }
-}
-
-/** Restore PX storage, then either solve an edge checkpoint or refuse a degraded shell. */
-async function prepareLoginPage() {
-  // Restore PerimeterX localStorage from prior successful session (if any)
-  // BEFORE waiting for the page to hydrate. PX reads __pxvid and px_fp on
-  // bootstrap; once the bundle has run those reads, injecting later is a
-  // no-op. Page is already on linkedin.com origin after gotoLogin so
-  // localStorage writes hit the right origin.
-  await restoreLinkedinPxStorage(s, acct).catch((e) =>
-    console.log(`[linkedin_login] px storage not restored: ${e.message}`),
-  );
-  await pageSettled(s.page);
-  // Pre-form-render checkpoint: PerimeterX edge-redirects flagged proxy IPs
-  // from /login → /checkpoint/challenge before SDUI form renders. Detect
-  // here so the form-fill below doesn't time out 30s on inputs that won't
-  // appear.
-  const earlyUrl = s.page.url?.() ?? '';
-  if (CHECKPOINT_RE.test(earlyUrl)) {
-    console.log(
-      `[linkedin_login] pre-form checkpoint at ${earlyUrl} — solving captcha first`,
-    );
-    const r = await solveLinkedinCheckpoint(
-      s,
-      'pre-form',
-      acct.metadata?.email ?? acct.username,
-    );
-    if (!r.liAt)
-      throw new Error(`pre-form captcha solver failed at ${r.finalUrl}`);
-    await captureCookies();
-    await captureLinkedinPxStorage(s, acct).catch((e) =>
-      console.log(`[linkedin_login] px storage not captured: ${e.message}`),
-    );
-    writeBan(acct, 'healthy', { final_url: r.finalUrl });
-    console.log(
-      `PASS: li_at cookie set via pre-form captcha solve — ${r.finalUrl}`,
-    );
-    await s.close();
-    process.exit(0);
-  }
-  // Degraded /login skeleton: LinkedIn serves a 13KB SSR shell (no SDUI
-  // bootstrap, no inputs) to suspect IPs. Fast-fail on an empty form after
-  // hydration so the form-fill below doesn't time out.
-  const inputCount = await s.page.evaluate(
-    () => document.querySelectorAll('input').length,
-  );
-  if (inputCount === 0) {
-    const bodyText = await s.page.evaluate(
-      () => document.body?.innerText ?? '',
-    );
-    throw new Error(
-      `degraded_login_shell: no inputs after hydration window; body=${JSON.stringify(bodyText)}`,
-    );
-  }
-}
-
-/** Fill the email/password form and submit it on either LinkedIn login shell. */
-async function loginWithPassword() {
-  // flagship3 SDUI (current 2026-05): id=":r3:" type="email" autocomplete=
-  // "username webauthn". Old shells: id=username, name=session_key.
-  // Use locator click+humanType so the React onChange fires.
-  const usernameSel =
-    'input#username, input[name="session_key"], input[type="email"][autocomplete*="username"], input[type="email"]';
-  const passwordSel =
-    'input#password, input[name="session_password"], input[type="password"][autocomplete*="current-password"], input[type="password"]';
-  const userLoc = s.page.locator(usernameSel).filter({ visible: true }).first();
-  await userLoc.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, userLoc);
-  await pageSettled(s.page);
-  await humanType(s.page, process.env.SVC_EMAIL ?? '');
-  await pageSettled(s.page);
-  const pwLoc = s.page.locator(passwordSel).filter({ visible: true }).first();
-  await humanClickLocator(s.page, pwLoc);
-  await pageSettled(s.page);
-  await humanType(s.page, process.env.SVC_PASSWORD ?? '');
-  await pageSettled(s.page);
-  // LinkedIn serves two login shells:
-  //   (A) Legacy checkpoint-frontend: <form> + <button type="submit">,
-  //       PerimeterX iframe gates the click handler that POSTs
-  //       /checkpoint/pk/initiateLogin then submits to /checkpoint/lg/login-submit.
-  //   (B) flagship3 SDUI: <button type="button"> with React onClick that
-  //       POSTs /flagship-web/rsc-action/actions/server-request.
-  // getByRole('button', name='Sign in') finds the submit on either shell.
-  const submitBtn = s.page
-    .getByRole('button', { name: /^\s*sign\s*in\s*$/i })
-    .filter({ visible: true })
-    .first();
-  await submitBtn.waitFor({ state: 'visible' });
-  await injectV3LoginToken(s.page);
-  await humanClickLocator(s.page, submitBtn);
-  // LinkedIn answers by navigating away from /login, or by showing a field
-  // error in place; either ends the wait, and the page then settles.
-  await Promise.any([
-    urlMatching(
-      s.page,
-      (u) => !/^https?:\/\/www\.linkedin\.com\/login\/?$/.test(u),
-    ),
-    s.page
-      .locator('#error-for-password, #error-for-username, [role="alert"]')
-      .filter({ hasText: /\S/ })
-      .first()
-      .waitFor({ state: 'visible' }),
-  ]);
-  await pageSettled(s.page);
-}
-
+let verdict;
+let failure;
 try {
-  await gotoLogin();
-  await prepareLoginPage();
-  if (USE_GOOGLE_SSO) {
-    console.log('[linkedin_login] using Google SSO path');
-    await loginWithGoogleSso(s, acct);
+  const rotated = await gotoLoginRotating({ session: s, persona, restartFn: startSession });
+  s = rotated.session;
+  if (rotated.proxyUrl) proxyUrl = rotated.proxyUrl;
+  const restored = await restoreLinkedinPxStorage(s, acct);
+  console.log(`[linkedin_login] px storage: ${JSON.stringify(restored)}`);
+  await pageSettled(s.page);
+  let liAt;
+  let finalUrl = s.page.url();
+  if (onCheckpointRoute(finalUrl)) {
+    // An edge checkpoint before the form renders.
+    ({ liAt, finalUrl } = await solveCheckpoint('pre-form'));
+    if (!liAt) throw new Error(`pre-form captcha solver did not sign in; it ended at ${finalUrl}`);
   } else {
-    await loginWithPassword();
+    if (!(await s.page.locator('input').count()))
+      throw new Error(
+        `degraded_login_shell: no inputs after hydration; body=${JSON.stringify(await s.page.locator('body').innerText())}`,
+      );
+    if (USE_GOOGLE_SSO) await loginWithGoogleSso(s, acct);
+    else await submitLinkedinPassword(s, login, password);
+    finalUrl = s.page.url();
+    liAt = (await s.ctx.cookies()).find((c) => c.name === 'li_at' && c.value);
+    if (!liAt && onCheckpointRoute(finalUrl)) ({ liAt, finalUrl } = await solveCheckpoint('post-submit'));
   }
-  console.log(`[linkedin_login] post-submit url=${s.page.url()}`);
-
-  let cookies = await s.ctx.cookies();
-  let liAt = cookies.find((c) => c.name === 'li_at' && c.value);
-  let finalUrl = s.page.url?.() ?? '';
-  let title =
-    (await s.page.title?.().catch((e) => `unreadable: ${e.message}`)) ?? '';
-  let onCheckpoint =
-    CHECKPOINT_RE.test(finalUrl) || /Security Verification/.test(title);
-
-  // Post-submit checkpoint: route through the V2 enterprise solver. Old
-  // path called solvePerimeterX which CapSolver returns ERROR_TYPE_NOT_SUPPORTED
-  // for — never produced cookies. V2 enterprise solves the actual reCAPTCHA
-  // image-grid LinkedIn shows on /checkpoint/challenge.
-  if (!liAt && onCheckpoint) {
-    const r = await solveLinkedinCheckpoint(
-      s,
-      'post-submit',
-      acct.metadata?.email ?? acct.username,
-    );
-    liAt = r.liAt;
-    finalUrl = r.finalUrl;
-    onCheckpoint = CHECKPOINT_RE.test(finalUrl);
-  }
-
-  if (liAt) {
-    await captureCookies();
-    await captureLinkedinPxStorage(s, acct).catch((e) =>
-      console.log(`[linkedin_login] px storage not captured: ${e.message}`),
-    );
-    // Best-effort retroactive email confirmation. Accounts registered before
-    // confirmLinkedinEmail was wired into linkedin_register.mjs (a51f39e)
-    // still carry the unconfirmed-email yellow banner that suppresses feed
-    // posts and triggers captcha_challenge on first write actions. The
-    // helper is a no-op when no recent confirm-email is in the inbox.
-    await confirmLinkedinEmail(
-      s.page,
-      acct.metadata?.email ?? acct.username,
-    ).catch((e) =>
-      console.log(`[linkedin_login] confirmLinkedinEmail: ${e.message}`),
-    );
-    writeBan(acct, 'healthy', { final_url: finalUrl });
-    console.log(`PASS: li_at cookie set — ${finalUrl}`);
-  } else if (onCheckpoint) {
-    await markStaleAndFail(
-      acct,
-      'linkedin issued V2 enterprise captcha; CapSolver token did not satisfy /checkpoint',
-      finalUrl,
-    );
-    console.log(
-      `FAIL: linkedin checkpoint — ${finalUrl} (cookies marked stale)`,
-    );
-    process.exitCode = 1;
-  } else if (finalUrl.startsWith('chrome-error://')) {
-    writeBan(acct, 'proxy_failed', {
-      final_url: finalUrl,
-      reason: 'chrome-error: proxy CONNECT failed before login completed',
-    });
-    console.log(`FAIL: proxy_failed — ${finalUrl}`);
-    process.exitCode = 1;
-  } else if (/^https:\/\/www\.linkedin\.com\/login(\/|\?|$)/.test(finalUrl)) {
-    // Bounce back to /login = credentials rejected or session_redirect loop.
-    // Mark stale so routine cron stops re-attempting against a dead account.
-    await markStaleAndFail(
-      acct,
-      'submit returned to /login — credentials rejected or session_redirect loop',
-      finalUrl,
-    );
-    console.log(
-      `FAIL: linkedin login bounced back — ${finalUrl} (cookies marked stale)`,
-    );
-    process.exitCode = 1;
-  } else {
-    await markStaleAndFail(acct, 'no li_at cookie set after submit', finalUrl);
-    console.log(`FAIL: no li_at cookie — ${finalUrl} (cookies marked stale)`);
-    process.exitCode = 1;
-  }
-} catch (e) {
-  const finalUrl = s.page?.url?.() ?? '';
-  const msg = e.message ?? '';
-  const sig = classifyLoginError(msg, finalUrl);
-  if (sig === 'checkpoint' && acct.id) await markCookiesStale(acct.id);
-  writeBan(acct, sig, { final_url: finalUrl, error: msg });
-  console.log('FAIL:', msg);
-  process.exitCode = 1;
+  verdict = liAt ? await keepSession(finalUrl) : unsignedVerdict(finalUrl);
+  if (!verdict.healthy) failure = new Error(`LINKEDIN_LOGIN_FAILED: ${verdict.signal} at ${finalUrl}: ${verdict.details.reason}`);
+  else console.log(`PASS: li_at cookie set at ${finalUrl}`);
+} catch (error) {
+  failure = error;
+  verdict = failedVerdict(error.message, s.page.url());
+  console.log('FAIL:', error.message);
 } finally {
-  const fpTag = currentWelesFingerprintTag(s);
+  const tag = currentWelesFingerprintTag(s);
   await s.close();
-  reapWelesFingerprintTag(fpTag);
-  process.exit(process.exitCode ?? 0);
+  reapWelesFingerprintTag(tag);
 }
+try {
+  await keepVerdict(LABEL, acct, verdict);
+} catch (keepError) {
+  failure = failure
+    ? new AggregateError([failure, keepError], `${failure.message}; and its verdict was not kept: ${keepError.message}`)
+    : keepError;
+}
+if (failure) throw failure;

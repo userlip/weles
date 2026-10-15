@@ -13,15 +13,13 @@ export function refusedLogin(diag) {
   );
 }
 
-/** Chromium's own network error codes, by what each says about the route. */
-const NET_ERRORS = {
-  ERR_HTTP_RESPONSE_CODE_FAILURE: 'ip_blocked',
-  ERR_BLOCKED_BY_RESPONSE: 'ip_blocked',
-  ERR_BLOCKED_BY_CLIENT: 'ip_blocked',
-  ERR_BLOCKED_BY_ADMINISTRATOR: 'ip_blocked',
-  ERR_TUNNEL_CONNECTION_FAILED: 'proxy_failed',
-  ERR_PROXY_CONNECTION_FAILED: 'proxy_failed',
-};
+/** The captcha the run could not pass, as the run's failure. */
+export function unpassedCaptcha(message) {
+  return Object.assign(new Error(`captcha_challenge: ${message}`), {
+    code: 'TIKTOK_CAPTCHA_UNPASSED',
+    banSignal: { signal: 'captcha_challenge', healthy: false, details: { reason: message } },
+  });
+}
 
 /** TikTok's own pages a stopped sign-in lands on, by path. */
 const STOPPED_AT = [
@@ -30,61 +28,34 @@ const STOPPED_AT = [
 ];
 
 /**
- * Classify a failed login from what said it failed: TikTok's own answer to
- * its login call (read by the TikTok ban detector's declared rules), the
- * captcha the run could not pass (its own captcha_challenge code), Chromium's
- * network error code, or the TikTok page it stopped on.
+ * Keep what the login saw (its passport answers, failed requests, captcha
+ * and final state) in the run's login_diag.json, and attach to `error` the
+ * verdict the failure itself names: TikTok's own refusal read by the TikTok
+ * ban detector's declared rules, or the TikTok page the sign-in stopped on.
+ * A failure that names none is left to the shared verdict, which reads the
+ * page (and Chromium's error page) itself. Answers `error`.
  */
-export async function classifyLoginFailure(error, page, loginDiag) {
-  const message = String(error?.message);
-  const finalUrl = page.url();
-  if (error?.code === 'TIKTOK_LOGIN_REFUSED') {
-    const signal = await detectTikTokBanSignals(page, loginDiag.loginResponses);
-    return signal.healthy ? 'action_failed' : signal.signal;
-  }
-  if (message.startsWith('captcha_challenge:')) return 'captcha_challenge';
-  const netError = /\bnet::(?<code>ERR_[A-Z_]+)/.exec(message);
-  if (netError && Object.hasOwn(NET_ERRORS, netError.groups.code))
-    return NET_ERRORS[netError.groups.code];
-  if (finalUrl.startsWith('chrome-error://')) return 'proxy_failed';
-  const path = new URL(finalUrl).pathname;
-  const stopped = STOPPED_AT.find((step) => step.path.test(path));
-  return stopped ? stopped.signal : 'action_failed';
-}
-
-/**
- * Persist the login diagnostics and a structured ban_signal so the worker
- * reads the classified reason instead of 'unknown_error'.
- */
-export async function recordLoginFailure(error, s, acct, loginDiag) {
+export async function explainLoginFailure(error, s, diag) {
+  const finalUrl = s.page.url();
   const dir = runRecordingsDir('tiktok_login');
   mkdirSync(dir, { recursive: true });
-  const finalUrl = s.page.url();
-  const message = String(error?.message);
-  const ts = new Date().toISOString();
   writeFileSync(
     join(dir, 'login_diag.json'),
     JSON.stringify(
-      { ...loginDiag, error: message, final_url: finalUrl, ts },
+      { ...diag, error: error.message, final_url: finalUrl, ts: new Date().toISOString() },
       null,
       INDENT,
     ),
   );
-  const signal = await classifyLoginFailure(error, s.page, loginDiag);
-  writeFileSync(
-    join(dir, 'ban_signal.json'),
-    JSON.stringify(
-      {
-        account_id: acct.id,
-        username: acct.username,
-        action: 'tiktok_login',
-        signal,
-        healthy: false,
-        details: { final_url: finalUrl, reason: message },
-        ts,
-      },
-      null,
-      INDENT,
-    ),
-  );
+  if (error.banSignal) return error;
+  const details = { final_url: finalUrl, reason: error.message };
+  if (error.code === 'TIKTOK_LOGIN_REFUSED') {
+    const read = await detectTikTokBanSignals(s.page, diag.loginResponses);
+    if (!read.healthy) error.banSignal = read;
+    return error;
+  }
+  if (!URL.canParse(finalUrl) || !finalUrl.startsWith('https:')) return error;
+  const stopped = STOPPED_AT.find((step) => step.path.test(new URL(finalUrl).pathname));
+  if (stopped) error.banSignal = { signal: stopped.signal, healthy: false, details };
+  return error;
 }

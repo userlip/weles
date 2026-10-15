@@ -1,242 +1,51 @@
-// Write the linked character's persona content (display_name + bio) onto
-// the TikTok profile via the settings/profile page.
+// Write the linked character's name, bio and avatar onto the TikTok profile
+// at /setting, through the shared action runner and the shared profile editor
+// (../../_shared/profile/edit.mjs).
 //
-// A stated character field must be observed in the editor before saving.
-
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
-import {
-  confirmedFill,
-  statedField,
-} from '../../_shared/page/confirmed-fill.mjs';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
-import {
-  assertAuthed,
-  AuthProbeError,
-} from '../../_shared/auth/auth-probe.mjs';
-import {
-  loadFreshCookieJarOrFail,
-  CookieJarStaleError,
-} from '../../_shared/auth/cookie-freshness.mjs';
-import { loadAvatarFile } from '../../_shared/runner/avatar-loader.mjs';
-import { updateAccountMetadata } from '../../_shared/skarbiec/accounts.mjs';
-import { fitsField } from '../../_shared/page/fits.mjs';
+// Some cohorts keep the fields behind an edit control. The edit, photo, apply
+// and save controls are found by the vision model in whatever language TikTok
+// renders; what TikTok kept is read from a reloaded settings page.
+import { detectTikTokBanSignals } from '../../../../dist/platforms/tiktok/ban_signals.js';
+import { runAction } from '../../_shared/action-runner.mjs';
+import { clickDescribed, clickOffered } from '../../_shared/page/judged/seen.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { editProfileToCharacter } from '../../_shared/profile/edit.mjs';
 
-const acct = await getSocialAccount('tiktok');
-if (!acct) {
-  console.log('FAIL: no active tiktok account in Skarbiec');
-  process.exit(1);
-}
-console.log(`[tt-profile] using account: ${acct.username}`);
-const character = acct.metadata?.character;
-if (!character || typeof character !== 'object') {
-  console.log(`FAIL: no character stored for tiktok/${acct.username}`);
-  process.exit(1);
-}
-console.log(
-  `[tt-profile] character: ${character.name} (niche=${character.niche})`,
-);
-const avatarUrl =
-  character.avatar_url ||
-  (Array.isArray(character.training_images)
-    ? character.training_images[0]
-    : null);
-
-// The bio goes up whole; the field's own maxlength decides whether it fits.
-const targetBio = character.bio;
-// A character without a name leaves the profile's name as it is; an empty
-// one typed in would erase it.
-const targetName = character.name;
-
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'tiktok_edit_profile',
-  proxy: proxyUrl,
-  persona,
+const fields = (page) => ({
+  name: page.locator('input[data-e2e*="name" i]').filter({ visible: true }).first(),
+  bio: page.locator('textarea[data-e2e*="bio" i]').filter({ visible: true }).first(),
 });
 
-try {
-  let stored;
-  try {
-    const all = loadFreshCookieJarOrFail(acct, {
-      platform: 'tiktok',
-      label: 'tiktok_edit_profile',
-      currentProxyUrl: proxyUrl,
-      currentPersona: persona,
+await runAction({
+  platform: 'tiktok',
+  action: 'edit_profile',
+  feedUrl: 'https://www.tiktok.com/setting',
+  banDetector: detectTikTokBanSignals,
+  act: async (s, { acct }) => {
+    if (await clickOffered(s.page, 'the button that opens the profile editor')) await pageSettled(s.page);
+    return editProfileToCharacter(s, acct, 'tiktok', {
+      fields,
+      save: async (page) => {
+        await clickDescribed(page, 'the button that saves the profile');
+        await pageSettled(page);
+      },
+      kept: async (page) => {
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await pageSettled(page);
+        if (await clickOffered(page, 'the button that opens the profile editor')) await pageSettled(page);
+        const { name, bio } = fields(page);
+        return { name: await name.inputValue(), bio: await bio.inputValue() };
+      },
+      uploadAvatar: async (page, file) => {
+        await clickDescribed(page, 'the control that changes the profile photo');
+        const input = page.locator('input[type="file"][accept*="image"]').first();
+        if (!(await input.count())) throw new Error('TIKTOK_AVATAR_INPUT_MISSING: the profile settings offer no image file input');
+        await input.setInputFiles(file);
+        await clickDescribed(page, 'the button that applies the cropped photo');
+        await clickDescribed(page, 'the button that saves the profile');
+        await pageSettled(page);
+      },
+      profileUrl: (username) => `https://www.tiktok.com/@${username}`,
     });
-    stored = all.filter((c) => /tiktok\.com/.test(c.domain ?? ''));
-    if (!stored.length)
-      throw new CookieJarStaleError(
-        'cookie_jar_no_domain_match: jar fresh but no tiktok.com cookies',
-        { platform: 'tiktok' },
-      );
-  } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
-    throw jarErr;
-  }
-  await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
-
-  // TikTok's account-edit URL. The exact path has shifted across redesigns —
-  // try the canonical /setting first; if redirected, the trajectory will
-  // surface that final URL in the auth-probe failure.
-  await s.page.goto('https://www.tiktok.com/setting', {
-    waitUntil: 'domcontentloaded',
-  });
-  await humanIdlePause('long');
-  if (/\/login(\/|$)/.test(s.page.url())) {
-    await markCookiesStale(acct.id);
-    throw new Error(`cookies stale, redirected to login (${s.page.url()})`);
-  }
-  try {
-    await assertAuthed('tiktok', s, { label: 'tiktok_edit_profile' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
-    throw probeErr;
-  }
-
-  // Profile fields on /setting:
-  //   * Name      → input[data-e2e="edit-profile-name"] or input near "Name" label
-  //   * Bio       → textarea[data-e2e="edit-profile-bio"] or textarea near "Bio"
-  // Both are inline-edit fields; some cohorts gate edits behind a "Edit profile" button.
-  const editBtn = s.page
-    .locator(
-      'button:has-text("Edit profile"), [data-e2e="edit-profile-entrance"]',
-    )
-    .filter({ visible: true })
-    .first();
-  if (await editBtn.isVisible().catch(() => false)) {
-    await humanClickLocator(s.page, editBtn);
-    await humanIdlePause('deliberate');
-  }
-
-  const nameIn = s.page
-    .locator(
-      'input[data-e2e*="name" i], input[placeholder*="name" i], input[aria-label*="name" i]',
-    )
-    .filter({ visible: true })
-    .first();
-  const bioIn = s.page
-    .locator(
-      'textarea[data-e2e*="bio" i], textarea[placeholder*="bio" i], textarea[aria-label*="bio" i]',
-    )
-    .filter({ visible: true })
-    .first();
-
-  const writes = [];
-  if (await statedField(nameIn, targetName, 'the TikTok name field')) {
-    const cur = await nameIn.inputValue();
-    if (cur !== targetName) {
-      await confirmedFill(s.page, nameIn, targetName, 'the TikTok name field');
-      writes.push(`name "${cur}" -> "${targetName}"`);
-    }
-  }
-  if (await statedField(bioIn, targetBio, 'the TikTok bio field')) {
-    const cur = await bioIn.inputValue();
-    if (cur !== targetBio) {
-      await fitsField(bioIn, targetBio, 'the TikTok bio');
-      await confirmedFill(s.page, bioIn, targetBio, 'the TikTok bio field');
-      writes.push(`bio (${cur.length} -> ${targetBio.length} chars)`);
-    }
-  }
-
-  // Avatar upload — tiktok /setting exposes an avatar zone. Hovering shows
-  // a "Change photo" button that opens a dialog with an inline upload
-  // <input type="file" accept="image/*">. After upload, an "Apply" button
-  // commits the crop. A requested avatar that could not be read, placed or
-  // applied fails the run: a PASS would claim a picture the profile lacks.
-  if (avatarUrl) {
-    const tmpAvatar = await loadAvatarFile(avatarUrl);
-    const changeBtn = s.page
-      .locator(
-        '[data-e2e*="avatar" i], button:has-text("Change photo"), div[role="button"]:has-text("Change photo")',
-      )
-      .filter({ visible: true })
-      .first();
-    if (!(await changeBtn.isVisible()))
-      throw new Error(
-        `the TikTok profile has no Change photo control at ${s.page.url()}; the requested avatar was not uploaded`,
-      );
-    await humanClickLocator(s.page, changeBtn);
-    await humanIdlePause('deliberate');
-    const fileIn = s.page
-      .locator('input[type="file"][accept*="image"]')
-      .first();
-    if (!(await fileIn.count()))
-      throw new Error(
-        'the TikTok profile settings offer no image file input; the requested avatar was not uploaded',
-      );
-    await fileIn.setInputFiles(tmpAvatar);
-    const applyBtn = s.page
-      .locator(
-        'button:has-text("Apply"), button:has-text("Confirm"), button:has-text("Save")',
-      )
-      .filter({ visible: true })
-      .first();
-    await applyBtn.waitFor({ state: 'visible' });
-    await humanClickLocator(s.page, applyBtn);
-    writes.push('avatar uploaded');
-    await humanIdlePause('deliberate');
-  }
-
-  // The account record says the profile carries the character's name; it is
-  // written once the form already matches or the save verified, never
-  // before: a save that failed left the record naming a profile TikTok never
-  // had.
-  const recordProfile = () =>
-    updateAccountMetadata(acct.id, {
-      ...(typeof targetName === 'string' && targetName.trim()
-        ? { display_name: targetName }
-        : {}),
-      profile_url: `https://www.tiktok.com/@${acct.username}`,
-      updated_at: new Date().toISOString(),
-    });
-
-  if (!writes.length) {
-    recordProfile();
-    console.log(
-      'PASS: no-op (form values already match character; Skarbiec synced)',
-    );
-  } else {
-    console.log(`[tt-profile] writes: ${writes.join('; ')}`);
-
-    // Save. TikTok's button often reads "Save" — sometimes inside a modal.
-    const saveBtn = s.page
-      .locator('button:has-text("Save"), [data-e2e="save-profile"]')
-      .filter({ visible: true })
-      .first();
-    await saveBtn.waitFor({ state: 'visible' });
-    await humanClickLocator(s.page, saveBtn);
-    await humanIdlePause('deliberate');
-
-    // What TikTok kept is read from a reloaded settings page: the fields of
-    // the page that was saved still hold whatever was typed into them.
-    await s.page.reload({ waitUntil: 'domcontentloaded' });
-    await pageSettled(s.page);
-    for (const [field, target, what] of [
-      [nameIn, targetName, 'name'],
-      [bioIn, targetBio, 'bio'],
-    ]) {
-      if (!target) continue;
-      const kept = await field.inputValue();
-      if (kept !== target)
-        throw new Error(
-          `TikTok kept a ${what} of ${kept.length} characters after Save, not the ${target.length} written`,
-        );
-    }
-    recordProfile();
-    console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
-  }
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}
+  },
+});

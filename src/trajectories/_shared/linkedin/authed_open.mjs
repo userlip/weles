@@ -26,8 +26,13 @@ export async function openLinkedinAuthed(s, acct, label, open) {
     if (!isAuthWall(error)) throw error;
   }
   console.log(`[${label}] auth_wall — signing in again on the same session`);
-  const signed = await reloginLinkedinInline(s, acct);
-  if (!signed.ok) return { ok: false, reason: signed.reason };
+  let refused;
+  try {
+    await reloginLinkedinInline(s, acct);
+  } catch (error) {
+    refused = error;
+  }
+  if (refused) return { ok: false, reason: refused.message };
   await open();
   await assertAuthed('linkedin', s, { label });
   return { ok: true };

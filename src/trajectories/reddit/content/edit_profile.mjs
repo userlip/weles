@@ -1,257 +1,62 @@
-// Write the linked character's display_name + bio onto the reddit profile
-// via /settings/profile (modern shreddit). Companion to the per-platform
-// edit_profile chain.
-
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
-import {
-  confirmedFill,
-  statedField,
-} from '../../_shared/page/confirmed-fill.mjs';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
-import {
-  assertAuthed,
-  AuthProbeError,
-} from '../../_shared/auth/auth-probe.mjs';
-import {
-  loadFreshCookieJarOrFail,
-  CookieJarStaleError,
-} from '../../_shared/auth/cookie-freshness.mjs';
-import { loadAvatarFile } from '../../_shared/runner/avatar-loader.mjs';
-import { updateAccountMetadata } from '../../_shared/skarbiec/accounts.mjs';
-import { fitsField } from '../../_shared/page/fits.mjs';
+// Write the linked character's display name, about text and avatar onto the
+// Reddit profile (/settings/profile, modern shreddit), through the shared
+// action runner and the shared profile editor (../../_shared/profile/edit.mjs).
+//
+// The text is saved and read back from a reloaded settings page before the
+// avatar step leaves it. The avatar is set on the user page: its edit control
+// opens a dialog whose image chooser takes the file; a brand-new account
+// without its u_<name> profile subreddit cannot take one ("Unable to resolve
+// profile") until it has posted.
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
+import { detectRedditBanSignals } from '../../../../dist/platforms/reddit/ban_signals.js';
+import { runAction } from '../../_shared/action-runner.mjs';
+import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
+import { editProfileToCharacter } from '../../_shared/profile/edit.mjs';
 
-const acct = await getSocialAccount('reddit');
-if (!acct) {
-  console.log('FAIL: no active reddit account in Skarbiec');
-  process.exit(1);
-}
-console.log(`[rd-profile] using account: ${acct.username}`);
-const character = acct.metadata?.character;
-if (!character || typeof character !== 'object') {
-  console.log(`FAIL: no character stored for reddit/${acct.username}`);
-  process.exit(1);
-}
-console.log(
-  `[rd-profile] character: ${character.name} (niche=${character.niche})`,
-);
-const avatarUrl =
-  character.avatar_url ||
-  (Array.isArray(character.training_images)
-    ? character.training_images[0]
-    : null);
-
-// Name and bio go up whole; each field's own maxlength decides whether they fit.
-const targetName = character.name;
-const targetBio = character.bio;
-
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'reddit_edit_profile',
-  proxy: proxyUrl,
-  persona,
+const fields = (page) => ({
+  name: page.locator('input[name*="display" i], input[id*="displayName" i]').filter({ visible: true }).first(),
+  bio: page.locator('textarea[name*="about" i], textarea[id*="about" i]').filter({ visible: true }).first(),
 });
 
-try {
-  let stored;
-  try {
-    const all = loadFreshCookieJarOrFail(acct, {
-      platform: 'reddit',
-      label: 'reddit_edit_profile',
-      currentProxyUrl: proxyUrl,
-      currentPersona: persona,
-    });
-    stored = all.filter((c) => /reddit\.com/.test(c.domain ?? ''));
-    if (!stored.length)
-      throw new CookieJarStaleError(
-        'cookie_jar_no_domain_match: jar fresh but no reddit.com cookies',
-        { platform: 'reddit' },
-      );
-  } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
-    throw jarErr;
-  }
-  await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
-
-  await s.page.goto('https://www.reddit.com/settings/profile', {
-    waitUntil: 'domcontentloaded',
-  });
-  await humanIdlePause('long');
-  if (/\/login/.test(s.page.url())) {
-    await markCookiesStale(acct.id);
-    throw new Error(`cookies stale, redirected to login (${s.page.url()})`);
-  }
-  try {
-    await assertAuthed('reddit', s, { label: 'reddit_edit_profile' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
-    throw probeErr;
-  }
-
-  // shreddit /settings/profile fields. The exact selectors vary across
-  // cohorts, so try a wide net.
-  const nameIn = s.page
-    .locator(
-      'input[name*="display" i], input[id*="displayName" i], input[aria-label*="display name" i]',
-    )
-    .filter({ visible: true })
-    .first();
-  const bioIn = s.page
-    .locator(
-      'textarea[name*="about" i], textarea[id*="about" i], textarea[aria-label*="about" i], textarea[placeholder*="about" i]',
-    )
-    .filter({ visible: true })
-    .first();
-
-  const writes = [];
-  if (await statedField(nameIn, targetName, 'the Reddit display name field')) {
-    const cur = await nameIn.inputValue();
-    if (cur !== targetName) {
-      await fitsField(nameIn, targetName, 'the Reddit display name');
-      await confirmedFill(
-        s.page,
-        nameIn,
-        targetName,
-        'the Reddit display name field',
-      );
-      writes.push(`name "${cur}" -> "${targetName}"`);
-    }
-  }
-  if (await statedField(bioIn, targetBio, 'the Reddit about field')) {
-    const cur = await bioIn.inputValue();
-    if (cur !== targetBio) {
-      await fitsField(bioIn, targetBio, 'the Reddit about text');
-      await confirmedFill(s.page, bioIn, targetBio, 'the Reddit about field');
-      writes.push(`bio (${cur.length} -> ${targetBio.length} chars)`);
-    }
-  }
-
-  // The text is saved, and read back from a reloaded settings page, before
-  // the avatar step navigates to the user page: leaving first discarded the
-  // typed name and about, and a click on Save proves nothing about what
-  // Reddit kept.
-  if (writes.length) {
-    const saveBtn = s.page
-      .locator('button:has-text("Save"), button[type="submit"]')
-      .filter({ visible: true })
-      .first();
-    await saveBtn.waitFor({ state: 'visible' });
-    await humanClickLocator(s.page, saveBtn);
-    await pageSettled(s.page);
-    await s.page.reload({ waitUntil: 'domcontentloaded' });
-    await pageSettled(s.page);
-    for (const [field, target, what] of [
-      [nameIn, targetName, 'display name'],
-      [bioIn, targetBio, 'about text'],
-    ]) {
-      if (!target) continue;
-      const kept = await field.inputValue();
-      if (kept !== target)
-        throw new Error(
-          `Reddit kept a ${what} of ${kept.length} characters after Save, not the ${target.length} written`,
-        );
-    }
-  }
-
-  // Avatar upload — reddit's avatar-edit affordance lives on the user
-  // profile page:
-  //   1. nav /user/<u>/
-  //   2. click button[aria-label="Edit profile avatar"] → modal opens with
-  //      "Select a new image" + Save button
-  //   3. click "Select a new image" → fires filechooser
-  //   4. setFiles → enables Save in the modal
-  //   5. The Save button lives in shadow DOM; pierce + click via evaluate
-  //
-  // Backend caveat: shreddit's CreateProfileStructuredStylesUploadLease
-  // mutation needs the u_<username> subreddit to exist. Brand-new accounts
-  // that have never posted see "Unable to resolve profile" — make a
-  // throwaway post first if your account is fresh.
-  //
-  // A requested avatar that could not be read, selected or saved fails the
-  // run: a PASS would claim a picture the profile lacks.
-  if (avatarUrl) {
-    const tmpAvatar = await loadAvatarFile(avatarUrl);
-    await s.page.goto(`https://www.reddit.com/user/${acct.username}/`, {
-      waitUntil: 'domcontentloaded',
-    });
-    await humanIdlePause('long');
-    const editAvatarBtn = s.page
-      .locator(
-        'button[aria-label="Edit profile avatar"], [aria-label="Edit profile avatar"]',
-      )
-      .first();
-    if (!(await editAvatarBtn.count()))
-      throw new Error(
-        'the Reddit profile page shows no Edit profile avatar control; the requested avatar was not uploaded',
-      );
-    await humanClickLocator(s.page, editAvatarBtn);
-    await humanIdlePause('deliberate');
-    const selectBtn = s.page
-      .locator('button:has-text("Select a new image")')
-      .first();
-    if (!(await selectBtn.count()))
-      throw new Error(
-        'the Reddit avatar dialog offers no Select a new image control; the requested avatar was not uploaded',
-      );
-    const fcPromise = s.page.waitForEvent('filechooser');
-    await humanClickLocator(s.page, selectBtn);
-    const fc = await fcPromise;
-    await fc.setFiles(tmpAvatar);
-    await humanIdlePause('long');
-    // Save lives in shadow DOM; Playwright locators pierce open shadow roots.
-    const saveCandidates = await s.page
-      .getByRole('button', { name: 'Save', exact: true })
-      .filter({ visible: true })
-      .all();
-    let saveBtn = null;
-    for (const candidate of saveCandidates) {
-      if (await candidate.isEnabled()) {
-        saveBtn = candidate;
-        break;
-      }
-    }
-    if (!saveBtn)
-      throw new Error(
-        `the Reddit avatar dialog shows ${saveCandidates.length} Save button(s), none enabled after the image was chosen; the requested avatar was not saved`,
-      );
-    await humanClickLocator(s.page, saveBtn);
-    await humanIdlePause('long');
-    writes.push('avatar uploaded');
-  }
-
-  // The account record says the profile carries the character's name; it is
-  // written once the form already matches or the save went through, never
-  // before: a save that failed left the record naming a profile Reddit never had.
-  const recordProfile = () =>
-    updateAccountMetadata(acct.id, {
-      ...(typeof targetName === 'string' && targetName.trim()
-        ? { display_name: targetName }
-        : {}),
-      profile_url: `https://www.reddit.com/user/${acct.username}/`,
-      updated_at: new Date().toISOString(),
-    });
-
-  if (!writes.length) {
-    recordProfile();
-    console.log(
-      'PASS: no-op (form values already match character; Skarbiec synced)',
-    );
-  } else {
-    console.log(`[rd-profile] writes: ${writes.join('; ')}`);
-    recordProfile();
-    console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
-  }
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}
+await runAction({
+  platform: 'reddit',
+  action: 'edit_profile',
+  feedUrl: 'https://www.reddit.com/settings/profile',
+  banDetector: detectRedditBanSignals,
+  act: (s, { acct }) =>
+    editProfileToCharacter(s, acct, 'reddit', {
+      fields,
+      save: async (page) => {
+        await clickDescribed(page, 'the button that saves the profile settings');
+        await pageSettled(page);
+      },
+      kept: async (page) => {
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await pageSettled(page);
+        const { name, bio } = fields(page);
+        return { name: await name.inputValue(), bio: await bio.inputValue() };
+      },
+      uploadAvatar: async (page, file) => {
+        await page.goto(`https://www.reddit.com/user/${acct.username}/`, { waitUntil: 'domcontentloaded' });
+        await pageSettled(page);
+        const avatar = page.locator('img[alt*="avatar" i]').first();
+        const before = (await avatar.count()) ? await avatar.getAttribute('src') : null;
+        const edit = page.locator('[aria-label="Edit profile avatar"]').first();
+        if (!(await edit.count())) throw new Error('REDDIT_AVATAR_CONTROL_MISSING: the profile page shows no avatar edit control');
+        await humanClickLocator(page, edit);
+        await pageSettled(page);
+        const chooser = page.waitForEvent('filechooser');
+        await clickDescribed(page, 'the button that selects a new image for the avatar');
+        await (await chooser).setFiles(file);
+        await pageSettled(page);
+        await clickDescribed(page, 'the enabled button that saves the new avatar');
+        await pageSettled(page);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await pageSettled(page);
+        const after = (await avatar.count()) ? await avatar.getAttribute('src') : null;
+        if (!after || after === before) throw new Error('REDDIT_AVATAR_UNCHANGED: the profile shows the same avatar after saving the new one');
+      },
+      profileUrl: (username) => `https://www.reddit.com/user/${username}/`,
+    }),
+});

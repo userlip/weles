@@ -6,22 +6,11 @@ import { pageSettled } from '../_shared/page/settled.mjs';
 import { autocompleteField, field } from '../_shared/page/offers.mjs';
 import { clickOffered, pageShows } from '../_shared/page/judged/seen.mjs';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
+import { phoneForField } from '../_shared/inputs/phone.mjs';
 
+// hl=en: the month and gender options are chosen by their English names.
 const SIGNUP_URL =
-  'https://accounts.google.com/signup/v2/createaccount?biz=false&cc=US&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue&dsh=S0&flowEntry=SignUp&flowName=GlifWebSignIn&hl=en&service=youtube';
-
-const BASE_PROXY = statedProxy('the Google signup');
-
-// Rotate the sticky-session id per attempt; the URL forms of PacketStream,
-// IPRoyal, Pingproxies and Oxylabs embed it as session-NNNN / sessid-NNNN / _s_NNNN.
-function freshProxy() {
-  if (!BASE_PROXY || BASE_PROXY === 'none' || !BASE_PROXY.startsWith('http'))
-    return BASE_PROXY;
-  const sid = Math.floor(Math.random() * 9_000_000 + 1_000_000);
-  return BASE_PROXY.replace(/session-\d+/g, `session-${sid}`)
-    .replace(/sessid-\d+/g, `sessid-${sid}`)
-    .replace(/_s_\d+/g, `_s_${sid}`);
-}
+  'https://accounts.google.com/signup/v2/createaccount?biz=false&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue&flowEntry=SignUp&flowName=GlifWebSignIn&hl=en&service=youtube';
 
 // The flow's primary action, found by the vision model in whatever language
 // Google renders its caption. False when the page offers none.
@@ -48,32 +37,70 @@ async function phoneInput(page) {
   return (await first.isVisible()) ? first : null;
 }
 
+/** The Username input when Google has marked the given name invalid, or null. */
+async function refusedUsername(page) {
+  const username = page
+    .locator('input[name="Username"], input[aria-label="Username"]')
+    .first();
+  return (await username.isVisible()) &&
+    (await username.getAttribute('aria-invalid')) === 'true'
+    ? username
+    : null;
+}
+
+/** The phone field, reached through whatever route Google puts in front of it. */
+async function reachPhoneField(page) {
+  let phone = await phoneInput(page);
+  if (
+    !phone &&
+    (await clickOffered(
+      page,
+      'a control that offers verifying by phone instead (another way, a text message or a call)',
+    ))
+  ) {
+    await pageSettled(page);
+    phone = await phoneInput(page);
+  }
+  if (phone) return phone;
+  // No phone route offered: approve the QR with the saved approver session,
+  // then walk the intro screens until the phone field appears; a screen with
+  // no phone field and no control to continue is the failure.
+  try {
+    await approveQr(page);
+  } catch (error) {
+    throw new Error(`qr_code_blocked: the QR approval Google asked for failed: ${error.message}`, { cause: error });
+  }
+  console.log('[google] QR approved — waiting for phone-entry page');
+  while (!phone) {
+    phone = await phoneInput(page);
+    if (phone) break;
+    if (
+      !(await clickNext(page)) &&
+      !(await clickOffered(
+        page,
+        'the button that continues or chooses to use a phone number',
+      ))
+    )
+      throw new Error(
+        `google offers no phone field and no control to continue at ${page.url()}`,
+      );
+    await pageSettled(page);
+  }
+  return phone;
+}
+
 async function signup(s) {
   const page = s.page;
   const id = await s.generateIdentity('google');
-  const gmailUser = id.username.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const gmailUser = id.username.toLowerCase().replace(/[^\p{Ll}\p{Nd}]/gu, '');
   const firstName = id.firstName;
   const lastName = id.lastName;
   console.log(
     `[google] identity: ${firstName} ${lastName} / ${gmailUser}@gmail.com`,
   );
 
-  // A tunnel or proxy failure on the first request means this sticky exit is
-  // dead; the outer loop rotates to a fresh one on `proxy_dead`.
-  const isProxyErr = (m) =>
-    /TUNNEL_CONNECTION_FAILED|PROXY_CONNECTION_FAILED|ABORTED|EMPTY_RESPONSE|502|nav_timed_out/.test(
-      m ?? '',
-    );
-  try {
-    const r = await page.goto(SIGNUP_URL, { waitUntil: 'commit' });
-    console.log(
-      `[google] signup nav ok: status=${r?.status()} url=${r?.url()}`,
-    );
-  } catch (e) {
-    console.log(`[google] signup nav err: ${e.message}`);
-    if (isProxyErr(e.message)) throw new Error('proxy_dead');
-    throw e;
-  }
+  const r = await page.goto(SIGNUP_URL, { waitUntil: 'commit' });
+  console.log(`[google] signup nav ok: status=${r?.status()} url=${r?.url()}`);
   await page.locator('input[name="firstName"]').waitFor({ state: 'visible' });
   await pageSettled(page);
 
@@ -85,13 +112,13 @@ async function signup(s) {
   await clickNext(page);
   await pageSettled(page);
 
-  // Birthday and gender: Material comboboxes need trusted clicks.
+  // Birthday and gender: Material comboboxes need trusted clicks. The month
+  // option is the identity's month, by the name it carries.
   console.log('[google] step 3: birthday + gender');
-  const birthMonth = Number(id.birthMonth) || 6;
   await humanClickLocator(page, page.locator('#month').first());
   await pageSettled(page);
   await page
-    .locator(`li[data-value="${birthMonth}"]`)
+    .getByRole('option', { name: id.birthMonth, exact: true })
     .first()
     .click({ force: true });
   await pageSettled(page);
@@ -116,10 +143,8 @@ async function signup(s) {
   const urlBefore = page.url();
   await clickNext(page);
   await pageSettled(page);
-  if (urlBefore === page.url()) {
-    console.log('[google] stuck on birthday/gender page (URL unchanged)');
-    throw new Error('birthday_stuck');
-  }
+  if (urlBefore === page.url())
+    throw new Error(`birthday_stuck: the birthday and gender page did not continue (${page.url()})`);
 
   console.log(`[google] step 4: username ${gmailUser}`);
   if (await clickOffered(page, 'the option to create your own Gmail address'))
@@ -129,20 +154,19 @@ async function signup(s) {
   await clickNext(page);
   await pageSettled(page);
 
-  // A username Google refuses is marked invalid on its own input.
-  const username = page
-    .locator('input[name="Username"], input[aria-label="Username"]')
-    .first();
-  if (
-    (await username.isVisible()) &&
-    (await username.getAttribute('aria-invalid')) === 'true'
-  ) {
-    const retry = gmailUser + String(Math.floor(Math.random() * 900 + 100));
-    console.log(`[google] username refused, retrying ${retry}`);
-    await s.fill('Username', retry);
+  // A username Google refuses is marked invalid on its own input; Google then
+  // offers available ones, and the run takes the one it fills in.
+  let chosenUser = gmailUser;
+  const refused = await refusedUsername(page);
+  if (refused) {
+    if (!(await clickOffered(page, 'one of the available usernames Google suggests')))
+      throw new Error(`GOOGLE_USERNAME_REFUSED: Google refused ${gmailUser} and suggests no available username`);
     await pageSettled(page);
+    chosenUser = (await refused.inputValue()).toLowerCase();
     await clickNext(page);
     await pageSettled(page);
+    if (await refusedUsername(page))
+      throw new Error(`GOOGLE_USERNAME_REFUSED: Google refused the suggested username ${chosenUser} too`);
   }
 
   console.log('[google] step 5: password');
@@ -153,58 +177,12 @@ async function signup(s) {
   await clickNext(page);
   await pageSettled(page);
 
-  // Step 6: phone verification, or the QR block in front of it.
+  // Step 6: phone verification, or the QR block in front of it. Google's
+  // country picker is not a select: the field takes the whole international
+  // number, rented in the stated PHONE_COUNTRY.
   console.log(`[google] step 6: url=${page.url()}`);
-  let phone = await phoneInput(page);
-  if (!phone) {
-    // Whatever alternative the page offers that leads to a phone field.
-    if (
-      await clickOffered(
-        page,
-        'a control that offers verifying by phone instead (another way, a text message or a call)',
-      )
-    ) {
-      await pageSettled(page);
-      phone = await phoneInput(page);
-    }
-  }
-  if (!phone) {
-    // No phone route offered: approve the QR with the saved approver session,
-    // then walk the intro screens until the phone field appears.
-    try {
-      await approveQr(page);
-      console.log('[google] QR approved — waiting for phone-entry page');
-    } catch (e) {
-      console.log(`[google] QR approval failed: ${e.message}`);
-      throw new Error('qr_code_blocked');
-    }
-    // Walk the intro screens until the phone field appears; a screen with no
-    // phone field and no control to continue is the failure.
-    while (!phone) {
-      phone = await phoneInput(page);
-      if (phone) break;
-      if (
-        !(await clickNext(page)) &&
-        !(await clickOffered(
-          page,
-          'the button that continues or chooses to use a phone number',
-        ))
-      ) {
-        throw new Error(
-          `google offers no phone field and no control to continue at ${page.url()}`,
-        );
-      }
-      await pageSettled(page);
-    }
-  }
-
-  console.log('[google] phone verification');
-  const smsRes = await s.checkSms('google', 'US');
-  if (smsRes.startsWith('error')) {
-    console.log(`[google] SMS error: ${smsRes}`);
-    throw new Error('sms_unavailable');
-  }
-  const number = smsRes.replace(/^phone:\s*/i, '').trim();
+  const phone = await reachPhoneField(page);
+  const number = await phoneForField(s, page, 'google');
   console.log(`[google] phone: ${number}`);
   await humanFill(page, phone, number);
   await pageSettled(page);
@@ -214,7 +192,6 @@ async function signup(s) {
   console.log('[google] waiting for SMS code...');
   const code = await s.pollSmsCode();
   if (!/^\d+$/.test(code)) throw new Error(`sms code not delivered: ${code}`);
-  console.log(`[google] SMS code: ${code}`);
   const codeField =
     (await field(page, 'code')) ??
     (await autocompleteField(page, 'one-time-code')) ??
@@ -241,7 +218,7 @@ async function signup(s) {
         'Does the page show terms or a privacy agreement to scroll through and agree to?',
       )
     ) {
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await page.evaluate(() => window.scrollTo({ top: document.body.scrollHeight }));
       await pageSettled(page);
     }
     if (
@@ -258,49 +235,31 @@ async function signup(s) {
     await pageSettled(page);
   }
 
-  // Success is the account session, not what the page says.
+  // Success is the account session (Google's SID cookie), not what the page says.
   const cookies = await s.ctx.cookies();
-  const googleCookies = cookies.filter(
-    (c) => c.domain?.includes('google.com') && /SID$|^__Secure-/.test(c.name),
-  );
-  console.log(
-    `[google] final url: ${page.url()}, auth cookies: ${googleCookies.map((c) => c.name).join(',')}`,
-  );
-  if (googleCookies.length < 2) throw new Error('no_auth_cookies');
+  if (!cookies.some((c) => c.name === 'SID' && c.domain.endsWith('google.com')))
+    throw new Error(`no_auth_cookies: the signup ended on ${page.url()} without a Google SID cookie`);
 
   const result = await s.saveAccount('google', {
-    username: gmailUser,
-    email: `${gmailUser}@gmail.com`,
+    username: chosenUser,
+    email: `${chosenUser}@gmail.com`,
     password: id.password,
     name: `${firstName} ${lastName}`,
   });
   console.log(`[google] ${result}`);
-  return gmailUser;
+  return chosenUser;
 }
 
-function instrumentSession(s) {
-  s.page.on('crash', () => console.log('[evt] RENDERER CRASHED'));
-  s.ctx.on('close', () => console.log('[evt] ctx.close'));
-  const br = s.ctx.browser?.();
-  if (br)
-    br.on('disconnected', () => console.log('[evt] browser.disconnected'));
-}
-const proxy = freshProxy();
-// WSession.start logs the proxy redacted; the raw URL's last characters can
-// still carry its password, so it is not printed here.
 console.log('\n=== Google signup ===');
 const s = await WSession.start({
   label: 'google_register',
-  proxy,
+  proxy: statedProxy('the Google signup'),
   targetHost: 'accounts.google.com',
 });
-instrumentSession(s);
+s.page.on('crash', () => console.log('[evt] RENDERER CRASHED'));
+s.ctx.on('close', () => console.log('[evt] ctx.close'));
 try {
-  const username = await signup(s);
-  console.log(`PASS: ${username}`);
-} catch (e) {
-  console.log(`FAIL: ${e.message}`);
-  process.exitCode = 1;
+  console.log(`PASS: ${await signup(s)}`);
 } finally {
   await s.close();
 }

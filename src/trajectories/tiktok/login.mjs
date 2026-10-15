@@ -1,277 +1,142 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-} from '../../../dist/utils/credentials.js';
-import { WSession } from '../../../dist/session/wsession.js';
+// Sign the active TikTok account in through its email login form, through
+// the shared login runner (../_shared/action/login.mjs): the account, its
+// proxy, the kept session and the verdict are the runner's.
+//
+// Login is always the form: a stored jar on a device TikTok does not trust
+// shows a signed-out shell. TikTok's own passport answers decide a refusal.
+// A rotate captcha is solved through SadCaptcha, as many times as
+// TIKTOK_CAPTCHA_SOLVE_BUDGET (required) allows, the puzzle refreshed by its
+// own control between attempts; a new device is verified by the code TikTok
+// mails (./login/new_device_verify.mjs). The login counts once TikTok sets
+// its sessionid cookie and leaves /login (./login/session_wait.mjs). What
+// the login saw is kept in the run's login_diag.json.
 import { humanType } from '../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../dist/human/mouse.js';
-import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
+import { humanClickLocator } from '../../../dist/human/mouse.js';
+import { detectTikTokBanSignals } from '../../../dist/platforms/tiktok/ban_signals.js';
+import { runLogin } from '../_shared/action/login.mjs';
+import { statedCount } from '../_shared/inputs/stated.mjs';
+import { pageSettled } from '../_shared/page/settled.mjs';
 import { screenshotIfPossible } from '../_shared/runner/evidence.mjs';
+import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 import { solveTiktokRotateCaptcha } from './login/rotate_captcha.mjs';
 import { seedRegionCookies, mockRegionEndpoint } from './login/region.mjs';
-import {
-  completeNewDeviceVerification,
-  verifyDialogPresent,
-} from './login/new_device_verify.mjs';
+import { completeNewDeviceVerification, verifyDialogPresent } from './login/new_device_verify.mjs';
 import { waitForSignedIn } from './login/session_wait.mjs';
-import { recordLoginFailure, refusedLogin } from './login/failure_signal.mjs';
+import { explainLoginFailure, refusedLogin, unpassedCaptcha } from './login/failure_signal.mjs';
 
-const PASSWORD_URL =
-  'https://www.tiktok.com/login/phone-or-email/email?lang=en';
-const CAPTCHA_MODAL =
-  '.captcha-verify-container, .captcha_verify_container, [class*="captcha-"]';
+const PASSWORD_URL = 'https://www.tiktok.com/login/phone-or-email/email?lang=en';
+const CAPTCHA_MODAL = '.captcha-verify-container, .captcha_verify_container, [class*="captcha-"]';
 const SUBMIT = 'button[data-e2e="login-button"], button[type="submit"]';
-
-// There is deliberately no cookie-first login here — see auth-probe.mjs for
-// the full rationale. Short version: cookies present + URL didn't bounce ≠
-// session is authed. TikTok serves /foryou and /messages with logged-out
-// shells when the session is device-mismatched, so cookie-first declared PASS
-// while the comment input never rendered for the supposedly-logged-in user.
-// Login always means form login. Action trajectories use assertAuthed() from
-// auth-probe.mjs to verify a session is real.
-
-const acct = await getSocialAccount('tiktok');
-if (!acct) {
-  console.log('FAIL: no active tiktok account in DB');
-  process.exitCode = 1;
-}
-process.env.SVC_EMAIL = acct.metadata.email ?? acct.username;
-process.env.SVC_PASSWORD = acct.metadata.password ?? '';
-console.log(`[trajectory] Using account: ${acct.username}`);
-
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'tiktok_login',
-  proxy: proxyUrl,
-  persona,
-});
-const loginDiag = {
-  account_id: acct.id,
-  username: acct.username,
-  // TikTok's own refusal of the sign-in: the first passport login answer
-  // whose message is not success, with its data (error_code, description).
-  refusal: null,
-  loginResponses: [],
-  failedRequests: [],
-  captcha: { present: false, solved: false },
-  finalState: null,
-};
-
-async function captureCookies() {
-  if (!acct.id) return;
-  try {
-    const cookies = await s.ctx.cookies();
-    await persistFreshCookieJar(acct, cookies, {
-      currentProxyUrl: proxyUrl,
-      currentPersona: persona,
-    });
-  } catch (e) {
-    console.log('[cookie-capture] err:', e.message);
-  }
-}
-
 /** TikTok's own passport sign-in calls. */
-const PASSPORT_LOGIN =
-  /\/passport\/web\/(login|login_with_email|account_check)\/?$/;
+const PASSPORT_LOGIN = /\/passport\/web\/(login|login_with_email|account_check)\/?$/;
 
 /**
- * Record the passport login answers with their bodies, every failed request
- * and every console message into loginDiag and the log. A refusal is
- * TikTok's own answer to its login call, read from that answer, not from
- * words in the console.
+ * Record the passport login answers with their bodies, and every failed
+ * request, into `diag`. A refusal is TikTok's own answer to its login call:
+ * the first whose message is not success.
  */
-function observeLoginTraffic(page) {
+function observeLoginTraffic(page, diag) {
   page.on('response', async (res) => {
-    const u = res.url();
-    if (!PASSPORT_LOGIN.test(new URL(u).pathname)) return;
-    const entry = { url: u, status: res.status(), ts: Date.now() };
-    loginDiag.loginResponses.push(entry);
+    if (!PASSPORT_LOGIN.test(new URL(res.url()).pathname)) return;
+    const entry = { url: res.url(), status: res.status(), ts: Date.now() };
+    diag.loginResponses.push(entry);
+    let unread;
     try {
       entry.body = await res.text();
     } catch (error) {
-      entry.body_error = error.message;
+      unread = error;
+    }
+    if (unread) {
+      entry.body_error = unread.message;
       return;
     }
     let answer;
     try {
       answer = JSON.parse(entry.body);
     } catch (error) {
-      entry.body_error = `not JSON: ${error.message}`;
+      unread = error;
+    }
+    if (unread) {
+      entry.body_error = `not JSON: ${unread.message}`;
       return;
     }
-    if (answer?.message !== 'success' && loginDiag.refusal === null)
-      loginDiag.refusal = { url: u, status: entry.status, answer };
+    if (answer.message !== 'success' && !diag.refusal)
+      diag.refusal = { url: res.url(), status: entry.status, answer };
   });
-  page.on('requestfailed', (req) => {
-    const headers = req.headers();
-    loginDiag.failedRequests.push({
-      url: req.url(),
-      failure: req.failure()?.errorText,
-      method: req.method(),
-      origin: headers.origin ? headers.origin : headers.referer,
-    });
-  });
-  page.on('console', (msg) =>
-    console.log(`[tiktok_login] page-${msg.type()}: ${msg.text()}`),
+  page.on('requestfailed', (req) =>
+    diag.failedRequests.push({ url: req.url(), failure: req.failure()?.errorText, method: req.method() }),
   );
 }
 
-/** Fill the email/password form. Its selectors are stable on TikTok's login page. */
-async function fillLoginForm(page) {
-  await s.goto(PASSWORD_URL);
-  const emailIn = page
-    .locator(
-      'input[name="username"], input[type="text"][placeholder*="email" i], input[type="email"]',
-    )
-    .filter({ visible: true })
-    .first();
-  const pwIn = page
-    .locator('input[type="password"]')
-    .filter({ visible: true })
-    .first();
-  await emailIn.waitFor({ state: 'visible' });
-  await humanClickLocator(page, emailIn);
-  await humanIdlePause('short');
-  await humanType(page, process.env.SVC_EMAIL);
-  await humanIdlePause('short');
-  await humanClickLocator(page, pwIn);
-  await humanIdlePause('short');
-  await humanType(page, process.env.SVC_PASSWORD);
-  await humanIdlePause('short');
-  // Diagnostic: snapshot field values + button enabled state right before
-  // the click. If button is still disabled, typing didn't fully register.
-  const formState = await page
-    .evaluate(() => {
-      const u = document.querySelector('input[name="username"]');
-      const p = document.querySelector('input[type="password"]');
-      const b = document.querySelector('button[data-e2e="login-button"]');
-      return {
-        usernameLen: u?.value?.length ?? -1,
-        passwordLen: p?.value?.length ?? -1,
-        buttonDisabled: b?.disabled,
-        buttonAria: b?.getAttribute('aria-disabled'),
-      };
-    })
-    .catch((e) => ({ err: e.message }));
-  console.log(
-    `[tiktok_login] form-state pre-submit: ${JSON.stringify(formState)}`,
+/** Solve the rotate captcha within the stated budget, then submit again. */
+async function passCaptcha(s, diag) {
+  // Every solve is a paid SadCaptcha call.
+  const budget = statedCount(
+    'TIKTOK_CAPTCHA_SOLVE_BUDGET',
+    'how many paid captcha solves one login may spend',
+    'TIKTOK_CAPTCHA_SOLVE_BUDGET_REQUIRED',
   );
-  await screenshotIfPossible(s, 'pre_submit');
-}
-
-/** Solve the rotate captcha, refreshing the puzzle between attempts, then re-submit. */
-async function passCaptcha(page) {
-  console.log(
-    '[tiktok_login] captcha modal detected — attempting SadCaptcha solve',
-  );
-  // Every solve is a paid SadCaptcha call; how many one login may spend is
-  // the operator's TIKTOK_CAPTCHA_SOLVE_BUDGET, required.
-  const budget = Number(process.env.TIKTOK_CAPTCHA_SOLVE_BUDGET);
-  if (!Number.isInteger(budget) || budget <= 0) {
-    throw new Error(
-      'captcha_challenge: TIKTOK_CAPTCHA_SOLVE_BUDGET must say how many paid captcha solves one login may spend (a positive whole number)',
-    );
-  }
-  let solved = false;
-  // retry-allowed: each attempt is a different rotate puzzle after the widget's
-  // own refresh control, which is how a person clears one they cannot solve.
-  for (let attempt = 0; attempt < budget && !solved; attempt++) {
-    if (attempt > 0) {
-      // Click captcha refresh button to get a new puzzle. The icon is a
-      // circular arrow at the bottom-right of the modal footer.
-      const refresh = page
-        .locator(CAPTCHA_MODAL)
-        .locator(
-          'button, [role="button"], [class*="refresh" i], [class*="reload" i]',
-        )
-        .filter({ visible: true })
-        .first();
-      const refreshed = (await refresh.count()) > 0;
-      if (refreshed) await humanClickLocator(page, refresh);
-      console.log(
-        `[tiktok_login] captcha retry ${attempt} refresh-clicked=${refreshed}`,
-      );
-      await humanIdlePause('short');
+  for (const attempt of Array(budget).keys()) {
+    if (attempt) {
+      // A new puzzle, through the widget's own refresh control: how a person
+      // clears a puzzle they cannot solve.
+      await clickDescribed(s.page, 'the control in the captcha that loads a new puzzle');
+      await pageSettled(s.page);
     }
-    solved = await solveTiktokRotateCaptcha(page);
-    console.log(
-      `[tiktok_login] captcha attempt ${attempt + 1} solved=${solved}`,
-    );
+    diag.captcha.solved = await solveTiktokRotateCaptcha(s.page);
+    console.log(`[tiktok_login] captcha attempt after ${attempt} earlier: solved=${diag.captcha.solved}`);
+    if (diag.captcha.solved) break;
   }
-  loginDiag.captcha.solved = solved;
-  if (!solved) {
+  if (!diag.captcha.solved) {
     await screenshotIfPossible(s, 'captcha_solve_failed');
-    throw new Error(
-      `captcha_challenge: SadCaptcha solve failed after ${budget} attempts (TIKTOK_CAPTCHA_SOLVE_BUDGET)`,
-    );
+    throw unpassedCaptcha(`SadCaptcha did not solve the puzzle within ${budget} attempts (TIKTOK_CAPTCHA_SOLVE_BUDGET)`);
   }
-  // After captcha dismiss, TikTok web does NOT auto-submit the login form
-  // Re-click submit manually to fire /passport/web/login/.
-  await humanIdlePause('short');
-  const reSubmit = page.locator(SUBMIT).filter({ visible: true }).first();
-  if (await reSubmit.count().catch(() => false)) {
-    try {
-      await humanClickLocator(page, reSubmit);
-      console.log('[tiktok_login] post-captcha re-submit clicked');
-    } catch (e) {
-      console.log(`[tiktok_login] re-submit click err: ${e.message}`);
-    }
-  }
-  await humanIdlePause('deliberate');
-  console.log(
-    `[tiktok_login] post-captcha loginResponses=${JSON.stringify(loginDiag.loginResponses)}`,
-  );
-  if (loginDiag.refusal) throw refusedLogin(loginDiag);
+  // TikTok does not submit the form again once its captcha closes.
+  await humanClickLocator(s.page, s.page.locator(SUBMIT).filter({ visible: true }).first());
+  await pageSettled(s.page);
+  if (diag.refusal) throw refusedLogin(diag);
 }
 
-try {
-  await seedRegionCookies(s.ctx);
-  await fillLoginForm(s.page);
-  observeLoginTraffic(s.page);
-  await mockRegionEndpoint(s.page);
-  const submitBtn = s.page.locator(SUBMIT).filter({ visible: true }).first();
-  await humanClickLocator(s.page, submitBtn);
-  console.log(
-    `[tiktok_login] submit clicked, waiting for sessionid (${loginDiag.loginResponses.length} login XHR captured so far)`,
-  );
-  await humanIdlePause('deliberate');
-  await screenshotIfPossible(s, 'post_submit_3s');
-  console.log(
-    `[tiktok_login] +3s loginResponses=${JSON.stringify(loginDiag.loginResponses)}`,
-  );
-  console.log(
-    `[tiktok_login] +3s failedRequests=${JSON.stringify(loginDiag.failedRequests)}`,
-  );
-  // Captcha modal check. Excludes the "Verify it's really you" dialog which
-  // shares the captcha-* class prefix but is an OTP flow handled below.
-  const verifyDialogText = await verifyDialogPresent(s.page);
-  const captchaPresent =
-    !verifyDialogText &&
-    (await s.page
-      .evaluate((modal) => !!document.querySelector(modal), CAPTCHA_MODAL)
-      .catch(() => false));
-  loginDiag.captcha.present = captchaPresent;
-  if (captchaPresent) await passCaptcha(s.page);
-  // After the captcha, TikTok may ask a new device to prove the email. When
-  // the dialog is absent this is a no-op.
-  if (await verifyDialogPresent(s.page))
-    await completeNewDeviceVerification(s, acct);
-  await waitForSignedIn(s, loginDiag);
-  console.log('PASS: logged in (deterministic email/password)');
-  await captureCookies();
-} catch (e) {
-  try {
-    await recordLoginFailure(e, s, acct, loginDiag);
-  } catch (recordError) {
-    console.log(
-      `[tiktok_login] could not record the failure: ${recordError.message}`,
-    );
-  }
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}
+await runLogin({
+  platform: 'tiktok',
+  banDetector: detectTikTokBanSignals,
+  signIn: async (s, { acct, login, password }) => {
+    const diag = {
+      account_id: acct.id,
+      username: acct.username,
+      refusal: null,
+      loginResponses: [],
+      failedRequests: [],
+      captcha: { present: false, solved: false },
+      finalState: null,
+    };
+    let failure;
+    try {
+      await seedRegionCookies(s.ctx);
+      await s.goto(PASSWORD_URL);
+      await pageSettled(s.page);
+      const address = s.page.locator('input[name="username"], input[type="email"]').filter({ visible: true }).first();
+      const secret = s.page.locator('input[type="password"]').filter({ visible: true }).first();
+      if (!(await address.count()) || !(await secret.count()))
+        throw new Error(`TIKTOK_LOGIN_FORM_MISSING: ${s.page.url()} shows no email login form`);
+      await humanClickLocator(s.page, address);
+      await humanType(s.page, login);
+      await humanClickLocator(s.page, secret);
+      await humanType(s.page, password);
+      observeLoginTraffic(s.page, diag);
+      await mockRegionEndpoint(s.page);
+      await humanClickLocator(s.page, s.page.locator(SUBMIT).filter({ visible: true }).first());
+      await pageSettled(s.page);
+      // The "verify it's really you" dialog shares the captcha class prefix
+      // but is the new-device flow, handled after the captcha.
+      diag.captcha.present =
+        !(await verifyDialogPresent(s.page)) && Boolean(await s.page.locator(CAPTCHA_MODAL).count());
+      if (diag.captcha.present) await passCaptcha(s, diag);
+      if (await verifyDialogPresent(s.page)) await completeNewDeviceVerification(s, acct);
+      await waitForSignedIn(s, diag);
+    } catch (error) {
+      failure = await explainLoginFailure(error, s, diag);
+    }
+    if (failure) throw failure;
+  },
+});

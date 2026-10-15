@@ -1,217 +1,50 @@
-// Write the linked character's persona content (bio, display_name, optional
-// external_url) onto the instagram profile via /accounts/edit/.
+// Write the linked character's name, bio and avatar onto the Instagram
+// profile at /accounts/edit/, through the shared action runner and the shared
+// profile editor (../../_shared/profile/edit.mjs).
 //
-// Why: character rows carry a rich bio and personality while most active
-// social_accounts have no avatar_url and many no display_name, so nothing
-// propagates to the platform UI without this.
-//
-// Idempotent: skips writes when the form value already equals the character
-// row's value, so re-running is cheap.
-
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
-import {
-  confirmedFill,
-  statedField,
-} from '../../_shared/page/confirmed-fill.mjs';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
-import {
-  assertAuthed,
-  AuthProbeError,
-} from '../../_shared/auth/auth-probe.mjs';
-import {
-  loadFreshCookieJarOrFail,
-  CookieJarStaleError,
-} from '../../_shared/auth/cookie-freshness.mjs';
-import { loadAvatarFile } from '../../_shared/runner/avatar-loader.mjs';
-import { updateAccountMetadata } from '../../_shared/skarbiec/accounts.mjs';
-import { fitsField } from '../../_shared/page/fits.mjs';
-import { pageSettled } from '../../_shared/page/settled.mjs';
+// The save and the photo upload each count once Instagram's own answer to
+// them succeeds; what Instagram kept is read from a reloaded form.
+import { detectInstagramBanSignals } from '../../../../dist/platforms/instagram/ban_signals.js';
+import { runAction } from '../../_shared/action-runner.mjs';
 import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
+import { pageSettled, responseAfterAction } from '../../_shared/page/settled.mjs';
+import { editProfileToCharacter } from '../../_shared/profile/edit.mjs';
 
-const acct = await getSocialAccount('instagram');
-if (!acct) {
-  console.log('FAIL: no active instagram account in Skarbiec');
-  process.exit(1);
+/** A POST to an Instagram path containing `fragment`, answered successfully, or refused naming `what`. */
+async function acknowledged(page, fragment, what, action) {
+  const answer = await responseAfterAction(page, (request) => request.method() === 'POST' && new URL(request.url()).pathname.includes(fragment), action);
+  if (!answer.ok()) throw new Error(`INSTAGRAM_PROFILE_WRITE_REFUSED: the ${what} answered HTTP ${answer.status()}`);
 }
-console.log(`[ig-profile] using account: ${acct.username}`);
-const character = acct.metadata?.character;
-if (!character || typeof character !== 'object') {
-  console.log(`FAIL: no character stored for instagram/${acct.username}`);
-  process.exit(1);
-}
-console.log(
-  `[ig-profile] character: ${character.name} (niche=${character.niche})`,
-);
-const avatarUrl =
-  character.avatar_url ||
-  (Array.isArray(character.training_images)
-    ? character.training_images[0]
-    : null);
 
-// The bio goes up whole; the field's own maxlength decides whether it fits.
-const targetBio = character.bio;
-// A character without a name leaves the profile's name as it is; an empty
-// one typed in would erase it.
-const targetName = character.name;
-
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'instagram_edit_profile',
-  proxy: proxyUrl,
-  persona,
+const fields = (page) => ({
+  name: page.locator('input[name="full_name" i], input[aria-label*="Name" i]').filter({ visible: true }).first(),
+  bio: page.locator('textarea[name="biography" i], textarea[aria-label*="Bio" i]').filter({ visible: true }).first(),
 });
 
-try {
-  let stored;
-  try {
-    const all = loadFreshCookieJarOrFail(acct, {
-      platform: 'instagram',
-      label: 'instagram_edit_profile',
-      currentProxyUrl: proxyUrl,
-      currentPersona: persona,
-    });
-    stored = all.filter((c) => /instagram\.com/.test(c.domain ?? ''));
-    if (!stored.length)
-      throw new CookieJarStaleError(
-        'cookie_jar_no_domain_match: jar fresh but no instagram.com cookies',
-        { platform: 'instagram' },
-      );
-  } catch (jarErr) {
-    // Each failure is thrown, so the outer catch prints it and sets the exit
-    // code, and the finally closes the session and keeps its recording.
-    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
-    throw jarErr;
-  }
-  await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
-
-  await s.page.goto('https://www.instagram.com/accounts/edit/', {
-    waitUntil: 'domcontentloaded',
-  });
-  await humanIdlePause('long');
-  if (/\/accounts\/login/.test(s.page.url())) {
-    await markCookiesStale(acct.id);
-    throw new Error(`cookies stale, redirected to login (${s.page.url()})`);
-  }
-  try {
-    await assertAuthed('instagram', s, { label: 'instagram_edit_profile' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
-    throw probeErr;
-  }
-
-  // The /accounts/edit form has aria-labeled inputs:
-  //   * Name      → input with aria-label*="Name"
-  //   * Bio       → textarea (the only one on the page) with aria-label*="Bio"
-  // Both render as visible focused-on-mount fields. Read current value, only
-  // type when it differs from the character target.
-  const nameIn = s.page
-    .locator('input[aria-label*="Name" i], input[name="full_name" i]')
-    .filter({ visible: true })
-    .first();
-  const bioIn = s.page
-    .locator('textarea[aria-label*="Bio" i], textarea[name="biography" i]')
-    .filter({ visible: true })
-    .first();
-
-  const writes = [];
-  if (await statedField(nameIn, targetName, 'the Instagram name field')) {
-    const cur = await nameIn.inputValue();
-    if (cur !== targetName) {
-      await confirmedFill(
-        s.page,
-        nameIn,
-        targetName,
-        'the Instagram name field',
-      );
-      writes.push(`name "${cur}" -> "${targetName}"`);
-    }
-  }
-  if (await statedField(bioIn, targetBio, 'the Instagram bio field')) {
-    const cur = await bioIn.inputValue();
-    if (cur !== targetBio) {
-      await fitsField(bioIn, targetBio, 'the Instagram bio');
-      await confirmedFill(s.page, bioIn, targetBio, 'the Instagram bio field');
-      writes.push(`bio (${cur.length} -> ${targetBio.length} chars)`);
-    }
-  }
-
-  // Avatar upload — /accounts/edit/ opens a photo dialog bound to a hidden
-  // input[type="file"][accept*="image"]; the image is placed on that input
-  // whatever the dialog's buttons say. A requested avatar that could not be
-  // read or placed fails the run: a PASS would claim a picture the profile
-  // lacks.
-  if (avatarUrl) {
-    const tmpAvatar = await loadAvatarFile(avatarUrl);
-    await clickDescribed(s.page, 'the control that changes the profile photo');
-    await humanIdlePause('deliberate');
-    const fileIn = s.page
-      .locator('input[type="file"][accept*="image"]')
-      .first();
-    if (!(await fileIn.count()))
-      throw new Error(
-        'the Instagram photo dialog has no image file input; the requested avatar was not uploaded',
-      );
-    await fileIn.setInputFiles(tmpAvatar);
-    await humanIdlePause('deliberate');
-    writes.push('avatar uploaded');
-  }
-
-  // The account record says the profile carries the character's name; it is
-  // written once the form already matches or the submit verified, never
-  // before: a submit that failed left the record naming a profile Instagram
-  // never had.
-  const recordProfile = () =>
-    updateAccountMetadata(acct.id, {
-      ...(typeof targetName === 'string' && targetName.trim()
-        ? { display_name: targetName }
-        : {}),
-      profile_url: `https://www.instagram.com/${acct.username}/`,
-      updated_at: new Date().toISOString(),
-    });
-
-  if (!writes.length) {
-    recordProfile();
-    console.log(
-      'PASS: no-op (form values already match character; Skarbiec synced)',
-    );
-  } else {
-    console.log(`[ig-profile] writes: ${writes.join('; ')}`);
-
-    // Submit through the form's own submit control, found by the vision model
-    // in whatever language Instagram renders it.
-    await clickDescribed(s.page, 'the button that submits the profile form');
-    await humanIdlePause('deliberate');
-
-    // What Instagram kept is read from a reloaded form: the fields of the
-    // page that was submitted still hold whatever was typed into them.
-    await s.page.reload({ waitUntil: 'domcontentloaded' });
-    await pageSettled(s.page);
-    const verifiedName = await nameIn.inputValue();
-    const verifiedBio = await bioIn.inputValue();
-    if (targetName && verifiedName !== targetName) {
-      throw new Error(
-        `name mismatch after submit ("${verifiedName}" != "${targetName}")`,
-      );
-    }
-    if (targetBio && verifiedBio !== targetBio) {
-      throw new Error(
-        `bio mismatch after submit ("${verifiedBio}..." != "${targetBio}...")`,
-      );
-    }
-    recordProfile();
-    console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
-  }
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}
+await runAction({
+  platform: 'instagram',
+  action: 'edit_profile',
+  feedUrl: 'https://www.instagram.com/accounts/edit/',
+  banDetector: detectInstagramBanSignals,
+  act: (s, { acct }) =>
+    editProfileToCharacter(s, acct, 'instagram', {
+      fields,
+      save: (page) =>
+        acknowledged(page, '/accounts/edit', 'profile form submission', () => clickDescribed(page, 'the button that submits the profile form')),
+      kept: async (page) => {
+        // The fields of a submitted page still hold what was typed.
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await pageSettled(page);
+        const { name, bio } = fields(page);
+        return { name: await name.inputValue(), bio: await bio.inputValue() };
+      },
+      uploadAvatar: async (page, file) => {
+        // The photo dialog binds a hidden image input whatever its buttons say.
+        await clickDescribed(page, 'the control that changes the profile photo');
+        const input = page.locator('input[type="file"][accept*="image"]').first();
+        if (!(await input.count())) throw new Error('INSTAGRAM_AVATAR_INPUT_MISSING: the photo dialog has no image file input');
+        await acknowledged(page, 'profile_picture', 'profile photo upload', () => input.setInputFiles(file));
+      },
+      profileUrl: (username) => `https://www.instagram.com/${username}/`,
+    }),
+});

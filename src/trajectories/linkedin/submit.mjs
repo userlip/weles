@@ -3,32 +3,53 @@ import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../dist/human/mouse.js';
+import { pageSettled } from '../_shared/page/settled.mjs';
 
-export async function linkedinSubmitComment(s, text) {
-  // Legacy container selectors are gone in the new design system.
-  // Anchor on the React-Like button (semantic + stable) and ascend to its
-  // feed-post wrapper. Empty-feed accounts (fresh registrations with no
-  // following) get an early benign-no-op so we don't 30s-timeout hunting
-  // for a post that won't render.
-  const reactLikeCount = await s.page
-    .locator('button[aria-label*="React Like" i]')
-    .count();
-  if (reactLikeCount === 0) {
-    console.log(
-      '[linkedin_submit_comment] no_likeable_posts_on_page — feed empty, skipping',
+const POST_IDENTITY = ['data-urn', 'data-id'];
+const postNamed = (page, id) =>
+  page.locator(POST_IDENTITY.map((name) => `[${name}="${id}"]`).join(', ')).first();
+
+/**
+ * The first post the page shows (the one whose React Like control comes
+ * first), pinned by LinkedIn's own identifier for it, with its text. A page
+ * without a post, a post LinkedIn does not identify, or one without text is
+ * refused.
+ */
+export async function linkedinFirstPost(s) {
+  await pageSettled(s.page);
+  const like = s.page.locator('button[aria-label*="React Like" i]').first();
+  if (!(await like.count()))
+    throw new Error(`LINKEDIN_NO_POST: ${s.page.url()} shows no post to answer`);
+  const pinned = await like.evaluate((button, names) => {
+    const selector = names.map((name) => `[${name}]`).join(', ');
+    const post = button.closest(selector);
+    if (!post) return null;
+    const name = names.find((candidate) => post.hasAttribute(candidate));
+    return { id: post.getAttribute(name) };
+  }, POST_IDENTITY);
+  if (!pinned)
+    throw new Error(
+      `LINKEDIN_POST_UNIDENTIFIED: the first post on ${s.page.url()} carries no ${POST_IDENTITY.join(' or ')}`,
     );
-    return;
-  }
-  const post = s.page
-    .locator('button[aria-label*="React Like" i]')
-    .first()
-    .locator(
-      'xpath=ancestor::*[@data-testid="feed-post" or @data-id or contains(@class, "feed-post") or contains(@class, "update-components")][1]',
+  const text = postNamed(s.page, pinned.id)
+    .locator('.feed-shared-update-v2__description, .update-components-text')
+    .first();
+  if (!(await text.count()))
+    throw new Error(`LINKEDIN_NO_POST_TEXT: post ${pinned.id} carries no text to answer`);
+  return { postTitle: await text.innerText(), url: s.page.url(), id: pinned.id };
+}
+
+/**
+ * Comment on the post the run picked (linkedinFirstPost), found again by its
+ * identifier; the comment counts once LinkedIn clears its editor.
+ */
+export async function linkedinSubmitComment(s, text, post) {
+  const pinned = postNamed(s.page, post.id);
+  if (!(await pinned.count()))
+    throw new Error(
+      `LINKEDIN_POST_GONE: post ${post.id}, which the comment was written for, is no longer on ${s.page.url()}`,
     );
-  await post.waitFor({ state: 'visible' });
-  await post.scrollIntoViewIfNeeded().catch(() => {});
-  // Comment button — aria-label="Comment".
-  const commentBtn = post
+  const commentBtn = pinned
     .locator(
       'button[aria-label="Comment"], button[aria-label*="comment" i]:not([aria-label*="React" i])',
     )
@@ -36,31 +57,25 @@ export async function linkedinSubmitComment(s, text) {
     .first();
   await commentBtn.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, commentBtn);
-  // Editor — wider 2026 set: data-testid editor/composer + legacy Quill +
-  // bare contenteditable. Page-scoped because the comment composer can
-  // attach outside the post wrapper depending on layout.
+  // The comment editor can attach outside the post wrapper, by layout.
   const editor = s.page
     .locator(
-      '[data-testid*="editor"][contenteditable="true"], [data-testid*="composer"][contenteditable="true"], div[role="textbox"][contenteditable="true"], div.ql-editor[contenteditable="true"], [contenteditable="true"]:not([role="combobox"]):not([role="textbox"])',
+      '[data-testid*="editor"][contenteditable="true"], [data-testid*="composer"][contenteditable="true"], div[role="textbox"][contenteditable="true"], div.ql-editor[contenteditable="true"]',
     )
     .filter({ visible: true })
     .first();
   await editor.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, editor);
   await humanType(s.page, text);
-  // Post submit button — once text is entered, button[disabled] flips.
   const postBtn = s.page
     .locator('button.comments-comment-box__submit-button:not([disabled])')
     .filter({ visible: true })
     .first();
   await postBtn.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, postBtn);
-  // Verify state flip — editor cleared.
   await s.page.waitForFunction(() => {
-    const e = document.querySelector(
-      'div[role="textbox"][contenteditable="true"]',
-    );
-    return !e || (e.textContent ?? '').trim().length === 0;
+    const e = document.querySelector('div[role="textbox"][contenteditable="true"]');
+    return !e || !e.textContent.trim();
   });
 }
 

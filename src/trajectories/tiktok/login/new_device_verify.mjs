@@ -1,142 +1,47 @@
+// TikTok's new-device verification: when a login comes from another address
+// or browser than the account was made on, TikTok asks the owner to verify
+// with a code mailed to the account's email. Whether the dialog is open, and
+// each of its controls, is found by the vision model in whatever language the
+// page renders; the code is read from the account's mailbox by the shared
+// mailed-code reader, with the length TikTok's code field states.
 import { humanType } from '../../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
 import { screenshotIfPossible } from '../../_shared/runner/evidence.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
+import { fieldCodeLength, mailedCode } from '../../_shared/inputs/mailed_code.mjs';
+import { clickDescribed, clickOffered, pageShows } from '../../_shared/page/judged/seen.mjs';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 
-/** Whether the "Verify it's really you" new-device dialog is on the page. */
+/** Whether TikTok's new-device verification dialog is open on the page. */
 export function verifyDialogPresent(page) {
-  return page
-    .evaluate(() =>
-      /Verify it'?s really you|Verify your identity/i.test(
-        document.body.innerText || '',
-      ),
-    )
-    .catch(() => false);
+  return pageShows(
+    page,
+    'Is a dialog open that asks the account owner to verify that it is really them before the login continues?',
+  );
 }
 
-/**
- * Walk the DOM to find the Email row inside the verify dialog: the smallest
- * clickable ancestor that contains both "Email" and "@", excluding the outer
- * "Email or username" login form label.
- */
-function findEmailRow(page) {
-  return page
-    .evaluate(() => {
-      const vh = window.innerHeight,
-        vw = window.innerWidth;
-      const all = Array.from(
-        document.querySelectorAll('div, button, li, [role="button"]'),
-      );
-      const cands = all
-        .filter((el) => {
-          const t = (el.innerText || '').trim();
-          if (
-            !(
-              /\bEmail\b/i.test(t) &&
-              /@/.test(t) &&
-              t.length < 200 &&
-              !/Email or username/i.test(t)
-            )
-          )
-            return false;
-          const r = el.getBoundingClientRect();
-          return (
-            r.width >= 150 &&
-            r.height >= 30 &&
-            r.y >= 0 &&
-            r.y + r.height <= vh &&
-            r.x >= 0 &&
-            r.x + r.width <= vw
-          );
-        })
-        .map((el) => {
-          const r = el.getBoundingClientRect();
-          return {
-            tag: el.tagName,
-            cls: el.className?.toString?.() || '',
-            area: r.width * r.height,
-            x: r.x + r.width / 2,
-            y: r.y + r.height / 2,
-            w: Math.round(r.width),
-            h: Math.round(r.height),
-          };
-        });
-      cands.sort((a, b) => a.area - b.area);
-      return cands[0] || false;
-    })
-    .catch(() => false);
+/** The mailbox TikTok mails the code to: the account's recorded email, else its username at the stated agent domain. */
+function accountMailbox(acct) {
+  if (acct.metadata.email) return acct.metadata.email;
+  return `${acct.username}@${statedText(['AGENT_DOMAIN'], 'the agent mail domain of an account that records no email')}`;
 }
 
-/** Click the first visible control among the selectors, if any is on the page. */
-async function clickFirstVisible(page, selectors) {
-  for (const sel of selectors) {
-    const loc = page.locator(sel).filter({ visible: true }).first();
-    if (await loc.count().catch(() => false)) {
-      try {
-        await humanClickLocator(page, loc);
-        return;
-      } catch {}
-    }
-  }
-}
-
-/**
- * Complete TikTok's "Verify it's really you" new-device email-OTP dialog.
- * Triggered when TikTok sees the login coming from a different IP/UA than the
- * account creation session. The dialog shows an "Email" row with the masked
- * account email — clicking it sends a 6-digit code; we poll the inbox, enter
- * the code, and continue.
- */
+/** Complete the new-device verification by the code TikTok mails to the account. */
 export async function completeNewDeviceVerification(s, acct) {
-  console.log(
-    '[tiktok_login] new-device verify dialog detected — running email OTP flow',
-  );
+  console.log('[tiktok_login] new-device verification dialog open; verifying by email');
   await screenshotIfPossible(s, 'verify_dialog');
-  const emailBox = await findEmailRow(s.page);
-  if (!emailBox)
-    throw new Error('verify_otp: could not locate Email option in dialog');
-  console.log(
-    `[tiktok_login] verify-dialog Email row: ${JSON.stringify(emailBox)}`,
-  );
-  await s.page.mouse.click(emailBox.x, emailBox.y);
-  await humanIdlePause('deliberate');
-  await screenshotIfPossible(s, 'verify_after_email_click');
-  // Some flows auto-send; others require explicit Send code click.
-  await clickFirstVisible(s.page, [
-    'button:has-text("Send code")',
-    '[data-e2e="send-code-button"]',
-  ]);
-  await humanIdlePause('deliberate');
-  // Poll the inbox for the 6-digit code (s.checkEmail handles auth + filter).
-  // The mailbox is the account's recorded email; without one, its username at
-  // the agent mail domain the run states.
-  const acctEmail = acct.metadata?.email
-    ? acct.metadata.email
-    : `${acct.username}@${statedText(['AGENT_DOMAIN'], "the agent mail domain of an account that records no email")}`;
-  console.log(
-    `[tiktok_login] polling email for verification code: ${acctEmail}`,
-  );
-  const code = await s.checkEmail(acctEmail, 'tiktok');
-  if (!code || !/^\d{4,8}$/.test(code))
-    throw new Error(`verify_otp: no code received (got ${code})`);
-  console.log(`[tiktok_login] got verification code: ${code}`);
+  await clickDescribed(s.page, "the verification dialog's option that sends a code to the account's email");
+  if (await clickOffered(s.page, 'the button that sends the verification code')) await pageSettled(s.page);
   const codeInput = s.page
-    .locator(
-      'input[placeholder*="code" i], input[name*="code" i], input[maxlength="6"]',
-    )
+    .locator('input[autocomplete="one-time-code"], input[name*="code" i], input[placeholder*="code" i]')
     .filter({ visible: true })
     .first();
-  await codeInput.focus().catch(() => false);
+  await codeInput.waitFor({ state: 'visible' });
+  const mailbox = accountMailbox(acct);
+  console.log(`[tiktok_login] reading the verification code mailed to ${mailbox}`);
+  const code = await mailedCode(mailbox, 'tiktok', await fieldCodeLength(codeInput));
+  await codeInput.focus();
   await humanType(s.page, code);
-  await humanIdlePause('short');
-  await clickFirstVisible(s.page, [
-    'button:has-text("Continue")',
-    'button:has-text("Next")',
-    'button[type="submit"]',
-  ]);
-  await humanIdlePause('deliberate');
+  await clickDescribed(s.page, 'the button that submits the verification code');
+  await pageSettled(s.page);
   await screenshotIfPossible(s, 'verify_after_code_submit');
 }

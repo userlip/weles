@@ -10,6 +10,7 @@ import {
   frameFrom,
 } from '../_shared/page/offers.mjs';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
+import { phoneForField } from '../_shared/inputs/phone.mjs';
 
 const URL = 'https://x.com/i/flow/signup?lang=en';
 const HOME = 'https://x.com/home';
@@ -25,16 +26,21 @@ const ONBOARDING_SKIP =
 const ONBOARDING_NEXT =
   '[data-testid$="NextButton"], [data-testid$="NextLink"]';
 
-// The Arkose challenge, read from its iframe: public key and blob from the
-// frame's URL. Null when no such frame is attached.
+// The Arkose challenge, read from its iframe: the public key is the path
+// segment shaped as a UUID, the blob the frame's `data` parameter in its query
+// or its fragment (the solver takes a challenge without one). Null when no
+// such frame is attached.
 function arkose(page) {
   const frame = frameFrom(page, 'arkoselabs.com');
   if (!frame) return null;
-  const src = frame.url();
+  const src = new URL(frame.url());
+  const hashParams = new URLSearchParams(src.hash.replace(/^#/, ''));
   return {
-    publicKey: (src.match(/\/([A-F0-9-]{36})\//) || [])[1] || '',
-    blob: decodeURIComponent((src.match(/[?&]data=([^&]+)/) || [])[1] || ''),
-    subdomain: new URL(src).origin,
+    publicKey: src.pathname
+      .split('/')
+      .find((segment) => segment.includes('-') && /^[\dA-F-]+$/i.test(segment)),
+    blob: [src.searchParams, hashParams].map((params) => params.get('data')).find(Boolean),
+    subdomain: src.origin,
   };
 }
 
@@ -122,9 +128,8 @@ async function signup(s) {
   if (contact === 'email') {
     await s.fill('Email', id.email);
   } else if (contact === 'phone') {
-    const phone = await s.checkSms('twitter', 'UK');
-    console.log(`[tw] SMS: ${phone}`);
-    await s.fill('Phone', s.resolveEnv('$TWITTER_NEW_PHONE'));
+    // Rented in the country the phone field is set to (../_shared/inputs/phone.mjs).
+    await s.fill('Phone', await phoneForField(s, page, 'twitter'));
   } else {
     throw new Error(
       `signup form offers neither an email nor a phone field; step ${contact}`,
@@ -228,22 +233,16 @@ async function signup(s) {
     await pageSettled(page);
   }
 
-  // Success is the session's auth cookies, not what the page says.
+  // Success is the session's auth cookies (the session token and its CSRF
+  // pair), not what the page says.
   const cookies = await s.ctx.cookies();
-  const authCookies = cookies.filter(
-    (c) =>
-      (c.domain?.includes('.x.com') || c.domain?.includes('.twitter.com')) &&
-      (c.name === 'auth_token' || c.name === 'ct0'),
-  );
-  if (authCookies.length < 2) {
-    console.log(
-      `[tw] no auth cookies found (url=${page.url()}, cookies=${authCookies.map((c) => c.name)})`,
+  const onX = (c) => c.domain.includes('x.com') || c.domain.includes('twitter.com');
+  const authToken = cookies.find((c) => onX(c) && c.name === 'auth_token');
+  const csrf = cookies.find((c) => onX(c) && c.name === 'ct0');
+  if (!authToken || !csrf)
+    throw new Error(
+      `no_auth_cookies: the signup ended on ${page.url()} without ${authToken ? '' : 'auth_token '}${csrf ? '' : 'ct0'}`,
     );
-    throw new Error('no_auth_cookies');
-  }
-  console.log(
-    `[tw] auth cookies verified: ${authCookies.map((c) => c.name).join(', ')}`,
-  );
 
   const result = await s.saveAccount('twitter', {
     username: id.username,
@@ -260,12 +259,7 @@ async function signup(s) {
 // Chromium only: Weles's fill path needs its devtools session.
 const s = await WSession.start({ label: 'twitter_register', proxy });
 try {
-  const username = await signup(s);
-  console.log(`PASS: ${username}`);
+  console.log(`PASS: ${await signup(s)}`);
+} finally {
   await s.close();
-  process.exit(0);
-} catch (e) {
-  console.log(`FAIL: ${e.message}`);
-  await s.close();
-  process.exitCode = 1;
 }

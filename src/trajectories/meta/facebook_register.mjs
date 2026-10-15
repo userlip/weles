@@ -18,6 +18,8 @@ import {
   humanIdlePause,
 } from '../../../dist/human/mouse.js';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
+import { phoneForField } from '../_shared/inputs/phone.mjs';
+import { fieldCodeLength, mailedCode } from '../_shared/inputs/mailed_code.mjs';
 
 const URL = 'https://www.facebook.com/r.php';
 
@@ -66,12 +68,22 @@ async function signup(s) {
   const yearSel = s.page
     .locator('select#year,  select[name="birthday_year"]')
     .first();
-  if (await daySel.count())
-    await daySel.selectOption(String(id.birthDay)).catch(() => {});
-  if (await monthSel.count())
-    await monthSel.selectOption(String(id.birthMonth)).catch(() => {});
-  if (await yearSel.count())
-    await yearSel.selectOption(String(id.birthYear)).catch(() => {});
+  if (await daySel.count()) await daySel.selectOption(String(id.birthDay));
+  // Facebook's month options show short names ("Jan"); the identity carries
+  // the full one, so the option is the one whose name begins it.
+  if (await monthSel.count()) {
+    const month = await monthSel.evaluate(
+      (select, name) =>
+        [...select.options].find(
+          (option) => option.value && name.startsWith(option.textContent.trim()),
+        )?.value,
+      String(id.birthMonth),
+    );
+    if (!month)
+      throw new Error(`FACEBOOK_MONTH_ABSENT: the month select offers no option for ${id.birthMonth}`);
+    await monthSel.selectOption(month);
+  }
+  if (await yearSel.count()) await yearSel.selectOption(String(id.birthYear));
 
   // 3. Gender — Facebook uses radio inputs (1=Female, 2=Male, -1=Custom). Pick
   // Custom to avoid a pronoun-pick redirect, then leave the optional pronoun.
@@ -127,24 +139,14 @@ async function signup(s) {
 
   // 7. Verification — email OTP by default; some IPs trigger a phone-SMS
   // gate instead. Detect which branch we landed on and run the matching code.
-  const phoneGate = await s.page
+  const phoneIn = s.page
     .locator('input[type="tel"], input[name="phone_number"]')
     .filter({ visible: true })
-    .first()
-    .isVisible()
-    .catch(() => false);
-  if (phoneGate) {
-    const phone = await s.checkSms('facebook', 'US');
-    if (phone.startsWith('error'))
-      throw new Error(`fb_phone_gate_no_sms: ${phone}`);
-    const digits = s
-      .resolveEnv('$FACEBOOK_NEW_PHONE')
-      .replace(/^\+\d{1,2}/, '')
-      .replace(/\D/g, '');
-    const phoneIn = s.page
-      .locator('input[type="tel"], input[name="phone_number"]')
-      .filter({ visible: true })
-      .first();
+    .first();
+  if (await phoneIn.isVisible()) {
+    // The number is rented in the country the phone field is set to
+    // (../_shared/inputs/phone.mjs).
+    const digits = await phoneForField(s, s.page, 'facebook');
     await humanClickLocator(s.page, phoneIn);
     await humanType(s.page, digits);
     await phoneIn.press('Enter');
@@ -165,25 +167,23 @@ async function signup(s) {
       await humanIdlePause('long');
     }
   } else {
-    const emailCode = await s.checkEmail(id.email, 'facebook');
-    if (!/^\d+$/.test(emailCode))
-      throw new Error(`fb_email_otp_failed: ${emailCode}`);
     const codeIn = s.page
       .locator(
         'input[name="code"], input[name="confirmation_code"], input[aria-label*="confirmation" i]',
       )
       .filter({ visible: true })
       .first();
-    if (await codeIn.count()) {
-      await humanClickLocator(s.page, codeIn);
-      await humanType(s.page, emailCode);
-      await codeIn.press('Enter');
-      await humanIdlePause('long');
-    }
+    await codeIn.waitFor({ state: 'visible' });
+    // The confirmation field states how many digits the mailed code has.
+    const emailCode = await mailedCode(id.email, 'facebook', await fieldCodeLength(codeIn));
+    await humanClickLocator(s.page, codeIn);
+    await humanType(s.page, emailCode);
+    await codeIn.press('Enter');
+    await humanIdlePause('long');
   }
 
   // 8. Land on facebook.com home (or /home.php / /?ref=...) on success.
-  const finalUrl = s.page.url?.() ?? '';
+  const finalUrl = s.page.url();
   if (
     !/facebook\.com\/(home|\?|$)/.test(finalUrl) &&
     !/facebook\.com\/$/.test(finalUrl) &&
@@ -192,7 +192,7 @@ async function signup(s) {
     // Many flows show a "save your login info" interstitial — wait for the
     // post-interstitial settle.
     await humanIdlePause('deliberate');
-    const settled = s.page.url?.() ?? '';
+    const settled = s.page.url();
     if (!/facebook\.com/.test(settled)) {
       throw new Error(`facebook_register_no_landing: ${settled}`);
     }
@@ -213,11 +213,7 @@ const s = await WSession.start({
   proxy: statedProxy('the Facebook signup'),
 });
 try {
-  const username = await signup(s);
-  console.log(`PASS: ${username}`);
-} catch (e) {
-  console.log(`FAIL: ${e.message}`);
-  process.exitCode = 1;
+  console.log(`PASS: ${await signup(s)}`);
 } finally {
   await s.close();
 }

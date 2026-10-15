@@ -3,6 +3,7 @@
 // Reddit's own listing order and page size decide which posts and comments
 // are seen; no count or pick window is chosen here.
 import { onOldReddit } from '../../../content/old_reddit.mjs';
+import { pageSettled } from '../../../../_shared/page/settled.mjs';
 
 /** One signed-in JSON read through the page; Reddit's refusal throws. */
 async function signedInJson(page, url) {
@@ -75,10 +76,15 @@ const THREAD = /\/comments\/[a-z\d]+\//i;
  * thread `url` names, or, for a subreddit listing, the first post Reddit
  * lists there that is neither locked nor archived. A listing whose posts all
  * belong to other subreddits is an aggregate feed and refused; so is one
- * with no open post.
+ * with no open post. The page is moved to the old.reddit address first, so
+ * its signed-in JSON reads are same-origin.
  */
 export async function threadAt(page, url) {
   const address = onOldReddit(url).replace(/\/?(\?.*)?$/, '/');
+  if (new URL(page.url()).origin !== new URL(address).origin) {
+    await page.goto(address, { waitUntil: 'domcontentloaded' });
+    await pageSettled(page);
+  }
   if (THREAD.test(address)) {
     const [post] = await signedInJson(page, `${address}.json?raw_json=1`);
     const op = post.data?.children?.[0]?.data;

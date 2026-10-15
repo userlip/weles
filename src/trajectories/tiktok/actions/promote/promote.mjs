@@ -1,24 +1,22 @@
+// Comment naming the character's promoted product on a TikTok video,
+// through the shared action runner. The video is the first one the landing
+// page leads to (the For You feed, TARGET_URL, a TARGET_USER profile or a
+// SEARCH_QUERY hashtag; ../../rail.mjs videoPost); the text is written about
+// its caption and posted under that same video.
 import { runAction } from '../../../_shared/action-runner.mjs';
 import { tiktokSubmitComment } from '../../submit.mjs';
+import { TIKTOK_ORIGIN, videoPost } from '../../rail.mjs';
 import { detectTikTokBanSignals } from '../../../../../dist/platforms/tiktok/ban_signals.js';
 
 await runAction({
   platform: 'tiktok',
   action: 'promote',
-  feedUrl: 'https://www.tiktok.com/foryou',
+  feedUrl: `${TIKTOK_ORIGIN}/foryou`,
   surfaceLabel: 'tiktok fyp',
-  resolveUserUrl: (u) => `https://www.tiktok.com/@${u.replace(/^@/, '')}`,
+  resolveUserUrl: (u) => `${TIKTOK_ORIGIN}/@${encodeURIComponent(u.replace(/^@/, ''))}`,
   resolveSearchUrl: (q) =>
-    `https://www.tiktok.com/tag/${encodeURIComponent(q.replace(/^#/, ''))}`,
-  // The video's whole caption; a page without one is refused (runAction logs it).
-  pickPost: async (s) => {
-    const caption = s.page
-      .locator('[data-e2e="video-desc"], [data-e2e="browse-video-desc"]')
-      .first();
-    if (!(await caption.count()))
-      throw new Error('the page shows no video caption to answer');
-    return { postTitle: await caption.innerText(), postBody: '' };
-  },
+    `${TIKTOK_ORIGIN}/tag/${encodeURIComponent(q.replace(/^#/, ''))}`,
+  pickPost: videoPost,
   submitComment: tiktokSubmitComment,
   submitTargetedComment: tiktokSubmitComment,
   banDetector: detectTikTokBanSignals,

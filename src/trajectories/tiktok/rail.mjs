@@ -6,17 +6,49 @@ import { clickDescribed, pageShows } from '../_shared/page/judged/seen.mjs';
 
 export const TIKTOK_ORIGIN = 'https://www.tiktok.com';
 
+const onVideo = (url) => new URL(url).pathname.includes('/video/');
+
 /**
- * Open the first video of a profile or hashtag grid; a video page stays.
- * A grid with no video refuses by the wait failing on its first link.
+ * Open a video page from where the session is: a video page stays; a page
+ * that links videos (a profile, a hashtag, the feed) opens its first one; a
+ * page that links only authors (TikTok's immersive For You player) opens
+ * the first author's profile and then its first video. A page that links
+ * neither is refused.
  */
 export async function openVideo(s) {
-  if (new URL(s.page.url()).pathname.includes('/video/')) return;
-  const firstVideo = s.page.locator('a[href*="/video/"]').first();
-  await firstVideo.waitFor({ state: 'visible' });
+  if (onVideo(s.page.url())) return;
+  await pageSettled(s.page);
+  const firstVideo = s.page.locator('a[href*="/video/"]').filter({ visible: true }).first();
+  if (!(await firstVideo.count())) {
+    const firstAuthor = s.page.locator('a[href*="/@"]').first();
+    if (!(await firstAuthor.count()))
+      throw new Error(
+        `TIKTOK_NO_VIDEO_SOURCE: ${s.page.url()} links no video and no author profile`,
+      );
+    await s.goto(new URL(await firstAuthor.getAttribute('href'), TIKTOK_ORIGIN).href);
+    await pageSettled(s.page);
+    if (!(await firstVideo.count()))
+      throw new Error(
+        `TIKTOK_NO_VIDEO_SOURCE: the author profile ${s.page.url()} links no video`,
+      );
+  }
   await humanClickLocator(s.page, firstVideo);
   await s.page.waitForURL((url) => url.pathname.includes('/video/'));
   await pageSettled(s.page);
+}
+
+/**
+ * The video a comment on this page answers, opened by openVideo, with its
+ * caption; a video without a caption is refused.
+ */
+export async function videoPost(s) {
+  await openVideo(s);
+  const caption = s.page
+    .locator('[data-e2e="video-desc"], [data-e2e="browse-video-desc"]')
+    .first();
+  if (!(await caption.count()))
+    throw new Error(`TIKTOK_NO_CAPTION: ${s.page.url()} shows no video caption to answer`);
+  return { postTitle: await caption.innerText(), url: s.page.url() };
 }
 
 /**

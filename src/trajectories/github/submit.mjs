@@ -1,61 +1,68 @@
 import { humanFill } from '../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
+import { pageSettled } from '../_shared/page/settled.mjs';
 
-export async function githubSubmitIssueComment(s, text) {
-  // Comment textarea — id=new_comment_field on classic; React UI uses
-  // textarea[name="comment[body]"] or [aria-label="Add a comment"].
-  // GitHub migrated issues to the Primer/React composer: textarea wrapped in
-  // [data-testid="comment-composer"], referenced by aria-labelledby
-  // "comment-composer-heading", placeholder "Use Markdown to format your
-  // comment", auto-generated id (e.g. _r_22_). Classic shell (#new_comment_field,
-  // name="comment[body]") still ships for some repos / unauth views — keep
-  // those in the selector union.
-  const ta = s.page
-    .locator(
-      '[data-testid="comment-composer"] textarea, textarea[aria-labelledby="comment-composer-heading"], textarea[placeholder*="Use Markdown to format your comment"], textarea#new_comment_field, textarea[name="comment[body]"], textarea[aria-label="Add a comment"]',
-    )
-    .filter({ visible: true })
+// The issue comment box: the Primer/React composer, and the classic shell
+// some repositories and views still ship.
+const COMMENT_BOX =
+  '[data-testid="comment-composer"] textarea, textarea[aria-labelledby="comment-composer-heading"], textarea#new_comment_field, textarea[name="comment[body]"]';
+
+/**
+ * The issue a comment on this page answers: its title and its opening
+ * post. A page that shows no issue title is not an issue and is refused.
+ */
+export async function githubIssuePost(s) {
+  await pageSettled(s.page);
+  const title = s.page
+    .locator('bdi.js-issue-title, .js-issue-title, [data-testid="issue-title"]')
     .first();
-  await ta.waitFor({ state: 'visible' });
-  await ta.scrollIntoViewIfNeeded().catch(() => {});
-  await humanFill(s.page, ta, text);
-  // Submit — primary "Comment" button, not [disabled]. Primer composer uses
-  // type="button" (not "submit") wrapped in [data-testid="save-button-tooltip"]
-  // with data-variant="primary"; classic shell uses type="submit". Match both.
+  if (!(await title.count()))
+    throw new Error(`GITHUB_NOT_AN_ISSUE: ${s.page.url()} shows no issue title`);
+  const opening = s.page.locator('.markdown-body').first();
+  return {
+    postTitle: await title.innerText(),
+    postBody: (await opening.count()) ? await opening.innerText() : undefined,
+    url: s.page.url(),
+  };
+}
+
+/**
+ * Comment on the issue the page shows. The comment counts once GitHub
+ * answers its write (the Primer flow's POST to /_graphql, the classic
+ * flow's POST to /issues/<n>/comments) with success and clears the box.
+ */
+export async function githubSubmitIssueComment(s, text) {
+  const box = s.page.locator(COMMENT_BOX).filter({ visible: true }).first();
+  await box.waitFor({ state: 'visible' });
+  await humanFill(s.page, box, text);
+  // The Primer composer's primary button is type="button" inside
+  // [data-testid="save-button-tooltip"]; the classic shell's is a submit.
   const submit = s.page
     .locator(
-      '[data-testid="save-button-tooltip"] button[data-variant="primary"]:not([disabled]), [data-testid="comment-composer"] button[data-variant="primary"]:not([disabled]), button[type="submit"]:has-text("Comment"):not([disabled]), button[data-disable-with]:not([disabled]):has-text("Comment")',
+      '[data-testid="save-button-tooltip"] button[data-variant="primary"]:not([disabled]), [data-testid="comment-composer"] button[data-variant="primary"]:not([disabled]), form.js-new-comment-form button[type="submit"]:not([disabled])',
     )
     .filter({ visible: true })
     .first();
   await submit.waitFor({ state: 'visible' });
-  // Arm response listener BEFORE the click so we don't miss the comment-write
-  // POST. Primer flow fires POST https://github.com/_graphql; classic flow
-  // fires POST /repos/<owner>/<repo>/issues/<n>/comments. Race: textarea
-  // clears the moment React updates state, well before the network response
-  // lands; without explicit awaiting, action-runner.verifyWriteAction()
-  // observes capturedResponses in the brief window between DOM-clear and
-  // response-arrival and falsely reports action_failed.
-  const writePOST = s.page.waitForResponse(
+  // Armed before the click, so the write's answer is not missed: the box
+  // clears as soon as React updates, before the answer lands.
+  const written = s.page.waitForResponse(
     (r) =>
       r.request().method() === 'POST' &&
-      /(\/_graphql$|\/issues\/\d+\/comments)/.test(r.url()) &&
-      r.status() >= 200 &&
-      r.status() < 300,
+      /(\/_graphql$|\/issues\/\d+\/comments)/.test(r.url()),
   );
   await humanClickLocator(s.page, submit);
-  // Don't return until the POST response is captured — otherwise verify_write
-  // sees an empty capturedResponses for this URL.
-  await writePOST;
-  // Verify state flip — textarea cleared / page advanced (added comment timeline element).
+  const answer = await written;
+  if (!answer.ok())
+    throw new Error(
+      `GITHUB_COMMENT_REFUSED: ${answer.url()} answered ${answer.status()}: ${await answer.text()}`,
+    );
   await s.page.waitForFunction(
-    () => {
-      const t = document.querySelector(
-        '[data-testid="comment-composer"] textarea, textarea[aria-labelledby="comment-composer-heading"], textarea#new_comment_field, textarea[name="comment[body]"]',
-      );
-      return !t || (t.value ?? '').length === 0;
+    (selector) => {
+      const field = document.querySelector(selector);
+      return !field || !field.value;
     },
-    undefined,
+    COMMENT_BOX,
     { polling: 'raf' },
   );
 }

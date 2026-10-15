@@ -167,6 +167,23 @@
         }
       ],
       "suspiciousEndpoints": "/api/(vote|comment|submit|me|login)"
+    },
+    "youtube": {
+      "routes": {
+        "checkpoint": [
+          "accounts\\.google\\.com/(v3/signin|signin/v2|ServiceLogin|speedbump|signin/rejected)"
+        ],
+        "suspended": ["accounts\\.google\\.com/(signin/)?disabled"]
+      },
+      "apiAnswers": [],
+      "suspiciousEndpoints": "/youtubei/v\\d+/"
+    },
+    "snapchat": {
+      "routes": {
+        "checkpoint": ["accounts\\.snapchat\\.com/(accounts|v\\d+)/login"]
+      },
+      "apiAnswers": [],
+      "suspiciousEndpoints": "web\\.snapchat\\.com/[\\w.]+\\.\\w+/\\w+"
     }
   }
 }

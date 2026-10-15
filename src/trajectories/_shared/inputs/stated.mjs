@@ -87,3 +87,22 @@ export function statedChoice(names, table, what) {
     );
   return choice;
 }
+
+/**
+ * The JSON a caller states in `name`, parsed. Unset answers `absent`: the
+ * caller's own answer for an optional input (undefined, or the value it
+ * composes from other inputs). Set but not JSON is refused by name.
+ */
+export function parseJsonEnv(name, absent) {
+  const raw = process.env[name];
+  if (!raw) return absent;
+  let parsed;
+  let malformed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    malformed = error;
+  }
+  if (malformed) throw new Error(`${name} must be valid JSON: ${malformed.message}`);
+  return parsed;
+}

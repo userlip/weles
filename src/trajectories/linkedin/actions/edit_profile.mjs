@@ -1,237 +1,97 @@
-// Apply the linked character's stated name, headline, about and avatar to
-// the authenticated LinkedIn profile.
-
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
+// Apply the linked character's name, headline, About and avatar to the
+// LinkedIn profile, through the shared action runner: the account's fresh
+// jar, the signed-in gate (on the feed, which carries the global nav the
+// edit pages lack), the inline relogin, the verdict and its record are the
+// runner's.
+//
+// The intro is edited by ./profile/intro.mjs; the About is saved and read
+// back from a reloaded editor; the avatar counts once the profile shows a
+// different photo. A requested change that does not take fails the run.
+import { detectLinkedInBanSignals } from '../../../../dist/platforms/linkedin/ban_signals.js';
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
+import { runAction } from '../../_shared/action-runner.mjs';
+import { reloginLinkedinInline } from '../../_shared/linkedin/relogin.mjs';
 import { confirmedFill } from '../../_shared/page/confirmed-fill.mjs';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
-import {
-  assertAuthed,
-  AuthProbeError,
-} from '../../_shared/auth/auth-probe.mjs';
-import {
-  loadFreshCookieJarOrFail,
-  CookieJarStaleError,
-} from '../../_shared/auth/cookie-freshness.mjs';
-import { loadAvatarFile } from '../../_shared/runner/avatar-loader.mjs';
-import { updateAccountMetadata } from '../../_shared/skarbiec/accounts.mjs';
-import { pageSettled, reviewUntilClosed } from '../../_shared/page/settled.mjs';
 import { fitsField } from '../../_shared/page/fits.mjs';
 import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
+import { pageSettled } from '../../_shared/page/settled.mjs';
+import { loadAvatarFile } from '../../_shared/runner/avatar-loader.mjs';
+import { accountCharacter, findAccount, updateAccountMetadata } from '../../_shared/skarbiec/accounts.mjs';
 import { editIntro } from './profile/intro.mjs';
 
-const acct = await getSocialAccount('linkedin');
-if (!acct) {
-  console.log('FAIL: no active linkedin account in Skarbiec');
-  process.exit(1);
+/** The profile's own vanity name, from the address LinkedIn left the page on. */
+function vanityOf(page, what) {
+  const vanity = new URL(page.url()).pathname.match(/^\/in\/(?<name>[^/]+)/)?.groups.name;
+  if (!vanity) throw new Error(`LINKEDIN_PROFILE_UNNAMED: ${page.url()} names no /in/<vanity> profile for the ${what}`);
+  return vanity;
 }
-console.log(`[li-profile] using account: ${acct.username}`);
-const character = acct.metadata?.character;
-if (!character || typeof character !== 'object') {
-  console.log(`FAIL: no character stored for linkedin/${acct.username}`);
-  process.exit(1);
+
+async function writeAbout(page, about) {
+  await page.goto(`https://www.linkedin.com/in/${vanityOf(page, 'About')}/edit/about/`, { waitUntil: 'domcontentloaded' });
+  await pageSettled(page);
+  const field = page.locator('textarea').filter({ visible: true }).first();
+  if (!(await field.count())) throw new Error(`LINKEDIN_ABOUT_FIELD_MISSING: the About editor shows no text field at ${page.url()}`);
+  if ((await field.inputValue()) === about) return false;
+  await fitsField(field, about, 'the LinkedIn about text');
+  await confirmedFill(page, field, about, 'the LinkedIn about field');
+  await clickDescribed(page, 'the button that saves the About section');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await pageSettled(page);
+  const kept = await field.inputValue();
+  if (kept !== about) throw new Error(`LINKEDIN_ABOUT_NOT_SAVED: LinkedIn kept an About of ${kept.length} characters, not the ${about.length} requested`);
+  return true;
 }
-console.log(
-  `[li-profile] character: ${character.name} (niche=${character.niche})`,
-);
-const avatarUrl =
-  character.avatar_url ||
-  (Array.isArray(character.training_images)
-    ? character.training_images[0]
-    : null);
 
-const targetName = character.name || '';
-// Headline = occupation if present, else niche; about = the bio. Each goes up
-// whole, and its field's own maxlength decides whether it fits.
-const targetHeadline = character.occupation ?? character.niche;
-const targetAbout = character.bio;
+async function writeAvatar(page, avatarUrl) {
+  const avatar = await loadAvatarFile(avatarUrl);
+  const profile = `https://www.linkedin.com/in/${vanityOf(page, 'avatar')}/`;
+  await page.goto(profile, { waitUntil: 'domcontentloaded' });
+  await pageSettled(page);
+  const photo = page.locator('img[alt*="photo" i]').filter({ visible: true }).first();
+  const before = (await photo.count()) ? await photo.getAttribute('src') : null;
+  const edit = page.locator('a[aria-label*="photo" i], button[aria-label*="photo" i]').filter({ visible: true }).first();
+  if (!(await edit.count())) throw new Error(`LINKEDIN_PHOTO_CONTROL_MISSING: the profile at ${page.url()} shows no photo-edit control`);
+  await humanClickLocator(page, edit);
+  await pageSettled(page);
+  // The photo dialog carries a file input whatever its upload button says.
+  const file = page.locator('input[type="file"]').first();
+  if (!(await file.count())) throw new Error('LINKEDIN_PHOTO_INPUT_MISSING: the photo dialog has no file input');
+  await file.setInputFiles(avatar);
+  await pageSettled(page);
+  await clickDescribed(page, 'the button in the photo dialog that saves or applies the new profile photo');
+  await page.goto(profile, { waitUntil: 'domcontentloaded' });
+  await pageSettled(page);
+  const after = await photo.getAttribute('src');
+  if (!after || after === before) throw new Error(`LINKEDIN_PHOTO_UNCHANGED: the profile photo at ${page.url()} did not change after saving`);
+}
 
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'linkedin_edit_profile',
-  proxy: proxyUrl,
-  persona,
+await runAction({
+  platform: 'linkedin',
+  action: 'edit_profile',
+  feedUrl: 'https://www.linkedin.com/feed/',
+  inlineRelogin: reloginLinkedinInline,
+  banDetector: detectLinkedInBanSignals,
+  act: async (s, { acct }) => {
+    const character = accountCharacter(findAccount('linkedin', acct.username));
+    if (!character) throw new Error(`LINKEDIN_PROFILE_CHARACTER_MISSING: linkedin/${acct.username} has no linked character`);
+    console.log(`[li-profile] character: ${character.name} (niche=${character.niche})`);
+    // The headline is the occupation when the character has one, else its niche.
+    const headline = character.occupation ? character.occupation : character.niche;
+    const writes = await editIntro(s, character, character.name ? character.name : '', headline);
+    if (character.bio && (await writeAbout(s.page, character.bio))) writes.push('about');
+    const [firstImage] = Array.isArray(character.training_images) ? character.training_images : [];
+    const avatarUrl = character.avatar_url ? character.avatar_url : firstImage;
+    if (avatarUrl) {
+      await writeAvatar(s.page, avatarUrl);
+      writes.push('avatar');
+    }
+    updateAccountMetadata(acct.id, {
+      ...(character.name ? { display_name: character.name } : {}),
+      profile_url: `https://www.linkedin.com/in/${acct.username}/`,
+      updated_at: new Date().toISOString(),
+    });
+    return writes.length
+      ? `${acct.username} profile changed: ${writes.join(', ')}`
+      : `${acct.username} profile already matches the character; Skarbiec synced`;
+  },
 });
-
-try {
-  let stored;
-  try {
-    const all = loadFreshCookieJarOrFail(acct, {
-      platform: 'linkedin',
-      label: 'linkedin_edit_profile',
-      currentProxyUrl: proxyUrl,
-      currentPersona: persona,
-    });
-    stored = all.filter((c) => /linkedin\.com/.test(c.domain ?? ''));
-    if (!stored.length)
-      throw new CookieJarStaleError(
-        'cookie_jar_no_domain_match: jar fresh but no linkedin.com cookies',
-        { platform: 'linkedin' },
-      );
-  } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
-    throw jarErr;
-  }
-  await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
-
-  // Hit /feed/ first to confirm auth via primary-nav. The
-  // /in/me/edit-form/intro/ page renders an edit-modal-only view that does
-  // NOT expose the global nav, so assertAuthed false-fails there even on
-  // valid sessions. After /feed/ confirms auth, navigate to the edit URL.
-  await s.page.goto('https://www.linkedin.com/feed/', {
-    waitUntil: 'domcontentloaded',
-  });
-  await humanIdlePause('deliberate');
-  if (
-    ['/login', '/checkpoint', '/uas'].some((wall) =>
-      new URL(s.page.url()).pathname.startsWith(wall),
-    )
-  ) {
-    const error = new Error(`cookies stale, redirected to ${s.page.url()}`);
-    await markCookiesStale(acct.id);
-    throw error;
-  }
-  try {
-    await assertAuthed('linkedin', s, { label: 'linkedin_edit_profile' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
-    throw probeErr;
-  }
-  const writes = await editIntro(s, character, targetName, targetHeadline);
-
-  // About is edited separately from the intro form and requires its own
-  // persisted readback before any avatar work or metadata update.
-  if (targetAbout) {
-    const myVanity = s.page.url().match(/\/in\/([^/?]+)/)?.pop();
-    if (!myVanity)
-      throw new Error(
-        `the LinkedIn profile URL ${s.page.url()} names no account for the requested About update`,
-      );
-    await s.page.goto(`https://www.linkedin.com/in/${myVanity}/edit/about/`, {
-      waitUntil: 'domcontentloaded',
-    });
-    await pageSettled(s.page);
-    const aboutIn = s.page
-      .locator('textarea')
-      .filter({ visible: true })
-      .first();
-    if (!(await aboutIn.count()))
-      throw new Error(
-        `the LinkedIn About editor has no visible text field at ${s.page.url()}; the requested About was not written`,
-      );
-    const current = await aboutIn.inputValue();
-    if (current !== targetAbout) {
-      await fitsField(aboutIn, targetAbout, 'the LinkedIn about text');
-      await confirmedFill(s.page, aboutIn, targetAbout, 'the LinkedIn about field');
-      await s.page.keyboard.press('Tab');
-      const saveBtn = s.page
-        .locator('button:has-text("Save")')
-        .filter({ visible: true })
-        .first();
-      if (!(await saveBtn.isEnabled()))
-        throw new Error('the LinkedIn About Save control is not enabled');
-      await humanClickLocator(s.page, saveBtn);
-      await s.page.reload({ waitUntil: 'domcontentloaded' });
-      await pageSettled(s.page);
-      const kept = await aboutIn.inputValue();
-      if (kept !== targetAbout)
-        throw new Error(
-          `LinkedIn kept an About of ${kept.length} characters, not the ${targetAbout.length} requested; the profile is unconfirmed`,
-        );
-      writes.push(`about (${current.length} -> ${targetAbout.length} chars)`);
-    }
-  }
-
-  // A requested avatar fails the run if its input or save control is absent.
-  console.log(
-    `[li-profile] entering avatar block (avatarUrl=${avatarUrl ? 'yes' : 'none'})`,
-  );
-  if (avatarUrl) {
-    const tmpAvatar = await loadAvatarFile(avatarUrl);
-    const myVanity = s.page.url().match(/\/in\/([^/?]+)/)?.[1];
-    if (!myVanity)
-      throw new Error(
-        `the page ${s.page.url()} names no /in/<vanity> profile to open for the avatar; the requested avatar was not uploaded`,
-      );
-    await s.page.goto(`https://www.linkedin.com/in/${myVanity}/`, {
-      waitUntil: 'domcontentloaded',
-    });
-    await humanIdlePause('deliberate');
-    const photo = s.page
-      .locator('img[alt*="photo" i]')
-      .filter({ visible: true })
-      .first();
-    const beforePhoto = (await photo.count())
-      ? await photo.getAttribute('src')
-      : null;
-    const addPhotoBtn = s.page
-      .locator('a[aria-label*="photo" i], button[aria-label*="photo" i]')
-      .filter({ visible: true })
-      .first();
-    if (!(await addPhotoBtn.count()))
-      throw new Error(
-        `the LinkedIn profile has no photo-edit control at ${s.page.url()}; the requested avatar was not uploaded`,
-      );
-    await humanClickLocator(s.page, addPhotoBtn);
-    await pageSettled(s.page);
-    // The photo dialog carries a file input whatever its upload button says.
-    const fIn = s.page.locator('input[type="file"]').first();
-    if (!(await fIn.count()))
-      throw new Error(
-        'the LinkedIn photo dialog has no file input; the requested avatar was not uploaded',
-      );
-    await fIn.setInputFiles(tmpAvatar);
-    await humanIdlePause('deliberate');
-    await clickDescribed(
-      s.page,
-      'the button in the photo dialog that saves or applies the new profile photo',
-    );
-    await s.page.goto(`https://www.linkedin.com/in/${myVanity}/`, {
-      waitUntil: 'domcontentloaded',
-    });
-    await pageSettled(s.page);
-    const afterPhoto = await photo.getAttribute('src');
-    if (!afterPhoto || afterPhoto === beforePhoto)
-      throw new Error(
-        `the LinkedIn profile photo at ${s.page.url()} did not change after Save; the requested avatar is unconfirmed`,
-      );
-    writes.push('avatar uploaded and visible on profile');
-  }
-
-  updateAccountMetadata(acct.id, {
-    ...(typeof targetName === 'string' && targetName.trim()
-      ? { display_name: targetName }
-      : {}),
-    profile_url: `https://www.linkedin.com/in/${acct.username}/`,
-    updated_at: new Date().toISOString(),
-  });
-
-  if (!writes.length)
-    console.log(
-      'PASS: no-op (form values already match character; Skarbiec synced)',
-    );
-  else
-    console.log(`PASS: ${acct.username} profile updated to ${character.name}`);
-} catch (e) {
-  console.log('FAIL:', e);
-  process.exitCode = 1;
-} finally {
-  try {
-    // Explicit review holds only an existing page and releases every observer.
-    if (process.env.WELES_KEEP_OPEN === '1' && !s.page.isClosed()) {
-      console.log(
-        '[li-profile] WELES_KEEP_OPEN=1 — browser left open. Close window or Ctrl+C to exit.',
-      );
-      await reviewUntilClosed(s);
-    }
-  } finally {
-    await s.close();
-  }
-}

@@ -1,187 +1,58 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
+// Send a TikTok direct message, through the shared action runner: the
+// account's fresh jar, the signed-in gate, the verdict and its record are the
+// runner's.
+//
+// Env: RECIPIENT_HANDLE (required; @ optional) the username the DM goes to;
+// DM_MESSAGE (required) the text, from a real account to a real person.
+//
+// The new-message control and its search are TikTok's own (data-e2e); the
+// recipient is the search row naming exactly that username. A recipient
+// whose settings refuse messages leaves no composer: the vision model reads
+// why, and the run is refused by name. The message counts once the
+// conversation shows it outside the composer.
 import { humanType } from '../../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
-import {
-  assertAuthed,
-  AuthProbeError,
-} from '../../_shared/auth/auth-probe.mjs';
-import {
-  loadFreshCookieJarOrFail,
-  CookieJarStaleError,
-} from '../../_shared/auth/cookie-freshness.mjs';
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
+import { detectTikTokBanSignals } from '../../../../dist/platforms/tiktok/ban_signals.js';
+import { runAction } from '../../_shared/action-runner.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
+import { clickOffered, pageShows } from '../../_shared/page/judged/seen.mjs';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 import { textShownOutsideEditors } from '../../_shared/page/shows.mjs';
 
-const RECIPIENT = statedText(
-  ['RECIPIENT_HANDLE'],
-  'the TikTok username the DM goes to',
-).replace(/^@/, '');
-const MESSAGE = statedText(
-  ['DM_MESSAGE'],
-  'the text sent from a real account to a real person',
-);
+const RECIPIENT = statedText(['RECIPIENT_HANDLE'], 'the TikTok username the DM goes to').replace(/^@/, '');
+const MESSAGE = statedText(['DM_MESSAGE'], 'the text sent from a real account to a real person');
 
-const acct = await getSocialAccount('tiktok');
-if (!acct) {
-  console.log('FAIL: no active tiktok account in DB');
-  process.exit(1);
-}
-console.log(`[trajectory] Using account: ${acct.username}`);
-
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'tiktok_dm',
-  proxy: proxyUrl,
-  persona,
-});
-
-try {
-  let stored;
-  try {
-    const all = loadFreshCookieJarOrFail(acct, {
-      platform: 'tiktok',
-      label: 'tiktok_dm',
-      currentProxyUrl: proxyUrl,
-      currentPersona: persona,
-    });
-    stored = all.filter((c) => /tiktok\.com/.test(c.domain ?? ''));
-    if (!stored.length)
-      throw new CookieJarStaleError(
-        'cookie_jar_no_domain_match: jar fresh but no tiktok.com cookies',
-        { platform: 'tiktok' },
-      );
-  } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
-    throw jarErr;
-  }
-  await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
-
-  await s.page.goto('https://www.tiktok.com/messages', {
-    waitUntil: 'domcontentloaded',
-  });
-  await humanIdlePause('long');
-  if (/\/login(\/|$)/.test(s.page.url())) {
-    await markCookiesStale(acct.id);
-    throw new Error(`cookies stale, redirected to login (${s.page.url()})`);
-  }
-  try {
-    await assertAuthed('tiktok', s, { label: 'tiktok_dm' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
-    throw probeErr;
-  }
-
-  const newMsgBtn = s.page
-    .locator(
-      '[data-e2e="chat-create-new"], button[aria-label*="New message" i], div[role="button"]:has-text("New message"), button:has-text("New message")',
-    )
-    .filter({ visible: true })
-    .first();
-  await newMsgBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, newMsgBtn);
-
-  const searchIn = s.page
-    .locator(
-      'input[data-e2e="chat-create-new-search"], input[placeholder*="Search" i], input[aria-label*="Search" i]',
-    )
-    .filter({ visible: true })
-    .first();
-  await searchIn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, searchIn);
-  await humanType(s.page, RECIPIENT);
-
-  const userRow = s.page
-    .locator(
-      `[data-e2e*="search-user"]:has-text("${RECIPIENT}"), div[role="button"]:has-text("${RECIPIENT}"), li:has-text("${RECIPIENT}")`,
-    )
-    .filter({ visible: true })
-    .first();
-  await userRow.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, userRow);
-  await humanIdlePause('short');
-
-  // Some flows show a "Next"/"Start chat" confirm — opportunistic.
-  await humanIdlePause('short');
-  const nextSel =
-    'button:has-text("Next"), button:has-text("Start chat"), [role="button"]:has-text("Next")';
-  const nextCount = await s.page
-    .locator(nextSel)
-    .filter({ visible: true })
-    .count()
-    .catch(() => 0);
-  if (nextCount > 0) {
-    await humanClickLocator(
-      s.page,
-      s.page.locator(nextSel).filter({ visible: true }).first(),
-    );
-    await humanIdlePause('deliberate');
-  }
-
-  // Recipient may have DMs restricted (followers-only) → composer never
-  // mounts. Surface as a structured FAIL instead of waiting on default
-  // 30s waitFor.
-  await humanIdlePause('short');
-  const composerSel =
-    '[data-e2e="message-input-textarea"], div[contenteditable="true"][role="textbox"], textarea[data-e2e*="message-input"]';
-  const composerCount = await s.page
-    .locator(composerSel)
-    .filter({ visible: true })
-    .count()
-    .catch(() => 0);
-  if (!composerCount) {
-    const restrictNoteCount = await s.page
-      .locator(
-        ':text("can\'t send"), :text("DMs are off"), :text("only people you follow")',
-      )
-      .count()
-      .catch(() => 0);
-    throw new Error(
-      restrictNoteCount > 0
-        ? 'recipient does not accept DMs (privacy restriction)'
-        : 'composer not visible after recipient selected',
-    );
-  }
-  const composer = s.page
-    .locator(composerSel)
-    .filter({ visible: true })
-    .first();
-  await humanClickLocator(s.page, composer);
-  await humanType(s.page, MESSAGE);
-  await humanIdlePause('short');
-
-  const sendSel =
-    '[data-e2e="message-send"], button[aria-label*="Send" i], div[role="button"]:has-text("Send")';
-  const sendCount = await s.page
-    .locator(sendSel)
-    .filter({ visible: true })
-    .count()
-    .catch(() => 0);
-  if (sendCount > 0) {
-    await humanClickLocator(
-      s.page,
-      s.page.locator(sendSel).filter({ visible: true }).first(),
-    );
-  } else {
+await runAction({
+  platform: 'tiktok',
+  action: 'dm',
+  feedUrl: 'https://www.tiktok.com/messages',
+  banDetector: detectTikTokBanSignals,
+  act: async (s) => {
+    const create = s.page.locator('[data-e2e="chat-create-new"]').filter({ visible: true }).first();
+    await create.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, create);
+    const search = s.page.locator('input[data-e2e="chat-create-new-search"]').filter({ visible: true }).first();
+    await search.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, search);
+    await humanType(s.page, RECIPIENT);
+    const row = s.page.locator('[data-e2e*="search-user"]').filter({ has: s.page.getByText(RECIPIENT, { exact: true }), visible: true }).first();
+    await row.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, row);
+    await pageSettled(s.page);
+    // Some flows confirm the chosen person before the conversation opens.
+    if (await clickOffered(s.page, 'the button that starts the chat with the chosen person')) await pageSettled(s.page);
+    const composer = s.page.locator('[data-e2e="message-input-textarea"], div[contenteditable="true"][role="textbox"]').filter({ visible: true }).first();
+    if (!(await composer.count())) {
+      if (await pageShows(s.page, `Does the page say @${RECIPIENT} does not accept messages from this account?`))
+        throw new Error(`TIKTOK_DM_REFUSED_BY_RECIPIENT: @${RECIPIENT}'s settings do not accept messages from this account`);
+      throw new Error(`TIKTOK_DM_COMPOSER_MISSING: the conversation with @${RECIPIENT} shows no message field at ${s.page.url()}`);
+    }
+    await humanClickLocator(s.page, composer);
+    await humanType(s.page, MESSAGE);
     await s.page.keyboard.press('Enter');
-  }
-  await humanIdlePause('deliberate');
-
-  if (!(await textShownOutsideEditors(s.page, MESSAGE)))
-    throw new Error(
-      'composer typed but message not echoed in conversation pane',
-    );
-  console.log(`PASS: DM sent to @${RECIPIENT}`);
-} catch (e) {
-  console.error('FAIL:', e);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}
+    await pageSettled(s.page);
+    if (!(await textShownOutsideEditors(s.page, MESSAGE)))
+      throw new Error('TIKTOK_DM_UNCONFIRMED: the conversation does not show the message after sending');
+    return `sent a message to @${RECIPIENT}`;
+  },
+});

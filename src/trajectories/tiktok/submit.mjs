@@ -1,262 +1,67 @@
 import { humanType } from '../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../dist/human/mouse.js';
+import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
 
 /**
- * Navigate to a video page from the current feed/profile, then submit a
- * comment. TikTok's /foryou feed uses an immersive video player where the
- * right-rail action bar (comment icon, like button, etc.) frequently fails to
- * hydrate — the same render-shadow that tiktok_like works around by navigating
- * to a profile → video page first. On a dedicated /video/ page the right rail
- * always mounts, so the comment icon and input are reliably present.
- *
- * If the page is already on a /video/ URL with a visible comment icon, we
- * skip the navigation and go straight to commenting.
+ * Comment on the video the run picked (rail.mjs videoPost, which opened its
+ * own page): a session that is no longer on that video is refused, so the
+ * text is never posted under a video it was not written about. A toast
+ * covering the rail is closed first; the comment counts once TikTok clears
+ * its input.
  */
-export async function tiktokSubmitComment(s, text) {
-  let currentUrl = s.page.url?.() ?? '';
-
-  // If we're not already on a video page, navigate to one. Strategy:
-  // 1. If on a profile page (@user), click the first video link.
-  // 2. If on /foryou or /following, navigate to @tiktok (always has videos)
-  //    and click through to a video page.
-  // TikTok's /foryou immersive player frequently fails to hydrate the
-  // right-rail action bar (comment icon, like button, etc.) — same
-  // render-shadow as tiktok_like. On a dedicated /video/ page the right
-  // rail always mounts, so the comment icon and input are reliably present.
-  const onVideoPage = /\/video\/\d+/.test(currentUrl);
-  if (!onVideoPage) {
-    const profile = /\/@(?<handle>[^/?#]+)$/.exec(new URL(currentUrl).pathname);
-    let gridLoaded = false;
-    // The profiles tried are the one the session is on, else the authors
-    // TikTok's own /foryou feed recommends to this account (each video in it
-    // links its author's /@handle): accounts TikTok chose for it, not a list
-    // of famous handles written here.
-    let profileHandles = profile ? [profile.groups.handle] : [];
-    if (!profile) {
-      if (!/\/foryou/.test(currentUrl))
-        await s.goto('https://www.tiktok.com/foryou');
-      await humanIdlePause('long');
-      profileHandles = await s.page.evaluate(() => [
-        ...new Set(
-          Array.from(document.querySelectorAll('a[href*="/@"]'), (a) =>
-            /\/@([^/?#]+)/.exec(String(a.getAttribute('href'))),
-          )
-            .filter((found) => found !== null)
-            .map(([, handle]) => handle),
-        ),
-      ]);
-      console.log(
-        `[tiktok-submit] /foryou recommended authors: ${JSON.stringify(profileHandles)}`,
-      );
-      if (!profileHandles.length)
-        throw new Error(
-          `TIKTOK_NO_VIDEO_SOURCE: the /foryou feed at ${s.page.url()} links no author profile to find a video on`,
-        );
-    }
-    // Repost responses can supply video identifiers when the profile's post
-    // grid has no usable entries.
-    let repostCandidate = null;
-    const onResponse = async (resp) => {
-      try {
-        const u = resp.url();
-        if (!/\/api\/repost\/item_list\//.test(u)) return;
-        if (resp.status() !== 200) return;
-        const json = await resp.json().catch(() => null);
-        const items = json?.itemList;
-        if (!Array.isArray(items)) return;
-        for (const it of items) {
-          const handle = it?.author?.uniqueId;
-          const id = it?.id;
-          if (handle && id && !repostCandidate) {
-            repostCandidate = {
-              handle,
-              id,
-              url: `https://www.tiktok.com/@${handle}/video/${id}`,
-            };
-            console.log(
-              `[tiktok-submit] /api/repost/item_list captured: @${handle}/video/${id}`,
-            );
-            return;
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-    s.page.on('response', onResponse);
-    outer: for (const handle of profileHandles) {
-      const profileUrl = `https://www.tiktok.com/@${handle}`;
-      await s.goto(profileUrl);
-      await pageSettled(s.page);
-      gridLoaded = await s.page
-        .locator('a[href*="/video/"]')
-        .first()
-        .isVisible();
-      if (gridLoaded) {
-        console.log(`[tiktok-submit] @${handle} grid loaded`);
-        currentUrl = profileUrl;
-        break outer;
-      }
-      console.log(
-        `[tiktok-submit] @${handle}: grid not shown on the settled page`,
-      );
-      if (repostCandidate) {
-        console.log(
-          `[tiktok-submit] using repost-list video ${repostCandidate.url} since post grid empty`,
-        );
-        break outer;
-      }
-    }
-    s.page.off('response', onResponse);
-    if (!gridLoaded && repostCandidate) {
-      // Navigate directly to the video URL extracted from the working repost
-      // endpoint and treat the rest of the trajectory as if we landed there.
-      await s.goto(repostCandidate.url);
-      currentUrl = repostCandidate.url;
-      gridLoaded = true; // cosmetic — we have a video URL now
-    }
-    if (!gridLoaded && !repostCandidate) {
-      const bodyLen = await s.page
-        .evaluate(() => document.body?.innerText?.length || 0)
-        .catch(() => 0);
-      throw new Error(
-        `tiktok_comment: no candidate profile rendered video grid and no repost-list candidate (bodyLen=${bodyLen})`,
-      );
-    }
-    // If we navigated directly via repost-list candidate URL we're already
-    // on a /video/N page — skip the profile->click step entirely.
-    let landed = /\/video\/\d+/.test(s.page.url());
-    if (landed) {
-      console.log(
-        '[tiktok-submit] already on /video/ page from repost-list candidate — skipping profile click',
-      );
-    }
-    // Click through to a video page. Try up to 4 videos in case the first
-    // doesn't hydrate the right rail (same pattern as tiktok_like).
-    const videoLinks = landed
-      ? []
-      : await s.page.locator('a[href*="/video/"]').all();
-    const candidates = videoLinks.slice(0, Math.min(4, videoLinks.length));
-    if (!landed)
-      console.log(
-        `[tiktok-submit] found ${candidates.length} video links on profile`,
-      );
-    if (!landed)
-      for (let i = 0; i < candidates.length; i++) {
-        const link = candidates[i];
-        const href = await link.getAttribute('href').catch(() => '');
-        console.log(
-          `[tiktok-submit] trying video ${i + 1}/${candidates.length}: ${href}`,
-        );
-        try {
-          await humanClickLocator(s.page, link);
-          await s.page.waitForURL(/\/video\/\d+/);
-          await pageSettled(s.page);
-          // The right rail is hydrated when the comment icon is on the settled page.
-          const commentIconProbe = s.page
-            .locator(
-              '[data-e2e="comment-icon"], [data-e2e="browse-comment-icon"], button[aria-label*="comments" i]',
-            )
-            .filter({ visible: true })
-            .first();
-          const found = await commentIconProbe.isVisible();
-          if (found) {
-            console.log(
-              `[tiktok-submit] comment icon hydrated on video ${i + 1}`,
-            );
-            landed = true;
-            break;
-          }
-          console.log(
-            `[tiktok-submit] video ${i + 1} did not hydrate comment icon — retrying`,
-          );
-        } catch (e) {
-          console.log(
-            `[tiktok-submit] video ${i + 1} click failed: ${e.message}`,
-          );
-        }
-        // Go back to profile to try next video.
-        if (i < candidates.length - 1) {
-          await s.page.goBack({ waitUntil: 'domcontentloaded' });
-          // Wait for profile grid to re-render.
-          await s.page
-            .locator('a[href*="/video/"]')
-            .first()
-            .waitFor({ state: 'visible' });
-        }
-      }
-    if (!landed)
-      throw new Error(
-        'tiktok_comment: could not reach a video page with a visible comment icon',
-      );
-  }
-
-  // Dismiss intercepting overlays first — the "Introducing keyboard
-  // shortcuts" tooltip (button.inapp-notif__close, aria-label="Close toast")
-  // covers part of the right-rail action area and absorbs clicks.
-  for (const selX of [
-    'button[aria-label="Close toast"]',
-    'button.inapp-notif__close',
-  ]) {
-    const x = s.page.locator(selX).filter({ visible: true }).first();
-    if (await x.count().catch(() => 0)) {
-      try {
-        await humanClickLocator(s.page, x);
-        await humanIdlePause('short');
-      } catch {}
-    }
-  }
-  // The right rail is hydrated once the page settles. When we landed via
-  // repost-URL navigation we skipped the click-through loop's check.
+export async function tiktokSubmitComment(s, text, post) {
+  if (new URL(s.page.url()).pathname !== new URL(post.url).pathname)
+    throw new Error(
+      `TIKTOK_VIDEO_CHANGED: the comment was written for ${post.url}, but the session is at ${s.page.url()}`,
+    );
   await pageSettled(s.page);
+  const toast = s.page
+    .locator('button[aria-label="Close toast"], button.inapp-notif__close')
+    .filter({ visible: true })
+    .first();
+  if (await toast.count()) {
+    await humanClickLocator(s.page, toast);
+    await pageSettled(s.page);
+  }
   const commentIcon = s.page
     .locator(
-      '[data-e2e="comment-icon"], [data-e2e="browse-comment-icon"], [data-e2e="feed-comment-icon"], button[aria-label*="comments" i]',
+      '[data-e2e="comment-icon"], [data-e2e="browse-comment-icon"], [data-e2e="feed-comment-icon"]',
     )
     .filter({ visible: true })
     .first();
-  if (await commentIcon.isVisible()) {
-    console.log('[tiktok-submit] clicking comment icon to open panel');
+  // A video page may open with its comment panel already shown.
+  if (await commentIcon.count()) {
     await humanClickLocator(s.page, commentIcon);
-    await humanIdlePause('deliberate');
-  } else {
-    console.log('[tiktok-submit] comment icon not on the settled page');
+    await pageSettled(s.page);
   }
-  // Comment input — TikTok uses a contenteditable div with class containing
-  // "DraftEditor" or div[role="textbox"]. Modern selector: data-e2e="comment-input".
   const input = s.page
     .locator(
-      '[data-e2e="comment-input"], [data-e2e="comment-text"], div[contenteditable="true"][role="textbox"], div.DraftEditor-editorContainer div[contenteditable="true"], div[contenteditable="true"][aria-label*="comment" i], textarea[placeholder*="comment" i]',
+      '[data-e2e="comment-input"], [data-e2e="comment-text"], div[contenteditable="true"][role="textbox"], div.DraftEditor-editorContainer div[contenteditable="true"]',
     )
     .filter({ visible: true })
     .first();
   await input.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, input);
   await humanType(s.page, text);
-  // Post button — data-e2e="comment-post" once input is non-empty.
-  const post = s.page
+  const send = s.page
     .locator(
       '[data-e2e="comment-post"]:not([aria-disabled="true"]), button[data-e2e="comment-post"]',
     )
     .filter({ visible: true })
     .first();
-  await post.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, post);
+  await send.waitFor({ state: 'visible' });
+  await humanClickLocator(s.page, send);
   await s.page.waitForFunction(() => {
     const e = document.querySelector(
       '[data-e2e="comment-input"], div[contenteditable="true"][role="textbox"]',
     );
-    return !e || (e.textContent ?? '').trim().length === 0;
+    return !e || !e.textContent.trim();
   });
 }
 
-export async function tiktokSubmitPost(s, text) {
-  // TikTok's web upload page is /upload, with file picker → caption → post.
-  // Without a video file the trajectory can't post — fail explicitly.
+export async function tiktokSubmitPost() {
+  // TikTok's web upload page takes a video file before a caption; this run
+  // has none to upload.
   throw new Error(
     'tiktok_post_not_supported: TikTok requires a video upload; this trajectory does not generate one',
   );

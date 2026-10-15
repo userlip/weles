@@ -1,140 +1,43 @@
-import {
-  getSocialAccount,
-  markCookiesStale,
-} from '../../../dist/utils/credentials.js';
-import { WSession } from '../../../dist/session/wsession.js';
+// Comment on a YouTube video through the shared action runner: the account's
+// session and proxy, the signed-in gate, the ban signal and the kept verdict
+// are runAction's. The video and the words published under the account's name
+// are the caller's (VIDEO_URL, COMMENT_TEXT); nothing is assumed, because a
+// built-in comment on a built-in video is a real publication nobody asked for.
+//
+// The comment box and its Comment button are found by the vision model. The
+// comment counts once YouTube answers its create_comment request with a
+// succeeded action; a held or refused comment fails with YouTube's answer.
 import { humanType } from '../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../dist/human/mouse.js';
-import { assertAuthed, AuthProbeError } from '../_shared/auth/auth-probe.mjs';
-import {
-  loadFreshCookieJarOrFail,
-  CookieJarStaleError,
-} from '../_shared/auth/cookie-freshness.mjs';
-import { statedProxy } from '../_shared/inputs/stated.mjs';
+import { detectYouTubeBanSignals } from '../../../dist/platforms/youtube/ban_signals.js';
+import { runAction } from '../_shared/action-runner.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
+import { clickDescribed } from '../_shared/page/judged/seen.mjs';
+import { pageSettled, responseAfterAction } from '../_shared/page/settled.mjs';
 
-// The video and the words published under the account's name are the
-// caller's; nothing is assumed, because a built-in comment on a built-in
-// video is a real publication nobody asked for.
-const VIDEO = process.env.VIDEO_URL;
-const COMMENT = process.env.COMMENT_TEXT;
-if (!VIDEO) {
-  console.log('FAIL: VIDEO_URL env var required');
-  process.exit(1);
-}
-if (!COMMENT) {
-  console.log('FAIL: COMMENT_TEXT env var required');
-  process.exit(1);
-}
+const VIDEO = statedText(['VIDEO_URL'], 'the YouTube video commented on');
+const COMMENT = statedText(['COMMENT_TEXT'], 'the comment published under the account');
+const CREATE_COMMENT = /\/youtubei\/v\d+\/comment\/create_comment/;
 
-const acct = await getSocialAccount('youtube');
-if (!acct) {
-  console.log('FAIL: no active youtube account in DB');
-  process.exit(1);
-}
-console.log(`[trajectory] Using account: ${acct.username} video=${VIDEO}`);
-
-const s = await WSession.start({
-  label: 'youtube_comment',
-  proxy: statedProxy('the YouTube comment'),
+await runAction({
+  platform: 'youtube',
+  action: 'comment',
+  feedUrl: VIDEO,
+  banDetector: detectYouTubeBanSignals,
+  act: async (s) => {
+    await s.page.locator('#comments').scrollIntoViewIfNeeded();
+    await pageSettled(s.page);
+    await clickDescribed(s.page, "the video's add-a-comment box below the video");
+    await humanType(s.page, COMMENT);
+    const answer = await responseAfterAction(
+      s.page,
+      (request) => request.method() === 'POST' && CREATE_COMMENT.test(request.url()),
+      () => clickDescribed(s.page, 'the Comment button that posts the typed comment'),
+    );
+    const body = await answer.text();
+    if (!answer.ok()) throw new Error(`YOUTUBE_COMMENT_REFUSED: ${answer.url()} answered ${answer.status()}: ${body}`);
+    const result = JSON.parse(body).actionResult;
+    if (!result || result.status !== 'STATUS_SUCCEEDED')
+      throw new Error(`YOUTUBE_COMMENT_NOT_POSTED: YouTube's create_comment answer reports no succeeded action: ${body}`);
+    return `commented on ${VIDEO}`;
+  },
 });
-try {
-  // Cookie injection — youtube_login persists Google + youtube cookies; this
-  // trajectory assumes a previously-authenticated account. If logged out we
-  // throw, since the YT comment form refuses anonymous submissions.
-  // Cookie freshness gate — see _shared/auth/cookie-freshness.mjs.
-  let stored;
-  try {
-    stored = loadFreshCookieJarOrFail(acct, {
-      platform: 'youtube',
-      label: 'youtube_comment',
-      currentProxyUrl: proxyUrl,
-      currentPersona: persona,
-    });
-  } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) {
-      console.log(`FAIL: ${jarErr.message}`);
-      await markCookiesStale(acct.id);
-      await s
-        .close()
-        .catch((e) => console.log(`[session] close failed: ${e.message}`));
-      process.exit(1);
-    }
-    throw jarErr;
-  }
-  await s.ctx.addCookies(
-    stored
-      .filter((c) => c?.name && c?.value && (c.domain || c.url))
-      .map((c) => ({ ...c, path: c.path || '/' })),
-  );
-
-  await s.goto(VIDEO);
-  await humanIdlePause('deliberate');
-  const loggedOut = await s.page.evaluate(
-    () =>
-      !!document.querySelector(
-        'a[href^="https://accounts.google.com/ServiceLogin"]',
-      ) && !document.querySelector('img#avatar-btn'),
-  );
-  if (loggedOut) {
-    await markCookiesStale(acct.id);
-    throw new Error('not_logged_in: cookies stale — run youtube_login first');
-  }
-  // Positive auth probe — see _shared/auth/auth-probe.mjs.
-  try {
-    await assertAuthed('youtube', s, { label: 'youtube_comment' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
-    throw probeErr;
-  }
-
-  // Scroll to comment section: #comments anchor.
-  await s.page.evaluate(() => {
-    document.querySelector('#comments')?.scrollIntoView({ block: 'center' });
-  });
-  // Placeholder "Add a comment..." — clicking it expands the input box.
-  const placeholder = s.page
-    .locator(
-      '#placeholder-area, ytd-comment-simplebox-renderer #simplebox-placeholder',
-    )
-    .filter({ visible: true })
-    .first();
-  await placeholder.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, placeholder);
-  // Expanded input: contenteditable div.
-  const input = s.page
-    .locator(
-      'div#contenteditable-root[contenteditable="true"], ytd-commentbox div[contenteditable="true"]',
-    )
-    .filter({ visible: true })
-    .first();
-  await input.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, input);
-  await humanType(s.page, COMMENT);
-  // Submit button — id=submit-button or aria-label="Comment".
-  const submit = s.page
-    .locator(
-      'ytd-commentbox #submit-button button, ytd-button-renderer#submit-button button, button[aria-label="Comment"]',
-    )
-    .filter({ visible: true })
-    .first();
-  await submit.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, submit);
-  // The comment counts once YouTube lists it in the thread; a click that
-  // posted nothing (a held or rejected comment) fails here with the cause.
-  await s.page
-    .locator(
-      'ytd-comment-thread-renderer #content-text, ytd-comment-view-model #content-text',
-    )
-    .filter({ hasText: COMMENT.trim() })
-    .first()
-    .waitFor({ state: 'visible' });
-  console.log(`PASS: commented`);
-} catch (e) {
-  console.error('FAIL:', e);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}

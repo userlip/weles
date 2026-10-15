@@ -1,123 +1,31 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
-import {
-  assertAuthed,
-  AuthProbeError,
-} from '../../_shared/auth/auth-probe.mjs';
-import {
-  loadFreshCookieJarOrFail,
-  CookieJarStaleError,
-} from '../../_shared/auth/cookie-freshness.mjs';
+// Like one Instagram post through the shared action runner: the account's
+// fresh jar, the signed-in gate, the verdict and its record are the runner's.
+//
+// Env: TARGET_URL (required): the post's page (/p/<code> or /reel/<code>);
+// the post liked is the caller's, never whichever the feed shows first.
+//
+// The post's like control is the svg labelled "Like" (in its button), which
+// Instagram replaces with one labelled "Unlike" once the like is taken.
+import { detectInstagramBanSignals } from '../../../../dist/platforms/instagram/ban_signals.js';
+import { runAction } from '../../_shared/action-runner.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
+import { takeOnce } from '../../_shared/page/controls/toggle.mjs';
 
-// The page the like lands on is the caller's; no feed is assumed.
-const TARGET_URL = process.env.TARGET_URL;
-if (!TARGET_URL) {
-  console.log(
-    'FAIL: TARGET_URL env var required: the Instagram page the like lands on',
-  );
-  process.exit(1);
-}
+const TARGET_URL = statedText(['TARGET_URL'], 'the Instagram post to like', 'INSTAGRAM_LIKE_TARGET_REQUIRED');
+if (!/^\/(?:p|reel)\/[^/]+/.test(new URL(TARGET_URL).pathname))
+  throw new Error(`INSTAGRAM_LIKE_TARGET_NOT_A_POST: ${TARGET_URL} is not an Instagram post address (/p/… or /reel/…)`);
 
-const acct = await getSocialAccount('instagram');
-if (!acct) {
-  console.log('FAIL: no active instagram account in DB');
-  process.exitCode = 1;
-}
-console.log(`[trajectory] Using account: ${acct.username}`);
-
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'instagram_like',
-  proxy: proxyUrl,
-  persona,
+await runAction({
+  platform: 'instagram',
+  action: 'like',
+  banDetector: detectInstagramBanSignals,
+  act: async (s) => {
+    const liked = await takeOnce(
+      s.page,
+      s.page.locator('div[role="button"]:has(svg[aria-label="Like"]), svg[aria-label="Like"]').filter({ visible: true }).first(),
+      s.page.locator('svg[aria-label="Unlike"]').filter({ visible: true }).first(),
+      'like',
+    );
+    return liked ? `${TARGET_URL} is already liked` : `liked ${TARGET_URL}`;
+  },
 });
-
-try {
-  // Cookie freshness gate — see _shared/auth/cookie-freshness.mjs.
-  let stored;
-  try {
-    const all = loadFreshCookieJarOrFail(acct, {
-      platform: 'instagram',
-      label: 'instagram_like',
-      currentProxyUrl: proxyUrl,
-      currentPersona: persona,
-    });
-    stored = all.filter((c) => /instagram\.com/.test(c.domain ?? ''));
-    if (!stored.length)
-      throw new CookieJarStaleError(
-        'cookie_jar_no_domain_match: jar fresh but no instagram.com cookies',
-        { platform: 'instagram' },
-      );
-  } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
-    throw jarErr;
-  }
-  await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
-
-  await s.page.goto(TARGET_URL, { waitUntil: 'domcontentloaded' });
-  await humanIdlePause('long');
-  const url = s.page.url();
-  if (/\/accounts\/login/.test(url)) {
-    await markCookiesStale(acct.id);
-    throw new Error(`cookies stale, redirected to login (${url})`);
-  }
-  // Positive auth probe — see _shared/auth/auth-probe.mjs.
-  try {
-    await assertAuthed('instagram', s, { label: 'instagram_like' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
-    throw probeErr;
-  }
-
-  // Open first post: clicking the first <a href*="/p/"> in the feed/explore.
-  const firstPost = s.page
-    .locator('a[href*="/p/"]')
-    .filter({ visible: true })
-    .first();
-  await firstPost.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, firstPost);
-  await humanIdlePause('deliberate');
-
-  // The like button on a post is <svg aria-label="Like"> wrapped in a clickable
-  // div role=button. After click aria-label becomes "Unlike". Filter to the
-  // primary like (post-level), not comment-level by picking the first visible.
-  const likeBtn = s.page
-    .locator(
-      'div[role="button"]:has(svg[aria-label="Like"]), svg[aria-label="Like"]',
-    )
-    .filter({ visible: true })
-    .first();
-  const unlikeBtn = s.page
-    .locator('svg[aria-label="Unlike"]')
-    .filter({ visible: true })
-    .first();
-  const alreadyLiked = await unlikeBtn.count().catch(() => 0);
-  if (alreadyLiked > 0) {
-    console.log('PASS: already liked first post');
-  } else {
-    await likeBtn.waitFor({ state: 'visible' });
-    await humanClickLocator(s.page, likeBtn);
-    await humanIdlePause('deliberate');
-    const after = await s.page
-      .locator('svg[aria-label="Unlike"]')
-      .filter({ visible: true })
-      .count()
-      .catch(() => 0);
-    if (after === 0)
-      throw new Error('clicked Like but no transition to Unlike state');
-    console.log('PASS: liked first post on explore');
-  }
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}

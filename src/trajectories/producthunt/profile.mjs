@@ -1,135 +1,53 @@
-import { WSession } from '../../../dist/session/wsession.js';
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../dist/utils/credentials.js';
-import { injectPHCookies, loginViaTwitter } from './_session.mjs';
-import { assertAuthed, AuthProbeError } from '../_shared/auth/auth-probe.mjs';
-import {
-  loadFreshCookieJarOrFail,
-  CookieJarStaleError,
-} from '../_shared/auth/cookie-freshness.mjs';
-
-// Fill a Product Hunt user profile (headline, about, location, website).
-
-const EDIT_URL = 'https://www.producthunt.com/my/details/edit';
+// Fill the Product Hunt profile (headline, about, location, website) at
+// /my/details/edit, through the shared action runner: the account's fresh jar
+// (or the sign-in through X when it is stale), the signed-in gate, the
+// verdict and its record are the runner's.
+//
+// Env: PH_HEADLINE, PH_BIO and PH_LOCATION (required), PH_WEBSITE (optional):
+// the profile is the account's public face, so its text is the caller's.
+//
+// Each field and the save control are found by the vision model; each value
+// is checked in its field as typed, and the saved profile is read back from
+// a reloaded form: a value it does not hold fails the run.
+import { detectProductHuntBanSignals } from '../../../dist/platforms/producthunt/ban_signals.js';
+import { runAction } from '../_shared/action-runner.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
+import { clickDescribed, fillDescribed } from '../_shared/page/judged/seen.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
+import { loginViaTwitter } from './_session.mjs';
 
-// The profile is the account's public face: headline, about and location are
-// the caller's; no persona text is built in.
-const HEADLINE = process.env.PH_HEADLINE;
-const ABOUT = process.env.PH_BIO;
-const LOCATION = process.env.PH_LOCATION;
-const WEBSITE = process.env.PH_WEBSITE || '';
-if (!HEADLINE || !ABOUT || !LOCATION) {
-  console.log('FAIL: PH_HEADLINE, PH_BIO and PH_LOCATION env vars required');
-  process.exit(1);
-}
+const VALUES = {
+  headline: statedText(['PH_HEADLINE'], 'the profile headline'),
+  about: statedText(['PH_BIO'], 'the profile about text'),
+  location: statedText(['PH_LOCATION'], 'the profile location'),
+  ...(process.env.PH_WEBSITE ? { website: process.env.PH_WEBSITE } : {}),
+};
 
-async function fillProfile(s, acct, sessionMeta) {
-  // Cookie-jar freshness gate — see _shared/auth/cookie-freshness.mjs. Skip
-  // injection on stale; loginViaTwitter recovers below.
-  let cookies = [];
-  try {
-    cookies = loadFreshCookieJarOrFail(acct, {
-      platform: 'producthunt',
-      label: 'producthunt_profile',
-      currentProxyUrl: sessionMeta.proxyUrl,
-      currentPersona: sessionMeta.persona,
-    });
-  } catch (jarErr) {
-    if (!(jarErr instanceof CookieJarStaleError)) throw jarErr;
-    console.log(
-      `[ph-profile] ${jarErr.message} — falling through to SSO recovery`,
-    );
-    cookies = [];
-  }
-  if (cookies.length) {
-    const inj = await injectPHCookies(s, cookies);
-    console.log(`[ph-profile] injected ${inj} saved producthunt cookies`);
-  }
+/** Whether some field of the form holds exactly `value`. */
+const formHolds = (page, value) =>
+  page.evaluate((wanted) => [...document.querySelectorAll('input, textarea')].some((field) => field.value === wanted), value);
 
-  await s.goto(EDIT_URL);
-  await pageSettled(s.page);
-
-  let cur = s.page.url();
-  console.log(`[ph-profile] initial nav: ${cur}`);
-  if (cur.includes('/login') || cur.includes('/captcha_verification')) {
-    await loginViaTwitter(s);
-    await s.goto(EDIT_URL);
-    await pageSettled(s.page);
-    cur = s.page.url();
-    if (cur.includes('/login') || cur.includes('/captcha_verification'))
-      throw new Error('still_blocked_after_relogin');
-  }
-
-  // Positive auth probe — refuses to fill the profile form on a logged-out shell.
-  try {
-    await assertAuthed('producthunt', s, { label: 'producthunt_profile' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) {
-      // A jar that could not be marked stale is picked again by the next
-      // run; the failure says so beside the probe's own cause.
-      const marked = await markCookiesStale(acct.id).then(
-        () => '',
-        (markError) =>
-          `; the cookie jar was not marked stale: ${markError.message}`,
-      );
-      throw new Error(`auth_probe_failed: ${probeErr.message}${marked}`);
+await runAction({
+  platform: 'producthunt',
+  action: 'profile',
+  feedUrl: 'https://www.producthunt.com/my/details/edit',
+  banDetector: detectProductHuntBanSignals,
+  inlineRelogin: async (s, acct) => {
+    await loginViaTwitter(s, acct);
+    return { ok: true };
+  },
+  act: async (s, { acct }) => {
+    for (const [field, value] of Object.entries(VALUES)) {
+      await fillDescribed(s.page, `the profile's ${field} field`, value);
+      if ((await s.page.evaluate(() => document.activeElement.value)) !== value)
+        throw new Error(`PRODUCTHUNT_PROFILE_FIELD_MISMATCH: the ${field} field does not hold the stated value as typed`);
     }
-    throw probeErr;
-  }
-
-  await s.page.waitForSelector('input[type="text"], textarea').catch(() => {});
-  await pageSettled(s.page);
-
-  // Use WSession's s.fill — humanType + smart target matching; drives one
-  // field at a time against its name/placeholder/aria-label. No need for a
-  // custom probe+fill when weles already has it.
-  const tries = [
-    ['headline', HEADLINE],
-    ['about', ABOUT],
-    ['bio', ABOUT],
-    ['location', LOCATION],
-    ...(WEBSITE ? [['website', WEBSITE]] : []),
-  ];
-  for (const [target, value] of tries) {
-    const r = await s.fill(target, value).catch((e) => `err: ${e.message}`);
-    console.log(`[ph-profile] fill ${target}: ${r}`);
+    await clickDescribed(s.page, 'the button that saves the profile');
     await pageSettled(s.page);
-  }
-
-  // Save — weles has no generic "submit form" method; use a vision click
-  // on the save button.
-  await s.click('Save').catch(() => {});
-  await s.click('Save changes').catch(() => {});
-  await pageSettled(s.page);
-  return true;
-}
-
-const acct = await getSocialAccount('producthunt');
-if (!acct) {
-  console.log('FAIL: no_producthunt_account_in_db');
-  process.exit(1);
-}
-console.log(`[ph-profile] using account: ${acct.username}`);
-
-const sessionOpts = await resolveAccountSession(acct);
-// This trajectory uses the Chromium navigation and input path.
-const s = await WSession.start({
-  label: 'producthunt_profile',
-  ...sessionOpts,
-  browser: 'chromium',
+    await s.page.reload({ waitUntil: 'domcontentloaded' });
+    await pageSettled(s.page);
+    for (const [field, value] of Object.entries(VALUES))
+      if (!(await formHolds(s.page, value))) throw new Error(`PRODUCTHUNT_PROFILE_NOT_SAVED: the saved profile does not hold the stated ${field}`);
+    return `${acct.username} profile saved`;
+  },
 });
-try {
-  await fillProfile(s, acct, sessionOpts);
-  console.log(`PASS: ${acct.username} profile saved`);
-} catch (e) {
-  console.log(`FAIL: ${e.message}`);
-  process.exitCode = 1;
-} finally {
-  await s
-    .close()
-    .catch((e) => console.log(`[session] close failed: ${e.message}`));
-}

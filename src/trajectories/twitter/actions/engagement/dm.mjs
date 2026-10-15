@@ -1,160 +1,55 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../../dist/session/wsession.js';
+// Send an X direct message, through the shared action runner: the account's
+// fresh jar, the signed-in gate, the verdict and its record are the runner's.
+//
+// Env: RECIPIENT_HANDLE (required; @ optional) the handle the DM goes to;
+// DM_MESSAGE (required) the text, from a real account to a real person.
+//
+// The compose page's people search takes the handle; the recipient is the
+// typeahead row naming exactly that handle. The message counts once X's own
+// answer to the send (its /dm/ API) succeeds and the conversation shows it.
 import { humanType } from '../../../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../../dist/human/mouse.js';
-import { pageSettled } from '../../../_shared/page/settled.mjs';
-import {
-  assertAuthed,
-  AuthProbeError,
-} from '../../../_shared/auth/auth-probe.mjs';
-import {
-  loadFreshCookieJarOrFail,
-  CookieJarStaleError,
-} from '../../../_shared/auth/cookie-freshness.mjs';
+import { humanClickLocator } from '../../../../../dist/human/mouse.js';
+import { detectTwitterBanSignals } from '../../../../../dist/platforms/twitter/ban_signals.js';
+import { runAction } from '../../../_shared/action-runner.mjs';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
+import { pageSettled, responseAfterAction } from '../../../_shared/page/settled.mjs';
 
-const RECIPIENT = statedText(
-  ['RECIPIENT_HANDLE'],
-  'the X handle the DM goes to',
-);
-const MESSAGE = statedText(
-  ['DM_MESSAGE'],
-  'the text sent from a real account to a real person',
-);
+const RECIPIENT = statedText(['RECIPIENT_HANDLE'], 'the X handle the DM goes to').replace(/^@/, '');
+const MESSAGE = statedText(['DM_MESSAGE'], 'the text sent from a real account to a real person');
 
-const acct = await getSocialAccount('twitter');
-if (!acct) {
-  console.log('FAIL: no active twitter account in DB');
-  process.exitCode = 1;
-}
-console.log(`[trajectory] Using account: ${acct.username}`);
-
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'twitter_dm',
-  proxy: proxyUrl,
-  persona,
-});
-
-try {
-  // Cookie freshness gate — see _shared/auth/cookie-freshness.mjs.
-  let stored;
-  try {
-    const all = loadFreshCookieJarOrFail(acct, {
-      platform: 'twitter',
-      label: 'twitter_dm',
-      currentProxyUrl: proxyUrl,
-      currentPersona: persona,
-    });
-    stored = all.filter((c) =>
-      /(^|\.)x\.com$|(^|\.)twitter\.com$/.test(c.domain ?? ''),
+await runAction({
+  platform: 'twitter',
+  action: 'dm',
+  feedUrl: 'https://x.com/messages/compose',
+  banDetector: detectTwitterBanSignals,
+  act: async (s) => {
+    const search = s.page.locator('input[data-testid="searchPeople"]').filter({ visible: true }).first();
+    await search.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, search);
+    await humanType(s.page, RECIPIENT);
+    const row = s.page
+      .locator('div[data-testid="TypeaheadUser"]')
+      .filter({ has: s.page.getByText(`@${RECIPIENT}`, { exact: true }), visible: true })
+      .first();
+    await row.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, row);
+    await pageSettled(s.page);
+    const next = s.page.locator('button[data-testid="nextButton"]').filter({ visible: true }).first();
+    if (await next.isVisible()) {
+      await humanClickLocator(s.page, next);
+      await pageSettled(s.page);
+    }
+    const composer = s.page.locator('div[data-testid="dmComposerTextInput"]').filter({ visible: true }).first();
+    await composer.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, composer);
+    await humanType(s.page, MESSAGE);
+    const answer = await responseAfterAction(
+      s.page,
+      (request) => request.method() === 'POST' && new URL(request.url()).pathname.includes('/dm/'),
+      () => humanClickLocator(s.page, s.page.locator('[data-testid="dmComposerSendButton"]').filter({ visible: true }).first()),
     );
-    if (!stored.length)
-      throw new CookieJarStaleError(
-        'cookie_jar_no_domain_match: jar fresh but no x.com/twitter.com cookies',
-        { platform: 'twitter' },
-      );
-  } catch (jarErr) {
-    if (jarErr instanceof CookieJarStaleError) await markCookiesStale(acct.id);
-    throw jarErr;
-  }
-  await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
-
-  await s.page.goto('https://x.com/home', { waitUntil: 'domcontentloaded' });
-  await humanIdlePause('deliberate');
-  if (/\/(i\/flow\/login|login)/.test(s.page.url())) {
-    await markCookiesStale(acct.id);
-    throw new Error(`cookies stale, redirected to login (${s.page.url()})`);
-  }
-  // Positive auth probe — see _shared/auth/auth-probe.mjs.
-  try {
-    await assertAuthed('twitter', s, { label: 'twitter_dm' });
-  } catch (probeErr) {
-    if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
-    throw probeErr;
-  }
-
-  // Compose URL pre-opens the new-message panel; we still need to pick the
-  // recipient (no recipient_id pre-fill is supported without their numeric id).
-  await s.page.goto('https://x.com/messages/compose', {
-    waitUntil: 'domcontentloaded',
-  });
-  await humanIdlePause('deliberate');
-
-  // Recipient search input — Twitter uses input[data-testid="searchPeople"]
-  // inside the new-conversation modal/panel.
-  const searchIn = s.page
-    .locator(
-      'input[data-testid="searchPeople"], input[aria-label*="Search people" i], div[role="dialog"] input[role="combobox"]',
-    )
-    .filter({ visible: true })
-    .first();
-  await searchIn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, searchIn);
-  await humanType(s.page, RECIPIENT);
-  await humanIdlePause('deliberate');
-  // Pick the first matching user cell — data-testid="TypeaheadUser" or
-  // role="button" containing the @ handle. Filter to exact-match handle.
-  const userRow = s.page
-    .locator(
-      `div[data-testid="TypeaheadUser"]:has-text("@${RECIPIENT}"), [role="button"]:has-text("@${RECIPIENT}")`,
-    )
-    .filter({ visible: true })
-    .first();
-  if (!(await userRow.count()))
-    throw new Error(`recipient @${RECIPIENT} not found in search results`);
-  await humanClickLocator(s.page, userRow);
-  await humanIdlePause('short');
-  // "Next" button to confirm recipient selection.
-  const nextBtn = s.page
-    .locator(
-      'button[data-testid="nextButton"], div[role="button"]:has-text("Next")',
-    )
-    .filter({ visible: true })
-    .first();
-  await pageSettled(s.page);
-  if (await nextBtn.isVisible()) {
-    await humanClickLocator(s.page, nextBtn);
-    await humanIdlePause('deliberate');
-  }
-
-  // Message body — contenteditable div with data-testid="dmComposerTextInput".
-  const msgIn = s.page
-    .locator(
-      'div[data-testid="dmComposerTextInput"], div[contenteditable="true"][data-testid*="ComposerTextInput"], div[role="textbox"][data-testid*="dm" i]',
-    )
-    .filter({ visible: true })
-    .first();
-  await msgIn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, msgIn);
-  await humanType(s.page, MESSAGE);
-  // Send.
-  const sendBtn = s.page
-    .locator(
-      'button[data-testid="dmComposerSendButton"], div[data-testid="dmComposerSendButton"], button[aria-label*="Send" i]',
-    )
-    .filter({ visible: true })
-    .first();
-  await sendBtn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, sendBtn);
-  // The DM counts once the conversation shows it as a sent message; a send
-  // the server refused leaves no message entry and fails here.
-  await s.page
-    .locator('[data-testid="messageEntry"]')
-    .filter({ hasText: MESSAGE.trim() })
-    .first()
-    .waitFor({ state: 'visible' });
-  console.log(`PASS: DM sent to @${RECIPIENT}`);
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}
+    if (!answer.ok()) throw new Error(`TWITTER_DM_REFUSED: X answered the message ${answer.status()}: ${await answer.text()}`);
+    await s.page.locator('[data-testid="messageEntry"]').filter({ hasText: MESSAGE.trim() }).first().waitFor({ state: 'visible' });
+    return `sent a message to @${RECIPIENT}`;
+  },
+});

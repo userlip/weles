@@ -5,7 +5,8 @@
 import { detectTwitterBanSignals } from '../../../../dist/platforms/twitter/ban_signals.js';
 import { runAction } from '../../_shared/action-runner.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
-import { statusPost, takeOnce } from './toggle.mjs';
+import { statusPost } from './toggle.mjs';
+import { takeOnce } from '../../_shared/page/controls/toggle.mjs';
 
 const TARGET_URL = statedText(
   ['TARGET_URL'],

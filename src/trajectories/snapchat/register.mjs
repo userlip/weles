@@ -1,188 +1,104 @@
+// Create a Snapchat account. The generated identity's name, birth date,
+// username and password go into Snapchat's signup fields (found by their
+// autocomplete and name structure), each step continued by the button the
+// vision model finds. Snapchat then asks for an email or a phone: the email
+// is the identity's own (its mailed code read from the inbox, waiting until it
+// arrives), the phone one number rented in the field's country (its SMS code
+// read from that order). The account counts once Snapchat leaves the signup
+// for the account or the web app; it is then saved to Skarbiec. A refusal is
+// thrown and sets the exit status from its error.
 import { WSession } from '../../../dist/session/wsession.js';
-import { humanType } from '../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../dist/human/mouse.js';
-import { urlMatching } from '../_shared/page/settled.mjs';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
+import { humanFill } from '../../../dist/human/keyboard.js';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
+import { phoneForField } from '../_shared/inputs/phone.mjs';
+import { clickDescribed } from '../_shared/page/judged/seen.mjs';
+import { autocompleteField, field } from '../_shared/page/offers.mjs';
+import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
+import { fieldCodeLength, mailedCode } from '../_shared/inputs/mailed_code.mjs';
 
-const URL = 'https://accounts.snapchat.com/accounts/signup';
+const SIGNUP = new URL('https://accounts.snapchat.com/accounts/signup');
+const CONTINUE = 'the button that continues the signup to its next step';
 
-async function fillNext(s, locator, value) {
-  await locator.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, locator);
-  await humanType(s.page, value);
-  await humanClickLocator(
-    s.page,
-    s.page
-      .locator(
-        'button[type="submit"], button:has-text("Next"), button:has-text("Continue"), button:has-text("Sign Up")',
-      )
-      .filter({ visible: true })
-      .first(),
-  );
-  await humanIdlePause('short');
+async function continueSignup(s) {
+  await clickDescribed(s.page, CONTINUE);
+  await pageSettled(s.page);
 }
 
-{
-  const s = await WSession.start({
-    label: 'snapchat_register',
-    proxy: statedProxy('the Snapchat signup'),
-  });
-  try {
-    const id = await s.generateIdentity('snapchat');
-    console.log(`[sc] identity: ${id.username} / ${id.email}`);
-
-    await s.goto(URL);
-    await humanIdlePause('deliberate');
-
-    // 1. First name (most current Snap signup variants put first+last on the
-    //    same screen with separate "Next" between or one shared submit).
-    const firstIn = s.page
-      .locator(
-        'input[name="firstName"], input#firstName, input[autocomplete="given-name"]',
-      )
-      .filter({ visible: true })
-      .first();
-    await firstIn.waitFor({ state: 'visible' });
-    await humanClickLocator(s.page, firstIn);
-    await humanType(s.page, id.firstName);
-    const lastIn = s.page
-      .locator(
-        'input[name="lastName"], input#lastName, input[autocomplete="family-name"]',
-      )
-      .filter({ visible: true })
-      .first();
-    if (await lastIn.count()) {
-      await humanClickLocator(s.page, lastIn);
-      await humanType(s.page, id.lastName);
-    }
-    await humanClickLocator(
-      s.page,
-      s.page
-        .locator(
-          'button[type="submit"], button:has-text("Next"), button:has-text("Continue"), button:has-text("Sign Up")',
-        )
-        .filter({ visible: true })
-        .first(),
-    );
-    await humanIdlePause('short');
-
-    // 2. Birthday — usually a single date input or three selects.
-    const dateIn = s.page
-      .locator('input[name="birthday"], input[type="date"]')
-      .filter({ visible: true })
-      .first();
-    if (await dateIn.count()) {
-      const iso = `${id.birthYear.padStart(4, '0')}-${String(id.birthMonth).padStart(2, '0')}-${String(id.birthDay).padStart(2, '0')}`;
-      await humanClickLocator(s.page, dateIn);
-      await humanType(s.page, iso);
-      await humanClickLocator(
-        s.page,
-        s.page
-          .locator(
-            'button[type="submit"], button:has-text("Next"), button:has-text("Continue")',
-          )
-          .filter({ visible: true })
-          .first(),
-      );
-      await humanIdlePause('short');
-    } else {
-      // Triple-select fallback (older flow).
-      const monthSel = s.page.locator('select[name="month"]').first();
-      const daySel = s.page.locator('select[name="day"]').first();
-      const yearSel = s.page.locator('select[name="year"]').first();
-      if (await monthSel.count())
-        await monthSel.selectOption(String(id.birthMonth));
-      if (await daySel.count()) await daySel.selectOption(String(id.birthDay));
-      if (await yearSel.count())
-        await yearSel.selectOption(String(id.birthYear));
-      await humanClickLocator(
-        s.page,
-        s.page
-          .locator(
-            'button[type="submit"], button:has-text("Next"), button:has-text("Continue")',
-          )
-          .filter({ visible: true })
-          .first(),
-      );
-      await humanIdlePause('short');
-    }
-
-    // 3. Username
-    await fillNext(
-      s,
-      s.page
-        .locator(
-          'input[name="username"], input#username, input[autocomplete="username"]',
-        )
-        .filter({ visible: true })
-        .first(),
-      id.username,
-    );
-    // 4. Password
-    await fillNext(
-      s,
-      s.page
-        .locator(
-          'input[name="password"], input[type="password"], input[autocomplete="new-password"]',
-        )
-        .filter({ visible: true })
-        .first(),
-      id.password,
-    );
-    // 5. Email/phone — Snap signup variants ask for one. Fill whichever appears.
-    const emailIn = s.page
-      .locator(
-        'input[name="email"], input[type="email"], input[autocomplete="email"]',
-      )
-      .filter({ visible: true })
-      .first();
-    const phoneIn = s.page
-      .locator(
-        'input[name="phone"], input[type="tel"], input[autocomplete="tel"]',
-      )
-      .filter({ visible: true })
-      .first();
-    if (await emailIn.count()) {
-      await fillNext(s, emailIn, id.email);
-      // 6. Email OTP — poll Resend, fill verification code.
-      const code = await s.checkEmail(id.email, 'snap');
-      if (!code || /^no (code|email)|^error:/.test(code))
-        throw new Error(`snapchat verification email did not arrive: ${code}`);
-      await fillNext(
-        s,
-        s.page
-          .locator(
-            'input[name="otp"], input[autocomplete="one-time-code"], input[name="code"], input[name="verificationCode"]',
-          )
-          .filter({ visible: true })
-          .first(),
-        code,
-      );
-    } else if (await phoneIn.count()) {
-      throw new Error(
-        'snapchat_phone_required: SMS verification path not implemented; rerun with email-mode signup variant',
-      );
-    }
-
-    await urlMatching(
-      s.page,
-      /accounts\.snapchat\.com\/(?!.*signup)|web\.snapchat\.com/,
-    );
-    await s.saveAccount('snapchat', {
-      username: id.username,
-      email: id.email,
-      password: id.password,
-      status: 'verified',
-    });
-    console.log(`PASS: ${id.username}`);
-    process.exit(0);
-  } catch (e) {
-    console.log(`FAIL: ${e.message}`);
-    process.exitCode = 1;
-  } finally {
-    await s.close();
+/** The first visible field among `finders` (each answers a field or null); refused by `what` when none shows. */
+async function firstField(s, what, finders) {
+  for (const find of finders) {
+    const found = await find();
+    if (found) return found;
   }
+  throw new Error(`SNAPCHAT_FIELD_MISSING: the signup at ${s.page.url()} shows no ${what} field`);
+}
+
+async function fillStep(s, what, finders, value) {
+  await humanFill(s.page, await firstField(s, what, finders), value);
+  await continueSignup(s);
+}
+
+/** The birth date: one date input (ISO date), else month, day and year selects. */
+async function fillBirthDate(s, id) {
+  const dateInput = s.page.locator('input[type="date"]').filter({ visible: true }).first();
+  if (await dateInput.count()) {
+    const [isoDate] = new Date(`${id.birthMonth} ${id.birthDay}, ${id.birthYear} UTC`).toISOString().split('T');
+    await dateInput.fill(isoDate);
+  } else {
+    await s.page.locator('select[name="month"]').selectOption({ label: id.birthMonth });
+    await s.page.locator('select[name="day"]').selectOption(id.birthDay);
+    await s.page.locator('select[name="year"]').selectOption(id.birthYear);
+  }
+  await continueSignup(s);
+}
+
+async function verifyContact(s, id) {
+  const email = await autocompleteField(s.page, 'email');
+  const phone = await autocompleteField(s.page, 'tel');
+  const codeField = () => firstField(s, 'verification code', [() => autocompleteField(s.page, 'one-time-code'), () => field(s.page, 'code')]);
+  if (email) {
+    await humanFill(s.page, email, id.email);
+    await continueSignup(s);
+    const codeInput = await codeField();
+    const code = await mailedCode(id.email, 'snapchat', await fieldCodeLength(codeInput));
+    await humanFill(s.page, codeInput, code);
+    await continueSignup(s);
+    return { email: id.email };
+  }
+  if (phone) {
+    const number = await phoneForField(s, s.page, 'snapchat');
+    await humanFill(s.page, phone, number);
+    await continueSignup(s);
+    const code = await s.pollSmsCode();
+    if (!/^\d+$/.test(code)) throw new Error(`SNAPCHAT_SMS_CODE_UNREAD: the rented number ${number} received no code: ${code}`);
+    await humanFill(s.page, await codeField(), code);
+    await continueSignup(s);
+    return { email: id.email, phone: number };
+  }
+  throw new Error(`SNAPCHAT_CONTACT_STEP_UNKNOWN: the signup at ${s.page.url()} asks for neither an email nor a phone`);
+}
+
+const s = await WSession.start({ label: 'snapchat_register', proxy: statedProxy('the Snapchat signup') });
+try {
+  const id = await s.generateIdentity('snapchat');
+  console.log(`[sc] identity: ${id.username} / ${id.email}`);
+  await s.goto(SIGNUP.href);
+  await pageSettled(s.page);
+  await humanFill(s.page, await firstField(s, 'first name', [() => autocompleteField(s.page, 'given-name'), () => field(s.page, 'firstName')]), id.firstName);
+  const lastName = (await autocompleteField(s.page, 'family-name')) || (await field(s.page, 'lastName'));
+  if (lastName) await humanFill(s.page, lastName, id.lastName);
+  await continueSignup(s);
+  await fillBirthDate(s, id);
+  await fillStep(s, 'username', [() => autocompleteField(s.page, 'username'), () => field(s.page, 'username')], id.username);
+  await fillStep(s, 'password', [() => autocompleteField(s.page, 'new-password'), () => field(s.page, 'password')], id.password);
+  const contact = await verifyContact(s, id);
+  await urlMatching(s.page, (url) => new URL(url).pathname !== SIGNUP.pathname);
+  console.log(`[sc] ${await s.saveAccount('snapchat', { username: id.username, password: id.password, status: 'verified', ...contact })}`);
+  console.log(`PASS: ${id.username}`);
+} catch (error) {
+  console.error(`FAIL: ${error.message}`);
+  process.exitCode = exitStatusFor(error);
+} finally {
+  await s.close();
 }

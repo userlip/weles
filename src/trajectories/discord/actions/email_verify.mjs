@@ -1,295 +1,82 @@
-// Discord email-verify trajectory. Drives the SPA verify flow for a freshly
-// registered Discord account whose email is sitting on the Unverified state
-// in User Settings. Sequence captured 1:1 from a keeper-driven demo.
+// Verify the Discord account's email, through the shared Discord action
+// runner (../../_shared/discord/run.mjs): the account, its seat, the ban
+// signal and the kept verdict are the runner's.
 //
-// The inbox has no push or blocking read, so the flow never waits for mail:
-//   1. Source account via getSocialAccount('discord') + persona/proxy from
-//      resolveAccountSession. Start WSession.
-//   2. Restore login state from metadata.discord_token via addInitScript
-//      seeding localStorage.token on every discord.com document load.
-//   3. Read the inbox once. When a "Verify Email Address for Discord" mail
-//      sent after the last resend this account recorded is there, follow its
-//      click.discord.com redirect to discord.com/verify#token=..., open it,
-//      read "Email Verified" and persist metadata.email_verified_at.
-//   4. Otherwise open User Settings, click Resend Verification Email, record
-//      metadata.email_verify_requested_at and stop with a named error; the
-//      next run finds the mail.
+// The inbox has no push or blocking read, so the run never waits for mail.
+// It reads the inbox once (../../../_shared/mail/skrzynka-inbox.mjs): a mail
+// from discord.com that arrived after the account's last recorded resend and
+// links through click.discord.com to discord.com/verify#token=... is opened,
+// and the email counts as verified once Discord's own account record
+// (/users/@me) says so. Without such a mail the settings' resend control
+// (found by the vision model) asks Discord for one; its acknowledgement is
+// recorded (metadata.email_verify_requested_at) and the run stops with
+// DISCORD_EMAIL_VERIFICATION_PENDING; the next run finds the mail.
+import { runDiscordAction } from '../../_shared/discord/run.mjs';
+import { readDiscordApi, readDiscordNoContent, readDiscordText } from '../../_shared/discord/response.mjs';
+import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
+import { pageSettled, responseAfterAction } from '../../_shared/page/settled.mjs';
 import { updateAccountMetadata } from '../../_shared/skarbiec/accounts.mjs';
-import { WSession } from '../../../../dist/session/wsession.js';
-import { humanClickLocator } from '../../../../dist/human/mouse.js';
-import {
-  getSocialAccount,
-  resolveAccountSession,
-} from '../../../../dist/utils/credentials.js';
-import {
-  inboxConfigured,
-  ORGANIZATION_VARIABLE,
-  messagesTo,
-} from '../../../_shared/mail/skrzynka-inbox.mjs';
-import {
-  pageSettled,
-  responseAfterAction,
-} from '../../_shared/page/settled.mjs';
-import { checkReachable } from '../../_shared/action-runner.mjs';
-import {
-  readDiscordNoContent,
-  readDiscordText,
-} from '../../_shared/discord/response.mjs';
+import { inboxConfigured, messagesTo } from '../../../_shared/mail/skrzynka-inbox.mjs';
 
-const ACCT_USERNAME = process.env.ACCOUNT_USERNAME;
-if (!inboxConfigured()) {
-  console.error(
-    `DISCORD_EMAIL_INBOX_UNCONFIGURED: ${ORGANIZATION_VARIABLE} names no Skrzynka organization, so the verification mail cannot be read`,
-  );
-  process.exit(1);
-}
+if (!inboxConfigured()) throw new Error('DISCORD_EMAIL_INBOX_UNCONFIGURED: no Skrzynka organization is named, so the verification mail cannot be read');
+const posted = (pattern) => (request) => request.method() === 'POST' && pattern.test(new URL(request.url()).pathname);
 
-const acct = ACCT_USERNAME
-  ? await getSocialAccount('discord', { username: ACCT_USERNAME })
-  : await getSocialAccount('discord');
-if (!acct) {
-  console.log('FAIL: no discord account');
-  process.exit(1);
-}
-const email = acct.metadata?.email;
-const token = acct.metadata?.discord_token;
-if (!email) {
-  console.log(`FAIL: ${acct.username} metadata.email missing`);
-  process.exit(1);
-}
-if (!token) {
-  console.log(`FAIL: ${acct.username} metadata.discord_token missing`);
-  process.exit(1);
-}
-if (!acct.id) {
-  console.error('DISCORD_EMAIL_ACCOUNT_ID_UNAVAILABLE');
-  process.exit(1);
-}
-
-async function getVerifiedText(s) {
-  const verified = s.page
-    .locator('text=Email Verified')
-    .filter({ visible: true })
-    .first();
-  await verified.waitFor({ state: 'visible' });
-  return verified.evaluate((element) => ({
-    text: element.textContent,
-    pageUrl: location.href,
-  }));
-}
-
-async function fetchInboxRecent() {
-  return messagesTo(email, 'discord.com');
-}
-
-async function resolveClickToVerify(link) {
+/** Where a click.discord.com link redirects, when that is discord.com's verify page with a token. */
+async function verifyTarget(link) {
   const source = new URL(link);
-  if (
-    source.origin !== 'https://click.discord.com' ||
-    source.username ||
-    source.password
-  ) {
-    throw Object.assign(new Error('DISCORD_EMAIL_LINK_INVALID'), {
-      requestUrl: link,
-    });
+  if (source.origin !== 'https://click.discord.com' || source.username || source.password)
+    throw new Error(`DISCORD_EMAIL_LINK_INVALID: ${link} is not a click.discord.com link`);
+  const answer = await fetch(source, { redirect: 'manual' });
+  const location = answer.headers.get('location');
+  if (!location) {
+    if (!answer.ok) throw new Error(`DISCORD_EMAIL_REDIRECT_REFUSED: ${source.href} answered ${answer.status}: ${await answer.text()}`);
+    return null;
   }
-  let response;
-  try {
-    response = await fetch(source, { redirect: 'manual' });
-  } catch (cause) {
-    throw Object.assign(
-      new Error('DISCORD_EMAIL_REDIRECT_REQUEST_FAILED', { cause }),
-      { requestUrl: source.href },
-    );
-  }
-  const location = response.headers.get('location');
-  const details = {
-    requestUrl: source.href,
-    httpStatus: response.status,
-    location,
-  };
-  let responseBody;
-  try {
-    responseBody = await response.text();
-  } catch (cause) {
-    throw Object.assign(
-      new Error('DISCORD_EMAIL_REDIRECT_READ_FAILED', { cause }),
-      details,
-    );
-  }
-  const isRedirect = response.status >= 300 && response.status < 400;
-  if (!response.ok && !isRedirect) {
-    throw Object.assign(new Error('DISCORD_EMAIL_REDIRECT_REFUSED'), details, {
-      responseBody,
-    });
-  }
-  if (!isRedirect || !location)
-    return { ...details, responseBody, verifyUrl: null };
-  let destination;
-  try {
-    destination = new URL(location, source);
-  } catch (cause) {
-    throw Object.assign(
-      new Error('DISCORD_EMAIL_REDIRECT_INVALID', { cause }),
-      details,
-    );
-  }
+  const destination = new URL(location, source);
   const trusted =
     destination.origin === 'https://discord.com' &&
     destination.pathname === '/verify' &&
     !destination.username &&
-    !destination.password &&
-    new URLSearchParams(destination.hash.slice(1)).get('token');
-  return { ...details, verifyUrl: trusted ? destination.href : null };
+    new URLSearchParams(destination.hash.replace(/^#/, '')).get('token');
+  return trusted ? destination.href : null;
 }
 
-const opts = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'discord_email_verify',
-  proxy: opts.proxyUrl,
-  persona: opts.persona,
-  targetHost: 'discord.com',
-});
-console.log(`[email_verify] account=${acct.username} email=${email}`);
-
-// The verify URL from a mail already in the inbox that was sent after this
-// account's last recorded resend, or null when there is none.
-async function verifyUrlFromInbox() {
-  const requestedAt = Date.parse(
-    acct.metadata?.email_verify_requested_at ?? '',
-  );
-  if (!requestedAt) return null;
-  const candidate = (await fetchInboxRecent()).find(
-    (m) =>
-      m.subject.includes('Verify') && Date.parse(m.received_at) >= requestedAt,
-  );
-  if (!candidate) return null;
-  const links = candidate.body_text.match(
-    /https:\/\/click\.discord\.com[^\s"<>]+/g,
-  );
-  if (!links)
-    throw new Error(
-      `discord_email_verify: mail ${candidate.id} has no click.discord.com links`,
-    );
-  const redirects = [];
-  for (const link of links) {
-    const resolved = await resolveClickToVerify(link);
-    redirects.push(resolved);
-    if (resolved.verifyUrl) return resolved.verifyUrl;
-  }
-  throw Object.assign(new Error('DISCORD_EMAIL_VERIFY_LINK_UNCONFIRMED'), {
-    emailId: candidate.id,
-    redirects,
-  });
-}
-
-try {
-  await s.ctx.addInitScript((value) => {
-    if (location.hostname === 'discord.com')
-      localStorage.setItem('token', JSON.stringify(value));
-  }, token);
-  const verifyUrl = await verifyUrlFromInbox();
-  if (!verifyUrl) {
-    await s.goto('https://discord.com/channels/@me');
-    checkReachable(s, 'discord');
-    const gear = s.page.locator('button[aria-label="User Settings"]').first();
-    await gear.waitFor({ state: 'visible' });
-    await humanClickLocator(s.page, gear);
-    await pageSettled(s.page);
-    const resend = s.page
-      .locator('button')
-      .filter({ hasText: 'Resend Verification Email', visible: true })
-      .first();
-    if ((await resend.count()) === 0) {
-      throw Object.assign(
-        new Error(
-          'DISCORD_EMAIL_STATUS_UNCONFIRMED: the resend control is absent; this is not proof of verification',
-        ),
-        {
-          pageUrl: s.page.url(),
-          observedSettingsText: await s.page.locator('body').innerText(),
-        },
-      );
+const CLICK_LINK = /https:\/\/click\.discord\.com[^\s"<>]+/g;
+/** The verify address from a discord.com mail that arrived after `requestedAt`, or null. */
+async function verifyUrlFromInbox(email, requestedAt) {
+  for (const mail of (await messagesTo(email, 'discord.com')).filter((m) => Date.parse(m.received_at) >= requestedAt))
+    for (const [link] of mail.body_text.matchAll(CLICK_LINK)) {
+      const target = await verifyTarget(link);
+      if (target) return target;
     }
-    const requestedAt = new Date().toISOString();
-    const response = await responseAfterAction(
-      s.page,
-      (request) => {
-        const url = new URL(request.url());
-        return (
-          request.method() === 'POST' &&
-          url.origin === 'https://discord.com' &&
-          /^\/api\/v\d+\/auth\/verify\/resend$/.test(url.pathname)
-        );
-      },
-      () => humanClickLocator(s.page, resend),
-    );
-    await readDiscordNoContent(
-      response,
-      'resend_verification_email',
-      'DISCORD_EMAIL_RESEND',
-    );
-    updateAccountMetadata(acct.id, { email_verify_requested_at: requestedAt });
-    throw Object.assign(
-      new Error(
-        'DISCORD_EMAIL_VERIFICATION_PENDING: the resend was acknowledged; run again to read the inbox and observe verification',
-      ),
-      {
-        email,
-        requestedAt,
-        requestUrl: response.url(),
-        httpStatus: response.status(),
-      },
-    );
-  }
-  console.log(`[email_verify] verify_url=${verifyUrl}...`);
-
-  const response = await responseAfterAction(
-    s.page,
-    (request) => {
-      const url = new URL(request.url());
-      return (
-        request.method() === 'POST' &&
-        url.origin === 'https://discord.com' &&
-        /^\/api\/v\d+\/auth\/verify$/.test(url.pathname)
-      );
-    },
-    async () => {
-      await s.goto(verifyUrl);
-      checkReachable(s, 'discord');
-    },
-  );
-  await readDiscordText(response, 'verify_email', 'DISCORD_EMAIL_VERIFY');
-  const verified = await getVerifiedText(s);
-  const verifiedPage = new URL(verified.pageUrl);
-  if (
-    verifiedPage.origin !== 'https://discord.com' ||
-    verifiedPage.pathname !== '/verify' ||
-    !verified.text?.includes('Email Verified')
-  ) {
-    throw Object.assign(new Error('DISCORD_EMAIL_VERIFICATION_UNCONFIRMED'), {
-      observed: verified,
-    });
-  }
-  console.log(`[email_verify] page shows: ${verified.text}`);
-
-  const verifiedAt = new Date().toISOString();
-  updateAccountMetadata(acct.id, { email_verified_at: verifiedAt });
-  console.log(
-    JSON.stringify({
-      ok: true,
-      operation: 'verify_email',
-      acknowledgement: 'provider_response_and_visible_confirmation',
-      account_id: acct.id,
-      email,
-      email_verified_at: verifiedAt,
-      request_url: response.url(),
-      http_status: response.status(),
-    }),
-  );
-} catch (e) {
-  console.error('DISCORD_EMAIL_VERIFY_FAILED:', e);
-  process.exitCode = 1;
-} finally {
-  await s.close();
+  return null;
 }
+
+await runDiscordAction({
+  action: 'email_verify',
+  url: 'https://discord.com/channels/@me',
+  act: async (s, acct) => {
+    const email = acct.metadata.email;
+    if (!email) throw new Error(`DISCORD_EMAIL_MISSING: discord account ${acct.username} records no email`);
+    const requestedAt = Date.parse(acct.metadata.email_verify_requested_at);
+    const verifyUrl = Number.isFinite(requestedAt) ? await verifyUrlFromInbox(email, requestedAt) : null;
+    if (!verifyUrl) {
+      await clickDescribed(s.page, 'the user settings button');
+      const asked = new Date().toISOString();
+      const answer = await responseAfterAction(s.page, posted(/^\/api\/v\d+\/auth\/verify\/resend$/), () =>
+        clickDescribed(s.page, 'the button that resends the verification email'),
+      );
+      await readDiscordNoContent(answer, 'resend_verification_email', 'DISCORD_EMAIL_RESEND');
+      updateAccountMetadata(acct.id, { email_verify_requested_at: asked });
+      throw new Error(`DISCORD_EMAIL_VERIFICATION_PENDING: Discord acknowledged a new verification mail to ${email}; run again once it is in the inbox`);
+    }
+    const answer = await responseAfterAction(s.page, posted(/^\/api\/v\d+\/auth\/verify$/), () => s.goto(verifyUrl));
+    await readDiscordText(answer, 'verify_email', 'DISCORD_EMAIL_VERIFY');
+    await s.goto('https://discord.com/channels/@me');
+    await pageSettled(s.page);
+    const { verified } = await readDiscordApi(s.page, '/users/@me', 'DISCORD_ACCOUNT');
+    if (verified !== true) throw new Error(`DISCORD_EMAIL_VERIFICATION_UNCONFIRMED: Discord's account record still holds ${email} unverified`);
+    updateAccountMetadata(acct.id, { email_verified_at: new Date().toISOString() });
+    return `${acct.username} verified ${email}`;
+  },
+});

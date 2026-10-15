@@ -1,18 +1,15 @@
-// High-level cross-login helper.
-//
-// Each platform's login page exposes one or more OAuth-provider buttons
-// ("Continue with Google", "Sign in with Apple", "Log in with Facebook", ...).
-// This helper drives that flow end-to-end:
-//   1. pull the provider account's cookies from social_accounts
-//   2. inject them onto the provider's primary + mirror domains
-//   3. navigate to the target login URL, click the provider button
-//   4. handle the consent screen (Authorize / Allow / Continue)
-//   5. wait for the post-OAuth redirect back to the target domain
-//   6. assertAuthed for the target platform
-//   7. persist the resulting target cookies via persistFreshCookieJar
-//
-// Per-(target, provider) trajectory files become thin wrappers that pass
-// targetPlatform / targetUrl / provider / provider button regex.
+// Signing a platform's account in through another platform's OAuth button
+// ("Continue with Google", "Sign in with Apple", ...), end to end:
+//   1. the provider account's stored cookies, put on the provider's domains
+//   2. the target's login page, and its provider control, found by the vision
+//      model in whatever language the target renders (behind the target's
+//      own sign-in control when its login address shows the homepage)
+//   3. the provider's consent screen
+//   4. the redirect back to the target's domain
+//   5. assertAuthed for the target platform
+//   6. the target's cookies kept with persistFreshCookieJar
+// The outcome is kept as the run's verdict through the shared verdict
+// writer; a failure is thrown.
 
 import {
   getSocialAccount,
@@ -21,236 +18,135 @@ import {
 import { WSession } from '../../../../dist/session/wsession.js';
 import {
   injectProviderCookies,
-  clickOAuthProviderButton,
   handleOAuthConsent,
   waitForNavBackTo,
 } from '../../../../dist/platforms/_shared/cross_platform_oauth.js';
+import { clickOffered } from '../page/judged/seen.mjs';
 import { assertAuthed, AuthProbeError } from '../auth/auth-probe.mjs';
 import { persistFreshCookieJar } from '../auth/cookie-freshness.mjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { pageSettled } from '../page/settled.mjs';
-import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { keepVerdict } from '../action/verdict.mjs';
 
-// Provider name on the OAuth button → social_accounts platform key for the
-// row that holds the cookies. Google-backed identities use the canonical
-// google platform key, including accounts used for Gmail and YouTube.
-const PROVIDER_TO_ACCOUNT_PLATFORM = {
-  google: 'google',
-  twitter: 'twitter',
-  instagram: 'instagram',
-  facebook: 'facebook',
-  github: 'github',
-  apple: 'apple',
-  microsoft: 'microsoft',
-};
+// The providers' own sign-in hosts: a page still on one has not come back.
+const PROVIDER_HOSTS = [
+  'accounts.google.com',
+  'appleid.apple.com',
+  'login.microsoftonline.com',
+  'login.microsoft.com',
+  'live.com',
+  'facebook.com/dialog',
+  'api.twitter.com/oauth',
+  'twitter.com/i/oauth2',
+  'x.com/i/oauth2',
+  'github.com/login/oauth',
+  'instagram.com/oauth',
+];
+
+/** A refusal before any session, kept as the run's verdict, then thrown. */
+async function refuse(label, signal, message) {
+  const failure = new Error(`${signal}: ${message}`);
+  await keepVerdict(label, null, { signal, healthy: false, details: { reason: message } });
+  throw failure;
+}
+
+/** The provider's account, read without the target account the worker pinned. */
+async function providerAccount(provider) {
+  // ACCOUNT_ID names the target's account; the provider's is another one.
+  const pinnedTarget = process.env.ACCOUNT_ID;
+  delete process.env.ACCOUNT_ID;
+  try {
+    return await getSocialAccount(provider);
+  } finally {
+    if (pinnedTarget !== undefined) process.env.ACCOUNT_ID = pinnedTarget;
+  }
+}
 
 export async function runCrossLogin(opts) {
-  const { targetPlatform, targetUrl, provider, providerButtonRegex } = opts;
-
-  const accountPlatform = PROVIDER_TO_ACCOUNT_PLATFORM[provider] ?? provider;
-
+  const { targetPlatform, targetUrl, provider } = opts;
+  const label = `${targetPlatform}_login_via_${provider}`;
   const acct = await getSocialAccount(targetPlatform);
-  if (!acct) {
-    fail(
-      targetPlatform,
-      provider,
-      'no_target_account',
-      `no active ${targetPlatform} account in DB`,
-    );
-    return;
-  }
-
-  // ACCOUNT_ID is set by the worker to the TARGET row's id. getSocialAccount
-  // honors that env and would query id=<target_id> AND platform=<provider>,
-  // which never matches → null. Same bug producthunt/_session.mjs:222-228
-  // documented for loginViaTwitter. Clear ACCOUNT_ID for the provider lookup,
-  // restore it after so downstream code sees the original.
-  const savedAccountId = process.env.ACCOUNT_ID;
-  delete process.env.ACCOUNT_ID;
-  let providerAcct;
-  try {
-    providerAcct = await getSocialAccount(accountPlatform);
-  } finally {
-    if (savedAccountId !== undefined) process.env.ACCOUNT_ID = savedAccountId;
-  }
-  if (!providerAcct) {
-    fail(
-      targetPlatform,
-      provider,
-      'provider_account_missing',
-      `no active ${accountPlatform} (provider=${provider}) account in DB`,
-    );
-    return;
-  }
-  const providerCookies = providerAcct.metadata?.cookies ?? [];
-  if (providerCookies.length < 2) {
-    fail(
-      targetPlatform,
-      provider,
+  if (!acct) await refuse(label, 'no_target_account', `no active ${targetPlatform} account in Skarbiec`);
+  const providerAcct = await providerAccount(provider);
+  if (!providerAcct)
+    await refuse(label, 'provider_account_missing', `no active ${provider} account in Skarbiec`);
+  const providerCookies = Array.isArray(providerAcct.metadata?.cookies) ? providerAcct.metadata.cookies : [];
+  if (!providerCookies.length)
+    await refuse(
+      label,
       'provider_cookies_missing',
-      `${accountPlatform} ${providerAcct.username} has ${providerCookies.length} cookies — login the provider first`,
+      `${provider} account ${providerAcct.username} holds no cookies; sign the provider in first`,
     );
-    return;
-  }
-
   console.log(
-    `[cross-login] target=${targetPlatform}/${acct.username} provider=${provider} (${accountPlatform}/${providerAcct.username})`,
+    `[cross-login] target=${targetPlatform}/${acct.username} provider=${provider}/${providerAcct.username}`,
   );
 
   const { proxyUrl, persona } = await resolveAccountSession(acct);
-  const s = await WSession.start({
-    label: `${targetPlatform}_login_via_${provider}`,
-    proxy: proxyUrl,
-    persona,
-  });
-
-  let banSignal = null;
+  const s = await WSession.start({ label, proxy: proxyUrl, persona });
+  let banSignal;
+  let failure;
   try {
-    const injected = await injectProviderCookies(
-      s.ctx,
-      provider,
-      providerCookies,
-    );
+    const injected = await injectProviderCookies(s.ctx, provider, providerCookies);
     console.log(`[cross-login] injected ${injected} ${provider} cookies`);
-
     await s.goto(targetUrl);
     await pageSettled(s.page);
-    // Some platforms (e.g. ProductHunt) render their homepage on the target URL
-    // and require an explicit "Sign in" click to open the SSO modal before the
-    // provider buttons are in the DOM. Caller passes openerButtonRegex to drive
-    // that pre-click; defaults to no-op when the page already shows the buttons.
-    if (opts.openerButtonRegex) {
-      const opened = await clickOAuthProviderButton(s, opts.openerButtonRegex);
-      if (opened) {
-        console.log(
-          `[cross-login] opened auth modal via ${opts.openerButtonRegex}`,
-        );
-        await pageSettled(s.page);
-      }
+    // Some targets show their homepage at the login address and open the SSO
+    // choices only after their own sign-in control is clicked.
+    const providerControl = `the button that signs in or continues with ${provider} (an account on ${provider}, not another provider)`;
+    let offered = await clickOffered(s.page, providerControl);
+    if (!offered && (await clickOffered(s.page, "the control that opens the site's own sign-in"))) {
+      await pageSettled(s.page);
+      offered = await clickOffered(s.page, providerControl);
     }
-    const clicked = await clickOAuthProviderButton(s, providerButtonRegex);
-    if (!clicked) {
-      banSignal = {
-        signal: 'provider_button_not_found',
-        healthy: false,
-        details: {
-          final_url: s.page.url(),
-          button_regex: providerButtonRegex.toString(),
-        },
-      };
-      throw new Error(
-        `provider_button_not_found: regex=${providerButtonRegex} on ${s.page.url()}`,
-      );
+    if (!offered) {
+      banSignal = { signal: 'provider_button_not_found', healthy: false, details: { final_url: s.page.url(), provider } };
+      throw new Error(`provider_button_not_found: ${s.page.url()} offers no sign-in with ${provider}`);
     }
-    console.log(`[cross-login] clicked ${provider} button — handling consent`);
-
     await pageSettled(s.page);
     await handleOAuthConsent(s);
     const targetHost = new URL(targetUrl).hostname.replace(/^www\./, '');
-    await waitForNavBackTo(s.page, targetHost, [
-      'accounts.google.com',
-      'appleid.apple.com',
-      'login.microsoftonline.com',
-      'login.microsoft.com',
-      'live.com',
-      'facebook.com/dialog',
-      'api.twitter.com/oauth',
-      'twitter.com/i/oauth2',
-      'x.com/i/oauth2',
-      'github.com/login/oauth',
-      'instagram.com/oauth',
-    ]);
-    console.log(`[cross-login] back on ${targetHost} → asserting authed`);
-
+    await waitForNavBackTo(s.page, targetHost, PROVIDER_HOSTS);
+    let unauthed;
     try {
-      await assertAuthed(targetPlatform, s, {
-        label: `${targetPlatform}_login_via_${provider}`,
-      });
-    } catch (e) {
-      banSignal =
-        e instanceof AuthProbeError
-          ? e.banSignal
-          : {
-              signal: 'assert_authed_failed',
-              healthy: false,
-              details: { reason: e.message, final_url: s.page.url() },
-            };
-      throw e;
+      await assertAuthed(targetPlatform, s, { label });
+    } catch (error) {
+      unauthed = error;
     }
-
+    if (unauthed) {
+      banSignal =
+        unauthed instanceof AuthProbeError
+          ? unauthed.banSignal
+          : { signal: 'assert_authed_failed', healthy: false, details: { reason: unauthed.message, final_url: s.page.url() } };
+      throw unauthed;
+    }
     const cookies = await s.ctx.cookies();
     const persisted = await persistFreshCookieJar(acct, cookies, {
       currentProxyUrl: proxyUrl,
       currentPersona: persona,
     });
-    if (persisted?.ok) {
-      banSignal = {
-        signal: 'healthy',
-        healthy: true,
-        details: {
-          provider,
-          final_url: s.page.url(),
-          cookies_persisted: cookies.length,
-        },
-      };
-      console.log(
-        `PASS: ${targetPlatform} logged in via ${provider} (${cookies.length} cookies persisted)`,
-      );
-    } else {
-      banSignal = {
-        signal: 'cookies_persist_failed',
-        healthy: false,
-        details: { reason: persisted?.reason },
-      };
-      throw new Error(`cookies_persist_failed: ${persisted?.reason}`);
+    if (!persisted.ok) {
+      banSignal = { signal: 'cookies_persist_failed', healthy: false, details: { reason: persisted.reason } };
+      throw new Error(`cookies_persist_failed: ${persisted.reason}`);
     }
-  } catch (e) {
+    banSignal = {
+      signal: 'healthy',
+      healthy: true,
+      details: { provider, final_url: s.page.url(), cookies_persisted: cookies.length },
+    };
+    console.log(`PASS: ${targetPlatform} logged in via ${provider} (${cookies.length} cookies persisted)`);
+  } catch (error) {
+    failure = error;
     if (!banSignal)
-      banSignal = {
-        signal: 'unknown_error',
-        healthy: false,
-        details: { reason: e.message },
-      };
-    console.log('FAIL:', e.message);
-    process.exitCode = 1;
+      banSignal = { signal: 'action_failed', healthy: false, details: { reason: error.message, final_url: s.page.url() } };
+    console.log('FAIL:', error.message);
   } finally {
-    persistBanSignal(targetPlatform, provider, acct, banSignal);
+    try {
+      await keepVerdict(label, acct, { ...banSignal, provider });
+    } catch (keepError) {
+      failure = failure
+        ? new AggregateError([failure, keepError], `${failure.message}; and its verdict was not kept: ${keepError.message}`)
+        : keepError;
+    }
     await s.close();
   }
-}
-
-function fail(targetPlatform, provider, signal, msg) {
-  console.log(`FAIL: ${msg}`);
-  persistBanSignal(targetPlatform, provider, null, {
-    signal,
-    healthy: false,
-    details: { reason: msg },
-  });
-  process.exit(1);
-}
-
-function persistBanSignal(targetPlatform, provider, acct, banSignal) {
-  if (!banSignal) return;
-  try {
-    const dir = runRecordingsDir(`${targetPlatform}_login_via_${provider}`);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, 'ban_signal.json'),
-      JSON.stringify(
-        {
-          action: `${targetPlatform}_login_via_${provider}`,
-          account_id: acct?.id ?? null,
-          username: acct?.username ?? null,
-          provider,
-          ts: new Date().toISOString(),
-          ...banSignal,
-        },
-        null,
-        2,
-      ),
-    );
-  } catch (e) {
-    console.log('[ban-signal] persist err:', e.message);
-  }
+  if (failure) throw failure;
 }

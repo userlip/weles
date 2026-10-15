@@ -1,219 +1,65 @@
-// Discord edit-profile trajectory. Picks one of three writable surfaces
-// (display name, About Me bio, custom status) based on env vars and
-// updates it via the SPA — same selector chain as the keeper-demonstrated
-// email_verify flow but landing on different rows in My Account.
+// Edit the Discord account's display name, About Me and custom status,
+// through the shared Discord action runner (../../_shared/discord/run.mjs):
+// the account, its seat, the ban signal and the kept verdict are the runner's.
 //
-// Env vars (set one; if multiple, all are applied):
-//   DISCORD_NEW_DISPLAY_NAME  — new global Display Name
-//   DISCORD_NEW_BIO           — new "About Me" text
-//   DISCORD_NEW_STATUS        — new custom status text (max ~128 chars)
+// Env (at least one; each one set is applied): DISCORD_NEW_DISPLAY_NAME,
+// DISCORD_NEW_BIO, DISCORD_NEW_STATUS.
 //
-// Sequence:
-//   1. Source account, start WSession, addInitScript-inject discord_token.
-//   2. Navigate /channels/@me.
-//   3. Open User Settings via gear button.
-//   4. For each set env var, find the matching row in My Account or
-//      User Profile pane, click its Edit button, fill, click Save Changes.
-//   5. Verify the new value persisted by re-reading the field's value.
-//   6. Persist last_edit_at to social_accounts.metadata.
-
-import { WSession } from '../../../../dist/session/wsession.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
-import { humanFill } from '../../../../dist/human/keyboard.js';
-import {
-  getSocialAccount,
-  resolveAccountSession,
-} from '../../../../dist/utils/credentials.js';
+// The settings controls are found by the vision model. The display name and
+// About Me count once Discord's own account record (/users/@me) holds them;
+// the custom status, which that record does not carry, once the user area
+// shows it. A change that does not take fails the run. The changes are kept
+// in the account's metadata.
+import { runDiscordAction } from '../../_shared/discord/run.mjs';
+import { readDiscordApi } from '../../_shared/discord/response.mjs';
+import { clickDescribed, fillDescribed, pageShows } from '../../_shared/page/judged/seen.mjs';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 import { updateAccountMetadata } from '../../_shared/skarbiec/accounts.mjs';
 
-const ACCT_USERNAME = process.env.ACCOUNT_USERNAME;
 const NEW_DISPLAY = process.env.DISCORD_NEW_DISPLAY_NAME;
 const NEW_BIO = process.env.DISCORD_NEW_BIO;
 const NEW_STATUS = process.env.DISCORD_NEW_STATUS;
-if (!NEW_DISPLAY && !NEW_BIO && !NEW_STATUS) {
-  console.log(
-    'FAIL: at least one of DISCORD_NEW_DISPLAY_NAME / DISCORD_NEW_BIO / DISCORD_NEW_STATUS required',
-  );
-  process.exit(1);
-}
+if (!NEW_DISPLAY && !NEW_BIO && !NEW_STATUS)
+  throw new Error('DISCORD_PROFILE_NOTHING_STATED: set DISCORD_NEW_DISPLAY_NAME, DISCORD_NEW_BIO or DISCORD_NEW_STATUS');
 
-const acct = ACCT_USERNAME
-  ? await getSocialAccount('discord', { username: ACCT_USERNAME })
-  : await getSocialAccount('discord');
-if (!acct) {
-  console.log('FAIL: no discord account');
-  process.exit(1);
-}
-const token = acct.metadata?.discord_token;
-if (!token) {
-  console.log(`FAIL: ${acct.username} metadata.discord_token missing`);
-  process.exit(1);
-}
-
-const opts = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'discord_edit_profile',
-  proxy: opts.proxyUrl,
-  persona: opts.persona,
-  targetHost: 'discord.com',
+await runDiscordAction({
+  action: 'edit_profile',
+  url: 'https://discord.com/channels/@me',
+  run: { display_name: NEW_DISPLAY, bio: NEW_BIO, status: NEW_STATUS },
+  act: async (s, acct) => {
+    const changes = [];
+    if (NEW_DISPLAY || NEW_BIO) await clickDescribed(s.page, 'the user settings button');
+    if (NEW_DISPLAY) {
+      await clickDescribed(s.page, 'the edit button of the display name on the account page');
+      await fillDescribed(s.page, 'the display name field', NEW_DISPLAY);
+      await clickDescribed(s.page, 'the button that saves the display name');
+      await pageSettled(s.page);
+      const { global_name: shown } = await readDiscordApi(s.page, '/users/@me', 'DISCORD_ACCOUNT');
+      if (shown !== NEW_DISPLAY) throw new Error(`DISCORD_DISPLAY_NAME_NOT_SAVED: Discord's account record holds ${JSON.stringify(shown)}`);
+      changes.push('display_name');
+    }
+    if (NEW_BIO) {
+      await clickDescribed(s.page, 'the profiles tab of the user settings');
+      await fillDescribed(s.page, 'the About Me field', NEW_BIO);
+      await clickDescribed(s.page, 'the button that saves the profile changes');
+      await pageSettled(s.page);
+      const { bio } = await readDiscordApi(s.page, '/users/@me', 'DISCORD_ACCOUNT');
+      if (bio !== NEW_BIO) throw new Error(`DISCORD_BIO_NOT_SAVED: Discord's account record holds a ${String(bio).length}-character About Me`);
+      changes.push('bio');
+    }
+    if (NEW_STATUS) {
+      await s.page.keyboard.press('Escape');
+      await pageSettled(s.page);
+      await clickDescribed(s.page, "the account's avatar in the bottom-left user area");
+      await clickDescribed(s.page, 'the option that sets a custom status');
+      await fillDescribed(s.page, 'the custom status field', NEW_STATUS);
+      await clickDescribed(s.page, 'the button that saves the custom status');
+      await pageSettled(s.page);
+      if (!(await pageShows(s.page, `Does the user area show the custom status "${NEW_STATUS}"?`)))
+        throw new Error('DISCORD_STATUS_NOT_SHOWN: the user area does not show the custom status after saving it');
+      changes.push('status');
+    }
+    updateAccountMetadata(acct.id, { last_profile_edit_at: new Date().toISOString(), last_profile_changes: changes });
+    return `${acct.username} changed ${changes.join(', ')}`;
+  },
 });
-console.log(`[edit_profile] account=${acct.username}`);
-
-async function editInline(rowName, newValue) {
-  const row = s.page
-    .locator('div')
-    .filter({ hasText: new RegExp(`^${rowName}$`, 'i') })
-    .first();
-  if ((await row.count()) === 0) {
-    console.log(`[edit_profile] row "${rowName}" not found`);
-    return false;
-  }
-  // Edit button is typically a sibling/parent. Find nearest Edit button.
-  const editBtn = s.page.locator('button').filter({ hasText: 'Edit' }).first();
-  await humanClickLocator(s.page, editBtn);
-  await humanIdlePause('deliberate');
-  const input = s.page
-    .locator('input, textarea')
-    .filter({ visible: true })
-    .first();
-  await humanFill(s.page, input, newValue);
-  await humanIdlePause('short');
-  const save = s.page
-    .locator('button')
-    .filter({ hasText: 'Save Changes' })
-    .first();
-  if ((await save.count()) === 0) {
-    console.log(`[edit_profile] no Save Changes button for "${rowName}"`);
-    return false;
-  }
-  await humanClickLocator(s.page, save);
-  await humanIdlePause('deliberate');
-  return true;
-}
-
-try {
-  await s.ctx.addInitScript(
-    `(()=>{try{if(location.hostname.indexOf('discord')>=0){localStorage.setItem('token',JSON.stringify(${JSON.stringify(token)}))}}catch(e){}})()`,
-  );
-  await s.goto('https://discord.com/channels/@me');
-  await humanIdlePause('deliberate');
-
-  const gear = s.page.locator('button[aria-label="User Settings"]').first();
-  await humanClickLocator(s.page, gear);
-  await humanIdlePause('deliberate');
-
-  const changes = [];
-  if (NEW_DISPLAY) {
-    const ok = await editInline('Display Name', NEW_DISPLAY);
-    if (ok) {
-      changes.push(`display_name=${NEW_DISPLAY}`);
-      console.log(`[edit_profile] display_name set`);
-    }
-  }
-  if (NEW_BIO) {
-    // About Me lives under User Profile tab on the left nav.
-    const userProfile = s.page
-      .locator('div')
-      .filter({ hasText: /^User Profile$/ })
-      .first();
-    if ((await userProfile.count()) > 0) {
-      try {
-        await humanClickLocator(s.page, userProfile);
-      } catch (e) {
-        console.log(`[edit_profile] user profile tab err: ${e.message}`);
-      }
-      await humanIdlePause('deliberate');
-    }
-    const bioField = s.page
-      .locator(
-        'textarea[aria-label*="About"], textarea[placeholder*="What do you like"]',
-      )
-      .first();
-    if ((await bioField.count()) > 0) {
-      await humanFill(s.page, bioField, NEW_BIO);
-      const save = s.page
-        .locator('button')
-        .filter({ hasText: 'Save Changes' })
-        .first();
-      if ((await save.count()) > 0) {
-        await humanClickLocator(s.page, save);
-        await humanIdlePause('deliberate');
-        changes.push(`bio=<${NEW_BIO.length} chars>`);
-        console.log(`[edit_profile] bio set (${NEW_BIO.length} chars)`);
-      }
-    } else {
-      console.log('[edit_profile] About Me textarea not found');
-    }
-  }
-  if (NEW_STATUS) {
-    // Custom Status: bottom-left user popout -> Set a custom status.
-    // Close settings first.
-    const closeSettings = s.page.locator('div[aria-label="Close"]').first();
-    if ((await closeSettings.count()) > 0) {
-      try {
-        await humanClickLocator(s.page, closeSettings);
-      } catch (e) {
-        console.log(`[edit_profile] settings close err: ${e.message}`);
-      }
-      await humanIdlePause('deliberate');
-    }
-    // Click user avatar in bottom-left to open status popover
-    const userBtn = s.page
-      .locator('button[aria-label*="status"], button[class*="avatarWrapper"]')
-      .first();
-    if ((await userBtn.count()) > 0) {
-      try {
-        await humanClickLocator(s.page, userBtn);
-      } catch (e) {
-        console.log(`[edit_profile] user btn err: ${e.message}`);
-      }
-      await humanIdlePause('deliberate');
-      const setStatus = s.page
-        .locator('div, button')
-        .filter({ hasText: 'Set a custom status' })
-        .first();
-      if ((await setStatus.count()) > 0) {
-        try {
-          await humanClickLocator(s.page, setStatus);
-        } catch (e) {
-          console.log(`[edit_profile] set-status click err: ${e.message}`);
-        }
-        await humanIdlePause('deliberate');
-        const statusInput = s.page
-          .locator('input[placeholder*="status"]')
-          .first();
-        if ((await statusInput.count()) > 0) {
-          await humanFill(s.page, statusInput, NEW_STATUS);
-          const save = s.page
-            .locator('button')
-            .filter({ hasText: 'Save' })
-            .first();
-          if ((await save.count()) > 0) {
-            await humanClickLocator(s.page, save);
-            await humanIdlePause('deliberate');
-            changes.push(`status=${NEW_STATUS}`);
-            console.log(`[edit_profile] status set`);
-          }
-        }
-      }
-    }
-  }
-  if (changes.length === 0) throw new Error('no fields successfully updated');
-
-  if (!acct.id) throw new Error('Discord account has no stable Skarbiec id');
-  updateAccountMetadata(acct.id, {
-    last_profile_edit_at: new Date().toISOString(),
-    last_profile_changes: changes,
-  });
-  console.log('[edit_profile] persisted account metadata in Skarbiec');
-  console.log(`PASS: ${acct.username} ${changes.join(', ')}`);
-} catch (e) {
-  console.log(`FAIL: ${e.message}`);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}
-process.exit(process.exitCode);

@@ -1,314 +1,92 @@
-import { getSocialAccount } from '../../../dist/utils/credentials.js';
-import { WSession } from '../../../dist/session/wsession.js';
-import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
-import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
-import { messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
-import { pageSettled } from '../_shared/page/settled.mjs';
-
-const URL = 'https://github.com/login';
-
-const acct = await getSocialAccount('github');
-if (!acct) {
-  console.error('FAIL: no active github account in DB');
-  process.exitCode = 1;
-}
-if (!acct.metadata.password) {
-  console.error(`FAIL: account ${acct.username} has no password`);
-  process.exitCode = 1;
-}
-// Skip stubs from a registration that never completed. metadata.status set by
-// src/trajectories/github/register.mjs:245 (captcha_blocked) and similar
-// signup-fail paths. These rows have no cookies and no real GitHub identity —
-// form-login produces "incorrect credentials" forever. Stop the storm here so
-// each failed attempt isn't logged as exit 1 against an unrecoverable account.
-{
-  const s = acct.metadata?.status;
-  if (
-    [
-      'captcha_blocked',
-      'unverified',
-      'needs_verification',
-      'captcha_signup_failed',
-    ].includes(s)
-  ) {
-    console.error(
-      `FAIL: account ${acct.username} has metadata.status=${s} — registration never completed; login can't recover (mark account inactive in DB to remove from pool)`,
-    );
-    process.exitCode = 1;
-  }
-}
-process.env.SVC_EMAIL = acct.metadata.email ?? acct.username;
-process.env.SVC_PASSWORD = acct.metadata.password;
-
-// GitHub login: direct egress by default. Empirically, saved Oxylabs
-// Mobile BR proxies + PacketStream residential both get rejected by
-// GitHub's login endpoint (ERR_EMPTY_RESPONSE from PacketStream, post-
-// submit redirect back to /login from Oxylabs BR). Only the first
-// successful session-refresh we've seen across the fleet was on direct
-// egress (swiftwolf6387 via GCE IP).
+// Sign the active GitHub account in through github.com/login, through the
+// shared login runner (../_shared/action/login.mjs): the account, its
+// proxy, the kept session and the verdict are the runner's.
 //
-// Override paths, in priority order:
-//   PROXY_URL         — explicit full URL wins
-//   FORCE_RESIDENTIAL — pick from provider rotation
-//   USE_SAVED_PROXY   — honor the account's metadata.proxy.server
-//   (default)         — no proxy, direct egress
-const savedProxy = acct.metadata.proxy;
-let proxyUrl;
-if (process.env.PROXY_URL) {
-  proxyUrl = process.env.PROXY_URL;
-  console.log(`[login] Using PROXY_URL override`);
-} else if (process.env.FORCE_RESIDENTIAL === '1') {
-  proxyUrl = 'residential';
-  console.log(`[login] Using residential rotation (FORCE_RESIDENTIAL=1)`);
-} else if (
-  process.env.USE_SAVED_PROXY === '1' &&
-  savedProxy?.server &&
-  savedProxy?.username
-) {
-  const u = new globalThis.URL(savedProxy.server);
-  proxyUrl = `${u.protocol}//${savedProxy.username}:${savedProxy.password}@${u.hostname}:${u.port}`;
-  console.log(
-    `[login] Using saved proxy: ${u.hostname}:${u.port} (USE_SAVED_PROXY=1)`,
-  );
-} else {
-  proxyUrl = undefined;
-  console.log(
-    `[login] No proxy — direct egress (GitHub-friendly default; override with PROXY_URL, FORCE_RESIDENTIAL=1, or USE_SAVED_PROXY=1)`,
-  );
-}
-console.log(`[login] Account: ${acct.username} (${process.env.SVC_EMAIL})`);
+// Login is always the form: saved cookies may belong to another device.
+// GitHub's own error banner on the form is the refusal, quoted. A
+// device-verification page is answered with the code from the mail GitHub
+// sends for this attempt, read from Skrzynka: the run of digits as long as
+// the page's code field takes. GitHub's gate routes are a checkpoint. The
+// login counts once GitHub has set a user_session cookie and left its login
+// and gate pages.
+import { humanFill, humanType } from '../../../dist/human/keyboard.js';
+import { humanClickLocator } from '../../../dist/human/mouse.js';
+import { detectGitHubBanSignals } from '../../../dist/platforms/github/ban_signals.js';
+import { runLogin } from '../_shared/action/login.mjs';
+import { messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
+import { pageSettled, submitAnswered } from '../_shared/page/settled.mjs';
 
-// One session, started once: a homepage that does not load is this run's
-// failure with Playwright's own cause, not a cue to try again a set number of
-// times. Cookie-first is removed — github.com serves a logged-out homepage
-// shell and saved cookies might be device-mismatched, so login always means
-// form login.
-const s = await WSession.start({ label: 'github_login', proxy: proxyUrl });
-await s.goto('https://github.com/');
-await s.page.waitForLoadState('load', { timeout: 0 });
-console.log('[login] Homepage loaded');
+const LOGIN_URL = 'https://github.com/login';
+// GitHub's sign-in routes, and the gates it puts in front of an account it
+// will not sign in yet.
+const SIGN_IN_ROUTES = ['/login', '/session'];
+const DEVICE_ROUTE = '/sessions/verified-device';
+const GATE_ROUTES = [DEVICE_ROUTE, '/sessions/two-factor', '/account_lockout', '/account_recovery'];
+const routeOf = (url, routes) =>
+  routes.find((route) => new URL(url).pathname.startsWith(route));
+const onSignIn = (url) => Boolean(routeOf(url, SIGN_IN_ROUTES));
 
-try {
-  // Cookie-first PASS branch removed. Always do form login.
-  await s.ctx.clearCookies();
-  await s.goto(URL);
-  await pageSettled(s.page);
-
-  // Confirm the login form actually loaded before filling. If we ended up
-  // anywhere other than /login or /session/*, something redirected and the
-  // form isn't present; bail with a specific error.
-  const urlAfterGoto = s.page.url?.() ?? '';
-  if (!urlAfterGoto.includes('/login') && !urlAfterGoto.includes('/session'))
-    throw new Error(
-      `goto(${URL}) landed at ${urlAfterGoto} — login form not present`,
-    );
-
-  await s.fill('Username or email', '$SVC_EMAIL');
-  await pageSettled(s.page);
-  await s.fill('Password', '$SVC_PASSWORD');
-  await pageSettled(s.page);
-
-  // Submit — match ONLY the login form's submit control (value~="Sign in")
-  // to avoid hitting unrelated submit buttons on other pages. Use Playwright
-  // locator so the click routes through CDP with isTrusted=true (see
-  // docs/DETECTION_ANTIPATTERNS.md §1). Login submit is exactly the kind of
-  // event github's spam ML reads isTrusted on.
-  // Wait for any submit-type control. GitHub serves either classic
-  // <input type="submit" name="commit"> or React <button type="submit">.
-  // Avoid :has-text — Playwright's text-engine intermittently fails on
-  // GitHub's whitespace-padded button text.
-  await s.page
-    .locator('input[type="submit"], button[type="submit"]')
-    .first()
-    .waitFor({ state: 'attached' });
-  const submitLoc = s.page
-    .locator(
-      'input[type="submit"][value*="Sign in" i], input[name="commit"], form[action*="/session"] button[type="submit"], button[type="submit"]',
-    )
-    .first();
-  let submitted = { clicked: false };
-  if ((await submitLoc.count()) > 0) {
-    submitted = await humanClickLocator(s.page, submitLoc)
-      .then(() => ({ clicked: true, via: 'humanClickLocator' }))
-      .catch((e) => ({ clicked: false, err: e.message }));
-    if (!submitted.clicked) {
-      // Locator.click hit Chromium synthesizeMouseEvent disconnect; submit form
-      // via JS instead. Form has action="/session" so requestSubmit triggers POST.
-      const jsOk = await s.page
-        .evaluate(
-          `(() => { const f = document.querySelector('form[action*="/session"]'); if (!f) return false; if (typeof f.requestSubmit === 'function') f.requestSubmit(); else f.submit(); return true; })()`,
-        )
-        .catch(() => false);
-      if (jsOk) submitted = { clicked: true, via: 'js-form-submit' };
-    }
-  }
-  console.log(`[login] Submit: ${JSON.stringify(submitted)}`);
-  if (!submitted.clicked)
-    throw new Error('no Sign-in submit control found on login page');
-
-  // Wait until the page leaves the login form, or GitHub shows its error
-  // banner on it; the banner's text is the failure.
-  const leftLogin = s.page
-    .waitForURL(
-      (url) =>
-        !url.pathname.startsWith('/login') &&
-        !url.pathname.startsWith('/session'),
-      { timeout: 0 },
-    )
-    .then(() => null);
-  const banner = s.page
-    .locator('.flash-error, [role="alert"]')
+/**
+ * Answer GitHub's device verification with the code from the mail it sent
+ * for this attempt (one not in `seenBefore`). Refused when that mail has not
+ * arrived or holds no code of the length the page's field takes.
+ */
+async function verifyDevice(s, login, seenBefore) {
+  const field = s.page
+    .locator('input[autocomplete="one-time-code"], input[name="otp"]')
     .filter({ visible: true })
     .first();
-  const refused = banner
-    .waitFor({ state: 'visible', timeout: 0 })
-    .then(() => banner.innerText());
-  const loginRefusal = await Promise.race([leftLogin, refused]);
-  if (loginRefusal !== null)
-    throw new Error(`login refused: ${loginRefusal.trim()}`);
-  let url2 = s.page.url?.() ?? '';
-  console.log(`[login] After submit: ${url2}`);
-
-  // Check for device verification (email code)
-  if (
-    url2.includes('sessions/verified-device') ||
-    url2.includes('launch_code') ||
-    url2.includes('two-factor')
-  ) {
-    console.log(
-      '[login] Device verification required, reading the code from Skrzynka...',
+  await field.waitFor({ state: 'visible' });
+  const length = Number(await field.getAttribute('maxlength'));
+  if (!Number.isSafeInteger(length) || !length)
+    throw new Error(`GITHUB_DEVICE_CODE_LENGTH_UNKNOWN: the verification field on ${s.page.url()} states no maxlength`);
+  const code = new RegExp(`\\b\\d{${length}}\\b`);
+  const arrived = (await messagesTo(login, 'github.com')).filter((m) => !seenBefore.has(m.id));
+  const found = arrived.map((m) => m.body_text.match(code)?.shift()).find(Boolean);
+  if (!found)
+    throw new Error(
+      `GITHUB_DEVICE_CODE_MISSING: none of the ${arrived.length} mails to ${login} that arrived since the attempt holds a ${length}-digit code; run the login again once it is in the inbox`,
     );
-    const emailAddr = process.env.SVC_EMAIL;
-    // The code arrives when GitHub sends it; the inbox is read until it does.
-    let otp = null;
-    while (!otp) {
-      await pageSettled(s.page);
-      for (const em of await messagesTo(emailAddr, 'github.com')) {
-        const m = em.body_text.match(/\b(\d{6,8})\b/);
-        if (m) {
-          otp = m[1];
-          break;
-        }
-      }
-    }
-    {
-      console.log(`[login] Device code: ${otp}`);
-      await s.page
-        .evaluate(
-          `(code => {
-        const inputs = document.querySelectorAll('input[autocomplete="one-time-code"], input[name*="code"], input[inputmode="numeric"]');
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-        if (inputs.length === 1) { setter.call(inputs[0], code); inputs[0].dispatchEvent(new Event('input', {bubbles:true})); }
-        else if (inputs.length >= code.length) { for (let i = 0; i < code.length; i++) { setter.call(inputs[i], code[i]); inputs[i].dispatchEvent(new Event('input', {bubbles:true})); } }
-      })(${JSON.stringify(otp)})`,
-        )
-        .catch(() => {});
-      await pageSettled(s.page);
-      url2 = s.page.url?.() ?? '';
-      console.log(`[login] After device verify: ${url2}`);
-    }
-  }
-
-  // Verify logged in via fresh user_session cookie. We cleared cookies before
-  // form submit, so any user_session present now is from the just-completed
-  // password POST → it's proof the session is valid. Avatar-DOM check is
-  // unreliable because Chromium can disconnect during the heavy /settings page
-  // load before the eval runs.
-  const postLoginCookies = await s.ctx.cookies().catch(() => []);
-  const sessionCookieFresh = postLoginCookies.find(
-    (c) => c.name === 'user_session' && c.value,
-  );
-  const finalUrl = s.page.url?.() ?? '';
-  const isLoginPage =
-    finalUrl.includes('/login') || finalUrl.includes('/session');
-  if (sessionCookieFresh && !isLoginPage) {
-    const finalCookies = postLoginCookies;
-    console.log(`PASS: logged in as ${acct.username} — ${finalUrl}`);
-    // Persist fresh cookies back to the account, stamped with cookies_minted_at
-    // and the proxy they were minted under, so action trajectories inject only
-    // a jar a verified login minted under their own egress.
-    try {
-      await persistFreshCookieJar(acct, finalCookies, {
-        currentProxyUrl: proxyUrl,
-      });
-    } catch (e) {
-      console.log('[cookie-capture] err:', e.message);
-    }
-  } else {
-    // GitHub's anti-abuse and device gates have their own routes; a refusal
-    // on the login page itself is stated in GitHub's flash, quoted as it is
-    // instead of being sorted by its wording.
-    const { pathname } = new URL(finalUrl);
-    const gate = [
-      '/sessions/verified-device',
-      '/sessions/two-factor',
-      '/account_lockout',
-      '/account_recovery',
-    ].find((route) => pathname.startsWith(route));
-    const diag = await s.page.evaluate(() => ({
-      flash: document
-        .querySelector('.flash-error,[role="alert"]')
-        ?.innerText.trim(),
-      title: document.title,
-    }));
-    diag.reason = gate ? `gate ${gate}` : 'login_refused';
-    console.error(
-      `FAIL: not logged in at ${finalUrl} — reason=${diag.reason} flash=${JSON.stringify(diag.flash)} title=${JSON.stringify(diag.title)}`,
-    );
-    process.exitCode = 1;
-  }
-} catch (e) {
-  // Structured ban_signal so the worker can route this row correctly. Three
-  // common failure tails: chrome-error proxy CONNECT, GitHub's account-locked
-  // landing, or an opaque agent give_up after the password page wouldn't
-  // accept submitted creds.
-  try {
-    const path = await import('node:path');
-    const fs = await import('node:fs');
-    const dir = runRecordingsDir('github_login');
-    fs.mkdirSync(dir, { recursive: true });
-    const finalUrl = s.page?.url?.() ?? '';
-    const msg = e.message ?? '';
-    let sig = 'action_failed';
-    if (
-      /ERR_HTTP_RESPONSE_CODE_FAILURE|ERR_BLOCKED_BY_RESPONSE|ERR_BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_ADMINISTRATOR/.test(
-        msg,
-      )
-    )
-      sig = 'ip_blocked';
-    else if (
-      /ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED/.test(msg)
-    )
-      sig = 'proxy_failed';
-    else if (finalUrl.startsWith('chrome-error://')) sig = 'proxy_failed';
-    else if (
-      /\/account_lockout|\/account\/locked|\/account_recovery|\/sessions\/two-factor|\/sessions\/verified-device/.test(
-        finalUrl,
-      )
-    )
-      sig = 'checkpoint';
-    fs.writeFileSync(
-      path.join(dir, 'ban_signal.json'),
-      JSON.stringify(
-        {
-          account_id: acct.id,
-          username: acct.username,
-          action: 'github_login',
-          signal: sig,
-          healthy: false,
-          details: { final_url: finalUrl, reason: e.message ?? 'no message' },
-          ts: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-    );
-  } catch (persistError) {
-    console.log('[ban-signal] persist err:', persistError.message);
-  }
-  console.error('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
+  await humanClickLocator(s.page, field);
+  await humanType(s.page, found);
+  await pageSettled(s.page);
 }
+
+await runLogin({
+  platform: 'github',
+  banDetector: detectGitHubBanSignals,
+  signIn: async (s, { acct, login, password }) => {
+    await s.ctx.clearCookies();
+    await s.goto(LOGIN_URL);
+    await pageSettled(s.page);
+    const address = s.page.locator('input#login_field').first();
+    const secret = s.page.locator('input#password').first();
+    if (!(await address.count()) || !(await secret.count()))
+      throw new Error(`GITHUB_LOGIN_FORM_MISSING: ${s.page.url()} shows no login form`);
+    await humanFill(s.page, address, login);
+    await humanFill(s.page, secret, password);
+    const seenBefore = new Set((await messagesTo(login, 'github.com')).map((m) => m.id));
+    const submit = secret
+      .locator('xpath=ancestor::form[1]')
+      .locator('input[type="submit"], button[type="submit"]')
+      .first();
+    if (!(await submit.count()))
+      throw new Error(`GITHUB_LOGIN_SUBMIT_MISSING: ${s.page.url()} shows no sign-in control`);
+    await humanClickLocator(s.page, submit);
+    const banner = s.page.locator('.flash-error, [role="alert"]').filter({ hasText: /\S/ }).first();
+    await submitAnswered(s.page, onSignIn, banner);
+    if (onSignIn(s.page.url()))
+      throw new Error(
+        `GITHUB_LOGIN_REFUSED: ${(await banner.count()) ? (await banner.innerText()).trim() : `GitHub stayed on ${s.page.url()}`}`,
+      );
+    if (routeOf(s.page.url(), [DEVICE_ROUTE])) await verifyDevice(s, login, seenBefore);
+    const gate = routeOf(s.page.url(), GATE_ROUTES);
+    if (gate)
+      throw Object.assign(new Error(`GITHUB_LOGIN_GATED: GitHub holds ${acct.username} at ${gate}`), {
+        banSignal: { signal: 'checkpoint', healthy: false, details: { final_url: s.page.url() } },
+      });
+    const cookies = await s.ctx.cookies();
+    if (!cookies.some((c) => c.name === 'user_session' && c.value))
+      throw new Error(`GITHUB_SESSION_MISSING: GitHub set no user_session cookie; the session is at ${s.page.url()}`);
+  },
+});

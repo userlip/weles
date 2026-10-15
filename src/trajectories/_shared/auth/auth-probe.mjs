@@ -48,7 +48,6 @@ const PROBES = {
       'button[data-e2e="top-login-button"]',
       'button[data-e2e="login-button"]',
     ],
-    bodyTextNegative: /log in to comment|log in to like|log in to follow/i,
   },
   twitter: {
     authedSelectors: [
@@ -188,7 +187,7 @@ class AuthProbeError extends Error {
  *
  * Returns the matched authed selector on success (useful for logging).
  */
-export async function assertAuthed(platform, s, opts = {}) {
+export async function assertAuthed(platform, s, opts) {
   const probe = PROBES[platform];
   if (!probe) {
     throw new AuthProbeError(
@@ -196,7 +195,8 @@ export async function assertAuthed(platform, s, opts = {}) {
       { platform },
     );
   }
-  const label = opts.label ?? 'auth-probe';
+  // The log tag is the caller's label, or the platform when it gives none.
+  const label = opts && opts.label ? opts.label : platform;
 
   // The SPA mounts user-specific UI after the initial navigation (Twitter /
   // Instagram / TikTok hydrate the topbar via a post-load XHR), so the probe
@@ -213,41 +213,30 @@ export async function assertAuthed(platform, s, opts = {}) {
   // presenceSelectors: structural markers emitted by SSR only when authed
   // but with no visible bounding box (e.g. shreddit's user-drawer-button-
   // logged-in async-loader, username-bearing custom elements). Use count.
-  for (const sel of probe.presenceSelectors ?? []) {
-    const n = await s.page.locator(sel).count();
-    if (n > 0) {
-      console.log(
-        `[${label}] authed: ${platform} matched ${sel} (presence-only, count=${n})`,
-      );
-      return sel;
+  if (probe.presenceSelectors)
+    for (const sel of probe.presenceSelectors) {
+      const n = await s.page.locator(sel).count();
+      if (n) {
+        console.log(`[${label}] authed: ${platform} matched ${sel} (presence-only, count=${n})`);
+        return sel;
+      }
     }
-  }
 
-  // Pass 2: collect logged-out markers + page-text negative for diagnostics.
+  // Pass 2: the logged-out markers the page shows, named in the error; a
+  // marker that could not be read is named too, not dropped.
   const foundLoggedOut = [];
-  for (const sel of probe.loggedOutMarkers ?? []) {
-    try {
-      if (await s.page.locator(sel).first().isVisible())
-        foundLoggedOut.push(sel);
-    } catch {}
-  }
-  let bodyTextHit = null;
-  if (probe.bodyTextNegative) {
-    try {
-      const text = await s.page.evaluate(() => document.body?.innerText || '');
-      const m = text.match(probe.bodyTextNegative);
-      if (m) bodyTextHit = m[0];
-    } catch {}
-  }
-  const finalUrl = s.page.url?.() ?? '';
+  const unread = [];
+  if (probe.loggedOutMarkers)
+    for (const sel of probe.loggedOutMarkers) {
+      try {
+        if (await s.page.locator(sel).first().isVisible()) foundLoggedOut.push(sel);
+      } catch (error) {
+        unread.push(`${sel}: ${error.message}`);
+      }
+    }
   throw new AuthProbeError(
-    `${platform} session not authenticated — no authed UI found${foundLoggedOut.length ? ` (logged-out markers: ${foundLoggedOut.join(', ')})` : ''}${bodyTextHit ? ` (body: "${bodyTextHit}")` : ''}`,
-    {
-      platform,
-      final_url: finalUrl,
-      logged_out_markers: foundLoggedOut,
-      body_text_hit: bodyTextHit,
-    },
+    `${platform} session not authenticated — no authed UI found${foundLoggedOut.length ? ` (logged-out markers: ${foundLoggedOut.join(', ')})` : ''}${unread.length ? ` (unread: ${unread.join('; ')})` : ''}`,
+    { platform, final_url: s.page.url(), logged_out_markers: foundLoggedOut, unread },
   );
 }
 

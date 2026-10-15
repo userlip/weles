@@ -10,7 +10,8 @@
 import { detectTwitterBanSignals } from '../../../../dist/platforms/twitter/ban_signals.js';
 import { runAction } from '../../_shared/action-runner.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
-import { X_ORIGIN, takeOnce } from './toggle.mjs';
+import { X_ORIGIN } from './toggle.mjs';
+import { takeOnce } from '../../_shared/page/controls/toggle.mjs';
 
 const TARGET_HANDLE = statedText(
   ['TARGET_USER'],

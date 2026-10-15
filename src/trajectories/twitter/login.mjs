@@ -1,159 +1,87 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-} from '../../../dist/utils/credentials.js';
-import { WSession } from '../../../dist/session/wsession.js';
+// Sign the active X account in through x.com's login flow, through the
+// shared login runner (../_shared/action/login.mjs): the account, its
+// proxy, the kept session and the verdict are the runner's.
+//
+// Each step of the flow is answered by X with its next step, its own alert,
+// or a challenge input (a phone or email confirmation, a code); the run
+// waits for whichever comes and reads which. An alert is the refusal,
+// quoted; a challenge is a checkpoint; X's account-access routes mean the
+// account is suspended, which deactivates it. The login counts once X lands
+// on /home.
 import { humanFill } from '../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
-import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import { deactivateAccount } from '../../../dist/account/state.js';
+import { detectTwitterBanSignals } from '../../../dist/platforms/twitter/ban_signals.js';
+import { runLogin } from '../_shared/action/login.mjs';
+import { pageCondition, pageSettled } from '../_shared/page/settled.mjs';
 
 const LOGIN_URL = 'https://x.com/i/flow/login';
-const HOME_URL = 'https://x.com/home';
+const HOME_ROUTE = '/home';
+const SUSPENDED_ROUTES = ['/account/access'];
+const ADDRESS = 'input[autocomplete="username"]';
+const PASSWORD = 'input[autocomplete="current-password"], input[name="password"]';
+// X's challenge step: a free-text input that is neither the address nor
+// the password field.
+const CHALLENGE = '[data-testid="ocfEnterTextTextInput"]';
 
-const acct = await getSocialAccount('twitter');
-if (!acct) {
-  console.log('FAIL: no active twitter account in DB');
-  process.exitCode = 1;
+/**
+ * Which answer the flow gave: 'left' (the page left the login flow),
+ * 'alert', 'challenge', or `expected` when that field showed.
+ */
+function flowAnswer(page, expected) {
+  return pageCondition(
+    page,
+    ({ wanted, challenge }) => {
+      if (!location.pathname.startsWith('/i/flow/login')) return 'left';
+      const alert = document.querySelector('[role="alert"]');
+      if (alert?.textContent.trim()) return 'alert';
+      if (document.querySelector(challenge)) return 'challenge';
+      return wanted && document.querySelector(wanted) ? 'expected' : false;
+    },
+    { wanted: expected, challenge: CHALLENGE },
+  );
 }
-process.env.SVC_EMAIL = acct.metadata.email ?? acct.username;
-process.env.SVC_PASSWORD = acct.metadata.password ?? '';
-console.log(`[trajectory] Using account: ${acct.username}`);
 
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'twitter_login',
-  proxy: proxyUrl,
-  persona,
-});
-
-async function captureCookies() {
-  if (!acct.id) return;
-  try {
-    const cookies = await s.ctx.cookies();
-    await persistFreshCookieJar(acct, cookies, {
-      currentProxyUrl: proxyUrl,
-      currentPersona: persona,
+/** Throw for an answer that is not the next step. */
+async function refuseAnswer(s, acct, answer) {
+  const url = s.page.url();
+  if (answer === 'alert')
+    throw new Error(`TWITTER_LOGIN_REFUSED: ${(await s.page.locator('[role="alert"]').first().innerText()).trim()}`);
+  if (answer === 'challenge')
+    throw Object.assign(new Error(`TWITTER_CHALLENGE: X asks ${acct.username} to confirm the login at ${url}`), {
+      banSignal: { signal: 'checkpoint', healthy: false, details: { final_url: url } },
     });
-  } catch (e) {
-    console.log('[cookie-capture] err:', e.message);
+  if (SUSPENDED_ROUTES.some((route) => new URL(url).pathname.startsWith(route))) {
+    await deactivateAccount(acct.id, acct.metadata, 'TWITTER_SUSPENDED');
+    throw Object.assign(new Error(`TWITTER_SUSPENDED: ${url}; ${acct.username} is deactivated`), {
+      banSignal: { signal: 'suspended', healthy: false, details: { final_url: url } },
+    });
   }
 }
 
-async function deterministicLogin() {
-  const usernameSel = 'input[autocomplete="username"], input[name="text"]';
-  const passwordSel =
-    'input[autocomplete="current-password"], input[name="password"]';
-  const nextBtnSel =
-    '[data-testid="LoginForm_Login_Button"], button:has-text("Next")';
-  const loginBtnSel =
-    '[data-testid="LoginForm_Login_Button"], button:has-text("Log in")';
-
-  await s.page.waitForSelector(usernameSel);
-  await humanFill(
-    s.page,
-    s.page.locator(usernameSel).first(),
-    process.env.SVC_EMAIL,
-  );
-  await humanClickLocator(s.page, s.page.locator(nextBtnSel).first());
-
-  // Wait for the password input. If a challenge step intervenes (phone/email
-  // confirm, 2FA, arkose), the password input never appears and this throws
-  // after Playwright's default — outer catch persists ban_signal=checkpoint.
-  await s.page.locator(passwordSel).first().waitFor({ state: 'visible' });
-  await humanFill(
-    s.page,
-    s.page.locator(passwordSel).first(),
-    process.env.SVC_PASSWORD,
-  );
-  await humanClickLocator(s.page, s.page.locator(loginBtnSel).first());
-
-  // Wait for /home — auth complete. /i/flow/login/check or any non-/home
-  // landing means a post-password challenge (rate limit, locked, suspended)
-  // and we throw to ban_signal.
-  await s.page.waitForURL(/x\.com\/home/);
-}
-
-try {
-  // Cookie-first removed — login always means form login. See auth-probe.mjs.
-  await s.goto(LOGIN_URL);
-  await s.page.waitForLoadState('domcontentloaded');
-  await deterministicLogin();
-  console.log('PASS: logged in (deterministic email/password)');
-  await captureCookies();
-} catch (e) {
-  // Write a structured ban_signal so the worker doesn't bucket as
-  // 'unknown_error'. Twitter login can fail at proxy CONNECT (chrome-error),
-  // at the suspended/locked landing page, on a 2FA/arkose challenge that
-  // intercepts the password step, or simply because /home never loads after
-  // submit (rate limit). Each surfaces with a distinct ban_signal below.
-  try {
-    const dir = runRecordingsDir('twitter_login');
-    (await import('node:fs')).mkdirSync(dir, { recursive: true });
-    const finalUrl = s.page?.url?.() ?? '';
-    const msg = e.message ?? '';
-    let sig = 'action_failed';
-    // HTTP-level rejection beats chrome-error URL detection: ip_blocked is
-    // actionable (worker auto-burns the proxy host) while proxy_failed is
-    // ambiguous (could be tunnel failure or rejection). Pattern order matches
-    // the linkedin_login fix.
-    if (
-      /ERR_HTTP_RESPONSE_CODE_FAILURE|ERR_BLOCKED_BY_RESPONSE|ERR_BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_ADMINISTRATOR/.test(
-        msg,
-      )
-    )
-      sig = 'ip_blocked';
-    else if (
-      /ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED/.test(msg)
-    )
-      sig = 'proxy_failed';
-    else if (finalUrl.startsWith('chrome-error://')) sig = 'proxy_failed';
-    else if (/account\/access|account_access/.test(finalUrl)) sig = 'suspended';
-    // Any /i/flow/login* (including bare /i/flow/login when /home never
-    // loads after submit) is cookies-stale: the trajectory got the form
-    // rendered but couldn't push past auth. Same 24h skip as the explicit
-    // /check URL.
-    else if (
-      /\/i\/flow\/login|\/account\/locked|\/i\/flow\/(verify|access)/.test(
-        finalUrl,
-      )
-    )
-      sig = 'checkpoint';
-    (await import('node:fs')).writeFileSync(
-      (await import('node:path')).join(dir, 'ban_signal.json'),
-      JSON.stringify(
-        {
-          account_id: acct.id,
-          username: acct.username,
-          action: 'twitter_login',
-          signal: sig,
-          healthy: false,
-          details: { final_url: finalUrl, reason: e.message ?? 'no message' },
-          ts: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-    );
-    // suspended → deactivate row; checkpoint → mark cookies stale (24h skip).
-    if (sig === 'suspended') {
-      const { deactivateAccount } = await import(
-        '../../../dist/account/state.js'
-      );
-      await deactivateAccount(acct.id, acct.metadata, 'TWITTER_SUSPENDED');
-    } else if (sig === 'checkpoint') {
-      const { markCookiesStale } = await import(
-        '../../../dist/utils/credentials.js'
-      );
-      if (acct.id) await markCookiesStale(acct.id);
+await runLogin({
+  platform: 'twitter',
+  banDetector: detectTwitterBanSignals,
+  signIn: async (s, { acct, login, password }) => {
+    await s.goto(LOGIN_URL);
+    await pageSettled(s.page);
+    const address = s.page.locator(ADDRESS).first();
+    await address.waitFor({ state: 'visible' });
+    await humanFill(s.page, address, login);
+    // Enter in the address field takes the flow to its next step.
+    await s.page.keyboard.press('Enter');
+    const afterAddress = await flowAnswer(s.page, PASSWORD);
+    if (afterAddress !== 'expected') {
+      await refuseAnswer(s, acct, afterAddress);
+      throw new Error(`TWITTER_LOGIN_UNEXPECTED: X left the login flow before the password, at ${s.page.url()}`);
     }
-  } catch (persistError) {
-    // The ban signal file, the deactivation of a suspended account and the
-    // stale mark of a checkpointed one: whichever of them failed is said.
-    console.log('[ban-signal] persist err:', persistError.message);
-  }
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}
+    const secret = s.page.locator(PASSWORD).first();
+    await humanFill(s.page, secret, password);
+    await humanClickLocator(s.page, s.page.locator('[data-testid="LoginForm_Login_Button"]').first());
+    const afterPassword = await flowAnswer(s.page);
+    await pageSettled(s.page);
+    await refuseAnswer(s, acct, afterPassword);
+    if (!new URL(s.page.url()).pathname.startsWith(HOME_ROUTE))
+      throw new Error(`TWITTER_LOGIN_UNCONFIRMED: X left the login flow for ${s.page.url()}, not ${HOME_ROUTE}`);
+  },
+});

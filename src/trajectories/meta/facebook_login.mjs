@@ -21,16 +21,10 @@ import { isLoginUrl } from './ads/session/login_wall.mjs';
 const URL = 'https://www.facebook.com/login';
 
 const acct = await getSocialAccount('facebook');
-if (!acct) {
-  console.log('FAIL: no active facebook account in DB');
-  process.exit(1);
-}
-const email = acct.metadata?.email ?? acct.username;
+if (!acct) throw new Error('FACEBOOK_ACCOUNT_UNAVAILABLE: no active facebook account in Skarbiec');
+const email = acct.metadata?.email ? acct.metadata.email : acct.username;
 const password = acct.metadata?.password;
-if (!email || !password) {
-  console.log('FAIL: facebook account missing email/password');
-  process.exit(1);
-}
+if (!password) throw new Error(`FACEBOOK_PASSWORD_UNAVAILABLE: facebook account ${acct.username} has no password`);
 console.log(`[fb-login] using account: ${acct.username} <${email}>`);
 
 const { proxyUrl, persona } = await resolveAccountSession(acct);
@@ -104,14 +98,8 @@ try {
     currentProxyUrl: proxyUrl,
     currentPersona: persona,
   });
-  if (!persisted?.ok)
-    throw new Error(`facebook_persist_failed: ${persisted?.reason}`);
+  if (!persisted.ok) throw new Error(`facebook_persist_failed: ${persisted.reason}`);
   console.log(`PASS: facebook logged in (${cookies.length} cookies persisted)`);
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
 } finally {
-  await s
-    .close()
-    .catch((e) => console.log(`[session] close failed: ${e.message}`));
+  await s.close();
 }

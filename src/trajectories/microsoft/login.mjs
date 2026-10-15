@@ -18,28 +18,17 @@ import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
 const URL = 'https://login.live.com/login.srf';
 
 const acct = await getSocialAccount('microsoft');
-if (!acct) {
-  console.log('FAIL: no active microsoft account in DB');
-  process.exit(1);
-}
-const email = acct.metadata?.email ?? acct.username;
+if (!acct) throw new Error('MICROSOFT_ACCOUNT_UNAVAILABLE: no active microsoft account in Skarbiec');
+const email = acct.metadata?.email ? acct.metadata.email : acct.username;
 const credentialId = acct.metadata?.skarbiec_credential_id;
-const tenantId =
-  typeof acct.metadata?.skarbiec_tenant_id === 'string'
-    ? acct.metadata.skarbiec_tenant_id
-    : null;
-if (credentialId && !process.env.WELES_CREDENTIAL_CONSTRAINTS) {
-  process.env.WELES_CREDENTIAL_CONSTRAINTS = JSON.stringify({
-    store_secret_target: 'skarbiec',
-  });
-}
-const password = credentialId
-  ? readWelesManagedCredential(credentialId, 'password', tenantId)
-  : undefined;
-if (!email || !password) {
-  console.log('FAIL: Microsoft account has no managed Skarbiec password');
-  process.exit(1);
-}
+if (!credentialId)
+  throw new Error(`MICROSOFT_PASSWORD_UNAVAILABLE: microsoft account ${acct.username} names no managed Skarbiec password`);
+const tenantId = typeof acct.metadata.skarbiec_tenant_id === 'string' ? acct.metadata.skarbiec_tenant_id : null;
+if (!process.env.WELES_CREDENTIAL_CONSTRAINTS)
+  process.env.WELES_CREDENTIAL_CONSTRAINTS = JSON.stringify({ store_secret_target: 'skarbiec' });
+const password = readWelesManagedCredential(credentialId, 'password', tenantId);
+if (!password)
+  throw new Error(`MICROSOFT_PASSWORD_UNAVAILABLE: the managed Skarbiec credential of ${acct.username} holds no password`);
 console.log(`[ms-login] using account: ${acct.username} <${email}>`);
 
 const { proxyUrl, persona } = await resolveAccountSession(acct);
@@ -87,47 +76,23 @@ try {
   );
   await humanIdlePause('long');
 
-  // 3. "Stay signed in?" prompt — click Yes for sticky session.
-  const ksiOk = s.page
-    .locator('input#idSIButton9')
-    .filter({ visible: true })
-    .first();
-  if (await ksiOk.isVisible().catch(() => false)) {
-    await humanClickLocator(s.page, ksiOk);
+  // 3. "Stay signed in?" answered yes when Microsoft asks it.
+  const staySignedIn = s.page.locator('input#idSIButton9').filter({ visible: true }).first();
+  if (await staySignedIn.isVisible()) {
+    await humanClickLocator(s.page, staySignedIn);
     await humanIdlePause('deliberate');
   }
 
-  // 4. Land on account.microsoft.com or any *.live.com authed surface.
-  const finalUrl = s.page.url?.() ?? '';
-  if (
-    !/account\.microsoft\.com|outlook\.live\.com|outlook\.office\.com|microsoft365\.com|login\.live\.com\/oauth20/i.test(
-      finalUrl,
-    )
-  ) {
-    // Confirm the session on a known landing: a jar persisted from a page
-    // that never signed in would be reported as a login that worked.
-    await s.page.goto('https://account.microsoft.com');
-    await humanIdlePause('deliberate');
-    const landed = s.page.url();
-    if (new URL(landed).hostname !== 'account.microsoft.com')
-      throw new Error(`microsoft_session_unconfirmed: ${landed}`);
-  }
-
+  // 4. The session is confirmed on Microsoft's account page before the jar
+  //    is kept: a jar from a page that never signed in is not a login.
+  await s.page.goto('https://account.microsoft.com');
+  await humanIdlePause('deliberate');
+  if (new URL(s.page.url()).hostname !== 'account.microsoft.com')
+    throw new Error(`microsoft_session_unconfirmed: ${s.page.url()}`);
   const cookies = await s.ctx.cookies();
-  const persisted = await persistFreshCookieJar(acct, cookies, {
-    currentProxyUrl: proxyUrl,
-    currentPersona: persona,
-  });
-  if (!persisted?.ok)
-    throw new Error(`microsoft_persist_failed: ${persisted?.reason}`);
-  console.log(
-    `PASS: microsoft logged in (${cookies.length} cookies persisted)`,
-  );
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
+  const persisted = await persistFreshCookieJar(acct, cookies, { currentProxyUrl: proxyUrl, currentPersona: persona });
+  if (!persisted.ok) throw new Error(`microsoft_persist_failed: ${persisted.reason}`);
+  console.log(`PASS: microsoft logged in (${cookies.length} cookies persisted)`);
 } finally {
-  await s
-    .close()
-    .catch((e) => console.log(`[session] close failed: ${e.message}`));
+  await s.close();
 }

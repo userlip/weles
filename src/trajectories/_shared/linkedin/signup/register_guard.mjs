@@ -76,7 +76,7 @@ export async function assertLinkedinAuthenticatedRegistration(
 }
 
 async function nudgeIntoSignup(page) {
-  const url = page.url?.() ?? '';
+  const url = page.url();
   const joinSelectors = ['a[href*="/signup"]', 'a[href*="/join"]'];
   for (const sel of joinSelectors) {
     const loc = await firstVisible(page, sel);
@@ -163,14 +163,4 @@ export function classifyLinkedinRegisterFailure(
   if (finalUrl.includes('/checkpoint')) return 'captcha_challenge';
   if (/signup_form_unavailable/.test(errorMessage)) return 'form_unavailable';
   return 'action_failed';
-}
-
-export function linkedinRegisterExitCode(signal = '') {
-  if (signal === 'detection_triggered' || signal === 'captcha_challenge')
-    return 2;
-  if (signal === 'proxy_failed') return 3;
-  if (signal === 'phone_verification_required') return 4;
-  if (signal === 'registration_not_accepted') return 4;
-  if (signal === 'account_persist_failed') return 5;
-  return 1;
 }

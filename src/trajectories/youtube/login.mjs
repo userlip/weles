@@ -1,89 +1,24 @@
-import { getSocialAccount } from '../../../dist/utils/credentials.js';
-import { WSession } from '../../../dist/session/wsession.js';
-import { humanType } from '../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../dist/human/mouse.js';
-import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
-import { statedProxy } from '../_shared/inputs/stated.mjs';
+// Sign the active YouTube account in and keep its session, through the shared
+// login run (../_shared/action/login.mjs): a YouTube account is a Google
+// account, so it signs in on Google's sign-in for YouTube with the shared
+// Google SSO steps (identifier, password, the account's own second factor).
+// The login counts once Google returns the session to youtube.com and the
+// declared YouTube signals read the page as healthy.
+import { detectYouTubeBanSignals } from '../../../dist/platforms/youtube/ban_signals.js';
+import { runLogin } from '../_shared/action/login.mjs';
+import { googleSso } from '../_shared/services/google_sso.mjs';
+import { pageSettled } from '../_shared/page/settled.mjs';
 
-const URL =
-  'https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.youtube.com%2F';
+const SIGN_IN = 'https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.youtube.com%2F';
 
-const acct = await getSocialAccount('youtube');
-if (!acct) {
-  console.log('FAIL: no active youtube account in DB');
-  process.exit(1);
-}
-process.env.SVC_EMAIL = acct.metadata.email ?? acct.username;
-process.env.SVC_PASSWORD = acct.metadata.password ?? '';
-console.log(`[trajectory] Using account: ${acct.username}`);
-
-const s = await WSession.start({
-  label: 'youtube_login',
-  proxy: statedProxy('the YouTube login'),
+await runLogin({
+  platform: 'youtube',
+  banDetector: detectYouTubeBanSignals,
+  signIn: async (s, { acct, login, password }) => {
+    await s.goto(SIGN_IN);
+    await pageSettled(s.page);
+    const creds = { email: login, password, metadata: acct.metadata };
+    if (!(await googleSso(s, creds, { originHost: 'youtube.com' })))
+      throw new Error(`YOUTUBE_SIGN_IN_FAILED: Google did not return ${login} to YouTube (at ${s.page.url()})`);
+  },
 });
-try {
-  // Cookie-first removed — login always means form login. See auth-probe.mjs.
-  await s.goto(URL);
-  // Step 1: email → Next.
-  const emailIn = s.page
-    .locator(
-      'input[type="email"], input#identifierId, input[name="identifier"]',
-    )
-    .filter({ visible: true })
-    .first();
-  await emailIn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, emailIn);
-  await humanType(s.page, process.env.SVC_EMAIL);
-  await humanClickLocator(
-    s.page,
-    s.page
-      .locator(
-        'button:has-text("Next"), #identifierNext button, button[jsname]:has-text("Next")',
-      )
-      .filter({ visible: true })
-      .first(),
-  );
-  // Step 2: password → Next.
-  const pwIn = s.page
-    .locator(
-      'input[type="password"], input[name="Passwd"], input[name="password"]',
-    )
-    .filter({ visible: true })
-    .first();
-  await pwIn.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, pwIn);
-  await humanType(s.page, process.env.SVC_PASSWORD);
-  await humanClickLocator(
-    s.page,
-    s.page
-      .locator(
-        'button:has-text("Next"), #passwordNext button, button[jsname]:has-text("Next")',
-      )
-      .filter({ visible: true })
-      .first(),
-  );
-  // Wait until we land on youtube.com (or myaccount.google.com if redirect path differs).
-  await s.page.waitForFunction(
-    () =>
-      /youtube\.com\/?(?:\?|$)/.test(location.href) ||
-      /myaccount\.google\.com/.test(location.href),
-  );
-  // Persist with cookies_minted_at so action trajectories can enforce freshness.
-  try {
-    const cookies = await s.ctx.cookies();
-    await persistFreshCookieJar(acct, cookies, {
-      currentProxyUrl: process.env.PROXY_URL,
-    });
-  } catch (e) {
-    console.log('[cookie-capture] err:', e.message);
-  }
-  console.log(`PASS: logged in (${s.page.url()})`);
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}

@@ -1,16 +1,31 @@
 import { humanType } from '../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
 
-// Click the first tweet's Reply button → fill composer → submit. Each step is
+/** The first post the page shows: the one a reply on this page answers. */
+function firstPost(page) {
+  return page.locator('article[data-testid="tweet"]').filter({ visible: true }).first();
+}
+
+/**
+ * The text of the first post the page shows, which twitterSubmitReply
+ * answers; a first post without text is refused.
+ */
+export async function twitterFirstPost(s) {
+  const post = firstPost(s.page);
+  await post.waitFor({ state: 'visible' });
+  const text = post.locator('[data-testid="tweetText"]').first();
+  if (!(await text.count()))
+    throw new Error(
+      `the first post on ${s.page.url()} carries no text to answer`,
+    );
+  return { postTitle: await text.innerText() };
+}
+
+// Click the first post's Reply button → fill composer → submit. Each step is
 // a single deterministic Playwright locator path with state-flip verification.
 export async function twitterSubmitReply(s, text) {
-  // Find the first reply button on the timeline / detail / hashtag page.
-  const replyBtn = s.page
-    .locator('[data-testid="reply"]')
-    .filter({ visible: true })
-    .first();
+  const replyBtn = firstPost(s.page).locator('[data-testid="reply"]').first();
   await replyBtn.waitFor({ state: 'visible' });
-  await replyBtn.scrollIntoViewIfNeeded().catch(() => {});
   await humanClickLocator(s.page, replyBtn);
   // Composer textbox — Twitter uses a contenteditable div with role="textbox"
   // and data-testid="tweetTextarea_0" inside the modal/inline composer.

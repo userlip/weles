@@ -1,136 +1,42 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-  markCookiesStale,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
+// React "Like" to a LinkedIn post through the shared action runner: the
+// account's fresh jar, the inline sign-in again when it is stale, the
+// signed-in gate, the verdict and its record are the runner's.
+//
+// Env: TARGET_URL (required): the post's page.
+//
+// The post's like control is <button aria-label="React Like"> (comment likes
+// are labelled differently), which LinkedIn presses once the like is taken.
+// A page that shows no post to like is refused.
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { detectLinkedInBanSignals } from '../../../../dist/platforms/linkedin/ban_signals.js';
-import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { checkReachable } from '../../_shared/action-runner.mjs';
-import { openLinkedinAuthed } from '../../_shared/linkedin/authed_open.mjs';
-import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { runAction } from '../../_shared/action-runner.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
+import { reloginLinkedinInline } from '../../_shared/linkedin/relogin.mjs';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 
-// The page the like lands on is the caller's; no feed is assumed.
-const TARGET_URL = process.env.TARGET_URL;
-if (!TARGET_URL) {
-  console.log(
-    'FAIL: TARGET_URL env var required: the LinkedIn page the like lands on',
-  );
-  process.exit(1);
-}
-
-const acct = await getSocialAccount('linkedin');
-if (!acct) {
-  console.log('FAIL: no active linkedin account');
-  process.exit(1);
-}
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'linkedin_like',
-  proxy: proxyUrl,
-  persona,
-});
-const _stored = (acct.metadata?.cookies ?? []).filter((c) =>
-  /linkedin\.com/.test(c.domain ?? ''),
+const TARGET_URL = statedText(
+  ['TARGET_URL'],
+  'the LinkedIn post to like',
+  'LINKEDIN_LIKE_TARGET_REQUIRED',
 );
-// A jar that could not be injected leaves the session signed out; the
-// failure is raised inside the try so it is reported and the session closed.
-let cookieInjectError = null;
-if (_stored.length)
-  await s.ctx
-    .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
-    .catch((e) => {
-      cookieInjectError = e;
-    });
-let ban = null;
-try {
-  if (cookieInjectError)
-    throw new Error(
-      `stored cookies could not be injected: ${cookieInjectError.message}`,
-    );
-  // Auth gate: navigate + checkReachable + assertAuthed. Any of these can
-  // throw auth_wall (cookies stale because the residential sticky changed
-  // exit IP since they were minted); openLinkedinAuthed then signs in again
-  // on the SAME WSession so the new li_at is bound to the current sticky's
-  // exit IP, and opens the page once more.
-  const opened = await openLinkedinAuthed(
-    s,
-    acct,
-    'linkedin_like',
-    async () => {
-      await s.page.goto(TARGET_URL, { waitUntil: 'domcontentloaded' });
-      checkReachable(s, 'linkedin');
-      await humanIdlePause('deliberate');
-    },
-  );
-  if (!opened.ok) {
-    await markCookiesStale(acct.id);
-    throw new Error(`inline relogin failed: ${opened.reason}`);
-  }
-  // LinkedIn's like button is a <button aria-label="React Like"> that flips
-  // aria-pressed false→true on click. The React-Like label excludes
-  // comment-level actions labeled "Like this comment".
-  const likeBtn = s.page
-    .locator('button[aria-label*="React Like" i]:not([aria-pressed="true"])')
-    .first();
-  if (!(await likeBtn.count())) {
-    // Already liked OR no posts on the page — idempotent PASS-or-noop.
-    const anyLiked = await s.page
-      .locator('button[aria-label*="React Like" i][aria-pressed="true"]')
-      .count();
-    ban = await banSignalOf(
-      detectLinkedInBanSignals,
-      s,
-      'after finding it liked',
-    );
-    console.log(
-      `[ban-signal] ${ban?.signal}  PASS: ${anyLiked ? 'already liked' : 'no_likeable_posts_on_page'}`,
-    );
-  } else {
-    await likeBtn.scrollIntoViewIfNeeded().catch(() => {});
-    await humanClickLocator(s.page, likeBtn);
-    await s.page
-      .locator('button[aria-label*="React Like" i][aria-pressed="true"]')
-      .first()
-      .waitFor({ state: 'visible' });
-    ban = await banSignalOf(detectLinkedInBanSignals, s, 'after liking');
-    console.log(`[ban-signal] ${ban?.signal}  PASS: liked`);
-  }
-} catch (e) {
-  ban =
-    e.banSignal ??
-    (await banSignalOf(detectLinkedInBanSignals, s, 'after the failure'));
-  console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
-  process.exitCode = 1;
-} finally {
-  if (ban) {
-    try {
-      const dir = runRecordingsDir('linkedin_like');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'ban_signal.json'),
-        JSON.stringify(
-          {
-            account_id: acct.id,
-            username: acct.username,
-            action: 'linkedin_like',
-            target_url: TARGET_URL,
-            ...ban,
-            ts: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
+const REACT_LIKE = 'button[aria-label*="React Like" i]';
+
+await runAction({
+  platform: 'linkedin',
+  action: 'like',
+  inlineRelogin: reloginLinkedinInline,
+  banDetector: detectLinkedInBanSignals,
+  act: async (s) => {
+    await pageSettled(s.page);
+    const liked = s.page.locator(`${REACT_LIKE}[aria-pressed="true"]`).first();
+    if (await liked.count()) return `${TARGET_URL} is already liked`;
+    const like = s.page.locator(REACT_LIKE).first();
+    if (!(await like.count()))
+      throw new Error(
+        `LINKEDIN_NOTHING_TO_LIKE: ${s.page.url()} shows no post with a like control`,
       );
-    } catch (e) {
-      console.log('[ban-signal] persist err:', e.message);
-    }
-  }
-  await s.close();
-}
+    await humanClickLocator(s.page, like);
+    await liked.waitFor({ state: 'visible' });
+    return `liked ${TARGET_URL}`;
+  },
+});

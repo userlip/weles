@@ -1,447 +1,124 @@
-import {
-  pageCondition,
-  pageSettled,
-  responseAfterAction,
-} from '../_shared/page/settled.mjs';
-import { solverTaskResult } from '../_shared/captcha/solver_task.mjs';
-import { getSocialAccount } from '../../../dist/utils/credentials.js';
-import { resolveAccountSession } from '../../../dist/account/session.js';
-import { WSession } from '../../../dist/session/wsession.js';
-import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
-import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
-import {
-  inboxConfigured,
-  messagesTo,
-} from '../../_shared/mail/skrzynka-inbox.mjs';
-import { statedProxy } from '../_shared/inputs/stated.mjs';
+// Sign the active Discord account in through discord.com/login, through the
+// shared login runner (../_shared/action/login.mjs): the account, its
+// proxy, the kept session and the verdict are the runner's. Discord's web
+// token, which it keeps in localStorage, is kept in the account beside the
+// cookies.
+//
+// Discord answers the submitted form by landing in /channels, by blocking
+// the account (which is then deactivated), or with an hCaptcha challenge,
+// solved through the solving services whose keys Skarbiec holds and sent
+// back through Discord's own login API. A login from an address Discord has
+// not seen is authorized from the mail Discord sends for it
+// (./login/new_location.mjs).
+import { pageSettled } from '../_shared/page/settled.mjs';
+import { deactivateAccount } from '../../../dist/account/state.js';
+import { CaptchaSolver } from '../../../dist/captcha/solver.js';
+import { humanFill } from '../../../dist/human/keyboard.js';
+import { detectDiscordBanSignals } from '../../../dist/platforms/discord/ban_signals.js';
+import { runLogin } from '../_shared/action/login.mjs';
+import { inboxConfigured, messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
+import { asksNewLocation, authorizeNewLocation } from './login/new_location.mjs';
 
-const URL = 'https://discord.com/login';
+const LOGIN_URL = 'https://discord.com/login';
+const onChannels = (url) => new URL(url).pathname.startsWith('/channels');
 
-const acct = await getSocialAccount('discord');
-if (!acct)
-  throw Object.assign(new Error('No active Discord account in Skarbiec'), {
-    code: 'DISCORD_ACCOUNT_UNAVAILABLE',
+/** One call of Discord's login API from the page, with the captcha headers. */
+async function loginApi(s, formData) {
+  const answer = await s.page.evaluate(
+    async ({ headers, body }) => {
+      const response = await fetch('/api/v9/auth/login', { method: 'POST', headers, body });
+      return { ok: response.ok, status: response.status, body: await response.text() };
+    },
+    {
+      headers: { 'Content-Type': 'application/json', ...s.captchaHeaders },
+      body: JSON.stringify(formData),
+    },
+  );
+  let data;
+  let unreadable;
+  try {
+    data = JSON.parse(answer.body);
+  } catch (error) {
+    unreadable = error;
+  }
+  if (unreadable)
+    throw new Error(`discord_login: the login API answered ${answer.status} with no JSON: ${answer.body}`);
+  console.log(`[discord_login] login API: ${answer.status} ${answer.body}`);
+  return { ...answer, data };
+}
+
+/** Solve the login's hCaptcha, answer it through the login API, keep the token. */
+async function answerCaptcha(s, acct, captchaData, formData) {
+  const key = await new CaptchaSolver().solveHcaptcha(captchaData.captcha_sitekey, LOGIN_URL, {
+    enterprisePayload: { rqdata: captchaData.captcha_rqdata, rqtoken: captchaData.captcha_rqtoken },
+    userAgent: await s.page.evaluate(() => navigator.userAgent),
+    proxy: s.proxyConfig,
   });
-if (!acct.metadata?.password)
-  throw Object.assign(
-    new Error(`Discord account ${acct.username} has no password`),
-    { code: 'DISCORD_PASSWORD_UNAVAILABLE' },
+  if (!key)
+    throw new Error(
+      'DISCORD_CAPTCHA_UNSOLVED: no captcha solving service whose key Skarbiec holds answered the login challenge',
+    );
+  const answered = { ...formData, captcha_key: key };
+  if (captchaData.captcha_rqtoken) answered.captcha_rqtoken = captchaData.captcha_rqtoken;
+  // The mails already in the inbox: a new-location mail Discord sends for
+  // this attempt is the one not among them.
+  const seenBefore = new Set(
+    inboxConfigured() ? (await messagesTo(answered.login, 'discord.com')).map((m) => m.id) : [],
   );
-process.env.SVC_EMAIL = acct.metadata.email ?? acct.username;
-process.env.SVC_PASSWORD = acct.metadata.password;
-const accountSession = await resolveAccountSession(acct);
-const pinned = accountSession.proxyUrl && !process.env.PROXY_URL?.trim();
-const proxyUrl = pinned
-  ? accountSession.proxyUrl
-  : statedProxy('the Discord login, whose account has no proxy pin,');
-console.log(
-  pinned
-    ? `[trajectory] Using persisted account proxy pin`
-    : `[trajectory] PROXY_URL stated: "${proxyUrl}"`,
-);
-console.log(
-  `[trajectory] Using account: ${acct.username} (${process.env.SVC_EMAIL})`,
-);
+  let answer = await loginApi(s, answered);
+  if (asksNewLocation(answer)) {
+    await authorizeNewLocation(s, answered.login, seenBefore);
+    await pageSettled(s.page);
+    answer = await loginApi(s, answered);
+  }
+  if (answer.data.captcha_rqdata)
+    throw new Error('discord_login: Discord rejected the captcha answer and issued a new challenge');
+  if (!answer.ok || !answer.data.token)
+    throw new Error(`discord_login: the login API answered ${answer.status} with ${answer.body}`);
+  await s.page.evaluate((token) => localStorage.setItem('token', JSON.stringify(token)), answer.data.token);
+  await s.patchAccount(acct.id, { metadata: { discord_token: answer.data.token } });
+  await s.goto('https://discord.com/channels/@me');
+  await pageSettled(s.page);
+}
 
-// targetHost lets resolveProxy map a filter string ("residential
-// oxylabs us") to the right provider row + Discord country policy.
-// Without it, filter-form PROXY_URL throws proxy_unavailable.
-const s = await WSession.start({
-  label: 'discord_login',
-  proxy: proxyUrl,
-  persona: accountSession.persona,
-  targetHost: 'discord.com',
+await runLogin({
+  platform: 'discord',
+  banDetector: detectDiscordBanSignals,
+  // A provider filter in PROXY_URL resolves to Discord's provider row and
+  // country policy through the target host.
+  session: { targetHost: 'discord.com' },
+  signIn: async (s, { acct, login, password }) => {
+    // The register page first, so Cloudflare's clearance is set before login.
+    await s.goto('https://discord.com/register');
+    await pageSettled(s.page);
+    await s.goto(LOGIN_URL);
+    await pageSettled(s.page);
+    const address = s.page.locator('input[type="email"], input[name="email"], input[name="login"]').first();
+    const secret = s.page.locator('input[type="password"]').first();
+    const form = s.page.locator('form').first();
+    if (!(await address.count()) || !(await secret.count()) || !(await form.count()))
+      throw new Error(`DISCORD_LOGIN_FORM_MISSING: ${s.page.url()} shows no login form with an address and a password`);
+    await humanFill(s.page, address, login);
+    await humanFill(s.page, secret, password);
+    // A click on Discord's submit never resolves its navigation; submitting
+    // the form fires /api/v9/auth/login, whose answer the session captures.
+    await form.evaluate((element) => element.requestSubmit());
+    await pageSettled(s.page);
+    if (s.authBlocked) {
+      await deactivateAccount(acct.id, acct.metadata, s.authBlocked);
+      throw Object.assign(
+        new Error(`DISCORD_AUTH_BLOCKED: Discord answered ${s.authBlocked}; ${acct.username} is deactivated`),
+        { banSignal: { signal: 'suspended', healthy: false, details: { reason: s.authBlocked } } },
+      );
+    }
+    if (!onChannels(s.page.url())) {
+      if (!s.captchaResponse || !s.captchaFormData)
+        throw new Error(
+          `discord_login: the login form answered without a captcha challenge and without logging in, at ${s.page.url()}`,
+        );
+      await answerCaptcha(s, acct, s.captchaResponse, s.captchaFormData);
+    }
+    if (!onChannels(s.page.url()))
+      throw new Error(`discord_login: the session is at ${s.page.url()}, not in Discord, after logging in`);
+  },
 });
-
-async function captureCookies() {
-  if (!acct.id) return;
-  try {
-    const cookies = await s.ctx.cookies();
-    await persistFreshCookieJar(acct, cookies, { currentProxyUrl: proxyUrl });
-  } catch (e) {
-    console.log('[cookie-capture] err:', e.message);
-  }
-}
-
-try {
-  // Visit register page first to pass Cloudflare challenge and set cf_clearance cookie
-  await s.goto('https://discord.com/register');
-  await pageSettled(s.page);
-  await s.goto(URL);
-  await pageCondition(
-    s.page,
-    () => document.querySelector('#app-mount')?.children?.length > 0,
-  );
-  console.log('[login] SPA mounted');
-  // SPA mount != form ready
-  await pageCondition(
-    s.page,
-    () => document.querySelectorAll('input').length > 0,
-  );
-  const inputNames = await s.page
-    .evaluate(
-      `Array.from(document.querySelectorAll('input')).map(i=>({name:i.name,type:i.type,ph:i.placeholder,aria:i.getAttribute('aria-label')}))`,
-    )
-    .catch(() => []);
-  console.log(`[login] Inputs: ${JSON.stringify(inputNames)}`);
-  // Humanized fill — descriptor-set + dispatch('input') previously bypassed
-  // every keystroke; route through humanFill (real click + ControlOrMeta+A
-  // + humanType). Discord's React inputs work fine with keystrokes; the old
-  // comment about Playwright el.fill failing was specific to the .fill()
-  // synchronous-set path, not real keyboard events.
-  const { humanFill } = await import('../../../dist/human/keyboard.js');
-  const fillField = async (selector, val) => {
-    const loc = s.page.locator(selector).first();
-    if (!(await loc.count()))
-      return { ok: false, reason: 'not-found', sel: selector };
-    await humanFill(s.page, loc, val);
-    return { ok: true, len: val.length };
-  };
-  // The address input is whichever of these the form renders (its name has
-  // been email and login), and the password input is the password field.
-  const emailSel =
-    'input[type="email"], input[name="email"], input[name="login"]';
-  const passSel = 'input[type="password"]';
-  const emailResult = await fillField(emailSel, process.env.SVC_EMAIL);
-  const passResult = await fillField(passSel, process.env.SVC_PASSWORD);
-  console.log(
-    `[login] fill email(${emailSel}): ${JSON.stringify(emailResult)}, password(${passSel}): ${JSON.stringify(passResult)}`,
-  );
-  await pageSettled(s.page);
-  let deactivateAccount = async () => {};
-  try {
-    ({ deactivateAccount } = await import('../../../dist/account/state.js'));
-  } catch (e) {
-    console.log(`[login] state.js import failed: ${e.message}`);
-  }
-  const bail = () => {
-    try {
-      if (s.authBlocked) {
-        Promise.resolve(
-          deactivateAccount(acct.id, acct.metadata, s.authBlocked),
-        )
-          .then(() => {
-            console.log(
-              `FAIL: ${acct.username} ${s.authBlocked} (deactivated)`,
-            );
-            process.exitCode = 1;
-          })
-          .catch(() => process.exit(1));
-        return true;
-      }
-      if ((s.page?.url?.() ?? '').includes('/channels')) {
-        console.log(`PASS: direct login — ${s.page.url()}`);
-        captureCookies()
-          .then(() => process.exit(0))
-          .catch(() => process.exit(0));
-        return true;
-      }
-    } catch (e) {
-      console.log(`[login] bail err: ${e.message}`);
-    }
-    return false;
-  };
-  // locator.click on Discord's submit hangs the full default timeout — click registers but its navigation promise never resolves. Skip locator.click; form.requestSubmit fires /api/v9/auth/login directly and populates captchaFormData on the response, which is what every downstream branch needs.
-  await s.page.evaluate('document.querySelector("form")?.requestSubmit()');
-  await pageSettled(s.page);
-  bail();
-  // Solve captcha and resubmit via API (same as registration)
-  const captchaData = s.captchaResponse;
-  const formData = s.captchaFormData;
-  const proxy = s.proxyConfig;
-  if (captchaData && formData) {
-    const ua = await s.page.evaluate('navigator.userAgent').catch(() => '');
-    const u = proxy ? new globalThis.URL(proxy.server) : null;
-    let gwIp = u?.hostname;
-    if (gwIp) {
-      try {
-        const dns = await import('node:dns');
-        gwIp = await new Promise((res, rej) =>
-          dns.lookup(gwIp, (e, a) => (e ? rej(e) : res(a))),
-        );
-      } catch {}
-    }
-    const proxyFields = u
-      ? {
-          proxyType: 'http',
-          proxyAddress: gwIp,
-          proxyPort: parseInt(u.port, 10),
-          proxyLogin: proxy.username,
-          proxyPassword: proxy.password,
-        }
-      : {};
-    console.log(
-      `[login] Proxy for captcha: ${JSON.stringify({ address: gwIp, port: u?.port, user: proxy?.username })}`,
-    );
-    const services = [
-      {
-        name: 'anticaptcha',
-        url: 'https://api.anti-captcha.com',
-        envKey: 'ANTICAPTCHA_API_KEY',
-      },
-      {
-        name: 'capsolver',
-        url: 'https://api.capsolver.com',
-        envKey: 'CAPSOLVER_API_KEY',
-      },
-    ];
-    const svc = services.find((candidate) => process.env[candidate.envKey]);
-    if (!svc)
-      throw new Error(
-        'discord_login: no captcha solver key is configured (ANTICAPTCHA_API_KEY or CAPSOLVER_API_KEY)',
-      );
-    const apiKey = process.env[svc.envKey];
-    console.log(
-      `[login] formData: login=${formData.login} pass=${formData.password ? '***(' + formData.password.length + ')' : 'EMPTY'}`,
-    );
-    const isCs = svc.name === 'capsolver';
-    const taskType = isCs
-      ? u
-        ? 'HCaptchaEnterpriseTask'
-        : 'HCaptchaEnterpriseTaskProxyLess'
-      : u
-        ? 'HCaptchaTask'
-        : 'HCaptchaTaskProxyless';
-    const task = {
-      type: taskType,
-      websiteURL: 'https://discord.com/login',
-      websiteKey: captchaData.captcha_sitekey,
-      enterprisePayload: { rqdata: captchaData.captcha_rqdata },
-      userAgent: ua,
-      ...proxyFields,
-      ...(isCs ? {} : { isEnterprise: true }),
-    };
-    const cr = await (
-      await fetch(svc.url + '/createTask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientKey: apiKey, task }),
-      })
-    ).json();
-    if (cr.errorId)
-      throw new Error(
-        `discord_login: ${svc.name} createTask refused: ${cr.errorCode}`,
-      );
-    console.log(`[login] ${svc.name} task ${cr.taskId} created`);
-    formData.captcha_key = await solverTaskResult(svc, apiKey, cr.taskId);
-    if (captchaData.captcha_rqtoken)
-      formData.captcha_rqtoken = captchaData.captcha_rqtoken;
-    const hdrs = JSON.stringify({
-      'Content-Type': 'application/json',
-      ...s.captchaHeaders,
-    });
-    const loginApi = () =>
-      s.page.evaluate(
-        `(async()=>{var r=await fetch('/api/v9/auth/login',{method:'POST',headers:${hdrs},body:${JSON.stringify(JSON.stringify(formData))}});return{status:r.status,data:await r.json().catch(()=>({}))};})()`,
-      );
-    const finishWithToken = async (token) => {
-      await s.page.evaluate(
-        `localStorage.setItem("token", JSON.stringify(${JSON.stringify(token)}))`,
-      );
-      // Discord auth lives in localStorage, so persist it beside the account
-      // cookies in the same Skarbiec item.
-      if (acct.id)
-        await s.patchAccount(acct.id, { metadata: { discord_token: token } });
-      await s.goto('https://discord.com/channels/@me');
-      await pageSettled(s.page);
-      console.log(`PASS: logged in as ${acct.username} — ${s.page.url?.()}`);
-      await captureCookies();
-    };
-    // The newest received mail for this login, and what it held before the
-    // attempt: a new-location mail Discord sends for this attempt is the one
-    // not among these, so no clock tolerance decides which mail is new.
-    const loginInbox = async () => messagesTo(formData.login, 'discord.com');
-    const seenBefore = inboxConfigured()
-      ? new Set((await loginInbox()).map((em) => em.id))
-      : new Set();
-    const result = await loginApi();
-    console.log(
-      `[login] ${svc.name}: status=${result?.status} response=${JSON.stringify(result?.data) ?? ''}`,
-    );
-    if (result?.status === 200 && result?.data?.token) {
-      await finishWithToken(result.data.token);
-    } else if (result?.data?.captcha_rqdata) {
-      throw new Error(
-        `discord_login: Discord rejected the ${svc.name} captcha answer and issued a new captcha challenge`,
-      );
-    } else if (
-      result?.data?.errors?.login?._errors?.some(
-        (e) => e.code === 'ACCOUNT_LOGIN_VERIFICATION_EMAIL',
-      )
-    ) {
-      // Login location verification — open the authorize-ip link from the
-      // mail, then re-submit the login API call.
-      console.log(
-        '[login] New location verification required, checking email...',
-      );
-      const email = formData.login;
-      const emails = await loginInbox();
-      const verifyMail = emails.find(
-        (em) => em.subject.includes('Login') && !seenBefore.has(em.id),
-      );
-      if (!verifyMail)
-        throw new Error(
-          `discord_login: no new-location verification mail for ${email} has arrived yet; run the login again once it is in the inbox`,
-        );
-      const links = [
-        ...verifyMail.body_text.matchAll(
-          /https:\/\/click\.discord\.com[^\s"]+/g,
-        ),
-      ].map((found) => found[0]);
-      let authorizeLink = null;
-      for (const link of links) {
-        const resp = await fetch(link, { redirect: 'manual' });
-        const loc = resp.headers.get('location') || '';
-        if (loc.includes('authorize-ip')) {
-          authorizeLink = loc;
-          break;
-        }
-      }
-      if (!authorizeLink)
-        throw new Error(
-          `discord_login: verification mail ${verifyMail.id} carries no authorize-ip link`,
-        );
-      console.log('[login] Found authorize-ip link, opening in new tab...');
-      const newPage = await s.ctx.newPage();
-      try {
-        const authorizeResponse = await responseAfterAction(
-          newPage,
-          (request) =>
-            request.url().includes('authorize-ip') &&
-            request.method() === 'POST',
-          () => newPage.goto(authorizeLink, { waitUntil: 'domcontentloaded' }),
-        );
-        const status = authorizeResponse.status();
-        const requestUrl = authorizeResponse.url();
-        let body;
-        try {
-          body = await authorizeResponse.text();
-        } catch (cause) {
-          throw Object.assign(
-            new Error(
-              `Discord IP authorization response could not be read at ${requestUrl}`,
-              { cause },
-            ),
-            {
-              code: 'DISCORD_IP_AUTHORIZATION_RESPONSE_FAILED',
-              requestMethod: 'POST',
-              requestUrl,
-              status,
-            },
-          );
-        }
-        console.log(`[login] authorize-ip API: ${status}`);
-        if (!authorizeResponse.ok())
-          throw Object.assign(
-            new Error(
-              `Discord IP authorization refused with HTTP ${status}: ${body}`,
-            ),
-            {
-              code: 'DISCORD_IP_AUTHORIZATION_REFUSED',
-              requestMethod: 'POST',
-              requestUrl,
-              status,
-            },
-          );
-      } finally {
-        if (!newPage.isClosed()) await newPage.close();
-      }
-      await pageSettled(s.page);
-      // After IP authorize, re-fire the /api/v9/auth/login XHR directly
-      // (same path the captcha-success branch uses).
-      console.log('[login] IP authorized, retrying login API directly...');
-      const retryResult = await loginApi();
-      console.log(
-        `[login] post-authorize retry: status=${retryResult?.status} response=${JSON.stringify(retryResult?.data) ?? ''}`,
-      );
-      if (retryResult?.status === 200 && retryResult?.data?.token) {
-        await finishWithToken(retryResult.data.token);
-      } else if (retryResult?.data?.captcha_rqdata) {
-        throw new Error(
-          'discord_login: Discord asks for a new captcha after the IP authorization',
-        );
-      } else if ((s.page.url?.() ?? '').includes('/channels')) {
-        console.log(`PASS: logged in as ${acct.username} — ${s.page.url()}`);
-        await captureCookies();
-      } else {
-        throw new Error(
-          `discord_login: login API answered ${retryResult?.status} after the IP authorization, at ${s.page.url?.()}`,
-        );
-      }
-    } else {
-      throw new Error(
-        `discord_login: login API answered ${result?.status} with ${JSON.stringify(result?.data) ?? ''}`,
-      );
-    }
-  } else {
-    // No captcha — check if already logged in
-    const url2 = s.page.url?.() ?? '';
-    if (url2.includes('/channels')) {
-      console.log('PASS: logged in');
-      await captureCookies();
-    } else {
-      throw new Error(
-        `discord_login: the login form answered without a captcha challenge and without logging in, at ${url2}`,
-      );
-    }
-  }
-} catch (e) {
-  // Structured ban_signal so the worker doesn't fall back to 'unknown_error'.
-  // Discord login fails in three distinct shapes: chrome-error proxy CONNECT,
-  // hCaptcha widget appearance (login is gated until solved), or invalid
-  // creds → /login still showing. Emit the right one.
-  try {
-    const path = await import('node:path');
-    const fs = await import('node:fs');
-    const dir = runRecordingsDir('discord_login');
-    fs.mkdirSync(dir, { recursive: true });
-    const finalUrl = s?.page?.url?.() ?? '';
-    const msg = e?.message ?? String(e);
-    let sig = 'action_failed';
-    if (
-      /ERR_HTTP_RESPONSE_CODE_FAILURE|ERR_BLOCKED_BY_RESPONSE|ERR_BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_ADMINISTRATOR/.test(
-        msg,
-      )
-    )
-      sig = 'ip_blocked';
-    else if (
-      /ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED/.test(msg)
-    )
-      sig = 'proxy_failed';
-    else if (finalUrl.startsWith('chrome-error://')) sig = 'proxy_failed';
-    else if (/captcha/i.test(msg) || /\/login/.test(finalUrl))
-      sig = 'checkpoint';
-    fs.writeFileSync(
-      path.join(dir, 'ban_signal.json'),
-      JSON.stringify(
-        {
-          account_id: acct.id,
-          username: acct.username,
-          action: 'discord_login',
-          signal: sig,
-          healthy: false,
-          details: {
-            final_url: finalUrl,
-            reason: msg,
-            error_code: e?.code,
-            request_method: e?.requestMethod,
-            request_url: e?.requestUrl,
-            response_status: e?.status,
-            operation_page_url: e?.pageUrl,
-            network_error: e?.errorText,
-            cause: e?.cause === undefined ? undefined : String(e.cause),
-          },
-          ts: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-    );
-  } catch (reportError) {
-    console.log('[login] Failed to record ban_signal:', reportError);
-  }
-  console.log('FAIL:', e);
-  process.exitCode = 1;
-} finally {
-  await s.close();
-}
