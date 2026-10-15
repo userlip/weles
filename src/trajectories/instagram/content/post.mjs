@@ -28,7 +28,7 @@ import { generateImageFile } from '../../_shared/content/media.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkReachable } from '../../_shared/action-runner.mjs';
-import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
+import { banSignalOf, HEALTH_UNREAD } from '../../_shared/auth/ban-signal.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import {
   accountCharacter,
@@ -117,7 +117,7 @@ const s = await WSession.start({
   proxy: proxyUrl,
   persona,
 });
-// banSignalOf answers null when detection failed, having logged its cause.
+// banSignalOf answers HEALTH_UNREAD, with its cause, when detection failed.
 try {
   // The account's stored jar, limited to the cookies Instagram's host would
   // be sent; an account with no stored jar has none to inject.
@@ -222,9 +222,12 @@ try {
     s,
     'after posting',
   );
-  if (!banSignal)
-    throw new Error(
-      'BAN_SIGNAL_UNREAD: the post was shared, but the account health after it could not be read (the detection error is logged above)',
+  if (banSignal.signal === HEALTH_UNREAD)
+    throw Object.assign(
+      new Error(
+        `BAN_SIGNAL_UNREAD: the post was shared, but the account health after it could not be read: ${banSignal.details.error}`,
+      ),
+      { banSignal },
     );
   persistBanSignal(banSignal);
   console.log(`[ban-signal] ${banSignal.signal}  PASS: posted`);
@@ -232,16 +235,14 @@ try {
   const banSignal = e.banSignal
     ? e.banSignal
     : await banSignalOf(detectInstagramBanSignals, s, 'after the failure');
-  console.log(`[ban-signal] ${banSignal?.signal}  FAIL: ${e.message}`);
-  if (banSignal) {
-    try {
-      persistBanSignal(banSignal);
-    } catch (writeError) {
-      throw new AggregateError(
-        [e, writeError],
-        `${e.message}; and its ban signal was not written: ${writeError.message}`,
-      );
-    }
+  console.log(`[ban-signal] ${banSignal.signal}  FAIL: ${e.message}`);
+  try {
+    persistBanSignal(banSignal);
+  } catch (writeError) {
+    throw new AggregateError(
+      [e, writeError],
+      `${e.message}; and its ban signal was not written: ${writeError.message}`,
+    );
   }
   throw e;
 } finally {

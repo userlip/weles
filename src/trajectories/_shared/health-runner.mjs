@@ -33,7 +33,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 import { submitWelesRun } from '../../../dist/worker/run-submit/index.js';
-import { banSignalOf } from './auth/ban-signal.mjs';
+import { banSignalOf, HEALTH_UNREAD } from './auth/ban-signal.mjs';
 import { navigationRefusal } from './page/navigation/refused.mjs';
 import { HTTP_OK } from '../../worker/weles-api-server/routes/http-status.mjs';
 
@@ -154,7 +154,10 @@ export async function runHealthProbe(cfg) {
 
   let signal;
   if (extracted.is_suspended) signal = 'suspended';
-  else if (detected && !detected.healthy) signal = detected.signal;
+  // A detector that could not read the page decides nothing; the read's own
+  // record keeps why.
+  else if (detected && !detected.healthy && detected.signal !== HEALTH_UNREAD)
+    signal = detected.signal;
   else if (shadowbanned) signal = 'shadowbanned';
   else if (extracted.ok || detected?.healthy) signal = 'healthy';
   else if (loggedIn.refusal && loggedIn.refusal !== 'reached')

@@ -11,14 +11,14 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { markCookiesStale } from '../../../../dist/utils/credentials.js';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
-import { banSignalOf } from '../auth/ban-signal.mjs';
+import { banSignalOf, HEALTH_UNREAD } from '../auth/ban-signal.mjs';
 
 const INDENT = '  ';
 
 /** The verdict once the action returned `resultValue`. */
 export async function verdictAfterAction(s, cfg, resultValue) {
   const banSignal = await banSignalOf(cfg.banDetector, s, 'after the action');
-  if (!banSignal?.healthy) return banSignal;
+  if (!banSignal.healthy) return banSignal;
   const { verifyWriteAction } = await import(
     '../../../../dist/platforms/_shared/write_verify.js'
   );
@@ -42,17 +42,22 @@ export async function verdictAfterAction(s, cfg, resultValue) {
 /**
  * The verdict of a run that failed with `error`: a signal already read
  * before the failure, the one the error carries, the detector's reading of
- * the page, or, when none of those exists, the failure itself.
+ * the page, or, when the detector could not read it, the failure itself with
+ * the unread health beside it.
  */
 export async function verdictAfterFailure(s, cfg, error, known) {
   if (known) return known;
   if (error.banSignal) return error.banSignal;
   const detected = await banSignalOf(cfg.banDetector, s, 'after the failure');
-  if (detected) return detected;
+  if (detected.signal !== HEALTH_UNREAD) return detected;
   return {
     signal: 'action_failed',
     healthy: false,
-    details: { final_url: s.page.url(), reason: error.message },
+    details: {
+      final_url: s.page.url(),
+      reason: error.message,
+      health: detected.details,
+    },
   };
 }
 

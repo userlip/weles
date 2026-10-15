@@ -5,8 +5,9 @@
  * The origin and the dwell budget are declaration content: admission resolved
  * reddit.browse and its {subreddit} before this process existed, so nothing
  * here names a URL or a scroll count. Uses the account's stored persona +
- * proxy via resolveAccountSession. Ban-detector at session close writes
- * ban_signal.json into recordings/reddit_browse/ for worker pool.
+ * proxy via resolveAccountSession. The account's verdict after the browse is
+ * read through the shared ban-signal reader and kept in the run's
+ * ban_signal.json by the shared verdict writer (`../../../_shared/action`).
  */
 import {
   getSocialAccount,
@@ -15,78 +16,63 @@ import {
 import { WSession } from '../../../../../dist/session/wsession.js';
 import { detectRedditBanSignals } from '../../../../../dist/platforms/reddit/ban_signals.js';
 import { banSignalOf } from '../../../_shared/auth/ban-signal.mjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   humanIdlePause,
   humanScrollPage,
 } from '../../../../../dist/human/mouse.js';
-import { runRecordingsDir } from '../../../../../dist/session/run-recordings.js';
 import { declaredObservation } from '../../../_shared/observation.mjs';
+import { keepVerdict } from '../../../_shared/action/verdict.mjs';
 
+const LABEL = 'reddit_browse';
 const observed = declaredObservation();
 
 const acct = await getSocialAccount('reddit');
-if (!acct) {
-  console.log('FAIL: no active reddit account');
-  process.exit(1);
-}
+if (!acct) throw new Error('no active reddit account to browse with');
 console.log(`[browse] acct=${acct.username} origin=${observed.origin}`);
 
+const run = {
+  observation: observed.observation,
+  origin: observed.origin,
+  reads: observed.reads,
+};
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({
-  label: 'reddit_browse',
+  label: LABEL,
   proxy: proxyUrl,
   persona,
 });
-let banSignal = null;
 try {
   await s.goto(observed.origin);
   // Idle scroll: simulate skimming the feed without clicking anything, for
   // exactly as long as the declared dwell budget allows.
-  for (let i = 0; i < observed.scrolls; i++) {
+  for (const step of Array(observed.scrolls).keys()) {
     await humanScrollPage(s.page, 'down');
     await humanIdlePause(observed.dwellMs);
+    console.log(`[browse] scrolled after ${step} earlier scrolls`);
   }
-  banSignal = await detectRedditBanSignals(s.page, s.capturedResponses).catch(
-    (e) => ({
-      healthy: false,
-      signal: 'unknown_error',
-      details: { detector_error: e.message },
-    }),
-  );
+  const banSignal = await banSignalOf(detectRedditBanSignals, s, 'after browsing');
   console.log(`[ban-signal] ${banSignal.signal}`);
+  if (!banSignal.healthy)
+    throw Object.assign(
+      new Error(`the page reads ${banSignal.signal} after browsing`),
+      { banSignal },
+    );
+  await keepVerdict(LABEL, acct, banSignal, run);
   console.log(`PASS: scrolled ${observed.scrolls}x on ${observed.origin}`);
 } catch (e) {
-  banSignal = await banSignalOf(detectRedditBanSignals, s, 'after the failure');
-  if (banSignal) console.log(`[ban-signal] ${banSignal.signal}`);
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
-} finally {
-  if (banSignal) {
-    try {
-      const dir = runRecordingsDir('reddit_browse');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'ban_signal.json'),
-        JSON.stringify(
-          {
-            account_id: acct.id,
-            username: acct.username,
-            action: 'reddit_browse',
-            observation: observed.observation,
-            origin: observed.origin,
-            reads: observed.reads,
-            ...banSignal,
-            ts: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
-      );
-    } catch (e) {
-      console.log('[ban-signal] persist err:', e.message);
-    }
+  const banSignal = e.banSignal
+    ? e.banSignal
+    : await banSignalOf(detectRedditBanSignals, s, 'after the failure');
+  console.log(`[ban-signal] ${banSignal.signal}  FAIL: ${e.message}`);
+  try {
+    await keepVerdict(LABEL, acct, banSignal, run);
+  } catch (writeError) {
+    throw new AggregateError(
+      [e, writeError],
+      `${e.message}; and its ban signal was not kept: ${writeError.message}`,
+    );
   }
+  throw e;
+} finally {
   await s.close();
 }
