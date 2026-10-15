@@ -1,17 +1,13 @@
 /**
  * What a caller asks WSession for, and how that request is named on disk and
  * in the run log: the option shape every trajectory passes to WSession.start,
- * the redaction used when the request is logged, the country hint read out of
- * a pool-style proxy request, and the per-account browser-profile directory
- * the request resolves to.
- *
- * Extracted verbatim from wsession.ts (WSessionOptions, redactProxyForLog,
- * countryHintFromProxyRequest, WSession.automaticUserDataDir) so the class
- * file stays under its 300-line cap. WSessionOptions is re-exported by name
- * from ../wsession.ts, so its import path is unchanged for every consumer.
+ * the redaction used when the request is logged, the country a pool-style
+ * proxy request names, and the per-account browser-profile directory the
+ * request resolves to. WSessionOptions is re-exported by name from
+ * ../wsession.ts, so its import path is the same for every consumer.
  */
 
-import { mkdirSync, chmodSync } from 'node:fs';
+import { chmodSync, constants, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { userInfo } from 'node:os';
@@ -41,57 +37,44 @@ export interface WSessionOptions {
   platform?: string;
 }
 
+/** A browser profile is the owner's alone. */
+const OWNER_ONLY = constants.S_IRWXU;
+
+/**
+ * The proxy as the run log shows it: a proxy URL with its password masked
+ * (the username is logged whole, as the object form logs it), a pool request
+ * ("residential oxylabs us") as written, since it carries no secret, and a
+ * proxy setting with its password masked.
+ */
 export function redactProxyForLog(proxy: unknown): string {
-  if (!proxy) return 'undefined';
+  if (!proxy) return 'no proxy';
   if (typeof proxy === 'string') {
-    try {
-      const u = new URL(proxy);
-      // The username is logged whole, as the object form below logs it; only
-      // the password is a secret.
-      if (u.password) u.password = '***';
-      return u.toString();
-    } catch {
-      return '[proxy]';
-    }
+    if (!URL.canParse(proxy)) return proxy;
+    const u = new URL(proxy);
+    if (u.password) u.password = '***';
+    return u.toString();
   }
   if (typeof proxy === 'object') {
-    const p = proxy as {
-      server?: string;
-      username?: string;
-      password?: string;
-    };
-    return JSON.stringify({
-      server: p.server,
-      username: p.username,
-      password: p.password ? '***' : undefined,
-    });
+    const p = proxy as { server?: string; username?: string; password?: string };
+    return JSON.stringify({ server: p.server, username: p.username, password: p.password ? '***' : undefined });
   }
   return String(proxy);
 }
 
-export function countryHintFromProxyRequest(
-  proxy: unknown,
-): string | undefined {
-  if (
-    typeof proxy !== 'string' ||
-    proxy.startsWith('http') ||
-    proxy.startsWith('socks')
-  )
-    return undefined;
-  const countryTokens = new Set([
-    'us',
-    'uk',
-    'gb',
-    'br',
-    'de',
-    'fr',
-    'nl',
-    'ca',
-    'au',
-  ]);
-  const tokens = proxy.toLowerCase().match(/\b[a-z]{2}\b/g) ?? [];
-  const cc = tokens.find((t) => countryTokens.has(t));
-  return cc?.toUpperCase();
+// The country a pool-style proxy request names, read by the proxy module's
+// one pool-request parser; the session asks for it when it dresses a persona.
+export { countryHintFromProxyRequest } from '../../proxy/sources/pool_request.js';
+
+/** The platform an account's browser profiles are filed under: the request's, else the action's first word, else the target host. */
+function profilePlatform(opts: WSessionOptions): string {
+  const action = process.env.ACTION?.trim();
+  const [actionPlatform] = action ? action.split('_') : [];
+  const named = [opts.platform?.trim(), actionPlatform, opts.targetHost?.trim()].find(Boolean);
+  if (!named)
+    throw new Error(
+      'ACCOUNT_PROFILE_PLATFORM_UNNAMED: an account session needs its platform (WSession.start platform, the ACTION it runs, or targetHost) to file its browser profile under',
+    );
+  return named;
 }
 
 /**
@@ -99,39 +82,27 @@ export function countryHintFromProxyRequest(
  * keyed by a hash of ACCOUNT_ID under <platform>/<browser>. Undefined when the
  * run has no ACCOUNT_ID, which is how a session gets an ephemeral profile.
  */
-export function accountProfileDirectory(
-  opts: WSessionOptions,
-  browser: string,
-): string | undefined {
+export function accountProfileDirectory(opts: WSessionOptions, browser: string): string | undefined {
   const accountId = process.env.ACCOUNT_ID?.trim();
   if (!accountId) return undefined;
-  const action = process.env.ACTION?.trim() ?? '';
-  const inferredPlatform =
-    opts.platform?.trim() ||
-    action.split('_').at(0)?.trim() ||
-    opts.targetHost?.trim() ||
-    'unknown';
-  const safePlatform = inferredPlatform.toLowerCase().replace(/[^\w.-]+/g, '-');
+  const safePlatform = profilePlatform(opts).toLowerCase().replace(/[^\w.-]+/g, '-');
   const safeBrowser = browser.toLowerCase().replace(/[^\w.-]+/g, '-');
   const accountKey = createHash('sha256').update(accountId).digest('hex');
-  const root =
-    process.env.WELES_BROWSER_PROFILE_ROOT?.trim() ||
-    join(userInfo().homedir, '.local', 'state', 'weles', 'browser-profiles');
+  const declaredRoot = process.env.WELES_BROWSER_PROFILE_ROOT?.trim();
+  const root = declaredRoot ? declaredRoot : join(userInfo().homedir, '.local', 'state', 'weles', 'browser-profiles');
   const parent = join(root, safePlatform, safeBrowser);
   const directory = join(parent, accountKey);
-  mkdirSync(parent, { recursive: true, mode: 0o700 });
+  mkdirSync(parent, { recursive: true, mode: OWNER_ONLY });
   if (process.env.WELES_FRESH_PROFILE === '1') {
     try {
-      mkdirSync(directory, { mode: 0o700 });
+      mkdirSync(directory, { mode: OWNER_ONLY });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-        throw new Error('fresh browser profile directory already exists');
-      }
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('fresh browser profile directory already exists');
       throw error;
     }
   } else {
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    mkdirSync(directory, { recursive: true, mode: OWNER_ONLY });
   }
-  chmodSync(directory, 0o700);
+  chmodSync(directory, OWNER_ONLY);
   return directory;
 }

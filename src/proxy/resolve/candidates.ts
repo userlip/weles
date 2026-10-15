@@ -1,18 +1,15 @@
 // Which provider rows a proxy request is tried against, in what order: the
 // Skarbiec proxy records plus the static ISP rows, narrowed by the pool type
-// and provider the request names, shuffled unless static. A row's provider
-// is derived from its endpoint and its pool type is what the row declares
-// (`proxy_type` in its Skarbiec context); a row that declares no pool type
-// cannot answer a typed request and is returned under `undeclared` so the
-// resolver reports it instead of guessing.
+// and provider the request names (../sources/pool_request.ts), shuffled
+// unless static. A row's provider is derived from its endpoint and its pool
+// type is what the row declares (`proxy_type` in its Skarbiec context); a row
+// that declares no pool type cannot answer a typed request and is returned
+// under `undeclared` so the resolver reports it instead of guessing.
 import type { WelesServiceSecret } from '../../secrets/scoped-service.js';
 import { listServiceMetadata } from '../../state/skarbiec-records.js';
-import { ALL_PROVIDERS } from '../capability.js';
 import { providerFromHost } from '../policy.js';
-import {
-  proxyTypeOf,
-  type ProxyType,
-} from '../sources/provider_credentials.js';
+import { poolRequest } from '../sources/pool_request.js';
+import { proxyTypeOf, type ProxyType } from '../sources/provider_credentials.js';
 
 export type ProviderRow = {
   display_name: string;
@@ -21,20 +18,28 @@ export type ProviderRow = {
   provider?: string;
   proxy_type?: ProxyType;
   secret_service?: WelesServiceSecret;
-  balance_usd: number;
+  // The balance the row's record states; absent when it states none.
+  balance_usd?: number;
   metadata?: { country?: string };
 };
 
 export type ProviderCandidates = {
   candidates: ProviderRow[];
   undeclared: ProviderRow[];
+  // 'unknown' when the request names no pool type: every row is tried.
   proxyType: ProxyType | 'unknown';
   ccOverride: string | undefined;
 };
 
-export async function providerCandidates(
-  proxy: string,
-): Promise<ProviderCandidates> {
+/** The rows in a random order, each order equally likely. */
+function shuffled(rows: ProviderRow[]): ProviderRow[] {
+  return rows
+    .map((row) => ({ row, key: Math.random() }))
+    .sort((left, right) => left.key - right.key)
+    .map(({ row }) => row);
+}
+
+export async function providerCandidates(proxy: string): Promise<ProviderCandidates> {
   const providers: ProviderRow[] = listServiceMetadata('proxy')
     .filter((record) => record.host && record.port)
     .map(
@@ -42,64 +47,30 @@ export async function providerCandidates(
         display_name: String(record.display_name ?? record.id),
         proxy_host: String(record.host),
         proxy_port: String(record.port),
-        provider:
-          typeof record.provider === 'string'
-            ? record.provider
-            : providerFromHost(String(record.host)),
+        provider: typeof record.provider === 'string' ? record.provider : providerFromHost(String(record.host)),
         proxy_type: proxyTypeOf(record.proxy_type),
-        balance_usd:
-          typeof record.balance_usd === 'number' ? record.balance_usd : 0,
+        ...(typeof record.balance_usd === 'number' ? { balance_usd: record.balance_usd } : {}),
         metadata:
-          record.metadata && typeof record.metadata === 'object'
-            ? (record.metadata as { country?: string })
-            : undefined,
+          record.metadata && typeof record.metadata === 'object' ? (record.metadata as { country?: string }) : undefined,
       }),
     );
-  // Decodo first — canonical static ISP (real residential ASNs). Skip-shuffle
-  // branch below keeps this order deterministic for isp requests.
-  const {
-    maybeOxylabsIspRow,
-    maybeOxylabsDedicatedIspRow,
-    maybeDecodoIspRows,
-  } = await import('../sources/isp_row.js');
-  for (const r of [
-    ...maybeDecodoIspRows(),
-    maybeOxylabsIspRow(),
-    maybeOxylabsDedicatedIspRow(),
-  ])
-    if (r) providers.push(r);
+  // Decodo first — canonical static ISP (real residential ASNs). The ISP
+  // branch below keeps this order deterministic.
+  const { maybeOxylabsIspRow, maybeOxylabsDedicatedIspRow, maybeDecodoIspRows } = await import('../sources/isp_row.js');
+  for (const r of [...maybeDecodoIspRows(), maybeOxylabsIspRow(), maybeOxylabsDedicatedIspRow()]) if (r) providers.push(r);
 
-  const request = proxy.toLowerCase();
-  // Tokens after the pool type may include a 2-letter country code
-  // ('residential us', 'residential br') to override the row's stored country.
-  // `\b([a-z]{2})\b` already yields two-letter tokens only, so the country
-  // code is the first of them.
-  const ccOverride = (request.match(/\b([a-z]{2})\b/g) ?? [])[0];
-  const proxyType: ProxyType | 'unknown' = /\bisp\b/.test(request)
-    ? 'isp'
-    : /\bmobile\b/.test(request)
-      ? 'mobile'
-      : /\bresidential\b/.test(request)
-        ? 'residential'
-        : 'unknown';
-  const undeclared =
-    proxyType === 'unknown' ? [] : providers.filter((p) => !p.proxy_type);
-  let filtered =
-    proxyType === 'unknown'
-      ? providers
-      : providers.filter((p) => p.proxy_type === proxyType);
-
+  // The request's country overrides the row's stored country
+  // ('residential us', 'residential br').
+  const request = poolRequest(proxy);
+  const proxyType = request.proxyType ? request.proxyType : 'unknown';
+  const undeclared = request.proxyType ? providers.filter((p) => !p.proxy_type) : [];
+  const typed = request.proxyType ? providers.filter((p) => p.proxy_type === request.proxyType) : providers;
   // Explicit provider targeting, e.g. 'pingproxies residential': the names
   // are the ones `proxy/capability.ts` declares, matched against the
   // provider the row's endpoint derives.
-  const explicit = ALL_PROVIDERS.find((name) => request.includes(name));
-  if (explicit) filtered = filtered.filter((p) => p.provider === explicit);
-
-  // Shuffle residential/mobile (per-pool rate limits). ISP stays deterministic.
-  if (proxyType !== 'isp')
-    for (let i = filtered.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [filtered[i], filtered[j]] = [filtered[j], filtered[i]];
-    }
-  return { candidates: filtered, undeclared, proxyType, ccOverride };
+  const filtered = request.provider ? typed.filter((p) => p.provider === request.provider) : typed;
+  // Residential and mobile pools are shuffled (per-pool rate limits); ISP rows stay in order.
+  const ordered = proxyType === 'isp' ? filtered : shuffled(filtered);
+  const ccOverride = request.country ? request.country.toLowerCase() : undefined;
+  return { candidates: ordered, undeclared, proxyType, ccOverride };
 }
