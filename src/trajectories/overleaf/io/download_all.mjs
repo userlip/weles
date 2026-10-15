@@ -1,131 +1,55 @@
-// overleaf/io/download_all.mjs — inventory + source download for EVERY Overleaf
-// project, reusing pull_github.mjs's PROVEN Google-SSO + dashboard scaffold.
-// After auth it scrapes the dashboard for all {id,title} then downloads each
-// project's source via the authenticated zip endpoint
-// (/project/<id>/download/zip) using the context request (shares cookies),
-// saving to $OVERLEAF_SOURCES_DIR/<id>.zip. Prints a JSON line per project so the
-// caller gets the full id->title map for reconciliation against GitHub repos.
+// Inventory and source download for every Overleaf project: Overleaf opened
+// signed in (_shared/services/overleaf_google_sign_in.mjs), every dashboard
+// project read (session/projects.mjs), and each project's source fetched
+// through the zip endpoint Overleaf's own download menu uses, with the
+// session's cookies, into OVERLEAF_SOURCES_DIR/<id>.zip. A JSON line per
+// project gives the caller the id->title map; an index of every project and
+// its outcome is written beside the zips. A download Overleaf refuses fails
+// the run after every project was attempted.
 //
 // Usage: node src/trajectories/overleaf/io/download_all.mjs
-// Env: HEADLESS=1 headless (default visible).
-// Exit: 0 all projects attempted; 1 no creds / SSO failed; 2 a UI step failed.
-
-import { WSession } from '../../../../dist/session/wsession.js';
-import { getGoogleSsoCreds } from '../../_shared/services/google_sso.mjs';
-import { overleafGoogleSignIn } from '../../_shared/services/overleaf_google_sign_in.mjs';
-import { humanIdlePause } from '../../../../dist/human/mouse.js';
+// Env: OVERLEAF_SOURCES_DIR (required), HEADLESS=1 headless.
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { join } from 'node:path';
+import { exitStatusFor } from '../../../../dist/cli/usage.js';
+import { statedText } from '../../_shared/inputs/stated.mjs';
+import { openOverleaf } from '../../_shared/services/overleaf_google_sign_in.mjs';
+import { overleafEvidence } from '../session/evidence.mjs';
+import { dashboardProjects } from '../session/projects.mjs';
 
+const INDENT = '  ';
 // Sources land where the caller says; nothing under one person's home is assumed.
-const OUT_DIR = process.env.OVERLEAF_SOURCES_DIR;
-if (!OUT_DIR) {
-  console.error(
-    'FAIL: OVERLEAF_SOURCES_DIR env var required: the directory the project zips are written to',
-  );
-  process.exit(1);
-}
-const SHOT_DIR = runRecordingsDir('overleaf_download_all');
+const OUT_DIR = statedText(['OVERLEAF_SOURCES_DIR'], 'the directory the project zips are written to');
 mkdirSync(OUT_DIR, { recursive: true });
-let shotN = 0;
-async function shot(s, tag) {
-  shotN += 1;
-  const p = `${SHOT_DIR}/${String(shotN).padStart(2, '0')}_${tag}.html`;
-  const html = await s.page.content();
-  writeFileSync(p, html);
-  console.log(`[download_all] [${tag}] DOM ${p} (${html.length}b)`);
-  return p;
-}
-async function dieUI(s, tag, msg) {
-  console.error(`\n[download_all] STEP FAILED: ${tag} — ${msg}`);
-  const p = await shot(s, `fail_${tag}`);
-  console.error(`[download_all] FAIL (exit 2). Inspect ${p} — do not guess.`);
-  await s.close();
-  process.exit(2);
-}
+const evidence = overleafEvidence('overleaf_download_all');
 
-const login = await getGoogleSsoCreds();
-if (!login) {
-  console.error('FAIL: getGoogleSsoCreds() returned null.');
-  process.exit(1);
-}
-console.log(`[download_all] Google creds loaded for ${login.email}`);
-
-const s = await WSession.start({
-  label: 'download_all',
-  browser: 'chromium',
-  headful: process.env.HEADLESS !== '1',
-});
-
+const { s } = await openOverleaf({ label: 'overleaf_download_all' });
 try {
-  await overleafGoogleSignIn(s, login, { label: 'download_all' });
-
-  if (!/\/project(\?|$|\/)/.test(s.page.url())) {
-    await s.goto('https://www.overleaf.com/project');
-  }
-  await humanIdlePause('short');
-  await shot(s, 'dashboard');
-
-  const anchorSel = 'a[href*="/project/"]';
-  await s.page.locator(anchorSel).first().waitFor({ state: 'visible' });
-  const projects = await s.page.evaluate((sel) => {
-    const seen = new Map();
-    for (const a of Array.from(document.querySelectorAll(sel))) {
-      const href = a.getAttribute('href');
-      if (!href) continue;
-      const m = href.match(/\/project\/([0-9a-fA-F]{24})(?:[/?#]|$)/);
-      if (!m) continue;
-      const id = m[1];
-      const title = a.textContent.trim();
-      if (!seen.has(id) && title) seen.set(id, title);
-    }
-    return Array.from(seen.entries()).map(([id, title]) => ({ id, title }));
-  }, anchorSel);
+  await evidence.shot(s, 'dashboard');
+  const projects = await dashboardProjects(s.page);
   console.log(`[download_all] dashboard projects found: ${projects.length}`);
-
   const results = [];
-  for (const proj of projects) {
-    const url = `https://www.overleaf.com/project/${proj.id}/download/zip`;
-    let bytes = 0;
-    let ok = false;
-    try {
-      const resp = await s.ctx.request.get(url);
-      if (resp.ok()) {
-        const buf = await resp.body();
-        bytes = buf.length;
-        writeFileSync(`${OUT_DIR}/${proj.id}.zip`, buf);
-        ok = true;
-      } else {
-        console.error(
-          `[download_all] ${proj.id} download HTTP ${resp.status()}`,
-        );
-      }
-    } catch (e) {
-      console.error(
-        `[download_all] ${proj.id} download error: ${e && e.message ? e.message : e}`,
-      );
+  for (const project of projects) {
+    const answer = await s.ctx.request.get(`https://www.overleaf.com/project/${project.id}/download/zip`);
+    const result = { id: project.id, title: project.name, ok: answer.ok(), status: answer.status() };
+    if (result.ok) {
+      const zip = await answer.body();
+      writeFileSync(join(OUT_DIR, `${project.id}.zip`), zip);
+      result.bytes = zip.length;
     }
-    results.push({ ...proj, bytes, ok });
-    console.log(
-      `PROJECT ${JSON.stringify({ id: proj.id, title: proj.title, bytes, ok })}`,
-    );
+    results.push(result);
+    console.log(`PROJECT ${JSON.stringify(result)}`);
   }
-
-  writeFileSync(`${OUT_DIR}/_index.json`, JSON.stringify(results, null, 2));
-  const good = results.filter((r) => r.ok).length;
-  console.log(
-    `\n[download_all] OK — downloaded ${good}/${results.length} project sources into ${OUT_DIR}`,
-  );
-  console.log(`[download_all] index: ${OUT_DIR}/_index.json`);
+  writeFileSync(join(OUT_DIR, '_index.json'), JSON.stringify(results, null, INDENT));
+  const refused = results.filter((result) => !result.ok);
+  if (refused.length)
+    throw new Error(
+      `OVERLEAF_DOWNLOAD_REFUSED: ${refused.map((result) => `${result.id} answered HTTP ${result.status}`).join('; ')}; index ${join(OUT_DIR, '_index.json')}`,
+    );
+  console.log(`PASS: downloaded ${results.length} project sources into ${OUT_DIR}`);
+} catch (error) {
+  console.error(`FAIL: ${error.message}`);
+  process.exitCode = exitStatusFor(error);
+} finally {
   await s.close();
-  process.exit(0);
-} catch (err) {
-  console.error(
-    '[download_all] unhandled error:',
-    err && err.message ? err.message : err,
-  );
-  const dp = await shot(s, 'exception');
-  console.error(`[download_all] DOM dump: ${dp}`);
-  await s.close();
-  process.exit(2);
 }

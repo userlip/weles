@@ -1,232 +1,31 @@
-// overleaf/pull_github.mjs — FULLY AUTOMATED: pull GitHub changes into the
-// Overleaf project that is linked to a specific GitHub repo. No human
-// step, no keeper, no manual login, no guessing between same-named
-// projects — the GitHub integration itself is the disambiguator.
+// Pull GitHub changes into the Overleaf project linked to a GitHub
+// repository, through the shared sync run (github_sync/run.mjs): sign-in,
+// the choice between same-titled projects by their linked repository, and
+// the DOM evidence are the run's.
 //
-// It signs in through the automated Google SSO the other Overleaf
-// trajectories use, then for every project whose title matches PROJECT it
-// opens the GitHub sync panel and pulls ONLY on the one whose linked
-// repository is REPO_SLUG.
+// Usage: node src/trajectories/overleaf/pull_github.mjs <PROJECT> <REPO_SLUG>
+//   (or OVERLEAF_PROJECT / OVERLEAF_GITHUB_REPO); OVERLEAF_AUTH_LABEL names
+//   the kept Overleaf session; HEADLESS=1 runs headless.
 //
-// Usage:
-//   node src/trajectories/overleaf/pull_github.mjs <PROJECT> <REPO_SLUG>
-//   PROJECT   = 24-hex Overleaf project id OR a case-insensitive title
-//               substring (argv[2] / OVERLEAF_PROJECT).
-//   REPO_SLUG = owner/name of the GitHub repo the right project is synced
-//               to, e.g. lbartoszcze/largelanguagemodels (argv[3] /
-//               OVERLEAF_GITHUB_REPO). This is the disambiguator: the only
-//               project acted on is the one whose GitHub panel names this
-//               repo. A non-unique title is resolved by it, not guessed.
-//
-// Env: HEADLESS=1 headless (default visible — Google heuristics, as list_auto).
-//
-// Exit codes:
-//   0 success — pulled on the project linked to REPO_SLUG
-//   1 no creds / SSO did not complete / bad args / no title match
-//   2 a UI step failed, or NO matched project is linked to REPO_SLUG —
-//     DOM dumps beside the run's recordings show the exact state (no
-//     recovery shortcuts, nothing skipped)
+// A dialog waiting on a manual merge is continued; a dialog that says there
+// is nothing new to pull leaves the project as it is; otherwise the pull
+// runs, and counts once Overleaf answers it and reports no conflict.
+import { clickDescribed, pageShows } from '../_shared/page/judged/seen.mjs';
+import { REPO_SLUG } from './github_sync/target.mjs';
+import { runGithubSync, syncedBy } from './github_sync/run.mjs';
 
-import { WSession } from '../../../dist/session/wsession.js';
-import { SessionStore } from '../../../dist/session/store.js';
-import { getGoogleSsoCreds } from '../_shared/services/google_sso.mjs';
-import {
-  humanIdlePause,
-  humanClickLocator,
-} from '../../../dist/human/mouse.js';
-import { pageCondition } from '../_shared/page/settled.mjs';
-import {
-  IS_ID,
-  OVERLEAF_AUTH_LABEL,
-  REPO_LC,
-  REPO_SLUG,
-} from './pull_github/settings.mjs';
-import { captureOverleafAuth, dieUI, shot } from './pull_github/evidence.mjs';
-import { signInToOverleaf } from './pull_github/sign_in.mjs';
-import { openGithubPanel } from './pull_github/github_panel.mjs';
-import { resolveCandidates } from './pull_github/resolve.mjs';
-
-const login = await getGoogleSsoCreds();
-if (!login) {
-  console.error('FAIL: exact weles-google-sso-login grant unavailable.');
-  process.exit(1);
-}
-console.log(
-  `[pull_github] Google creds loaded for ${login.email}; target repo ${REPO_SLUG}`,
-);
-
-const s = await WSession.start({
-  label: 'pull_github',
-  browser: 'chromium',
-  headful: process.env.HEADLESS !== '1',
+await runGithubSync({
+  label: 'overleaf_pull_github',
+  act: async (s, project) => {
+    if (await pageShows(s.page, 'Does the GitHub sync dialog wait for confirmation that changes were merged manually?')) {
+      await syncedBy(s.page, 'manual-merge continuation', () =>
+        clickDescribed(s.page, 'the button confirming the changes were merged manually and continuing'),
+      );
+      return `continued the manual merge of ${REPO_SLUG} into ${project.id}`;
+    }
+    if (await pageShows(s.page, 'Does the GitHub sync dialog say there are no new GitHub commits since the last merge?'))
+      return `${REPO_SLUG} has nothing new for ${project.id}`;
+    await syncedBy(s.page, 'pull', () => clickDescribed(s.page, 'the button that pulls GitHub changes into Overleaf'));
+    return `pulled GitHub changes from ${REPO_SLUG} into ${project.id}`;
+  },
 });
-const sessionStore = new SessionStore();
-const injectedCookies = await sessionStore
-  .injectPlaywright(s.ctx, OVERLEAF_AUTH_LABEL)
-  .catch((e) => {
-    console.log(`[pull_github] auth-cookie inject failed: ${e.message}`);
-    return false;
-  });
-if (injectedCookies)
-  console.log(
-    `[pull_github] injected stored cookies for ${OVERLEAF_AUTH_LABEL}`,
-  );
-
-try {
-  await signInToOverleaf(s, sessionStore, login);
-  const candidates = await resolveCandidates(s);
-
-  // For each candidate, open its GitHub panel and act ONLY on the project
-  // whose linked repository is REPO_SLUG.
-  const report = [];
-  let pulled = false;
-  for (const c of candidates) {
-    const tag8 = c.id.slice(0, 8);
-    await s.goto(`https://www.overleaf.com/project/${c.id}`);
-    await humanIdlePause('deliberate');
-    if (!s.page.url().includes(`/project/${c.id}`)) {
-      report.push(`${c.id} (${c.name}): did not open (at ${s.page.url()})`);
-      continue;
-    }
-    await shot(s, `editor_${tag8}`);
-    const panelText = await openGithubPanel(s);
-    await shot(s, `github_${tag8}`);
-    const hasManualMergeContinue =
-      (await s.page
-        .getByRole('button', { name: /i have manually merged\.?\s*continue/i })
-        .filter({ visible: true })
-        .count()) > 0;
-    if (
-      panelText.toLowerCase().includes(REPO_LC) ||
-      (IS_ID && hasManualMergeContinue)
-    ) {
-      console.log(
-        `[pull_github] MATCH — project ${c.id} (${c.name}) is linked to ${REPO_SLUG}`,
-      );
-      const panelLow = panelText.toLowerCase();
-      const manualMergeBtn = s.page
-        .getByRole('button', { name: /i have manually merged\.?\s*continue/i })
-        .filter({ visible: true })
-        .first();
-      if ((await manualMergeBtn.count()) > 0) {
-        await humanClickLocator(s.page, manualMergeBtn);
-        await humanIdlePause('deliberate');
-        const outcome = await pageCondition(s.page, () => {
-          const low = (document.body?.innerText || '').toLowerCase();
-          if (
-            /merge conflict|could not be (?:automatically )?merged|failed to (?:pull|merge|sync)|merge failed|unable to merge/.test(
-              low,
-            )
-          )
-            return 'conflict';
-          if (
-            !/checking project status in github|importing and merging changes in github|i have manually merged/.test(
-              low,
-            )
-          )
-            return 'settled';
-          return false;
-        });
-        if (outcome === 'conflict') {
-          await dieUI(
-            s,
-            `merge_continue_conflict_${tag8}`,
-            `Overleaf still reports a conflict/error after manual-merge continue for ${REPO_SLUG} in ${c.id}`,
-          );
-        }
-        const fin = await shot(s, `after_merge_continue_${tag8}`);
-        console.log(
-          `\n[pull_github] OK — completed manual-merge continuation for ${REPO_SLUG} in ${c.id}.`,
-        );
-        console.log(`[pull_github] final URL: ${s.page.url()}`);
-        console.log(`[pull_github] post-continue DOM: ${fin}`);
-        await captureOverleafAuth(sessionStore, s, 'post-merge-continue');
-        pulled = true;
-        break;
-      }
-      if (
-        /no new commits in github since last merge|already up[ -]?to[ -]?date|up to date/.test(
-          panelLow,
-        )
-      ) {
-        const fin = await shot(s, `up_to_date_${tag8}`);
-        console.log(
-          `\n[pull_github] OK — ${REPO_SLUG} is already up to date in ${c.id}.`,
-        );
-        console.log(`[pull_github] final URL: ${s.page.url()}`);
-        console.log(`[pull_github] up-to-date DOM: ${fin}`);
-        await captureOverleafAuth(sessionStore, s, 'up-to-date');
-        pulled = true;
-        break;
-      }
-      const pullBtn = s.page
-        .getByRole('button', { name: /pull github changes/i })
-        .or(s.page.getByText(/pull github changes/i))
-        .filter({ visible: true })
-        .first();
-      await pullBtn.waitFor({ state: 'visible' });
-      await humanClickLocator(s.page, pullBtn);
-      await humanIdlePause('deliberate');
-      // Self-verify the pull. Overleaf performs the merge then settles on
-      // either a success/up-to-date state or surfaces a conflict/error.
-      // Wait until the page leaves the in-progress state; HARD FAIL on any
-      // conflict/error so success is never claimed silently.
-      const outcome = await pageCondition(s.page, () => {
-        const low = (document.body?.innerText || '').toLowerCase();
-        if (
-          /merge conflict|could not be (?:automatically )?merged|failed to (?:pull|merge|sync)|merge failed|unable to merge/.test(
-            low,
-          )
-        )
-          return 'conflict';
-        if (
-          !/checking project status in github|importing and merging changes in github/.test(
-            low,
-          )
-        )
-          return 'settled';
-        return false;
-      });
-      if (outcome === 'conflict') {
-        await dieUI(
-          s,
-          `pull_conflict_${tag8}`,
-          `Overleaf reported a conflict/error pulling ${REPO_SLUG} into ${c.id}`,
-        );
-      }
-      const fin = await shot(s, `after_pull_${tag8}`);
-      console.log(
-        `\n[pull_github] OK — pulled GitHub changes (${REPO_SLUG}) into ${c.id}; result settled with no conflict/error.`,
-      );
-      console.log(`[pull_github] final URL: ${s.page.url()}`);
-      console.log(`[pull_github] post-pull DOM: ${fin}`);
-      await captureOverleafAuth(sessionStore, s, 'post-pull');
-      pulled = true;
-      break;
-    }
-    report.push(`${c.id} (${c.name}): GitHub panel does not name ${REPO_SLUG}`);
-  }
-
-  if (!pulled) {
-    console.error(
-      '[pull_github] no matched project is linked to the target repo:',
-    );
-    for (const r of report) console.error(`  ${r}`);
-    await dieUI(
-      s,
-      'nolink',
-      `none of ${candidates.length} candidate(s) had GitHub link ${REPO_SLUG}`,
-    );
-  }
-  await s.close();
-  process.exit(0);
-} catch (err) {
-  console.error(
-    '[pull_github] unhandled error:',
-    err && err.message ? err.message : err,
-  );
-  const dp = await shot(s, 'exception');
-  console.error(`[pull_github] DOM dump (find the exact selector here): ${dp}`);
-  await s.close();
-  process.exit(2);
-}

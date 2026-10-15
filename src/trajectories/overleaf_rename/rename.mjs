@@ -1,145 +1,68 @@
-// overleaf_rename/rename.mjs — fully automated Overleaf project rename.
-// Reuses the proven Google-SSO scaffold (import_github.mjs). Logs in once, then
-// for each "<24hex projectId>=<new name>" arg: scrapes the current dashboard
-// name (substantiation), POSTs /project/<id>/rename with the page CSRF token,
-// and re-scrapes to verify. Renaming does NOT touch the GitHub sync link.
+// Rename Overleaf projects. For each "<projectId>=<new name>" argument the
+// dashboard name is read, the project is renamed through the endpoint
+// Overleaf's own rename dialog posts to (with the page's CSRF token), and the
+// dashboard is read again to verify. Renaming does not touch the GitHub sync
+// link. A rename that fails is reported with Overleaf's answer, and the run
+// fails when any did.
 //
-// Usage:
-//   WELES_NO_INSTRUMENT=1 WELES_DISABLE_RECORDING=1 \
-//   node src/trajectories/overleaf_rename/rename.mjs "<24hex>=New Name" [...]
+// Usage: node src/trajectories/overleaf_rename/rename.mjs "<projectId>=New Name" [...]
+import { exitStatusFor } from '../../../dist/cli/usage.js';
+import { openOverleaf } from '../_shared/services/overleaf_google_sign_in.mjs';
+import { pageSettled } from '../_shared/page/settled.mjs';
+import { dashboardProjects } from '../overleaf/session/projects.mjs';
 
-import { WSession } from '../../../dist/session/wsession.js';
-import { getGoogleSsoCreds } from '../_shared/services/google_sso.mjs';
-import { overleafGoogleSignIn } from '../_shared/services/overleaf_google_sign_in.mjs';
-
-const PAIRS = process.argv
-  .slice(2)
-  .map((a) => {
-    const i = a.indexOf('=');
-    if (i < 0) return null;
-    const id = a.slice(0, i).trim();
-    const name = a.slice(i + 1).trim();
-    if (!/^[0-9a-fA-F]{24}$/.test(id) || !name) return null;
-    return { id, name };
-  })
-  .filter(Boolean);
-if (PAIRS.length === 0) {
-  console.error('FAIL: need "<24hex>=New Name" args');
-  process.exit(1);
-}
-
-const login = await getGoogleSsoCreds();
-if (!login) {
-  console.error('FAIL: getGoogleSsoCreds() returned null');
-  process.exit(1);
-}
-console.log(`[rename] creds for ${login.email}; ${PAIRS.length} project(s)`);
-
-const s = await WSession.start({
-  label: 'overleaf_rename',
-  browser: 'chromium',
-  headful: process.env.HEADLESS !== '1',
+const [, , ...ARGS] = process.argv;
+const PAIRS = ARGS.map((arg) => {
+  const [id, ...name] = arg.split('=');
+  const wanted = name.join('=').trim();
+  if (!/^[\dA-Fa-f]+$/.test(id.trim()) || !wanted) throw new Error(`OVERLEAF_RENAME_ARGUMENT: "${arg}" is not <projectId>=<new name>`);
+  return { id: id.trim(), name: wanted };
 });
+if (!PAIRS.length) throw new Error('OVERLEAF_RENAME_ARGUMENT: name at least one "<projectId>=<new name>"');
 
-async function ensureLoggedIn() {
-  const signedIn = await overleafGoogleSignIn(s, login, { label: 'rename' });
-  if (!/\/project(\?|$|\/)/.test(signedIn.url))
-    await s.goto('https://www.overleaf.com/project');
+async function dashboardName(s, id) {
+  await s.goto('https://www.overleaf.com/project');
+  await pageSettled(s.page);
+  const project = (await dashboardProjects(s.page)).find((candidate) => candidate.id === id);
+  if (!project) throw new Error(`OVERLEAF_PROJECT_NOT_FOUND: the dashboard lists no project ${id}`);
+  return project.name;
 }
 
-async function currentName(id) {
-  if (!/\/project(\?|$|\/)/.test(s.page.url()))
-    await s.goto('https://www.overleaf.com/project');
-  await s.page
-    .locator('a[href*="/project/"]')
-    .first()
-    .waitFor({ state: 'visible' });
-  return s.page.evaluate((pid) => {
-    const a = document.querySelector(`a[href*="/project/${pid}"]`);
-    if (!a) return null;
-    const t = (a.textContent || '').trim();
-    return t === '' ? null : t;
-  }, id);
-}
-
-async function renameOne(id, newName) {
-  const before = await currentName(id);
-  console.log(`[rename] ${id} current name: ${JSON.stringify(before)}`);
-  const res = await s.page.evaluate(
-    async ({ pid, name }) => {
-      function csrf() {
-        if (typeof window.csrfToken === 'string' && window.csrfToken)
-          return window.csrfToken;
-        const m = document.querySelector(
-          'meta[name="ol-csrfToken"], meta[name="csrf-token"]',
-        );
-        return m ? m.getAttribute('content') : null;
-      }
-      const token = csrf();
-      if (!token)
-        return { ok: false, status: 0, err: 'no csrf token found on page' };
-      const r = await fetch(`/project/${pid}/rename`, {
+async function rename(s, { id, name }) {
+  const before = await dashboardName(s, id);
+  const answer = await s.page.evaluate(
+    async ({ projectId, newName }) => {
+      const meta = document.querySelector('meta[name="ol-csrfToken"]');
+      if (!meta) return { ok: false, status: null, text: 'the page carries no ol-csrfToken' };
+      const response = await fetch(`/project/${projectId}/rename`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': token,
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ newProjectName: name }),
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': meta.getAttribute('content'), Accept: 'application/json' },
+        body: JSON.stringify({ newProjectName: newName }),
         credentials: 'include',
       });
-      return {
-        ok: r.ok,
-        status: r.status,
-        err: r.ok ? null : await r.text().catch((e) => String(e)),
-      };
+      return { ok: response.ok, status: response.status, text: await response.text() };
     },
-    { pid: id, name: newName },
+    { projectId: id, newName: name },
   );
-  console.log(
-    `[rename] ${id} POST /rename -> ok=${res.ok} status=${res.status}${res.err ? ' err=' + String(res.err) : ''}`,
-  );
-  if (!res.ok)
-    throw new Error(
-      `rename POST failed status=${res.status} ${String(res.err)}`,
-    );
-  await s.goto('https://www.overleaf.com/project');
-  await humanIdlePause('short');
-  const after = await currentName(id);
-  console.log(`[rename] ${id} name after: ${JSON.stringify(after)}`);
-  if (after !== newName)
-    throw new Error(
-      `verify mismatch: expected ${JSON.stringify(newName)} got ${JSON.stringify(after)}`,
-    );
-  return { id, before, after };
+  if (!answer.ok) throw new Error(`OVERLEAF_RENAME_REFUSED: ${id} answered ${answer.status}: ${answer.text}`);
+  const after = await dashboardName(s, id);
+  if (after !== name) throw new Error(`OVERLEAF_RENAME_UNVERIFIED: ${id} is named ${JSON.stringify(after)} after the rename`);
+  return `${id}: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`;
 }
 
+const { s } = await openOverleaf({ label: 'overleaf_rename' });
 try {
-  await ensureLoggedIn();
-  const results = [];
-  for (const { id, name } of PAIRS) {
-    try {
-      const r = await renameOne(id, name);
-      results.push({ ...r, ok: true });
-      console.log(
-        `[rename] OK ${id}: ${JSON.stringify(r.before)} -> ${JSON.stringify(r.after)}`,
-      );
-    } catch (e) {
-      results.push({ id, ok: false, err: e?.message || String(e) });
-      console.error(`[rename] FAIL ${id}: ${e?.message || e}`);
-    }
-  }
-  console.log('\n[rename] ===== summary =====');
-  for (const r of results)
-    console.log(
-      r.ok ? `  OK   ${r.id} -> ${r.after}` : `  FAIL ${r.id}: ${r.err}`,
+  const failures = [];
+  for (const pair of PAIRS)
+    await rename(s, pair).then(
+      (done) => console.log(`[rename] OK ${done}`),
+      (error) => failures.push(error),
     );
-  const good = results.filter((r) => r.ok).length;
-  console.log(`[rename] done — ${good}/${results.length} renamed`);
+  if (failures.length) throw new AggregateError(failures, failures.map((error) => error.message).join('; '));
+  console.log(`PASS: ${PAIRS.length} project(s) renamed`);
+} catch (error) {
+  console.error(`FAIL: ${error.message}`);
+  process.exitCode = exitStatusFor(error);
+} finally {
   await s.close();
-  process.exit(good === results.length ? 0 : 2);
-} catch (e) {
-  console.error('[rename] fatal:', e?.message || e);
-  await s.close();
-  process.exit(2);
 }

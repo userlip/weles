@@ -217,12 +217,6 @@ export function applyAccountAndTaskAdmission(
       params.max_history_clicks ?? params.overleaf_history_max_clicks,
     );
     if (maxClicks !== undefined) env.OVERLEAF_HISTORY_MAX_CLICKS = maxClicks;
-    if (
-      params.persistent_profile === false ||
-      params.persistent_profile === '0'
-    )
-      env.WELES_OVERLEAF_PERSISTENT_PROFILE = '0';
-    else env.WELES_OVERLEAF_PERSISTENT_PROFILE = '1';
     env.HEADLESS =
       params.headless === false || params.headless === '0' ? '0' : '1';
   }
@@ -238,6 +232,8 @@ export function applyAccountAndTaskAdmission(
     if (typeof repo === 'string') env.OVERLEAF_GITHUB_REPO = repo;
     const message = params.commit_message ?? params.overleaf_commit_message;
     if (typeof message === 'string') env.OVERLEAF_COMMIT_MESSAGE = message;
+    const authLabel = params.auth_label ?? params.overleaf_auth_label;
+    if (typeof authLabel === 'string') env.OVERLEAF_AUTH_LABEL = authLabel;
     env.HEADLESS =
       params.headless === false || params.headless === '0' ? '0' : '1';
   }
