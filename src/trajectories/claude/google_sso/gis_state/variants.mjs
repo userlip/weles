@@ -3,6 +3,8 @@
 // Recognize only supported Google sign-in surfaces; preserve unknown states
 // in diagnostics rather than guessing. Ranking and naming share one contract.
 
+import { GOOGLE_ACCOUNTS_HOST } from '../../../_shared/profile/google_session.mjs';
+
 // Highest priority first. A live Google page always outranks the parent's
 // "Continue with Google" gate, because the parent still shows that gate while
 // the popup holds the account decision — exactly the pair of states a run
@@ -32,8 +34,9 @@ const GIS_VARIANT_PRIORITY = [
 // failure message names those same states — a diagnostic that disagrees with
 // the trajectory about them would be worse than no diagnostic.
 export function gisVariantRank(variant) {
-  const i = GIS_VARIANT_PRIORITY.indexOf(variant);
-  return i < 0 ? GIS_VARIANT_PRIORITY.length : i;
+  return GIS_VARIANT_PRIORITY.includes(variant)
+    ? GIS_VARIANT_PRIORITY.indexOf(variant)
+    : GIS_VARIANT_PRIORITY.length;
 }
 
 // Name the state the page is in. Every name here is either proven by a
@@ -55,7 +58,7 @@ function under(pathname, routes) {
 export function classifyGisState(st) {
   if (!st || !st.ok) return 'unknown';
   if (st.host === 'platform.claude.com') return 'code_page';
-  if (st.host === 'accounts.google.com') {
+  if (st.host === GOOGLE_ACCOUNTS_HOST) {
     if (under(st.pathname, ['/signin/rejected', 'deniedsigninrejected']))
       return 'google_rejected';
     if (st.accountRow) return 'google_account_chooser';
@@ -71,11 +74,11 @@ export function classifyGisState(st) {
     // this step does not drive — it is named in the failure instead of guessed.
     if (st.identifierField) return 'google_identifier';
     if (st.passwordField) return 'google_password';
-    // Account already chosen, Google asking to confirm it: the state a run
-    // sat in for 300s. It is /v3/signin/accountchooser with NO data-identifier
-    // row at all, the selected-account switcher, and a cancel/continue pair —
-    // the affirmative button is the whole action. The older scope screen
-    // (/signin/oauth, /o/oauth2) is the same decision, so both resolve here.
+    // Account already chosen, Google asking to confirm it: the account
+    // chooser route with no data-identifier row, the selected-account
+    // switcher, and a cancel/continue pair — the affirmative button is the
+    // whole action. The older scope screen (/signin/oauth, /o/oauth2) is the
+    // same decision, so both resolve here.
     if (st.googlePrimary) return 'google_confirm_continue';
     if (/\/signin\/(v2\/)?challenge/.test(st.pathname))
       return 'google_challenge';
@@ -94,11 +97,10 @@ export function classifyGisState(st) {
   // claude.ai's app shell before it renders: no control yet, only the
   // loading marker. Nothing to click; the page renders into a driven state.
   if (claudeHost(st.host) && st.appLoading) return 'claude_app_loading';
-  // Signed in, but claude.ai answered the CLI's authorize request with the app
-  // itself: a run ended on https://claude.ai/new titled "New chat -
-  // Claude" as the only live page, with no grant affordance and no gate. The
-  // session is exactly what the authorize URL needs, so this state is driven by
-  // re-issuing that URL here rather than waited out.
+  // Signed in, and claude.ai answered the CLI's authorize request with the
+  // app itself: no grant affordance and no gate. The session is exactly what
+  // the authorize URL needs, so this state is driven by re-issuing that URL
+  // rather than waited out.
   if (claudeHost(st.host) && !under(st.pathname, ['/login', '/oauth'])) {
     return 'claude_app_authenticated';
   }
