@@ -1,7 +1,10 @@
 // The ISP product page and the start of its checkout: Buy now, the stated IP
 // tier, and Buy random locations.
 import { writeFileSync } from 'node:fs';
-import { humanIdlePause } from '../../../../../dist/human/mouse.js';
+import {
+  humanClickLocator,
+  humanIdlePause,
+} from '../../../../../dist/human/mouse.js';
 import { OUT_DIR, shot, stamp } from './evidence.mjs';
 
 export async function openIspProduct(s) {
@@ -13,16 +16,14 @@ export async function openIspProduct(s) {
   console.log(`[trajectory] products url=${s.page.url()}`);
   await shot(s, 'products_overview');
 
-  // Dump page text so we know what's on screen and which selectors to try.
+  // The page text goes beside the screenshots, so the run's evidence says
+  // what the products page listed.
   const productsText = await s.page.evaluate(() => document.body.innerText);
   writeFileSync(`${OUT_DIR}/${stamp()}_products_text.txt`, productsText);
-  const hasISP = /ISP\s+(Proxies|Proxy)/i.test(productsText);
-  console.log(`[trajectory] products page mentions ISP: ${hasISP}`);
 
-  // Try the direct product URL — the topup.mjs uses /overview/MP and /overview/RP,
-  // so /overview/ISP is the most-likely shape. If 404, fall back to clicking
-  // an ISP card on /products.
-  let ispUrl = 'https://dashboard.oxylabs.io/en/overview/ISP';
+  // The ISP product's own overview, beside the /overview/MP and /overview/RP
+  // pages topup.mjs opens.
+  const ispUrl = 'https://dashboard.oxylabs.io/en/overview/ISP';
   await s.page.goto(ispUrl, { waitUntil: 'domcontentloaded' });
   await humanIdlePause('long');
   console.log(`[trajectory] /overview/ISP url=${s.page.url()}`);
@@ -42,11 +43,11 @@ export async function startCheckout(s, ipCount) {
     )
     .filter({ visible: true })
     .first();
-  if (!(await buyBtn.isVisible().catch(() => false))) {
+  if (!(await buyBtn.isVisible())) {
     await shot(s, 'no_buy_btn');
     throw new Error('no Buy-style button visible on /overview/ISP');
   }
-  await buyBtn.click({ force: true });
+  await humanClickLocator(s.page, buyBtn);
   await humanIdlePause('long');
   await shot(s, 'step1_choose_plan');
   console.log(`[trajectory] step1 url=${s.page.url()}`);
@@ -62,7 +63,7 @@ export async function startCheckout(s, ipCount) {
     await shot(s, 'no_stated_tier');
     throw new Error(`the ISP checkout offers no ${ipCount} IPs tier; nothing was bought`);
   }
-  await tier.click();
+  await humanClickLocator(s.page, tier);
   const tierSelected = await tier.evaluate((el) => {
     const radio = el.matches('[role="radio"]')
       ? el
@@ -85,13 +86,13 @@ export async function startCheckout(s, ipCount) {
     .locator('button:has-text("Buy random locations")')
     .filter({ visible: true })
     .first();
-  if (!(await buyRandomBtn.isVisible().catch(() => false))) {
+  if (!(await buyRandomBtn.isVisible())) {
     await shot(s, 'no_buy_random');
     throw new Error('"Buy random locations" button not visible on step 1');
   }
   await shot(s, 'before_buy_random');
   console.log('[trajectory] clicking "Buy random locations"…');
-  await buyRandomBtn.click({ force: true });
+  await humanClickLocator(s.page, buyRandomBtn);
   await humanIdlePause('long');
   await shot(s, 'after_buy_random');
   console.log(`[trajectory] after buy-random url=${s.page.url()}`);
