@@ -1,7 +1,9 @@
 /**
  * hCaptcha, plain or enterprise, through every solving service whose key
  * Weles holds, in order: AntiCaptcha, CapMonster, CapSolver. A proxied task
- * names the proxy by IP address, which the services require.
+ * names the proxy by IP address and port, which the services require; a
+ * proxy that names no port or does not resolve fails the solve with the host
+ * and cause, since no service could take it.
  */
 
 import { lookup } from 'node:dns/promises';
@@ -39,21 +41,20 @@ export async function solveHcaptchaToken(
   if (useProxy) {
     const u = new URL(options!.proxy!.server);
     if (!u.port) {
-      console.log(
-        `[captcha:solver] hCaptcha proxy ${u.hostname} names no port; the solving services need one`,
-      );
       markAllProvidersFailed('hcaptcha');
-      return null;
+      throw new Error(
+        `hCaptcha proxy ${u.hostname} names no port; the solving services need one`,
+      );
     }
     let ip: string;
     try {
       ({ address: ip } = await lookup(u.hostname));
     } catch (error) {
-      console.log(
-        `[captcha:solver] hCaptcha proxy ${u.hostname} did not resolve to an address the solving services accept: ${error instanceof Error ? error.message : String(error)}`,
-      );
       markAllProvidersFailed('hcaptcha');
-      return null;
+      throw new Error(
+        `hCaptcha proxy ${u.hostname} did not resolve to an address the solving services accept: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
     Object.assign(baseTask, {
       proxyType: u.protocol.replace(':', ''),
@@ -64,7 +65,7 @@ export async function solveHcaptchaToken(
     });
   }
   console.log(
-    `[captcha:solver] solveHcaptcha enterprise=${enterprise} proxy=${useProxy} addr=${baseTask.proxyAddress ?? 'none'} sitekey=${sitekey}`,
+    `[captcha:solver] solveHcaptcha enterprise=${enterprise} proxy=${useProxy ? `${baseTask.proxyAddress}:${baseTask.proxyPort}` : 'none'} sitekey=${sitekey}`,
   );
   // Try all services: anticaptcha → capmonster → capsolver
   if (creds.anticaptcha) {
