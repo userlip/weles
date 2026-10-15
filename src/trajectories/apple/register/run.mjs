@@ -16,7 +16,7 @@ import {
   humanClickLocator,
   humanIdlePause,
 } from '../../../../dist/human/mouse.js';
-import { statedProxy } from '../../_shared/inputs/stated.mjs';
+import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 import { phoneForField } from '../../_shared/inputs/phone.mjs';
 import { mailedCode } from '../../_shared/inputs/mailed_code.mjs';
 
@@ -75,14 +75,16 @@ async function fillCodeBoxes(boxes, code, refusal) {
         `no_signup_frame: the appleid.apple.com frame on ${s.page.url()} has no content`,
       );
 
-    // 1. Country (Apple defaults to GeoIP — pin US for predictable downstream).
-    // A select that refuses the value fails the run: an account registered in
-    // the GeoIP country, or with another birth date, is not the identity
-    // generated for it.
+    // 1. Country: the one the run states (APPLE_ID_COUNTRY, as Apple's
+    // country select values it), not the GeoIP default Apple preselects. A
+    // select that refuses the value fails the run: an account registered in
+    // another country is not the identity generated for it. The phone number
+    // is then rented in that same country (phoneForField reads the select).
     const country = frame
       .locator('select[name="countryCode"], select[id*="country" i]')
       .first();
-    if (await country.count()) await country.selectOption('US');
+    if (await country.count())
+      await country.selectOption(statedText(['APPLE_ID_COUNTRY'], 'the country the Apple ID is registered in, as Apple\'s country select values it'));
 
     // 2. First / Last name
     const firstIn = frame
