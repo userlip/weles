@@ -2,9 +2,10 @@
 //
 // Everything downstream — the objective sentences, the queued job payload, the
 // lifecycle gates — takes a SecretDefinition and asks it questions. This file
-// owns that shape and the single resolution from a caller's loose wording to
-// exactly one definition, so there is one answer to "which credential is this"
-// and not one per queueing path.
+// owns that shape and the single resolution from a request to exactly one
+// definition: by the managed item its credentialId names, by the secret it
+// states, or by the registered contract whose item is its credentialId. No
+// definition is guessed from words in a request.
 //
 // The three sources a definition can come from are separated below it: a managed
 // password lifecycle, the enumerated provider table, and a slug nobody
@@ -31,13 +32,7 @@ import {
   ENTRA_UPN,
   LOWER_UUID,
 } from './catalog/managed-password.js';
-import {
-  FIGMA_PERSONAL_ACCESS_TOKEN,
-  GITHUB_ADMIN_TOKEN,
-  SECRET_REGISTRY,
-  SEMANTIC_SCHOLAR,
-  SNAPCHAT_SNAP_KIT_API_TOKEN,
-} from './catalog/registered-providers.js';
+import { SECRET_REGISTRY } from './catalog/registered-providers.js';
 import { genericDefinition } from './catalog/unregistered-provider.js';
 
 export { ENTRA_ORIGIN, ENTRA_PROVIDER, ENTRA_UPN, LOWER_UUID };
@@ -66,55 +61,33 @@ export type SecretDefinition = {
   sourceOrigin?: string;
 };
 
-export function normalizeSecret(request: AcquireSecretRequest): string {
-  const credentialId = request.credentialId?.trim() ?? '';
+/**
+ * The credential a request names: the managed item its credentialId names, or
+ * the secret it states (lower case, words joined by underscores). A request
+ * that states neither names none here; definitionFor then resolves it by its
+ * credential item.
+ */
+export function normalizeSecret(request: AcquireSecretRequest): string | undefined {
+  const credentialId = request.credentialId?.trim();
   // Managed item identifiers are exact and case-sensitive. Only the deployment
   // declaration selects their lifecycle; an item's spelling does not.
-  if (isWelesManagedPasswordItem(credentialId)) return credentialId;
-  const explicit = request.secret
-    ?.trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_');
-  if (explicit) return explicit;
-  const goal = request.goal?.toLowerCase() ?? '';
-  if (
-    (goal.includes('semantic') && goal.includes('scholar')) ||
-    goal.includes('semanticscholar') ||
-    goal.includes('s2')
-  ) {
-    return SEMANTIC_SCHOLAR.secret;
-  }
-  if (
-    goal.includes('github') &&
-    (goal.includes('admin') || goal.includes('org') || goal.includes('token'))
-  ) {
-    return GITHUB_ADMIN_TOKEN.secret;
-  }
-  if (
-    goal.includes('figma') &&
-    (goal.includes('api') ||
-      goal.includes('token') ||
-      goal.includes('asset') ||
-      goal.includes('design'))
-  ) {
-    return FIGMA_PERSONAL_ACCESS_TOKEN.secret;
-  }
-  if (
-    goal.includes('snapchat') &&
-    (goal.includes('api') ||
-      goal.includes('token') ||
-      goal.includes('snap kit'))
-  ) {
-    return SNAPCHAT_SNAP_KIT_API_TOKEN.secret;
-  }
-  return '';
+  if (credentialId && isWelesManagedPasswordItem(credentialId)) return credentialId;
+  return request.secret?.trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+/** The registered provider definition a stated secret names, spelled with dots or underscores. */
+function registeredNamed(secret: string): SecretDefinition | undefined {
+  const registry = SECRET_REGISTRY as Readonly<Record<string, SecretDefinition>>;
+  if (Object.hasOwn(registry, secret)) return registry[secret];
+  const underscored = secret.replace(/\./g, '_');
+  return Object.hasOwn(registry, underscored) ? registry[underscored] : undefined;
 }
 
 export function definitionFor(
   request: AcquireSecretRequest,
 ): SecretDefinition | null {
   const normalized = normalizeSecret(request);
-  if (isWelesManagedPasswordItem(normalized)) {
+  if (normalized && isWelesManagedPasswordItem(normalized)) {
     return acquiredSecretContract(normalized)?.sourceOrigin === ENTRA_ORIGIN
       ? entraPasswordDefinition(normalized)
       : microsoftPasswordDefinition(normalized);
@@ -123,13 +96,10 @@ export function definitionFor(
   if (request.provider === 'microsoft' || request.provider === ENTRA_PROVIDER)
     return null;
   const registered = normalized
-    ? (SECRET_REGISTRY[normalized] ??
-      SECRET_REGISTRY[normalized.replace(/\./g, '_')] ??
-      null)
-    : (Object.values(SECRET_REGISTRY).find(
+    ? registeredNamed(normalized)
+    : Object.values(SECRET_REGISTRY).find(
         (definition) =>
-          acquiredSecretContract(definition.secret)?.item ===
-          request.credentialId,
-      ) ?? null);
-  return registered ?? genericDefinition(request);
+          acquiredSecretContract(definition.secret)?.item === request.credentialId,
+      );
+  return registered ? registered : genericDefinition(request);
 }

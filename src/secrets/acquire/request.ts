@@ -23,11 +23,12 @@ export type CredentialOperation =
   | 'reset';
 
 export type AcquireSecretRequest = {
-  operation?: CredentialOperation;
+  // The credential API admits a request only with its operation; nothing
+  // downstream supplies one.
+  operation: CredentialOperation;
   credentialId?: string;
   provider?: string;
   requestId?: string;
-  goal?: string;
   secret?: string;
   purpose?: string;
   dryRun?: boolean;

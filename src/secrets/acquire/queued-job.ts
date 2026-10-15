@@ -22,71 +22,85 @@ import type { AcquireSecretRequest } from './request.js';
 import { ENTRA_PROVIDER, type SecretDefinition } from './catalog.js';
 import { objectiveFor, purposeFor } from './queued-job/objective.js';
 
+// The bridge's word for a job that goes through no proxy.
+const NO_PROXY = 'none';
+
+function lowerCase(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return value.trim().toLowerCase();
+}
+
+/** One directory coordinate; a directory job without it cannot be built. */
+function coordinate(value: string | null | undefined, what: string): string {
+  const exact = lowerCase(value);
+  if (!exact) throw new Error(`an Entra directory job needs ${what}; the request carries none`);
+  return exact;
+}
+
+/**
+ * The origin the credential may be captured on: the one the Skarbiec contract
+ * pins for a registered item, else the signup origin declared for a generic
+ * one. A job with neither carries an empty origin, which the bridge refuses.
+ */
+function captureOrigin(contractOrigin: string | null, def: SecretDefinition): string {
+  if (contractOrigin) return contractOrigin;
+  if (def.sourceOrigin) return def.sourceOrigin;
+  return '';
+}
+
 export function paramsFor(
   def: SecretDefinition,
   request: AcquireSecretRequest,
 ): Record<string, unknown> {
-  const autoPromote = request.autoPromoteTrajectory !== false;
-  const accountEmail =
-    request.accountEmail?.trim().toLowerCase() ??
-    request.goal
-      ?.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
-      ?.toLowerCase() ??
-    '';
+  const accountEmail = lowerCase(request.accountEmail);
   const contract = acquiredSecretContract(def.secret);
   if (!contract)
     throw new Error(
       `missing exact Skarbiec acquisition contract for ${def.secret}`,
     );
+  const directory = def.provider === ENTRA_PROVIDER;
+  const [envVar] = def.envVars;
   return {
     url: def.formUrl,
     objective: objectiveFor(def, request, accountEmail),
     flow_name: def.flowName,
     execution_mode: 'keeper_first',
-    proxy: request.proxy ?? 'none',
-    headless: request.headless ?? def.headless,
-    auto_promote_trajectory: autoPromote,
+    proxy: request.proxy ? request.proxy : NO_PROXY,
+    headless: typeof request.headless === 'boolean' ? request.headless : def.headless,
+    auto_promote_trajectory: request.autoPromoteTrajectory !== false,
     constraints: {
       secret: def.secret,
-      operation: request.operation ?? 'acquire',
+      operation: request.operation,
       request_id: request.requestId,
       purpose: purposeFor(request, def),
-      account_email: accountEmail || undefined,
+      account_email: accountEmail,
       store_secret_target: def.storeSecretTarget,
       vault_item_id: contract.item,
       vault_field: contract.field,
       // A registered item pins its source origin in the Skarbiec contract. A
       // generic item has none to pin, so the declared signup origin travels with
       // the job and the worker checks the capture page against exactly it.
-      secret_source_origin: contract.sourceOrigin ?? def.sourceOrigin ?? '',
+      secret_source_origin: captureOrigin(contract.sourceOrigin, def),
       // For microsoft_entra the directory block below is the only source of the
       // identity, so the flat binding tenant stays empty for that provider.
-      tenant_id:
-        def.provider === ENTRA_PROVIDER
-          ? undefined
-          : (request.tenantId ?? undefined),
-      ...(def.provider === ENTRA_PROVIDER
+      tenant_id: directory || request.tenantId === null ? undefined : request.tenantId,
+      ...(directory
         ? {
             // The directory identity is the item's own write-once contract, not a
             // call argument: the trajectory reads it from exactly this block. The
             // Entra directory id here is not a Weles Skarbiec binding tenant, so
             // the scoped reader and writer stay on the untenanted host binding.
-            // Always these four keys: the block is a fixed-shape contract, so a
-            // request without coordinates emits empty strings that fail closed at
-            // the bridge rather than dropping keys JSON.stringify would erase.
             directory: {
               provider: ENTRA_PROVIDER,
-              tenant_id: request.tenantId?.trim().toLowerCase() ?? '',
-              principal_object_id:
-                request.principalObjectId?.trim().toLowerCase() ?? '',
-              account_upn: request.accountUpn?.trim().toLowerCase() ?? '',
+              tenant_id: coordinate(request.tenantId, 'its tenant id'),
+              principal_object_id: coordinate(request.principalObjectId, 'its principal object id'),
+              account_upn: coordinate(request.accountUpn, 'its account UPN'),
             },
             weles_tenant_id: null,
           }
         : {}),
       display_name: def.displayName,
-      env_var: def.envVars[0],
-      env_vars: def.envVars,
+      env_var: envVar,
       provider: def.provider,
       capabilities: def.capabilities,
       requested_scopes: def.requestedScopes,
@@ -103,11 +117,11 @@ export function queueAction(
   action: string,
   accountItem: string,
   params: Record<string, unknown>,
-  priority = 0,
+  priority?: number,
 ): Promise<string> {
   return submitWelesRun({
     action,
     accountItem,
-    params: { ...params, priority },
+    params: priority === undefined ? params : { ...params, priority },
   });
 }

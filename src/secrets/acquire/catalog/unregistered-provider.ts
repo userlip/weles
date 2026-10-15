@@ -21,12 +21,13 @@ import { ENTRA_PROVIDER } from './managed-password.js';
 import { SECRET_REGISTRY } from './registered-providers.js';
 
 // A provider nobody registered above is still acquirable. The shared credential
-// contract fixes the slug shape, the api_key field, and acquire as the only
-// operation; Skarbiec names the item (the slug, unless the caller passed an
-// explicit credential id). Everything else is the registered path unchanged: the
-// same scoped-writer gate, the same store_credential contract, the same
+// contract fixes the api_key field and acquire as the only operation; Skarbiec
+// names the item (the slug, unless the caller passed an explicit credential id)
+// and refuses a name it does not take. A slug is lower-case letters, digits and
+// inner hyphens. Everything else is the registered path unchanged: the same
+// scoped-writer gate, the same store_credential contract, the same
 // capture-origin check.
-const GENERIC_SLUG = /^[a-z\d](?:[a-z\d-]{1,38}[a-z\d])$/;
+const GENERIC_SLUG = /^[a-z\d](?:[a-z\d-]*[a-z\d])?$/;
 const GENERIC_FIELD = 'api_key';
 const GENERIC_FLOW = 'generic-provider-api-key-acquisition';
 // A slug names no site, so a request that declares no signup origin starts the
@@ -37,8 +38,9 @@ const GENERIC_DISCOVERY_ORIGIN = 'https://duckduckgo.com';
 export function genericDefinition(
   request: AcquireSecretRequest,
 ): SecretDefinition | null {
-  const provider = request.provider?.trim().toLowerCase() ?? '';
+  const provider = request.provider?.trim().toLowerCase();
   if (
+    !provider ||
     !GENERIC_SLUG.test(provider) ||
     provider === 'microsoft' ||
     provider === ENTRA_PROVIDER ||
@@ -58,7 +60,7 @@ export function genericDefinition(
   const contract = acquiredSecretContract(item);
   if (!contract || contract.item !== item || contract.field !== GENERIC_FIELD)
     return null;
-  const declaredOrigin = request.signupOrigin?.trim() ?? '';
+  const declaredOrigin = declaredOriginOf(request);
   const displayName = provider.replace(/-/g, ' ');
   return {
     secret: item,
@@ -72,7 +74,7 @@ export function genericDefinition(
     flowName: GENERIC_FLOW,
     endpoints: [`${displayName} API`],
     usageText: `We register one Wisent-owned account with ${displayName} and generate a single API key for programmatic access from our own services. The key is written straight into the encrypted Skarbiec item and never appears in task results, logs, or tool arguments.`,
-    dailyRequests: '100',
+    dailyRequests: "only the calls of one service's own programmatic use",
     requestedScopes: [],
     capabilities: ['account_signup', 'api_key_generation'],
     runtimeInstall: false,
@@ -81,4 +83,10 @@ export function genericDefinition(
     operations: ['acquire'],
     sourceOrigin: declaredOrigin,
   };
+}
+
+/** The signup origin the caller declared, as written; empty when it declared none. */
+function declaredOriginOf(request: AcquireSecretRequest): string {
+  if (typeof request.signupOrigin !== 'string') return '';
+  return request.signupOrigin.trim();
 }

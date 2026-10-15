@@ -82,7 +82,7 @@ export async function acquireSecret(
       message: `Credential ${def.secret} is not registered for provider ${request.provider}`,
     };
   }
-  const operation = request.operation ?? 'acquire';
+  const { operation } = request;
   if (def.operations && !def.operations.includes(operation)) {
     return {
       status: 'unsupported_operation',
@@ -125,7 +125,7 @@ export function buildSecretAcquisitionPlan(
       message: `Credential ${def.secret} is not registered for provider ${request.provider}`,
     };
   }
-  const operation = request.operation ?? 'acquire';
+  const { operation } = request;
   if (
     (def.operations && !def.operations.includes(operation)) ||
     (!def.operations && operation !== 'acquire')
@@ -143,16 +143,12 @@ export function buildSecretAcquisitionPlan(
   // the emitted directory block would carry empty identity fields. Refuse here
   // rather than hand back a plan the caller cannot act on.
   if (def.provider === ENTRA_PROVIDER) {
+    const exact = (pattern: RegExp, value: string | null | undefined) =>
+      typeof value === 'string' && pattern.test(value.trim().toLowerCase());
     const missing = [
-      ...(ENTRA_UPN.test(request.accountUpn?.trim().toLowerCase() ?? '')
-        ? []
-        : ['one exact account UPN']),
-      ...(LOWER_UUID.test(request.tenantId?.trim().toLowerCase() ?? '')
-        ? []
-        : ['one exact tenant id']),
-      ...(LOWER_UUID.test(request.principalObjectId?.trim().toLowerCase() ?? '')
-        ? []
-        : ['one exact principal object id']),
+      ...(exact(ENTRA_UPN, request.accountUpn) ? [] : ['one exact account UPN']),
+      ...(exact(LOWER_UUID, request.tenantId) ? [] : ['one exact tenant id']),
+      ...(exact(LOWER_UUID, request.principalObjectId) ? [] : ['one exact principal object id']),
     ];
     if (missing.length) {
       return {

@@ -17,22 +17,43 @@ import { acquiredSecretContract } from '../../scoped-service.js';
 import type { AcquireSecretRequest } from '../request.js';
 import { ENTRA_PROVIDER, type SecretDefinition } from '../catalog.js';
 
-export function purposeFor(
-  request: AcquireSecretRequest,
-  def: SecretDefinition,
-): string {
+/** The purpose the request states, else the definition's own. */
+export function purposeFor(request: AcquireSecretRequest, def: SecretDefinition): string {
   const purpose = request.purpose?.trim();
   if (purpose) return purpose;
-  const goal = request.goal?.toLowerCase() ?? '';
-  if (goal.includes('lem')) return 'lem';
   return def.defaultPurpose;
+}
+
+/** A value an objective names; the objective cannot be written without it. */
+function named(value: string | null | undefined, what: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`the objective needs ${what}; the request carries none`);
+  return value.trim().toLowerCase();
+}
+
+/** The sentence telling the worker which existing account to use, when the request names one. */
+function accountSentences(accountEmail: string | undefined, signIn: string): string[] {
+  if (!accountEmail) return [];
+  return [`Use the existing authenticated account ${accountEmail}. ${signIn}`];
+}
+
+/** Where a generic acquisition happens: the declared provider site, or the provider's own site to be found. */
+function originSentences(def: SecretDefinition): string[] {
+  if (def.sourceOrigin === undefined) return [];
+  if (def.sourceOrigin)
+    return [
+      `The provider site is exactly ${def.sourceOrigin}: complete the sign-up and the key generation there, and capture the credential on that origin only.`,
+    ];
+  return [
+    `No provider site was declared: from this discovery page find the official ${def.displayName} developer site, open the provider's own origin, and complete the sign-up and the key generation there.`,
+  ];
 }
 
 export function objectiveFor(
   def: SecretDefinition,
   request: AcquireSecretRequest,
-  accountEmail: string,
+  accountEmail: string | undefined,
 ): string {
+  const { operation } = request;
   const purpose = purposeFor(request, def);
   const contract = acquiredSecretContract(def.secret);
   if (!contract)
@@ -40,11 +61,10 @@ export function objectiveFor(
       `missing exact Skarbiec acquisition contract for ${def.secret}`,
     );
   if (def.provider === ENTRA_PROVIDER) {
-    const operation = request.operation ?? 'acquire';
-    const accountUpn = request.accountUpn?.trim().toLowerCase() ?? '';
+    const accountUpn = named(request.accountUpn, 'the Entra account UPN');
     return [
       `${operation} the Microsoft Entra directory password for the exact identity ${accountUpn}.`,
-      `Confirm that the authorized session claims carry tenant ${request.tenantId ?? ''} and principal object id ${request.principalObjectId ?? ''} before any password write and again after the fresh login.`,
+      `Confirm that the authorized session claims carry tenant ${named(request.tenantId, 'the Entra tenant id')} and principal object id ${named(request.principalObjectId, 'the Entra principal object id')} before any password write and again after the fresh login.`,
       operation === 'verify'
         ? 'Perform a fresh password authentication and rewrite the same managed value only after Entra accepts it.'
         : operation === 'adopt'
@@ -58,9 +78,8 @@ export function objectiveFor(
     ].join(' ');
   }
   if (def.provider === 'microsoft') {
-    const operation = request.operation ?? 'acquire';
     return [
-      `${operation} the password for the exact Microsoft account ${accountEmail}.`,
+      `${operation} the password for the exact Microsoft account ${named(accountEmail, 'the Microsoft account email')}.`,
       'Use only the queued account session and the exact Skarbiec credential contract.',
       operation === 'verify'
         ? 'Perform a fresh password authentication and rewrite the same managed value only after Microsoft accepts it.'
@@ -75,18 +94,17 @@ export function objectiveFor(
   if (def.provider === 'figma') {
     return [
       `Acquire ${def.displayName} for ${purpose}.`,
-      accountEmail
-        ? `Use the existing authenticated account ${accountEmail}. If sign-in is required, use only the configured Google SSO credential capability or saved browser session; never ask for or expose its password.`
-        : '',
+      ...accountSentences(
+        accountEmail,
+        'If sign-in is required, use only the configured Google SSO credential capability or saved browser session; never ask for or expose its password.',
+      ),
       'Open account Settings, select Security, and scroll to Personal access tokens.',
       'Create one token named "Wisent design-assets export" with the longest offered expiration.',
       `Grant exactly these read-only scopes and no write scope: ${def.requestedScopes.join(', ')}.`,
       `The token will access only these endpoints: ${def.endpoints.join(', ')}.`,
       `When the generated token is visible, call store_credential(target, 'api-key') on the token element. Never pass the token to done, logs, tool arguments, clipboard, or normal result data.`,
       `Finish only after store_credential confirms the exact encrypted Skarbiec item ${contract.item} field ${contract.field} write.`,
-    ]
-      .filter(Boolean)
-      .join(' ');
+    ].join(' ');
   }
   const fieldClass =
     contract.field === 'api_key'
@@ -94,26 +112,17 @@ export function objectiveFor(
       : contract.field === 'password'
         ? 'password'
         : 'token';
-  const accountInstruction = accountEmail
-    ? `Use the existing authenticated account ${accountEmail}. If sign-in is required, choose that account and use only the configured credential capability or saved browser session; never ask for or expose its password.`
-    : '';
-  const completionInstruction = `When the generated credential is visible, call store_credential(target, '${fieldClass}') on the credential element. Never pass the credential to done, logs, tool arguments, or normal result data. Finish only after store_credential confirms the exact encrypted Skarbiec item ${contract.item} field ${contract.field} write.`;
-  const mode =
-    'Submit the request after all required fields are filled. Use Weles-generated or invented applicant details for identity, affiliation, organization, role, website, country, and other registration profile fields; do not ask the user for personal or organization data. If CAPTCHA, reCAPTCHA, or Turnstile appears, call solve_captcha and continue after it reports success; only return needs_human_approval after solve_captcha reports failure or mailbox/key-delivery access cannot be completed.';
   return [
     `Acquire ${def.displayName} API access for ${purpose}.`,
-    accountInstruction,
-    def.sourceOrigin === undefined
-      ? ''
-      : def.sourceOrigin
-        ? `The provider site is exactly ${def.sourceOrigin}: complete the sign-up and the key generation there, and capture the credential on that origin only.`
-        : `No provider site was declared: from this discovery page find the official ${def.displayName} developer site, open the provider's own origin, and complete the sign-up and the key generation there.`,
+    ...accountSentences(
+      accountEmail,
+      'If sign-in is required, choose that account and use only the configured credential capability or saved browser session; never ask for or expose its password.',
+    ),
+    ...originSentences(def),
     `Use case: ${def.usageText}`,
     `Requested endpoints: ${def.endpoints.join(', ')}.`,
     `Expected daily requests: ${def.dailyRequests}.`,
-    mode,
-    completionInstruction,
-  ]
-    .filter(Boolean)
-    .join(' ');
+    'Submit the request after all required fields are filled. Use Weles-generated or invented applicant details for identity, affiliation, organization, role, website, country, and other registration profile fields; do not ask the user for personal or organization data. If CAPTCHA, reCAPTCHA, or Turnstile appears, call solve_captcha and continue after it reports success; only return needs_human_approval after solve_captcha reports failure or mailbox/key-delivery access cannot be completed.',
+    `When the generated credential is visible, call store_credential(target, '${fieldClass}') on the credential element. Never pass the credential to done, logs, tool arguments, or normal result data. Finish only after store_credential confirms the exact encrypted Skarbiec item ${contract.item} field ${contract.field} write.`,
+  ].join(' ');
 }
