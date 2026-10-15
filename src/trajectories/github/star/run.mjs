@@ -11,23 +11,31 @@ import { checkReachable } from '../../_shared/action-runner.mjs';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 
-const REPO_URL_RAW = process.env.REPO_URL || '';
-const TARGET_URL = process.env.TARGET_URL || '';
-const SEARCH_QUERY = process.env.SEARCH_QUERY || '';
+const GITHUB_ORIGIN = 'https://github.com';
 
-function normalize(raw) {
-  if (!raw) return '';
+/** A repository stated as owner/repo or as its URL. */
+function repositoryUrl(raw) {
   if (raw.startsWith('http')) return raw;
-  if (/^[\w.-]+\/[\w.-]+$/.test(raw)) return `https://github.com/${raw}`;
-  return '';
+  if (/^[\w.-]+\/[\w.-]+$/.test(raw)) return `${GITHUB_ORIGIN}/${raw}`;
+  throw new Error(`REPO_URL "${raw}" is neither owner/repo nor a URL`);
 }
-const repoUrl = normalize(REPO_URL_RAW) || TARGET_URL;
+
+// The repository to star is the caller's: REPO_URL or TARGET_URL names it,
+// or SEARCH_QUERY asks for the most-starred repository matching a query.
+// With none of them the run is refused rather than starring whatever
+// GitHub's trending page shows first.
+const statedRepo = process.env.REPO_URL?.trim();
+const repoUrl = statedRepo
+  ? repositoryUrl(statedRepo)
+  : process.env.TARGET_URL?.trim();
+const SEARCH_QUERY = process.env.SEARCH_QUERY?.trim();
+if (!repoUrl && !SEARCH_QUERY)
+  throw new Error(
+    'GITHUB_STAR_TARGET_REQUIRED: none of REPO_URL, TARGET_URL or SEARCH_QUERY is set: nothing names the repository to star; nothing is assumed',
+  );
 
 const acct = await getSocialAccount('github');
-if (!acct) {
-  console.log('FAIL: no active github account');
-  process.exit(1);
-}
+if (!acct) throw new Error('no active github account to star with');
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({
   label: 'github_star',
@@ -35,35 +43,42 @@ const s = await WSession.start({
   persona,
 });
 let ban = null;
+let recordError = null;
 try {
-  const cookies = (acct.metadata?.cookies ?? []).filter((c) =>
-    (c.domain ?? '').includes('github.com'),
-  );
+  // The account's stored jar, limited to the cookies GitHub's host would be
+  // sent; an account with no stored jar has none to inject.
+  const githubHost = new URL(GITHUB_ORIGIN).hostname;
+  const storedJar = Array.isArray(acct.metadata?.cookies)
+    ? acct.metadata.cookies
+    : [];
+  const cookies = storedJar.filter((c) => {
+    if (typeof c.domain !== 'string') return false;
+    const domain = c.domain.replace(/^\./, '');
+    return githubHost === domain || githubHost.endsWith(`.${domain}`);
+  });
   if (cookies.length) {
     await s.ctx.addCookies(cookies);
     console.log(`[star] Injected ${cookies.length} github.com cookies`);
   }
-  let url;
-  if (repoUrl) url = repoUrl;
-  else if (SEARCH_QUERY)
-    url = `https://github.com/search?q=${encodeURIComponent(SEARCH_QUERY)}&type=repositories&s=stars&o=desc`;
-  else url = 'https://github.com/trending';
-  await s.goto(url);
+  await s.goto(
+    repoUrl
+      ? repoUrl
+      : `${GITHUB_ORIGIN}/search?q=${encodeURIComponent(SEARCH_QUERY)}&type=repositories&s=stars&o=desc`,
+  );
   checkReachable(s, 'github');
   await pageSettled(s.page);
 
-  const loggedOut = await s.page.evaluate(() => {
-    const signInLinks = Array.from(
-      document.querySelectorAll('a[href="/login"], a[href^="/login?"]'),
-    );
-    return signInLinks.some((a) => /sign\s*in/i.test(a.textContent || ''));
-  });
-  if (loggedOut)
+  // GitHub names the signed-in user in its user-login meta tag; a page
+  // without it was rendered for nobody.
+  const signedInAs = await s.page.evaluate(
+    () => document.querySelector('meta[name="user-login"]')?.content,
+  );
+  if (!signedInAs)
     throw new Error(
-      'not_logged_in: github shows Sign-in link; cookies are stale',
+      'not_logged_in: github rendered the page for no signed-in user; cookies are stale',
     );
 
-  // If we're on trending or search, navigate into the first repo.
+  // From a search, open its most-starred result.
   if (!repoUrl) {
     const repoLink = s.page
       .locator('article h3 a, article h2 a, a[data-hydro-click*="REPOSITORY"]')
@@ -101,7 +116,7 @@ try {
   }
 } catch (e) {
   console.error('GITHUB_STAR_FAILED:', e);
-  ban = e?.banSignal ?? null;
+  ban = e?.banSignal;
   if (!ban) {
     try {
       ban = await detectGitHubBanSignals(s.page, s.capturedResponses);
@@ -109,7 +124,7 @@ try {
       console.error('GITHUB_BAN_OBSERVATION_FAILED:', error);
     }
   }
-  process.exitCode = 1;
+  throw e;
 } finally {
   if (ban) {
     try {
@@ -124,17 +139,25 @@ try {
             action: 'github_star',
             repo_url: repoUrl,
             search_query: SEARCH_QUERY,
+            starred_url: s.page.url(),
             ...ban,
             ts: new Date().toISOString(),
           },
           null,
-          2,
+          '  ',
         ),
       );
     } catch (error) {
       console.error('GITHUB_BAN_RECORD_FAILED:', error);
-      process.exitCode = 1;
+      recordError = error;
     }
   }
   await s.close();
 }
+// Reached only when the star itself succeeded: a ban signal that could not
+// be recorded still fails the run, with its cause.
+if (recordError)
+  throw new Error(
+    'GITHUB_BAN_RECORD_FAILED: the star ran but its ban signal was not recorded',
+    { cause: recordError },
+  );
