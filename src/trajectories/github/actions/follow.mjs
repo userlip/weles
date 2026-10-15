@@ -12,6 +12,7 @@ import {
   assertAuthed,
   AuthProbeError,
 } from '../../_shared/auth/auth-probe.mjs';
+import { statedText } from '../../_shared/inputs/stated.mjs';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import {
@@ -19,13 +20,19 @@ import {
   responseAfterAction,
 } from '../../_shared/page/settled.mjs';
 
-const TARGET_USER = (process.env.TARGET_USER || '').replace(/^@/, '');
+const GITHUB_ORIGIN = 'https://github.com';
+// Whom to follow is the caller's; without TARGET_USER the run is refused
+// rather than following the first profile GitHub's explore page shows.
+const TARGET_USER = statedText(
+  ['TARGET_USER'],
+  'the GitHub user to follow',
+  'GITHUB_FOLLOW_TARGET_REQUIRED',
+).replace(/^@/, '');
+if (!TARGET_USER)
+  throw new Error('TARGET_USER is "@" alone: it names no GitHub user');
 
 const acct = await getSocialAccount('github');
-if (!acct) {
-  console.log('FAIL: no active github account');
-  process.exit(1);
-}
+if (!acct) throw new Error('no active github account to follow with');
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({
   label: 'github_follow',
@@ -34,31 +41,22 @@ const s = await WSession.start({
 });
 
 let ban = null;
+let recordError = null;
 try {
-  const stored = (acct.metadata?.cookies ?? []).filter((c) =>
-    /github\.com/.test(c.domain ?? ''),
-  );
-  if (stored.length)
-    await s.ctx.addCookies(stored.map((c) => ({ ...c, path: c.path || '/' })));
-  // If no target, scrape first user card from /explore. Deterministic: explore renders /users/<name> profile cards in articles.
-  let target = TARGET_USER;
-  if (!target) {
-    await s.goto('https://github.com/explore');
-    checkReachable(s, 'github');
-    await pageSettled(s.page);
-    target = await s.page.evaluate(() => {
-      const link = Array.from(document.querySelectorAll('a[href^="/"]')).find(
-        (a) =>
-          /^\/[\w-]+$/.test(a.getAttribute('href') || '') &&
-          a.querySelector('img.avatar') &&
-          a.getAttribute('href')?.length < 25,
-      );
-      return link ? link.getAttribute('href').replace(/^\//, '') : '';
-    });
-    if (!target) throw new Error('no target user found on /explore');
-  }
+  // The account's stored jar, limited to the cookies GitHub's host would be
+  // sent; an account with no stored jar has none to inject.
+  const githubHost = new URL(GITHUB_ORIGIN).hostname;
+  const storedJar = Array.isArray(acct.metadata?.cookies)
+    ? acct.metadata.cookies
+    : [];
+  const stored = storedJar.filter((c) => {
+    if (typeof c.domain !== 'string') return false;
+    const domain = c.domain.replace(/^\./, '');
+    return githubHost === domain || githubHost.endsWith(`.${domain}`);
+  });
+  if (stored.length) await s.ctx.addCookies(stored);
 
-  await s.goto(`https://github.com/${encodeURIComponent(target)}`);
+  await s.goto(`${GITHUB_ORIGIN}/${encodeURIComponent(TARGET_USER)}`);
   checkReachable(s, 'github');
   await pageSettled(s.page);
   try {
@@ -89,10 +87,9 @@ try {
     .locator(`form[action*="/users/unfollow"]`)
     .filter({ visible: true })
     .first();
-  const alreadyFollowing = await unfollowForm.count();
-  if (alreadyFollowing > 0) {
+  if (await unfollowForm.count()) {
     ban = await detectGitHubBanSignals(s.page, s.capturedResponses);
-    console.log(`PASS: already following ${target}`);
+    console.log(`PASS: already following ${TARGET_USER}`);
   } else {
     await followForm.waitFor({ state: 'visible' });
     const submit = followForm
@@ -108,9 +105,10 @@ try {
         const url = new URL(request.url());
         return (
           request.method() === 'POST' &&
-          url.origin === 'https://github.com' &&
+          url.origin === GITHUB_ORIGIN &&
           url.pathname === '/users/follow' &&
-          url.searchParams.get('target')?.toLowerCase() === target.toLowerCase()
+          url.searchParams.get('target')?.toLowerCase() ===
+            TARGET_USER.toLowerCase()
         );
       },
       () => humanClickLocator(s.page, submit),
@@ -126,12 +124,12 @@ try {
       );
     await unfollowForm.waitFor({ state: 'visible' });
     ban = await detectGitHubBanSignals(s.page, s.capturedResponses);
-    console.log(`PASS: followed ${target}`);
+    console.log(`PASS: followed ${TARGET_USER}`);
   }
   console.log(`[ban-signal] ${ban?.signal}`);
 } catch (e) {
   console.error('GITHUB_FOLLOW_FAILED:', e);
-  ban = e?.banSignal ?? null;
+  ban = e?.banSignal;
   if (!ban) {
     try {
       ban = await detectGitHubBanSignals(s.page, s.capturedResponses);
@@ -139,7 +137,7 @@ try {
       console.error('GITHUB_BAN_OBSERVATION_FAILED:', error);
     }
   }
-  process.exitCode = 1;
+  throw e;
 } finally {
   if (ban) {
     try {
@@ -157,13 +155,20 @@ try {
             ts: new Date().toISOString(),
           },
           null,
-          2,
+          '  ',
         ),
       );
     } catch (error) {
       console.error('GITHUB_BAN_RECORD_FAILED:', error);
-      process.exitCode = 1;
+      recordError = error;
     }
   }
   await s.close();
 }
+// Reached only when the follow itself succeeded: a ban signal that could not
+// be recorded still fails the run, with its cause.
+if (recordError)
+  throw new Error(
+    'GITHUB_BAN_RECORD_FAILED: the follow ran but its ban signal was not recorded',
+    { cause: recordError },
+  );
