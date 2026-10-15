@@ -23,69 +23,75 @@ import {
 import { markCookiesStale } from '../../../../dist/utils/credentials.js';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 
-const TARGET_URL = process.env.TARGET_URL || '';
-const TARGET_USER = (process.env.TARGET_USER || '').replace(/^@/, '');
-const SEARCH_QUERY = (process.env.SEARCH_QUERY || '').replace(/^#/, '');
+const TIKTOK_ORIGIN = 'https://www.tiktok.com';
+// What to like is the caller's: a video in TARGET_URL, the first video of the
+// profile in TARGET_USER, or the first video of the hashtag in SEARCH_QUERY.
+// With none of them the run is refused rather than liking whatever the For
+// You feed shows first.
+const TARGET_URL = process.env.TARGET_URL?.trim();
+const TARGET_USER = process.env.TARGET_USER?.trim().replace(/^@/, '');
+const SEARCH_QUERY = process.env.SEARCH_QUERY?.trim().replace(/^#/, '');
+const targetPage = TARGET_URL
+  ? TARGET_URL
+  : TARGET_USER
+    ? `${TIKTOK_ORIGIN}/@${encodeURIComponent(TARGET_USER)}`
+    : SEARCH_QUERY
+      ? `${TIKTOK_ORIGIN}/tag/${encodeURIComponent(SEARCH_QUERY)}`
+      : undefined;
+if (!targetPage)
+  throw new Error(
+    'TIKTOK_LIKE_TARGET_REQUIRED: none of TARGET_URL, TARGET_USER or SEARCH_QUERY names what to like; nothing is assumed',
+  );
 
 const acct = await getSocialAccount('tiktok');
-if (!acct) {
-  console.log('FAIL: no active tiktok account');
-  process.exit(1);
-}
+if (!acct) throw new Error('no active tiktok account to like with');
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({
   label: 'tiktok_like',
   proxy: proxyUrl,
   persona,
 });
-// Cookie freshness gate — see _shared/auth/cookie-freshness.mjs.
-let _stored;
+// Cookie freshness gate — see _shared/auth/cookie-freshness.mjs. Only the
+// cookies TikTok's host would be sent are injected.
+const tiktokHost = new URL(TIKTOK_ORIGIN).hostname;
+let stored;
 try {
-  const _all = loadFreshCookieJarOrFail(acct, {
+  const freshJar = loadFreshCookieJarOrFail(acct, {
     platform: 'tiktok',
     label: 'tiktok_like',
     currentProxyUrl: proxyUrl,
     currentPersona: persona,
   });
-  _stored = _all.filter((c) => /tiktok\.com/.test(c.domain ?? ''));
-  if (!_stored.length)
+  stored = freshJar.filter((c) => {
+    if (typeof c.domain !== 'string') return false;
+    const domain = c.domain.replace(/^\./, '');
+    return tiktokHost === domain || tiktokHost.endsWith(`.${domain}`);
+  });
+  if (!stored.length)
     throw new CookieJarStaleError(
       'cookie_jar_no_domain_match: jar fresh but no tiktok.com cookies',
       { platform: 'tiktok' },
     );
 } catch (jarErr) {
   if (jarErr instanceof CookieJarStaleError) {
-    console.log(`FAIL: ${jarErr.message}`);
     await markCookiesStale(acct.id);
-    await s
-      .close()
-      .catch((e) => console.log(`[session] close failed: ${e.message}`));
-    process.exit(1);
+    await s.close();
   }
   throw jarErr;
 }
 // A jar that could not be injected leaves the session signed out; the
 // failure is raised inside the try so it is reported and the session closed.
 let cookieInjectError = null;
-await s.ctx
-  .addCookies(_stored.map((c) => ({ ...c, path: c.path || '/' })))
-  .catch((e) => {
-    cookieInjectError = e;
-  });
+await s.ctx.addCookies(stored).catch((e) => {
+  cookieInjectError = e;
+});
 let ban = null;
 try {
   if (cookieInjectError)
     throw new Error(
       `stored cookies could not be injected: ${cookieInjectError.message}`,
     );
-  let url;
-  if (TARGET_URL) url = TARGET_URL;
-  else if (TARGET_USER)
-    url = `https://www.tiktok.com/@${encodeURIComponent(TARGET_USER)}`;
-  else if (SEARCH_QUERY)
-    url = `https://www.tiktok.com/tag/${encodeURIComponent(SEARCH_QUERY)}`;
-  else url = 'https://www.tiktok.com/foryou';
-  await s.goto(url);
+  await s.goto(targetPage);
   checkReachable(s, 'tiktok');
   await humanIdlePause('deliberate');
   try {
@@ -94,10 +100,9 @@ try {
     if (probeErr instanceof AuthProbeError) await markCookiesStale(acct.id);
     throw probeErr;
   }
-  // If we landed on a profile / hashtag grid, navigate into the first video.
-  // Specific-video URLs and /foryou already have the right-rail action panel
-  // hydrated in place.
-  if (!/\/video\//.test(s.page.url()) && !/\/foryou/.test(s.page.url())) {
+  // A profile or hashtag grid opens its first video; a video URL already
+  // shows the action panel in place.
+  if (!/\/video\//.test(s.page.url())) {
     const firstVideo = s.page.locator('a[href*="/video/"]').first();
     await firstVideo.waitFor({ state: 'visible' });
     await humanClickLocator(s.page, firstVideo);
@@ -113,8 +118,7 @@ try {
     .first();
   await likeBtn.waitFor({ state: 'visible' });
   await likeBtn.scrollIntoViewIfNeeded();
-  const before = await likeBtn.getAttribute('aria-pressed').catch(() => null);
-  if (before === 'true') {
+  if ((await likeBtn.getAttribute('aria-pressed')) === 'true') {
     ban = await banSignalOf(
       detectTikTokBanSignals,
       s,
@@ -123,7 +127,8 @@ try {
     console.log(`[ban-signal] ${ban?.signal}  PASS: already liked`);
   } else {
     await humanClickLocator(s.page, likeBtn);
-    // Poll for aria-pressed to flip — TikTok's digg XHR can take 3-8s.
+    // The like is confirmed when TikTok flips aria-pressed after its own
+    // request answers.
     await s.page.waitForFunction(
       (el) => el?.getAttribute('aria-pressed') === 'true',
       await likeBtn.elementHandle(),
@@ -136,7 +141,7 @@ try {
     e.banSignal ??
     (await banSignalOf(detectTikTokBanSignals, s, 'after the failure'));
   console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
-  process.exitCode = 1;
+  throw e;
 } finally {
   if (ban) {
     try {
@@ -152,11 +157,12 @@ try {
             target_url: TARGET_URL,
             target_user: TARGET_USER,
             search_query: SEARCH_QUERY,
+            liked_url: s.page.url(),
             ...ban,
             ts: new Date().toISOString(),
           },
           null,
-          2,
+          '  ',
         ),
       );
     } catch (e) {
