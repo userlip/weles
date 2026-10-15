@@ -13,14 +13,13 @@
 // entry points.
 
 import { commitPassword, outcome } from '../answer_and_custody.mjs';
-import { commitAfterFreshLogin, signIn } from '../authorized_session.mjs';
+import { commitAfterFreshLogin, signIn, skarbiecCommit } from '../authorized_session.mjs';
 import {
   changeEntraPassword,
   providerEffectAfterRollback,
   rollbackEntraPassword,
 } from '../directory_password.mjs';
 import { assertEntraIdentity } from '../proven_identity.mjs';
-import { updateAccountReference } from '../queued_job.mjs';
 
 export async function rotateDirectoryPassword(
   session,
@@ -168,23 +167,22 @@ export async function rotateDirectoryPassword(
     );
     evidence.push(`rollback:${rollbackStatus}`);
     if (rollbackStatus === 'completed') {
-      let skarbiecRestored = false;
-      try {
-        commitPassword(contract, currentPassword, 'rollback');
-        skarbiecRestored = true;
-      } catch {
-        skarbiecRestored = false;
-      }
+      const restoreFailure = await Promise.resolve()
+        .then(() => commitPassword(contract, currentPassword, 'rollback'))
+        .then(
+          () => null,
+          (error) => error.message,
+        );
       return outcome(contract, {
         status: 'operation_failed',
         code: 'SKARBIEC_COMMIT_FAILED',
-        phase: skarbiecRestored ? 'skarbiec_commit' : 'rollback',
-        retryable: skarbiecRestored,
+        phase: restoreFailure ? 'rollback' : 'skarbiec_commit',
+        retryable: !restoreFailure,
         providerEffect: 'none',
-        rollbackStatus: skarbiecRestored ? 'completed' : 'failed',
-        reason: skarbiecRestored
-          ? 'the Skarbiec commit failed and both Entra and Skarbiec were restored to the previous password'
-          : 'the Skarbiec commit failed, Entra was restored, and the Skarbiec restore did not confirm',
+        rollbackStatus: restoreFailure ? 'failed' : 'completed',
+        reason: restoreFailure
+          ? `the Skarbiec commit failed (${rotation.commitFailure}), Entra was restored, and the Skarbiec restore failed (${restoreFailure})`
+          : `the Skarbiec commit failed (${rotation.commitFailure}) and both Entra and Skarbiec were restored to the previous password`,
       });
     }
     if (rollbackStatus === 'unknown') {
@@ -197,17 +195,14 @@ export async function rotateDirectoryPassword(
         retryable: false,
         providerEffect: 'unknown',
         rollbackStatus,
-        reason:
-          'the Skarbiec commit failed and the compensating Entra rollback left the directory password unproven',
+        reason: `the Skarbiec commit failed (${rotation.commitFailure}) and the compensating Entra rollback left the directory password unproven`,
       });
     }
     // The directory refused the rollback and still holds the value this run
     // proved by a fresh login, so the only consistent recovery is to land that
     // value in Skarbiec.
-    try {
-      commitPassword(contract, nextPassword, 'rotate');
-      await updateAccountReference(account, contract);
-    } catch {
+    const secondFailure = await skarbiecCommit(account, contract, nextPassword, 'rotate');
+    if (secondFailure) {
       return outcome(contract, {
         status: 'operation_failed',
         code: 'SKARBIEC_COMMIT_FAILED',
@@ -215,8 +210,7 @@ export async function rotateDirectoryPassword(
         retryable: false,
         providerEffect: 'changed',
         rollbackStatus,
-        reason:
-          'the Skarbiec commit and the compensating Entra rollback both failed',
+        reason: `the Skarbiec commit failed (${rotation.commitFailure}), the compensating Entra rollback failed, and the second commit failed (${secondFailure})`,
       });
     }
     evidence.push('skarbiec_commit:rotate');

@@ -7,15 +7,10 @@
 // The screens are read by the vision model (`sign_in/surfaces.mjs`), and a
 // judgement it could not give is an answer of its own carrying the reason, so
 // each caller branches on that instead of on a screen that seemed to say nothing.
-//
-// Moved out of entra_password_lifecycle.mjs, which keeps the three trajectory
-// entry points.
+// Every step waits on the page itself, never on a pause.
 
 import { humanFill } from '../../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 
 import { persistFreshCookieJar } from '../../_shared/auth/cookie-freshness.mjs';
@@ -36,16 +31,7 @@ import {
   updateAccountReference,
 } from './queued_job.mjs';
 
-async function controlValue(locator) {
-  try {
-    return { ok: true, value: await locator.inputValue() };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `the control value could not be read back: ${error.message}`,
-    };
-  }
-}
+const SUBMIT = 'input[type="submit"]#idSIButton9, button[type="submit"]';
 
 export async function fill(page, locator, value) {
   await locator.waitFor({ state: 'visible' });
@@ -54,141 +40,105 @@ export async function fill(page, locator, value) {
 
 // The converged control re-renders during hydration and can silently drop
 // keystrokes of a human-typed value — sometimes after an immediate readback
-// already looked right — so every fill settles, reads back, and retries
-// before the form moves on. A readback that disagreed leaves the form's own
-// verdict to decide; a readback that never reached the control at all proves
-// nothing about the typed value and is raised.
+// already looked right — so every fill settles and reads back before the form
+// moves on. A readback that disagreed leaves the form's own verdict to
+// decide; a readback that never reached the control at all proves nothing
+// about the typed value and is raised with its cause.
 async function fillVerified(page, locator, value) {
-  let readback;
   await fill(page, locator, value);
   await pageSettled(page);
-  readback = await controlValue(locator);
-  if (readback.ok && readback.value === value) return;
-  if (!readback.ok) {
-    throw new Error(
-      `a typed sign-in value could not be verified: ${readback.reason}`,
-    );
-  }
+  await locator.inputValue().catch((error) => {
+    throw new Error(`a typed sign-in value could not be verified: the control value could not be read back: ${error.message}`, {
+      cause: error,
+    });
+  });
 }
 
-// The token cache of an earlier authorized context has to go before this login,
-// so the claims asserted afterwards are evidence of this login. A cache that
-// could not be dropped is named, because reading the earlier login's tokens
-// would prove the wrong session.
-async function clearTokenCache(page) {
-  try {
-    await page.evaluate(() => {
-      globalThis.localStorage?.clear();
-      globalThis.sessionStorage?.clear();
-    });
-    return { ok: true };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `the authorized context token cache could not be cleared: ${error.message}`,
-    };
-  }
+/**
+ * Write the proven password to Skarbiec and point the account at it. Answers
+ * null once both are written, else the cause the write or the update failed
+ * with, for the caller's outcome.
+ */
+export function skarbiecCommit(account, contract, password, writeOperation) {
+  return Promise.resolve()
+    .then(() => {
+      commitPassword(contract, password, writeOperation);
+      return updateAccountReference(account, contract);
+    })
+    .then(
+      () => null,
+      (error) => error.message,
+    );
 }
 
 // 'authenticated' | 'rejected' | 'identity_challenge' | 'account_unknown' | 'unavailable'
 export async function signIn(session, contract, password) {
   const page = session.page;
-  if (AUTHORIZED_CONTEXT_HOST.test(new URL(page.url()).hostname)) {
-    const cleared = await clearTokenCache(page);
-    if (!cleared.ok) return 'unavailable';
-  }
+  // The token cache of an earlier authorized context has to go before this
+  // login, so the claims asserted afterwards are evidence of this login; a
+  // cache that cannot be dropped fails the sign-in with its cause.
+  if (AUTHORIZED_CONTEXT_HOST.test(new URL(page.url()).hostname))
+    await page.evaluate(() => {
+      globalThis.localStorage?.clear();
+      globalThis.sessionStorage?.clear();
+    });
   await session.ctx.clearCookies();
   await page.goto(AUTHORIZED_CONTEXT_URL, { waitUntil: 'domcontentloaded' });
-  await humanIdlePause('deliberate');
-  const emailInput = page
-    .locator('input[name="loginfmt"], input#i0116, input[type="email"]')
-    .first();
-  if (!(await appears(emailInput)) || !(await visible(emailInput)))
-    return 'unavailable';
+  await pageSettled(page);
+  const emailInput = page.locator('input[name="loginfmt"], input#i0116, input[type="email"]').first();
+  if (!(await appears(emailInput)) || !(await visible(emailInput))) return 'unavailable';
   // fillVerified proves the field holds the whole UPN before it is sent, so
   // Microsoft's "isn't in our system" answer is about the account, not a
   // truncated submit, and resubmitting the same value cannot change it.
   await fillVerified(page, emailInput, contract.accountUpn);
-  await humanClickLocator(
-    page,
-    page
-      .locator('input[type="submit"]#idSIButton9, button[type="submit"]')
-      .first(),
-  );
-  await humanIdlePause('deliberate');
-  const unknown = await judged(
-    page,
-    'Does the page say this account does not exist or could not be found?',
-  );
+  await humanClickLocator(page, page.locator(SUBMIT).first());
+  await pageSettled(page);
+  const unknown = await judged(page, 'Does the page say this account does not exist or could not be found?');
   if (!unknown.ok) return 'unavailable';
   if (unknown.shows) return 'account_unknown';
   await choosePasswordSignIn(page);
-  const passwordInput = page
-    .locator('input[name="passwd"], input#i0118, input[type="password"]')
-    .first();
+  const passwordInput = page.locator('input[name="passwd"], input#i0118, input[type="password"]').first();
   if (!(await appears(passwordInput)) || !(await visible(passwordInput))) {
     const challenged = await judged(page, IDENTITY_CHALLENGE);
-    return challenged.ok && challenged.shows
-      ? 'identity_challenge'
-      : 'unavailable';
+    return challenged.ok && challenged.shows ? 'identity_challenge' : 'unavailable';
   }
   await fillVerified(page, passwordInput, password);
-  await humanClickLocator(
-    page,
-    page
-      .locator('input[type="submit"]#idSIButton9, button[type="submit"]')
-      .first(),
-  );
-  await humanIdlePause('long');
+  await humanClickLocator(page, page.locator(SUBMIT).first());
+  await pageSettled(page);
   // A refused password leaves Microsoft's password field on screen.
-  if (await visible(page.locator('input[name="passwd"], input#i0118')))
-    return 'rejected';
+  if (await visible(page.locator('input[name="passwd"], input#i0118'))) return 'rejected';
   if (!(await answerStaySignedIn(page)).ok) return 'unavailable';
   const challenged = await judged(page, IDENTITY_CHALLENGE);
   if (!challenged.ok) return 'unavailable';
   if (challenged.shows) return 'identity_challenge';
   await pageSettled(page);
-  if (
-    !AUTHORIZED_CONTEXT_URL_PATTERN.test(page.url()) ||
-    !AUTHORIZED_CONTEXT_HOST.test(new URL(page.url()).hostname)
-  ) {
+  if (!AUTHORIZED_CONTEXT_URL_PATTERN.test(page.url()) || !AUTHORIZED_CONTEXT_HOST.test(new URL(page.url()).hostname)) {
     const afterwards = await judged(page, IDENTITY_CHALLENGE);
-    return afterwards.ok && afterwards.shows
-      ? 'identity_challenge'
-      : 'unavailable';
+    return afterwards.ok && afterwards.shows ? 'identity_challenge' : 'unavailable';
   }
   return 'authenticated';
 }
 
 // Shared tail: fresh login with the value the provider now holds, full identity
-// assertion, then the Skarbiec commit. Never commits an unasserted identity.
+// assertion, then the Skarbiec commit. Never commits an unasserted identity. A
+// commit that failed answers committed: false with the cause in commitFailure.
 export async function commitAfterFreshLogin(session, account, contract, plan) {
-  const { password, writeOperation, sink, proxyUrl, providerEffect, evidence } =
-    plan;
+  const { password, writeOperation, sink, proxyUrl, providerEffect, evidence } = plan;
   const signedIn = await signIn(session, contract, password);
   evidence.push(`fresh_login_verification:${signedIn}`);
   if (signedIn !== 'authenticated') {
+    const challenged = signedIn === 'identity_challenge';
     return {
       committed: false,
       answer: outcome(contract, {
-        status:
-          signedIn === 'identity_challenge'
-            ? 'needs_human_approval'
-            : 'operation_failed',
-        code:
-          signedIn === 'identity_challenge'
-            ? 'ENTRA_FRESH_LOGIN_REQUIRES_HUMAN_APPROVAL'
-            : 'ENTRA_FRESH_LOGIN_FAILED',
-        phase:
-          signedIn === 'identity_challenge'
-            ? 'identity_verification'
-            : 'fresh_login_verification',
+        status: challenged ? 'needs_human_approval' : 'operation_failed',
+        code: challenged ? 'ENTRA_FRESH_LOGIN_REQUIRES_HUMAN_APPROVAL' : 'ENTRA_FRESH_LOGIN_FAILED',
+        phase: challenged ? 'identity_verification' : 'fresh_login_verification',
         retryable: signedIn !== 'rejected',
         providerEffect,
-        reason:
-          signedIn === 'identity_challenge'
-            ? 'the fresh Entra login after the password write needs interactive identity approval'
-            : 'the fresh Entra login with the newly written password did not authenticate',
+        reason: challenged
+          ? 'the fresh Entra login after the password write needs interactive identity approval'
+          : `the fresh Entra login with the newly written password did not authenticate (${signedIn})`,
       }),
     };
   }
@@ -207,12 +157,8 @@ export async function commitAfterFreshLogin(session, account, contract, plan) {
     };
   }
   evidence.push('identity_verification:confirmed');
-  try {
-    commitPassword(contract, password, writeOperation);
-    await updateAccountReference(account, contract);
-  } catch {
-    return { committed: false, answer: null };
-  }
+  const commitFailure = await skarbiecCommit(account, contract, password, writeOperation);
+  if (commitFailure) return { committed: false, answer: null, commitFailure };
   evidence.push(`skarbiec_commit:${writeOperation}`);
   const cookies = await session.ctx.cookies();
   await persistFreshCookieJar(account, cookies, { currentProxyUrl: proxyUrl });

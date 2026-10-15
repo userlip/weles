@@ -126,8 +126,7 @@ export async function resetDirectoryPassword(session, account, contract, plan) {
       retryable: false,
       providerEffect: 'changed',
       rollbackStatus: 'none',
-      reason:
-        'the Entra reset succeeded but the Skarbiec commit failed and no rollback value exists',
+      reason: `the Entra reset succeeded but the Skarbiec commit failed (${reset.commitFailure}) and no rollback value exists`,
     });
   }
   return outcome(contract, {

@@ -46,7 +46,7 @@ export async function verifyManagedPassword(session, account, contract, plan) {
       retryable: true,
       providerEffect: 'none',
       rollbackStatus: 'none',
-      reason: 'the verified Entra password could not be rewritten to Skarbiec',
+      reason: `the verified Entra password could not be rewritten to Skarbiec: ${verified.commitFailure}`,
     });
   }
   return outcome(contract, {
