@@ -19,6 +19,11 @@ import {
   parseJsonFrom,
   type ModelDecisionProvider,
 } from './loop/observe.js';
+import {
+  decidedCall,
+  declaredMaxSteps,
+  giveUpReason,
+} from './loop/decision.js';
 import { PageQuestionError } from '../vision/analyze.js';
 import {
   CapabilityDeniedError,
@@ -47,29 +52,6 @@ export class AgentFailure extends Error {
   }
 }
 
-/**
- * How many model steps one browser task may take before it is stopped, when
- * its caller names none: `WELES_AGENT_MAX_STEPS`, a whole number above zero
- * that the deployment declares. The forty once written here were nobody's
- * statement; without the setting the task is refused before the browser is
- * driven, naming it.
- */
-function declaredMaxSteps(history: ToolCall[]): number {
-  const raw = String(process.env.WELES_AGENT_MAX_STEPS ?? '').trim();
-  const steps = Number(raw);
-  if (
-    !raw ||
-    !Number.isSafeInteger(steps) ||
-    Math.sign(steps) !== Math.sign(Number.MAX_SAFE_INTEGER)
-  ) {
-    throw new AgentFailure(
-      `WELES_AGENT_MAX_STEPS is ${raw ? `"${raw}", not a whole number above zero` : 'not set'}: declare how many model steps one browser task may take`,
-      history,
-    );
-  }
-  return steps;
-}
-
 export async function execute(
   session: WSession,
   goal: string,
@@ -90,8 +72,12 @@ export async function execute(
   const history: ToolCall[] = options?.initialHistory
     ? [...options.initialHistory]
     : [];
-  const envHints = options?.envHints ?? {};
-  let replay = options?.replay ?? null;
+  const observedBefore = history.length;
+  // A caller that names no environment variables offers the model none.
+  const envHints: Record<string, string> = options?.envHints
+    ? options.envHints
+    : {};
+  let replay = options?.replay;
   const page = session.page;
   const capture = new Capture({ newPage: async () => page } as any);
   const flowName = options?.flowName;
@@ -161,7 +147,7 @@ export async function execute(
   }
 
   let activePage = page;
-  for (let step = 0; step < maxSteps; step++) {
+  for (const step of Array(maxSteps).keys()) {
     activePage = getActivePage(activePage);
     // Observations and dispatched actions must use the same popup or surviving tab.
     session.page = activePage;
@@ -215,12 +201,9 @@ export async function execute(
       continue;
     }
 
-    const call: ToolCall = {
-      tool: decision.tool ?? '',
-      args: decision.args ?? {},
-      thought: decision.thought ?? '',
-    };
-    console.log(`[loop] step ${step} thought: ${call.thought ?? ''}`);
+    const call = decidedCall(decision, step, history);
+    if (call.thought)
+      console.log(`[loop] step ${step} thought: ${call.thought}`);
     console.log(
       `[loop] step ${step} tool: ${call.tool} args=${JSON.stringify(call.args)}`,
     );
@@ -230,7 +213,7 @@ export async function execute(
       history.push(call);
       if (flowName && !options?.disableFlowPersistence) {
         const steps = history
-          .slice(options?.initialHistory?.length ?? 0)
+          .slice(observedBefore)
           .filter((h) => !h.error)
           .map((h) => ({ tool: h.tool, args: h.args, result: h.result }));
         if (saveFlow(flowName, steps))
@@ -249,7 +232,7 @@ export async function execute(
     if (call.tool === 'give_up') {
       call.result = 'give_up';
       history.push(call);
-      throw new AgentFailure(call.args.reason ?? 'unspecified', history);
+      throw new AgentFailure(giveUpReason(call.args), history);
     }
 
     try {
@@ -279,7 +262,7 @@ export async function execute(
       if (activePage.isClosed()) {
         activePage = getActivePage(activePage);
         if (replay) {
-          replay = null;
+          replay = undefined;
           console.log('[loop] replay aborted, switching to LLM');
         }
       }
