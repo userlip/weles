@@ -10,8 +10,8 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { exitStatusFor } from '../../../dist/cli/usage.js';
-import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
-import { statedText } from '../_shared/inputs/stated.mjs';
+import { runId, runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import { projectPage } from '../_shared/ncbr/project_page.mjs';
 import { loadPlan } from './correction/plan.mjs';
 import {
   fillPrepared,
@@ -31,14 +31,14 @@ import {
 
 const { plan, mode, projectUrl, planSha256 } = loadPlan();
 const endpoint = (await import('#ncbr-settings')).cdpEndpoint();
-const runId = statedText(['WELES_RUN_ID'], 'the run whose recordings keep the correction report');
+// The run's recordings directory is named by the same id the report carries.
 const reportDir = runRecordingsDir(`ncbr_${mode}_correction`);
 mkdirSync(reportDir, { recursive: true });
 const reportPath = join(reportDir, 'correction-report.json');
 const results = [];
 const report = {
   schema: 'weles.ncbr.correction-report.v1',
-  runId,
+  runId: runId(),
   mode,
   projectId: plan.project.id,
   applicationNumber: plan.project.applicationNumber,
@@ -54,14 +54,6 @@ const retain = (status, error) => {
 };
 const scopeFilter = process.env.SECTION;
 const selected = (scope) => !scopeFilter || scope.label === scopeFilter;
-
-/** The open page of the declared project in the signed-in browser. */
-function projectPage(browser) {
-  const [context] = browser.contexts();
-  const page = context?.pages().find((candidate) => candidate.url().startsWith(projectUrl));
-  if (!page) throw new Error('No existing browser page belongs to the declared project');
-  return page;
-}
 
 async function correctSection(page, section) {
   await openScope(page, section, projectUrl);
@@ -140,7 +132,7 @@ async function recordFailure(page, error) {
 const browser = await chromium.connectOverCDP(endpoint);
 let page;
 try {
-  page = projectPage(browser);
+  page = projectPage(browser, projectUrl);
   report.identity = await identity(page, projectUrl, plan.project);
   retain('inspecting');
   for (const section of plan.sections.filter(selected)) await correctSection(page, section);
