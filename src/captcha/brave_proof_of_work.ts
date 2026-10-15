@@ -1,17 +1,6 @@
 // The Brave proof-of-work challenge: a registration form that computes its
 // own solution in the page and enables its button when done. Nothing to
 // solve remotely; the page itself is asked to report when the form changes.
-//
-// Every state is read from the form's structure: the solution field holding a
-// value is the proof, a disabled button over an empty solution is the page
-// still validating or calculating, and an alert element is the page's refusal.
-// No word on the button decides anything.
-import {
-  DOCUMENT_REPLACED,
-  readAcrossReplacement,
-} from '../browser/settled.js';
-
-type Page = any;
 
 // Resolves in the page, on an animation frame, once the challenge form shows
 // one of the outcomes the caller is watching for (or has gone away).
@@ -33,21 +22,28 @@ async function braveFormChanged(
         document.querySelectorAll<HTMLElement>(
           '.alert, [role="alert"], .error',
         ),
-      ).some((element) => element.innerText.trim() !== '');
-      if (alerted && (which === 'validation' || !button.disabled)) return true;
+      ).some((element) => element.innerText.trim().length > 0);
+      if (
+        alerted &&
+        (which === 'validation' || !/verifying/i.test(button.innerText))
+      )
+        return true;
       if (which === 'validation') return !button.disabled;
-      return solution.value !== '';
+      return solution.value.length > 0 || /verified/i.test(button.innerText);
     },
     phase,
     { polling: 'raf' },
   );
 }
 
+type Page = any;
+
 export interface BraveProofOfWorkState {
   present: boolean;
   formValid: boolean;
   buttonDisabled: boolean;
-  solved: boolean;
+  buttonText: string;
+  solutionLength: number;
   errorText: string;
   url: string;
 }
@@ -70,9 +66,10 @@ export async function braveProofOfWorkState(
       .join(' ');
     return {
       present: true,
-      formValid: form !== null && form.checkValidity(),
+      formValid: form?.checkValidity() ?? false,
       buttonDisabled: button.disabled,
-      solved: solution.value !== '',
+      buttonText: button.innerText.trim(),
+      solutionLength: solution.value.length,
       errorText,
       url: location.href,
     };
@@ -91,7 +88,7 @@ export async function solveBraveProofOfWork(
     return false;
   }
 
-  if (ready.buttonDisabled && !ready.solved) {
+  if (ready.buttonDisabled && ready.solutionLength === 0) {
     console.log(
       '[captcha] Brave proof-of-work waiting for registration validation',
     );
@@ -113,45 +110,55 @@ export async function solveBraveProofOfWork(
     }
   }
 
-  if (ready.solved) return true;
-  if (!ready.buttonDisabled) {
+  let started = /verifying/i.test(ready.buttonText);
+  if (!started && ready.solutionLength === 0) {
     await page.locator('#captcha-button').click();
+    started = true;
     console.log('[captcha] Brave proof-of-work calculation started');
   }
 
+  if (ready.solutionLength > 0 || /verified/i.test(ready.buttonText))
+    return true;
   const initialURL = ready.url;
   for (;;) {
-    // The form submitting itself replaces the document under the wait.
-    if (
-      (await readAcrossReplacement(page, () =>
-        braveFormChanged(page, 'calculation'),
-      )) === DOCUMENT_REPLACED
-    )
+    try {
+      await braveFormChanged(page, 'calculation');
+    } catch (error) {
+      // The form submitting itself replaces the document under the wait.
+      if (!/Execution context was destroyed/i.test(String(error))) throw error;
       await page.waitForLoadState('domcontentloaded');
+    }
     const state = await braveProofOfWorkState(page);
     if (!state) {
+      const currentURL = page.url?.() ?? '';
+      if (currentURL !== initialURL) {
+        console.log(
+          '[captcha] Brave proof-of-work submitted the registration form',
+        );
+        return true;
+      }
       console.log(
-        page.url() === initialURL
-          ? '[captcha] Brave proof-of-work form disappeared after calculation'
-          : '[captcha] Brave proof-of-work submitted the registration form',
+        '[captcha] Brave proof-of-work form disappeared after calculation',
       );
       return true;
     }
-    if (state.solved) {
-      console.log('[captcha] Brave proof-of-work solved');
+    if (state.solutionLength > 0 || /verified/i.test(state.buttonText)) {
+      console.log(
+        `[captcha] Brave proof-of-work solved solution_length=${state.solutionLength}`,
+      );
       return true;
     }
     if (state.url !== initialURL) {
       console.log('[captcha] Brave proof-of-work navigated after submission');
       return true;
     }
-    if (state.errorText && !state.buttonDisabled) {
+    if (state.errorText && !/verifying/i.test(state.buttonText)) {
       console.log(`[captcha] Brave proof-of-work failed: ${state.errorText}`);
       return false;
     }
     if (!state.formValid) {
       console.log(
-        '[captcha] Brave proof-of-work blocked: registration form became invalid',
+        `[captcha] Brave proof-of-work blocked: registration form became invalid started=${started}`,
       );
       return false;
     }

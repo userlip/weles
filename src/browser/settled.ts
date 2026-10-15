@@ -12,14 +12,14 @@ type NavigationEvents = {
   on(event: 'framenavigated', listener: (frame: unknown) => void): unknown;
   off(event: 'framenavigated', listener: (frame: unknown) => void): unknown;
 };
-export type NavigatingPage =
-  | (NavigationEvents & { mainFrame(): unknown })
-  | { page(): NavigationEvents };
 export type EvaluatingPage = {
   evaluate(pageFunction: () => Promise<void>): Promise<unknown>;
-} & NavigatingPage;
+} & (
+  | (NavigationEvents & { mainFrame(): unknown })
+  | { page(): NavigationEvents }
+);
 
-function navigationOf(target: NavigatingPage): {
+function navigationOf(target: EvaluatingPage): {
   events: NavigationEvents;
   frame: unknown;
 } {
@@ -27,48 +27,12 @@ function navigationOf(target: NavigatingPage): {
   return { events: target.page(), frame: target };
 }
 
-// What a read answers when a navigation replaced the document under it.
-export const DOCUMENT_REPLACED = Symbol('weles:document-replaced');
-
-// Runs `read` against `page`. A read the page's own navigation interrupted
-// answers DOCUMENT_REPLACED, so the caller asks the new document; any other
-// failure is the caller's error. The replacement is the frame's navigation
-// event observed during the read (one event-loop turn is allowed for it to
-// arrive after the driver's rejection), as
-// src/trajectories/_shared/page/navigation/read.mjs reads it, never words in
-// the error the driver raised.
-export async function readAcrossReplacement<T>(
-  page: NavigatingPage,
-  read: () => Promise<T>,
-): Promise<T | typeof DOCUMENT_REPLACED> {
-  let replaced = false;
-  const { events, frame } = navigationOf(page);
-  const onNavigated = (navigated: unknown) => {
-    if (navigated === frame) replaced = true;
-  };
-  events.on('framenavigated', onNavigated);
-  try {
-    return await read();
-  } catch (error) {
-    if (!replaced) {
-      const turn = Promise.withResolvers<void>();
-      setImmediate(turn.resolve);
-      await turn.promise;
-    }
-    if (!replaced) throw error;
-    return DOCUMENT_REPLACED;
-  } finally {
-    events.off('framenavigated', onNavigated);
-  }
-}
-
-// Runs inside the page: settled once this animation frame and the one before
-// it both passed without a DOM mutation.
+// Runs inside the page.
 function settleInPage(): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   const quiet = () => {
     let changed = true;
-    let quietBefore = false;
+    let quietFrames = 0;
     const observer = new MutationObserver(() => {
       changed = true;
     });
@@ -79,14 +43,13 @@ function settleInPage(): Promise<void> {
       characterData: true,
     });
     const frame = () => {
-      const quietNow = !changed;
+      quietFrames = changed ? 0 : quietFrames + 1;
       changed = false;
-      if (quietNow && quietBefore) {
+      if (quietFrames >= 2) {
         observer.disconnect();
         resolve();
         return;
       }
-      quietBefore = quietNow;
       requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
@@ -98,9 +61,24 @@ function settleInPage(): Promise<void> {
 
 export async function pageSettled(page: EvaluatingPage): Promise<void> {
   // When a navigation replaces the document mid-wait, the new document is the
-  // one that has to settle.
-  while (
-    (await readAcrossReplacement(page, () => page.evaluate(settleInPage))) ===
-    DOCUMENT_REPLACED
-  );
+  // one that has to settle; any other failure is the caller's error. The
+  // replacement is the settling frame's own navigation event observed during the
+  // wait, as src/trajectories/_shared/page/navigation/read.mjs reads it, not
+  // words in the error the driver raised.
+  for (;;) {
+    let replaced = false;
+    const { events, frame } = navigationOf(page);
+    const onNavigated = (navigated: unknown) => {
+      if (navigated === frame) replaced = true;
+    };
+    events.on('framenavigated', onNavigated);
+    try {
+      await page.evaluate(settleInPage);
+      return;
+    } catch (error) {
+      if (!replaced) throw error;
+    } finally {
+      events.off('framenavigated', onNavigated);
+    }
+  }
 }

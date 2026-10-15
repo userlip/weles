@@ -4,15 +4,17 @@ import { CDPFrame, FrameTree } from './frame.js';
 import { CDPMouse, CDPKeyboard } from '../input.js';
 import { CDPScreencast } from './screencast.js';
 import { FetchInterception, type CDPRoute } from './fetch_interception.js';
-import {
-  captureScreenshot,
-  waitForMainFrameUrl,
-  waitForSelectorIn,
-  type SelectorState,
-} from './document.js';
 
 type EventHandler = (data?: any) => void;
-type LoadState = 'load' | 'domcontentloaded';
+
+function selectorCheck(selector: string, state: string): string {
+  const base = selector.startsWith('xpath=')
+    ? `document.evaluate(${JSON.stringify(selector.slice(6))},document,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null).singleNodeValue`
+    : `document.querySelector(${JSON.stringify(selector)})`;
+  return state === 'detached' || state === 'hidden'
+    ? `!(${base})`
+    : `!!(${base})`;
+}
 
 export class CDPPage {
   private _conn: CDPConnection;
@@ -43,8 +45,8 @@ export class CDPPage {
     this._conn = connection;
     this._targetId = targetId;
     this._sessionId = sessionId;
-    this._context = context;
-    this._recordVideo = recordVideo;
+    this._context = context ?? null;
+    this._recordVideo = recordVideo ?? null;
     this._ft = new FrameTree(connection, sessionId);
 
     this._fetch = new FetchInterception(connection, sessionId);
@@ -72,7 +74,7 @@ export class CDPPage {
   }
 
   get url(): string {
-    return this._frame().url;
+    return this._ft.mainFrame?.url ?? '';
   }
 
   get frames(): CDPFrame[] {
@@ -88,7 +90,7 @@ export class CDPPage {
   }
 
   get video(): any {
-    return this._screencast?.video;
+    return this._screencast?.video ?? null;
   }
 
   get mouse(): CDPMouse {
@@ -105,10 +107,13 @@ export class CDPPage {
   async init(): Promise<void> {
     await this._conn.send('Page.enable', undefined, this._sessionId);
     await this._conn.send('Network.enable', undefined, this._sessionId);
-    const {
-      frameTree: { frame },
-    } = await this._conn.send('Page.getFrameTree', undefined, this._sessionId);
-    this._ft.setMainFrame(frame.id, frame.url);
+    const tree = await this._conn.send(
+      'Page.getFrameTree',
+      undefined,
+      this._sessionId,
+    );
+    const root = tree?.frameTree?.frame ?? {};
+    this._ft.setMainFrame(root.id ?? '', root.url ?? '');
     this._conn.on(
       'Network.responseReceived',
       (p: any) => this._fire('response', p),
@@ -126,15 +131,15 @@ export class CDPPage {
     }
   }
 
-  // waitUntil defaults to 'load', as the Playwright page interface does.
   async goto(
     url: string,
-    { waitUntil = 'load' }: { waitUntil?: LoadState } = {},
+    options?: { waitUntil?: 'load' | 'domcontentloaded'; timeout?: number },
   ): Promise<void> {
+    const waitUntil = options?.waitUntil ?? 'load';
     this._loadFired = false;
     this._dcFired = false;
     const r = await this._conn.send('Page.navigate', { url }, this._sessionId);
-    if (r.errorText) {
+    if (r?.errorText) {
       throw new CDPNavigationError(`Navigation failed: ${r.errorText}`);
     }
     await this._waitForLoadState(waitUntil);
@@ -147,63 +152,117 @@ export class CDPPage {
     await this._waitForLoadState('load');
   }
 
-  // Goes to the history entry before the current one; a page at the start of
-  // its history stays where it is, as the Playwright page interface does.
   async goBack(): Promise<void> {
-    const { currentIndex, entries } = await this._conn.send(
+    const h = await this._conn.send(
       'Page.getNavigationHistory',
       undefined,
       this._sessionId,
     );
-    const previous = entries.findLast(
-      (_entry: unknown, index: number) => index < currentIndex,
-    );
-    if (!previous) return;
-    await this._conn.send(
-      'Page.navigateToHistoryEntry',
-      { entryId: previous.id },
-      this._sessionId,
-    );
+    const idx = h?.currentIndex ?? 0;
+    if (idx > 0) {
+      await this._conn.send(
+        'Page.navigateToHistoryEntry',
+        {
+          entryId: h.entries[idx - 1].id,
+        },
+        this._sessionId,
+      );
+    }
   }
 
   async evaluate(expression: string, arg?: any): Promise<any> {
-    return this._frame().evaluate(expression, arg);
+    const mf = this._ft.mainFrame;
+    if (!mf) throw new CDPError('No main frame');
+    return mf.evaluate(expression, arg);
   }
 
   async content(): Promise<string> {
-    const frame = this._frame();
-    const { content } = await this._conn.send(
+    const mf = this._ft.mainFrame;
+    if (!mf) throw new CDPError('No main frame');
+    const r = await this._conn.send(
       'Page.getResourceContent',
-      { frameId: frame.frameId, url: frame.url },
+      { frameId: mf.frameId, url: this.url },
       this._sessionId,
     );
-    return content;
+    return r?.content ?? '';
   }
-
   async title(): Promise<string> {
-    return this._frame().evaluate('document.title');
+    const mf = this._ft.mainFrame;
+    if (!mf) return '';
+    return (await mf.evaluate('document.title')) ?? '';
   }
 
-  // format defaults to 'png', as the Playwright page interface does.
-  async screenshot({
-    path,
-    fullPage,
-    format = 'png',
-  }: { path?: string; fullPage?: boolean; format?: string } = {}): Promise<Buffer> {
-    const options = { path, fullPage, format };
-    return captureScreenshot(this._conn, this._sessionId, options);
+  async screenshot(options?: {
+    path?: string;
+    fullPage?: boolean;
+    format?: string;
+  }): Promise<Buffer> {
+    const format = options?.format ?? 'png';
+    const params: Record<string, any> = { format };
+    if (options?.fullPage) {
+      const m = await this._conn.send(
+        'Page.getLayoutMetrics',
+        undefined,
+        this._sessionId,
+      );
+      const cs = m?.contentSize ?? {};
+      params.clip = {
+        x: 0,
+        y: 0,
+        scale: 1,
+        width: cs.width ?? 1920,
+        height: cs.height ?? 1080,
+      };
+    }
+    const r = await this._conn.send(
+      'Page.captureScreenshot',
+      params,
+      this._sessionId,
+    );
+    const buf = Buffer.from(r?.data ?? '', 'base64');
+    if (options?.path) {
+      const { writeFileSync } = require('node:fs');
+      writeFileSync(options.path, buf);
+    }
+    return buf;
   }
 
-  // state defaults to 'visible', as the Playwright page interface does.
   async waitForSelector(
     selector: string,
-    { state = 'visible' }: { state?: SelectorState } = {},
+    options?: { state?: string },
   ): Promise<void> {
-    const { _conn, _sessionId, _ft } = this;
-    return waitForSelectorIn(_conn, _sessionId, _ft, selector, state);
+    const state = options?.state ?? 'visible';
+    // Resolved inside the page by a MutationObserver: the DOM change that
+    // satisfies the selector is what ends the wait.
+    const condition = selectorCheck(selector, state);
+    const js = `new Promise((resolve) => {
+      const check = () => ${condition};
+      if (check()) { resolve(true); return; }
+      new MutationObserver((_, observer) => { if (check()) { observer.disconnect(); resolve(true); } })
+        .observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    })`;
+    for (;;) {
+      const mf = this._ft.mainFrame;
+      if (!mf) throw new CDPError('No main frame');
+      try {
+        await mf.evaluate(js);
+        return;
+      } catch (error) {
+        // A navigation replaced the document under the observer; the new
+        // document is asked the same question.
+        if (
+          !/context was destroyed|Cannot find context|Execution context/i.test(
+            String(error),
+          )
+        )
+          throw error;
+      }
+    }
   }
 
-  async waitForLoadState(state: LoadState = 'load'): Promise<void> {
+  async waitForLoadState(
+    state: 'load' | 'domcontentloaded' = 'load',
+  ): Promise<void> {
     return this._waitForLoadState(state);
   }
 
@@ -213,7 +272,24 @@ export class CDPPage {
         ? urlOrPattern.test(url)
         : url.includes(urlOrPattern);
     if (matches(this.url)) return Promise.resolve();
-    return waitForMainFrameUrl(this._conn, this._sessionId, this._ft, matches);
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const onNavigated = (params: any) => {
+      // Page.frameNavigated carries frame{id,url}; Page.navigatedWithinDocument
+      // carries frameId and url. Only the main frame's URL is the page's URL.
+      const frameId = params?.frame?.id ?? params?.frameId;
+      if (frameId !== this._ft.mainFrame?.frameId) return;
+      if (!matches(params?.frame?.url ?? params?.url ?? '')) return;
+      this._conn.off('Page.frameNavigated', onNavigated, this._sessionId);
+      this._conn.off(
+        'Page.navigatedWithinDocument',
+        onNavigated,
+        this._sessionId,
+      );
+      resolve();
+    };
+    this._conn.on('Page.frameNavigated', onNavigated, this._sessionId);
+    this._conn.on('Page.navigatedWithinDocument', onNavigated, this._sessionId);
+    return promise;
   }
 
   locator(selector: string): any {
@@ -231,65 +307,83 @@ export class CDPPage {
 
   async addInitScript(script: string): Promise<void> {
     this._initScripts.push(script);
-    const params = { source: script, worldName: '' };
-    await this._conn.send('Page.addScriptToEvaluateOnNewDocument', params, this._sessionId);
+    await this._conn.send(
+      'Page.addScriptToEvaluateOnNewDocument',
+      {
+        source: script,
+        worldName: '',
+      },
+      this._sessionId,
+    );
   }
 
-  async setProxyAuth(credentials: { username: string; password: string }): Promise<void> {
+  async setProxyAuth(credentials: {
+    username: string;
+    password: string;
+  }): Promise<void> {
     await this._fetch.setProxyAuth(credentials);
   }
 
-  async route(pattern: string, handler: (route: CDPRoute) => Promise<void>): Promise<void> {
+  async route(
+    pattern: string,
+    handler: (route: CDPRoute) => Promise<void>,
+  ): Promise<void> {
     await this._fetch.route(pattern, handler);
   }
 
   on(event: string, handler: EventHandler): void {
     const list = this._handlers.get(event);
-    if (list) list.push(handler);
-    else this._handlers.set(event, [handler]);
+    if (list) {
+      list.push(handler);
+    } else {
+      this._handlers.set(event, [handler]);
+    }
     this._conn.on(event, handler, this._sessionId);
   }
 
   off(event: string, handler: EventHandler): void {
     const list = this._handlers.get(event);
-    if (list) this._handlers.set(event, list.filter((h) => h !== handler));
+    if (list) {
+      const idx = list.indexOf(handler);
+      if (idx >= 0) list.splice(idx, 1);
+    }
     this._conn.off(event, handler, this._sessionId);
   }
 
-  // Stops the recording and closes the target; a failure of either is the
-  // caller's to see, and the target is asked to close even when the
-  // recording could not be stopped.
   async close(): Promise<void> {
     if (this._closed) return;
     this._closed = true;
-    const failures: unknown[] = [];
-    if (this._screencast)
-      await this._screencast.stop().then(undefined, (e) => failures.push(e));
-    await this._conn
-      .send('Target.closeTarget', { targetId: this._targetId })
-      .then(undefined, (e) => failures.push(e));
-    if (failures.length)
-      throw new AggregateError(failures, `page ${this._targetId} did not close cleanly`);
-  }
-
-  private _frame(): CDPFrame {
-    const frame = this._ft.mainFrame;
-    if (!frame) throw new CDPError('No main frame');
-    return frame;
+    if (this._screencast && !this._screencast._stopped)
+      await this._screencast.stop().catch(() => {});
+    try {
+      await this._conn.send('Target.closeTarget', { targetId: this._targetId });
+    } catch {
+      /* closed */
+    }
   }
 
   private _fire(name: string, data?: any): void {
     const handlers = this._handlers.get(name);
     if (!handlers) return;
-    for (const h of handlers) h(data);
+    for (const h of handlers) {
+      try {
+        h(data);
+      } catch {
+        /* listener errors silently dropped */
+      }
+    }
   }
 
-  private _waitForLoadState(state: LoadState): Promise<void> {
+  private _waitForLoadState(state: string): Promise<void> {
     if (state === 'domcontentloaded' && this._dcFired) return Promise.resolve();
-    if (state === 'load' && this._loadFired) return Promise.resolve();
-    const { promise, resolve } = Promise.withResolvers<void>();
-    if (state === 'domcontentloaded') this._dcResolvers.push(resolve);
-    else this._loadResolvers.push(resolve);
-    return promise;
+    if ((state === 'load' || state === 'networkidle') && this._loadFired)
+      return Promise.resolve();
+    return new Promise((resolve) => {
+      if (state === 'domcontentloaded') {
+        this._dcResolvers.push(resolve);
+      } else {
+        this._loadResolvers.push(resolve);
+      }
+    });
   }
 }
