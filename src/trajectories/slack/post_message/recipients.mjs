@@ -1,4 +1,4 @@
-import { slackPost } from './api.mjs';
+import { slackDirectory } from './api.mjs';
 
 // Default recipients: one user per matcher group, read from
 // SLACK_RECIPIENT_GROUPS ('name,alias;name,alias'). The people a message goes
@@ -122,12 +122,10 @@ export async function mentionIdsForTarget(target, loadMembers) {
 
 /** Every workspace member that is neither deleted nor a bot. */
 export async function listMembers() {
-  const ul = await slackPost('users.list', { limit: '1000' });
-  if (!Array.isArray(ul.members))
-    throw new Error(
-      `users.list answered without a members list: ${JSON.stringify(ul)}`,
-    );
-  return ul.members.filter((u) => !u.deleted && !u.is_bot);
+  const members = await slackDirectory('users.list', 'members', {
+    limit: '1000',
+  });
+  return members.filter((u) => !u.deleted && !u.is_bot);
 }
 
 /**
@@ -143,20 +141,16 @@ export async function resolveTargets() {
   if (process.env.SLACK_TARGET_USER_ID)
     return [process.env.SLACK_TARGET_USER_ID];
   if (process.env.SLACK_TARGET_CHANNEL_NAME) {
-    const list = await slackPost('conversations.list', {
+    const channels = await slackDirectory('conversations.list', 'channels', {
       types: 'public_channel,private_channel',
       limit: '1000',
     });
-    if (!Array.isArray(list.channels))
-      throw new Error(
-        `conversations.list answered without a channels list: ${JSON.stringify(list)}`,
-      );
-    const c = list.channels.find(
+    const c = channels.find(
       (x) => x.name && x.name.toLowerCase() === TARGET_NAME,
     );
     if (!c)
       throw new Error(
-        `no visible channel named "${TARGET_NAME}" among ${list.channels.length}; nothing was posted`,
+        `no visible channel named "${TARGET_NAME}" among ${channels.length}; nothing was posted`,
       );
     return [c.id];
   }
