@@ -26,7 +26,7 @@ import { submitAnswered } from '../_shared/page/settled.mjs';
 import { keepVerdict } from '../_shared/action/verdict.mjs';
 
 const LABEL = 'reddit_login';
-const URL = 'https://www.reddit.com/login';
+const LOGIN_URL = 'https://www.reddit.com/login';
 
 const acct = await getSocialAccount('reddit');
 if (!acct) throw new Error('no active reddit account to log in');
@@ -96,7 +96,7 @@ const s = await WSession.start({
   persona,
 });
 try {
-  await s.goto(URL);
+  await s.goto(LOGIN_URL);
   const early = await banSignalOf(
     detectRedditBanSignals,
     s,

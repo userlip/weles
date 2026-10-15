@@ -21,13 +21,13 @@ import { statedProxy } from '../_shared/inputs/stated.mjs';
 import { phoneForField } from '../_shared/inputs/phone.mjs';
 import { fieldCodeLength, mailedCode } from '../_shared/inputs/mailed_code.mjs';
 
-const URL = 'https://www.facebook.com/r.php';
+const SIGNUP_URL = 'https://www.facebook.com/r.php';
 
 async function signup(s) {
   const id = await s.generateIdentity('facebook');
   console.log(`[fb] identity: ${id.username} <${id.email}>`);
 
-  await s.goto(URL);
+  await s.goto(SIGNUP_URL);
   await humanIdlePause('deliberate');
 
   // Some locales prompt a cookie consent banner Meta marks with its test id.

@@ -18,7 +18,7 @@ import {
 import { statedProxy } from '../_shared/inputs/stated.mjs';
 import { phoneForField } from '../_shared/inputs/phone.mjs';
 
-const URL = 'https://signup.live.com';
+const SIGNUP_URL = 'https://signup.live.com';
 // Where a finished signup lands: the account, the OAuth hand-off, the mailbox
 // or the signup's own welcome page.
 const LANDINGS = [
@@ -38,7 +38,7 @@ const landed = (url) => LANDINGS.some((route) => url.includes(route));
     const id = await s.generateIdentity('microsoft');
     console.log(`[ms] identity: ${id.username} <${id.username}@outlook.com>`);
 
-    await s.goto(URL);
+    await s.goto(SIGNUP_URL);
     await humanIdlePause('deliberate');
 
     // 1. The first step asks "Create account" — there's a prefix-suffix combo.

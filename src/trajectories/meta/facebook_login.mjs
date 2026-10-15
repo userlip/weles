@@ -18,7 +18,7 @@ import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
 import { clickOffered } from '../_shared/page/judged/seen.mjs';
 import { isLoginUrl } from './ads/session/login_wall.mjs';
 
-const URL = 'https://www.facebook.com/login';
+const LOGIN_URL = 'https://www.facebook.com/login';
 
 const acct = await getSocialAccount('facebook');
 if (!acct) throw new Error('FACEBOOK_ACCOUNT_UNAVAILABLE: no active facebook account in Skarbiec');
@@ -35,7 +35,7 @@ const s = await WSession.start({
 });
 
 try {
-  await s.goto(URL);
+  await s.goto(LOGIN_URL);
   await humanIdlePause('deliberate');
 
   // Cookie banner — a fixed-position overlay Meta marks with its own test id.

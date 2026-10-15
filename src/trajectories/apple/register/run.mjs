@@ -20,7 +20,7 @@ import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 import { phoneForField } from '../../_shared/inputs/phone.mjs';
 import { mailedCode } from '../../_shared/inputs/mailed_code.mjs';
 
-const URL = 'https://appleid.apple.com/account';
+const SIGNUP_URL = 'https://appleid.apple.com/account';
 
 /** `value` padded with zeros to the width the field's own maxlength states. */
 async function toFieldWidth(field, value) {
@@ -61,7 +61,7 @@ async function fillCodeBoxes(boxes, code, refusal) {
       `[apple] identity: ${id.username} <${id.email}> dob=${id.birthMonth}/${id.birthDay}/${id.birthYear}`,
     );
 
-    await s.goto(URL);
+    await s.goto(SIGNUP_URL);
 
     // Resolve the signup frame — iframe-hosted on appleid.apple.com. Filling
     // the outer page instead fails much later on a field it does not hold,

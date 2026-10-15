@@ -15,7 +15,7 @@ import {
 } from '../../../dist/human/mouse.js';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
 
-const URL = 'https://login.live.com/login.srf';
+const LOGIN_URL = 'https://login.live.com/login.srf';
 
 const acct = await getSocialAccount('microsoft');
 if (!acct) throw new Error('MICROSOFT_ACCOUNT_UNAVAILABLE: no active microsoft account in Skarbiec');
@@ -39,7 +39,7 @@ const s = await WSession.start({
 });
 
 try {
-  await s.goto(URL);
+  await s.goto(LOGIN_URL);
   await humanIdlePause('deliberate');
 
   // 1. Email
