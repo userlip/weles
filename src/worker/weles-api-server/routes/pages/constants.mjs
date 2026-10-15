@@ -20,8 +20,10 @@ export const SCREENSHOT_MODES = Object.freeze(['none', 'viewport', 'full']);
 export const NO_SCREENSHOT = 'none';
 export const FULL_SCREENSHOT = 'full';
 export const CONCURRENT_PAGES = availableParallelism();
-export const HTTP_OK = 200;
-export const HTTP_INVALID_REQUEST = 400;
-export const HTTP_TARGET_REFUSED = 422;
-export const HTTP_BUSY = 429;
-export const HTTP_UPSTREAM_FAILED = 502;
+export {
+  HTTP_OK,
+  HTTP_INVALID_REQUEST,
+  HTTP_TARGET_REFUSED,
+  HTTP_BUSY,
+  HTTP_UPSTREAM_FAILED,
+} from '../http-status.mjs';

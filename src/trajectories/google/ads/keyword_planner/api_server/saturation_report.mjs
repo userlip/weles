@@ -1,62 +1,18 @@
-// How long the research runs and what it is worth. The saturation loop keeps
+// How long the research runs and what it found. The saturation loop keeps
 // asking the model router which paid-search intents are still uncovered, runs
 // each new batch of seed keywords through Keyword Planner, merges the metric
 // rows it gets back, and stops when the router says the intents are covered or
-// offers nothing new. The ranking turns those rows into ordered opportunities.
+// offers nothing new. The rows are reported as Google's planner gave them; no
+// score of our own is put on them.
 
 import { normalizeKeyword } from './request_intake.mjs';
 import { runKeywordPlanner } from './keeper_harvest.mjs';
 import { generateKeywordsWithRouter } from './model_router.mjs';
 
-function parseVolume(row) {
-  const explicit = Number(row?.avgMonthlySearches);
-  if (Number.isFinite(explicit)) return explicit;
-  const digits = String(row?.avgMonthlySearchesText || '').replace(
-    /[^\d]/g,
-    '',
-  );
-  return digits ? Number(digits) : 0;
-}
-
-function parseBid(row, key) {
-  const n = Number(String(row?.[key] || '').replace(/[^0-9.]/g, ''));
-  return Number.isFinite(n) ? n : null;
-}
-
-function parseSignedPercent(value) {
-  const n = Number(String(value || '').replace(/[^0-9.+-]/g, ''));
-  return Number.isFinite(n) ? n : 0;
-}
-
-// Google Ads labels competition Low, Medium or High. Low costs a keyword
-// nothing in this ranking, and so does a row Google left unlabelled.
-function competitionPenalty(competition) {
-  if (competition === 'Medium') return 0.2;
-  if (competition === 'High') return 0.45;
-  return 0;
-}
-
-function rankKeywordRows(rows) {
-  return [...(rows || [])]
-    .map((row) => {
-      const volume = parseVolume(row);
-      const yoy = parseSignedPercent(row.yoyChange);
-      const lowBid = parseBid(row, 'topOfPageBidLow');
-      const competition = row.competition || null;
-      const score =
-        Math.log10(volume + 1) +
-        Math.max(-1, Math.min(2, yoy / 100)) -
-        competitionPenalty(competition) -
-        (lowBid ? Math.min(0.4, lowBid / 25) : 0);
-      return { ...row, score: Number(score.toFixed(4)) };
-    })
-    .sort((a, b) => b.score - a.score);
-}
-
 function uniqueKeywords(values) {
   const seen = new Set();
   const out = [];
-  for (const value of values || []) {
+  for (const value of values) {
     const keyword = normalizeKeyword(value);
     const key = keyword.toLowerCase();
     if (!keyword || seen.has(key)) continue;
@@ -73,7 +29,7 @@ function mergeRows(existingRows, newRows) {
       row,
     ]),
   );
-  for (const row of newRows || []) {
+  for (const row of newRows) {
     const key = normalizeKeyword(row.keyword).toLowerCase();
     if (!key || byKeyword.has(key)) continue;
     byKeyword.set(key, row);
@@ -100,9 +56,10 @@ export async function runKeywordReport(input, generation) {
   let stdout = '';
   let stderr = '';
   let saturated = Boolean(generation.saturated);
-  let saturationRationale = generation.rationale || null;
+  let saturationRationale = generation.rationale;
+  let saturationReason = saturated ? 'model_reports_intents_covered' : null;
 
-  while (true) {
+  for (;;) {
     const pendingKeywords = keywords.filter(
       (keyword) => !checkedKeys.has(keyword.toLowerCase()),
     );
@@ -116,25 +73,24 @@ export async function runKeywordReport(input, generation) {
         checkedKeys.add(keyword.toLowerCase());
         checkedKeywords.push(keyword);
       }
-      stdout += `\n--- saturation round ${rounds.length + 1} stdout ---\n${run.stdout || ''}`;
-      stderr += `\n--- saturation round ${rounds.length + 1} stderr ---\n${run.stderr || ''}`;
 
-      const roundRows = run.report?.rows || [];
+      const { report } = run;
+      const roundRows = report?.rows ? report.rows : [];
       rows = mergeRows(rows, roundRows);
-      accountEmail = run.report?.accountEmail || accountEmail;
-      capturedAt = run.report?.capturedAt || capturedAt;
-      url = run.report?.url || url;
+      if (report?.accountEmail) accountEmail = report.accountEmail;
+      if (report?.capturedAt) capturedAt = report.capturedAt;
+      if (report?.url) url = report.url;
 
       rounds.push({
         keywords: pendingKeywords,
         ok: Boolean(run.ok),
         exitCode: run.exitCode,
         rowCount: roundRows.length,
-        blocked: run.report?.blocked || null,
+        blocked: report?.blocked ? report.blocked : null,
         resultFile: run.resultFile,
       });
-
-      if (run.report?.blocked === 'keeper_not_ready') break;
+      stdout += `\n--- saturation round ${rounds.length} stdout ---\n${run.stdout}`;
+      stderr += `\n--- saturation round ${rounds.length} stderr ---\n${run.stderr}`;
     }
 
     if (saturated) break;
@@ -145,7 +101,8 @@ export async function runKeywordReport(input, generation) {
     });
     generations.push(nextGeneration);
     saturated = Boolean(nextGeneration.saturated);
-    saturationRationale = nextGeneration.rationale || saturationRationale;
+    saturationRationale = nextGeneration.rationale;
+    if (saturated) saturationReason = 'model_reports_intents_covered';
     const nextKeywords = uniqueKeywords(nextGeneration.keywords).filter(
       (keyword) =>
         !keywords.some(
@@ -154,9 +111,7 @@ export async function runKeywordReport(input, generation) {
     );
     if (!nextKeywords.length) {
       saturated = true;
-      saturationRationale =
-        nextGeneration.rationale ||
-        'model-router returned no new deduped intent keywords';
+      saturationReason = 'model_offered_no_unchecked_keyword';
       break;
     }
     keywords = uniqueKeywords([...keywords, ...nextKeywords]);
@@ -166,14 +121,13 @@ export async function runKeywordReport(input, generation) {
     (keyword) => !checkedKeys.has(keyword.toLowerCase()),
   );
   return {
-    ok: rows.length > 0,
-    exitCode: rows.length > 0 ? 0 : (lastRun?.exitCode ?? 7),
-    resultFile: lastRun?.resultFile || null,
+    ok: Boolean(rows.length),
+    exitCode: lastRun ? lastRun.exitCode : null,
+    resultFile: lastRun ? lastRun.resultFile : null,
     stdout,
     stderr,
-    keeper: lastRun?.keeper || null,
     report: {
-      ok: rows.length > 0,
+      ok: Boolean(rows.length),
       source: 'google_ads_keyword_planner_saturation_report',
       session: input.session,
       customer: input.customerId,
@@ -187,41 +141,41 @@ export async function runKeywordReport(input, generation) {
       rounds,
       generations,
       saturated,
+      saturationReason,
       saturationRationale,
     },
   };
 }
 
 export function buildKeywordReport(input, generation, run) {
-  const rows = run.report?.rows || [];
-  const ranked = rankKeywordRows(rows);
+  const { report } = run;
   return {
     ok: Boolean(run.ok),
     source: 'weles_keyword_report',
     customer: input.customerId,
-    accountEmail: run.report?.accountEmail || null,
-    subject: input.subject || null,
-    product: input.product || null,
-    niche: input.niche || null,
-    audience: input.audience || null,
+    accountEmail: report.accountEmail,
+    subject: input.subject,
+    product: input.product,
+    niche: input.niche,
+    audience: input.audience,
     generated: generation,
-    generations: run.report?.generations || [generation],
-    saturated: Boolean(run.report?.saturated),
-    saturationRationale: run.report?.saturationRationale || null,
+    generations: report.generations,
+    saturated: report.saturated,
+    saturationReason: report.saturationReason,
+    saturationRationale: report.saturationRationale,
     metrics: {
-      ok: Boolean(run.report?.ok),
-      rowCount: rows.length,
-      checkedKeywordCount: run.report?.checkedKeywords?.length || 0,
-      uncheckedKeywordCount: run.report?.uncheckedKeywords?.length || 0,
-      roundCount: run.report?.rounds?.length || 0,
-      capturedAt: run.report?.capturedAt || null,
-      url: run.report?.url || null,
+      ok: report.ok,
+      rowCount: report.rows.length,
+      checkedKeywordCount: report.checkedKeywords.length,
+      uncheckedKeywordCount: report.uncheckedKeywords.length,
+      roundCount: report.rounds.length,
+      capturedAt: report.capturedAt,
+      url: report.url,
     },
-    checkedKeywords: run.report?.checkedKeywords || [],
-    uncheckedKeywords: run.report?.uncheckedKeywords || [],
-    rounds: run.report?.rounds || [],
-    topOpportunities: ranked,
-    rows,
-    plannerReport: run.report,
+    checkedKeywords: report.checkedKeywords,
+    uncheckedKeywords: report.uncheckedKeywords,
+    rounds: report.rounds,
+    rows: report.rows,
+    plannerReport: report,
   };
 }

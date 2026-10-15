@@ -1,9 +1,13 @@
 // Getting one harvest onto this machine. The keeper session owns the logged-in
 // Google Ads browser profile, so this module proves the keeper is answering on
-// its socket, then runs ads_keyword_planner_keeper.mjs as a child for this one
-// request and reads back the result file it wrote — rewritten with credentials
-// redacted before anyone else sees it. It never starts a keeper: a detached
-// keeper would outlive the request as a second permanent Weles process.
+// its socket, then runs the keeper runner (keyword_planner/keeper.mjs) as a
+// child for this one request and reads back the result file it wrote —
+// rewritten with credentials redacted before anyone else sees it. It never
+// starts a keeper: a detached keeper would outlive the request as a second
+// permanent Weles process. A keeper that does not answer, a runner that cannot
+// start and a result file that cannot be read or redacted are thrown with
+// their cause, marked as upstream failures. The child inherits the process's
+// recording and instrumentation switches as they are; none is set here.
 
 import {
   keeperRequest,
@@ -20,91 +24,62 @@ import {
   stripAmbientCredentialEnv,
 } from './service_settings.mjs';
 import { safeSlug } from './request_intake.mjs';
+import { HTTP_UPSTREAM_FAILED } from '../../../../../worker/weles-api-server/routes/http-status.mjs';
 
-async function keeperAction(session, cmd) {
-  const socket = keeperSocket(session);
-  try {
-    return await keeperRequest(socket, cmd);
-  } catch (error) {
-    return { ok: false, error: String(error?.message || error), socket };
-  }
+const INDENT = '  ';
+
+/** An error the route answers as an upstream failure, with its cause. */
+function upstreamFailure(message, cause) {
+  return Object.assign(new Error(message, { cause }), {
+    status: HTTP_UPSTREAM_FAILED,
+  });
 }
 
+/** Refuses unless the keeper answers on its socket. */
 async function ensureKeeper(session) {
-  const existing = await keeperAction(session, { action: 'url' });
-  if (existing?.ok) return { ready: true, socket: keeperSocket(session) };
-  return {
-    ready: false,
-    socket: keeperSocket(session),
-    lastError: existing?.error || 'keeper_not_running',
-  };
+  const socket = keeperSocket(session);
+  const answer = await keeperRequest(socket, { action: 'url' }).catch(
+    (error) => {
+      throw upstreamFailure(
+        `KEEPER_NOT_READY: keeper session ${session} does not answer on ${socket}: ${error.message}`,
+        error,
+      );
+    },
+  );
+  if (!answer.ok)
+    throw upstreamFailure(
+      `KEEPER_NOT_READY: keeper session ${session} refused the url action: ${answer.error ? answer.error : 'it gave no reason'}`,
+    );
 }
 
 // The child writes its metrics unredacted; nobody reads that file until it has
-// been rewritten. Both refusals are answers this facade is allowed to give, so
-// they are named rather than turned into a missing report.
+// been rewritten with credentials redacted.
 function readRedactedPlannerResult(resultFile) {
-  let report;
-  try {
-    report = JSON.parse(readFileSync(resultFile, 'utf8'));
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `planner result file ${resultFile} could not be read as JSON: ${error?.message || error}`,
-    };
-  }
-  try {
-    writeFileSync(
-      resultFile,
-      JSON.stringify(JSON.parse(redact(JSON.stringify(report))), null, 2),
-    );
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `planner result file ${resultFile} was read but could not be rewritten with credentials redacted: ${error?.message || error}`,
-    };
-  }
+  const report = JSON.parse(readFileSync(resultFile, 'utf8'));
+  writeFileSync(
+    resultFile,
+    JSON.stringify(JSON.parse(redact(JSON.stringify(report))), null, INDENT),
+  );
   return report;
 }
 
 export async function runKeywordPlanner(input) {
   mkdirSync(DIAG_DIR, { recursive: true });
+  const [firstKeyword] = input.keywords;
   const resultFile = join(
     DIAG_DIR,
-    `${Date.now()}-${process.pid}-${safeSlug(input.keywords[0])}.json`,
+    `${Date.now()}-${process.pid}-${safeSlug(firstKeyword)}.json`,
   );
-  const keeper = await ensureKeeper(input.session);
-  if (!keeper.ready) {
-    return {
-      ok: false,
-      exitCode: 3,
-      stdout: '',
-      stderr: '',
-      resultFile,
-      keeper,
-      report: {
-        ok: false,
-        blocked: 'keeper_not_ready',
-        session: input.session,
-        socket: keeper.socket,
-        lastError: keeper.lastError || null,
-      },
-    };
-  }
+  await ensureKeeper(input.session);
 
-  return await new Promise((resolveRun) => {
+  return await new Promise((resolveRun, rejectRun) => {
     const childEnv = stripAmbientCredentialEnv({
       ...process.env,
       SESSION: input.session,
       GOOGLE_ADS_CUSTOMER_ID: input.customerId,
       GOOGLE_ADS_KEYWORDS: input.keywords.join('\n'),
       GOOGLE_ADS_RESULT_FILE: resultFile,
-      GOOGLE_ADS_CLOSE_AFTER_HARVEST:
-        process.env.GOOGLE_ADS_CLOSE_AFTER_HARVEST || '0',
       GOOGLE_ADS_KEYWORD_BROWSER_AUTOMATION: '1',
-      WELES_DISABLE_RECORDING: process.env.WELES_DISABLE_RECORDING || '1',
-      WELES_NO_INSTRUMENT: process.env.WELES_NO_INSTRUMENT || '1',
-      GOOGLE_SSO_NO_SCREENSHOTS: process.env.GOOGLE_SSO_NO_SCREENSHOTS || '1',
     });
 
     const child = spawn(process.execPath, [RUNNER], {
@@ -125,29 +100,45 @@ export async function runKeywordPlanner(input) {
     child.on('error', (error) => {
       if (settled) return;
       settled = true;
-      resolveRun({
-        ok: false,
-        exitCode: 1,
-        stdout,
-        stderr: `${stderr}\n${error?.message || error}`,
-        resultFile,
-        keeper,
-        report: null,
-      });
+      rejectRun(
+        upstreamFailure(
+          `KEYWORD_PLANNER_RUNNER_FAILED: the keeper runner ${RUNNER} could not start: ${error.message}`,
+          error,
+        ),
+      );
     });
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
-      const report = existsSync(resultFile)
-        ? readRedactedPlannerResult(resultFile)
-        : null;
+      if (!existsSync(resultFile)) {
+        resolveRun({
+          ok: false,
+          exitCode: code,
+          stdout,
+          stderr,
+          resultFile,
+          report: null,
+        });
+        return;
+      }
+      let report;
+      try {
+        report = readRedactedPlannerResult(resultFile);
+      } catch (error) {
+        rejectRun(
+          upstreamFailure(
+            `KEYWORD_PLANNER_RESULT_UNREADABLE: ${resultFile} could not be read and rewritten with credentials redacted: ${error.message}`,
+            error,
+          ),
+        );
+        return;
+      }
       resolveRun({
-        ok: code === 0 && Boolean(report?.ok),
+        ok: !code && Boolean(report.ok),
         exitCode: code,
         stdout,
         stderr,
         resultFile,
-        keeper,
         report,
       });
     });

@@ -1,7 +1,10 @@
-// Status codes of the record routes, in one place. No length or count of a
-// request is chosen here; Skarbiec's record shapes and refusals decide.
+// Status codes of the record routes, from the routes' shared status table. No
+// length or count of a request is chosen here; Skarbiec's record shapes and
+// refusals decide.
 
-export const HTTP_OK = 200;
-export const HTTP_INVALID_REQUEST = 400;
-export const HTTP_NOT_FOUND = 404;
-export const HTTP_RECORD_FAILED = 502;
+export {
+  HTTP_OK,
+  HTTP_INVALID_REQUEST,
+  HTTP_NOT_FOUND,
+  HTTP_UPSTREAM_FAILED as HTTP_RECORD_FAILED,
+} from '../http-status.mjs';

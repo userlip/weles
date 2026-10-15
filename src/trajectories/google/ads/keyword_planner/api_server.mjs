@@ -1,7 +1,8 @@
 // Google Ads Keyword Planner routes of the Weles API process.
-// This module is only a transport wrapper around ads_keyword_planner_keeper.mjs.
-// It must not call Google Ads REST/developer-token APIs; metrics remain UI-observed
-// through the Weles keeper session and its logged-in browser profile.
+// This module is only a transport wrapper around the keeper runner
+// (keyword_planner/keeper.mjs). It must not call Google Ads REST/developer-token
+// APIs; metrics remain UI-observed through the Weles keeper session and its
+// logged-in browser profile.
 //
 // There is no separate keyword-planner server or unit. POST /google-ads/keyword-volume
 // and POST /google-ads/keyword-report are answered by the one Weles process
@@ -9,7 +10,12 @@
 //
 // Env of the Weles process:
 //   WELES_KEYWORD_PLANNER_API_TOKEN required unless WELES_KEYWORD_PLANNER_API_ALLOW_UNAUTH=1
-//   SESSION                         optional, default google_ads
+//                                   (WELES_CONSOLE_API_TOKEN is accepted in its place)
+//   SESSION / GOOGLE_ADS_KEEPER_SESSION the keeper session a request runs in when
+//                                   it names none; with neither, a request without
+//                                   `session` is refused
+//   GOOGLE_ADS_AUTHUSER             the browser's Google account index the customer
+//                                   is signed in as (read by the keeper runner)
 //   STADO_MODEL_ROUTER_URL          required model-router endpoint
 //   WELES_STADO_MODEL_ROUTER_TOKEN  required server-side model-router bearer
 //   WELES_STADO_MODEL_ROUTER_AGENT_ID required Brama caller identity
@@ -35,6 +41,13 @@ import {
   buildKeywordReport,
   runKeywordReport,
 } from './api_server/saturation_report.mjs';
+import {
+  HTTP_INVALID_REQUEST,
+  HTTP_OK,
+  HTTP_SERVER_MISCONFIGURED,
+  HTTP_UNAUTHORIZED,
+  HTTP_UPSTREAM_FAILED,
+} from '../../../../worker/weles-api-server/routes/http-status.mjs';
 
 const KEYWORD_VOLUME = '/google-ads/keyword-volume';
 const KEYWORD_REPORT = '/google-ads/keyword-report';
@@ -49,20 +62,20 @@ export function isKeywordPlannerRoute(req, url) {
 export async function respondToKeywordPlanner(req, res, url) {
   try {
     if (!authorized(req)) {
-      json(res, API_TOKEN || ALLOW_UNAUTH ? 401 : 500, {
+      const configured = API_TOKEN || ALLOW_UNAUTH;
+      json(res, configured ? HTTP_UNAUTHORIZED : HTTP_SERVER_MISCONFIGURED, {
         ok: false,
-        error:
-          API_TOKEN || ALLOW_UNAUTH
-            ? 'unauthorized'
-            : 'missing_WELES_KEYWORD_PLANNER_API_TOKEN',
+        error: configured
+          ? 'unauthorized'
+          : 'missing_WELES_KEYWORD_PLANNER_API_TOKEN',
       });
       return;
     }
 
     if (!existsSync(RUNNER)) {
-      json(res, 500, {
+      json(res, HTTP_SERVER_MISCONFIGURED, {
         ok: false,
-        error: 'ads_keyword_planner_keeper_missing',
+        error: 'keyword_planner_keeper_runner_missing',
         runner: RUNNER,
       });
       return;
@@ -76,7 +89,7 @@ export async function respondToKeywordPlanner(req, res, url) {
       const run = await runKeywordPlanner(input);
       const response = {
         ok: Boolean(run.ok),
-        source: 'weles_mac_mini_keyword_planner_api',
+        source: 'weles_keyword_planner_api',
         session: input.session,
         customer: input.customerId,
         keywordCount: input.keywords.length,
@@ -87,9 +100,8 @@ export async function respondToKeywordPlanner(req, res, url) {
         stdoutTail: redact(run.stdout),
         stderrTail: redact(run.stderr),
         report: run.report,
-        keeper: run.keeper,
       };
-      json(res, response.ok ? 200 : 502, response);
+      json(res, response.ok ? HTTP_OK : HTTP_UPSTREAM_FAILED, response);
       return;
     }
 
@@ -99,7 +111,7 @@ export async function respondToKeywordPlanner(req, res, url) {
     const report = buildKeywordReport(input, generation, run);
     const response = {
       ok: Boolean(run.ok),
-      source: 'weles_mac_mini_keyword_report_api',
+      source: 'weles_keyword_report_api',
       session: input.session,
       customer: input.customerId,
       keywordCount: report.metrics.checkedKeywordCount,
@@ -110,10 +122,14 @@ export async function respondToKeywordPlanner(req, res, url) {
       stdoutTail: redact(run.stdout),
       stderrTail: redact(run.stderr),
       report,
-      keeper: run.keeper,
     };
-    json(res, response.ok ? 200 : 502, response);
+    json(res, response.ok ? HTTP_OK : HTTP_UPSTREAM_FAILED, response);
   } catch (error) {
-    json(res, 400, { ok: false, error: String(error?.message || error) });
+    // The keeper, runner and result-file failures carry their upstream
+    // status; any other error is answered as a bad request with its message.
+    json(res, error.status ? error.status : HTTP_INVALID_REQUEST, {
+      ok: false,
+      error: error.message,
+    });
   }
 }
