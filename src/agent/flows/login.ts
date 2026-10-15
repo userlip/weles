@@ -1,5 +1,5 @@
 /**
- * Generic vision-driven login flow — 1:1 port of weles/agent/login.py
+ * Generic vision-driven login flow
  *
  * Works on any login form on any site. Uses Claude vision to identify
  * the username field, password field, and submit button. No selectors,
@@ -48,11 +48,14 @@ export async function run(
   await waitCloudflare(page);
 
   const preLoginUrl = getUrl(page);
-  let hostname = '';
+  let hostname: string;
   try {
     hostname = new URL(preLoginUrl).hostname.toLowerCase();
-  } catch {
-    // Relative or unavailable URLs are handled by the existing login flow.
+  } catch (error) {
+    throw new Error(
+      `login page address ${JSON.stringify(preLoginUrl)} is not an absolute URL, so its host cannot be checked before credentials are typed`,
+      { cause: error },
+    );
   }
   if (hostname === 'apple.com' || hostname.endsWith('.apple.com')) {
     throw new Error(

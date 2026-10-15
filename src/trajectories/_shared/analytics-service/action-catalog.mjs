@@ -25,12 +25,6 @@ function input(name) {
   return process.env[name];
 }
 
-function defaultInput(name, declaredDefault) {
-  const value = input(name);
-  if (value) return value;
-  return declaredDefault;
-}
-
 // A declared address names a platform base or an input in braces:
 // `{UMAMI_APP_BASE}/websites/{WEBSITE_ID}/settings`.
 function resolved(template) {
@@ -87,6 +81,11 @@ const ACTIONS = Object.fromEntries(
           signsIn: stated('signsIn'),
           scrolls: stated('scrolls'),
           url: () => resolved(action.url),
+          // The dashboard section a run opens by the vision model after the
+          // address, for an action whose address cannot name it.
+          section: action.section,
+          // Whether the run opens the data stream's tag installation instructions.
+          showsTagInstructions: action.showsTagInstructions === true,
           inputs: action.inputs,
           required: Object.keys(action.inputs).filter(
             (key) => action.inputs[key] === 'required',
@@ -98,31 +97,23 @@ const ACTIONS = Object.fromEntries(
   ),
 );
 
-function siteHost(url) {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return url
-      .replace(/^https?:\/\//, '')
-      .replace(/^www\./, '')
-      .replace(/\/.*$/, '');
-  }
-}
-
+/** The hostname of `url`; a site given as a bare host ("example.com") is read as https. */
 function siteHostname(url) {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-  }
+  return new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(url) ? url : `https://${url}`).hostname;
 }
 
+/** The site's hostname without its www. */
+function siteHost(url) {
+  return siteHostname(url).replace(/^www\./, '');
+}
+
+/** The analytics action this run was handed; a run handed none is refused. */
 function actionName() {
   if (process.env.SERVICE_ACTION) return process.env.SERVICE_ACTION;
   if (process.env.ACTION) return process.env.ACTION;
   if (process.env.PLATFORM && process.env.VERB)
     return `${process.env.PLATFORM}_${process.env.VERB}`;
-  return '';
+  throw new Error('no analytics action was named: SERVICE_ACTION, ACTION, or PLATFORM with VERB, is required');
 }
 
 function actionUrl(cfg) {
@@ -139,7 +130,6 @@ export {
   GA_BASE,
   ACTIONS,
   input,
-  defaultInput,
   siteHost,
   siteHostname,
   actionName,

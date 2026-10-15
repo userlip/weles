@@ -4,7 +4,7 @@
 // page APIs a run may not reach, the pinned network target and the reading of
 // interactive controls live beside this file, because each of them changes for
 // its own reasons; the two decisions below are what callers actually ask for.
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext } from 'playwright';
 import type { WSession } from '../session/wsession.js';
 import type { ControlDescriptor } from './browser-evidence-policy/interactive-control/descriptors.js';
 import { controlDescriptors } from './browser-evidence-policy/interactive-control/descriptors.js';
@@ -34,6 +34,7 @@ import {
   safeText,
   writeBrowserEvidencePolicy,
 } from './browser-evidence-policy/withheld-ledger.js';
+import { attachPageEdgeGuards } from './browser-evidence-policy/page-edge-guards.js';
 
 export {
   SPIS_BROWSER_EVIDENCE_POLICY,
@@ -42,58 +43,19 @@ export {
   writeBrowserEvidencePolicy,
 };
 
-function attachPageEdgeGuards(context: BrowserContext, label: string): void {
-  const attach = (page: Page) => {
-    page.on('dialog', async (dialog) => {
-      recordEdge(label, {
-        category: 'browser_dialog',
-        reason: 'JavaScript dialog automatically dismissed',
-        source: 'browser_context',
-        dialogType: safeText(dialog.type()),
-        message: safeText(dialog.message()),
-        url: safeText(page.url()),
-      });
-      try {
-        await dialog.dismiss();
-      } catch (error) {
-        // A dialog that would not close is a state of the page, not a
-        // non-event: the run continues against a page that still holds a modal,
-        // so the ledger says so beside the dismissal edge above.
-        recordEdge(label, {
-          category: 'browser_dialog_undismissed',
-          reason: `JavaScript dialog stayed open because dismissal failed: ${describeEdgeFailure(error)}`,
-          source: 'browser_context',
-          dialogType: safeText(dialog.type()),
-          message: safeText(dialog.message()),
-          url: safeText(page.url()),
-        });
-      }
-    });
-    page.on('download', async (download) => {
-      recordEdge(label, {
-        category: 'system_ui_download',
-        reason: 'download cancelled before persistence or system UI',
-        source: 'browser_context',
-        suggestedFilename: safeText(download.suggestedFilename()),
-        url: safeText(download.url()),
-      });
-      try {
-        await download.cancel();
-      } catch (error) {
-        // The cancellation edge above claims the download never persisted. If
-        // the cancellation itself failed, that claim is withdrawn here by name.
-        recordEdge(label, {
-          category: 'system_ui_download_uncancelled',
-          reason: `download was not cancelled: ${describeEdgeFailure(error)}`,
-          source: 'browser_context',
-          suggestedFilename: safeText(download.suggestedFilename()),
-          url: safeText(download.url()),
-        });
-      }
-    });
-  };
-  context.pages().forEach(attach);
-  context.on('page', attach);
+/**
+ * Whether `method` reads without changing anything: one the platform's own
+ * fetch refuses to send a body with (GET and HEAD); a forbidden one throws.
+ */
+function readOnlyMethod(method: string): boolean {
+  new Request('https://method.invalid/', { method });
+  let refusedBody: unknown;
+  try {
+    new Request('https://method.invalid/', { method, body: 'probe' });
+  } catch (error) {
+    refusedBody = error;
+  }
+  return refusedBody instanceof TypeError;
 }
 
 export async function installBrowserEvidencePolicy(
@@ -122,10 +84,12 @@ export async function installBrowserEvidencePolicy(
     });
     socket.close();
   });
+  // The request's address as the ledger keeps it, or the raw one it could not parse.
+  const evidenceUrl = (raw: string) =>
+    URL.canParse(raw) ? networkEvidenceUrl(new URL(raw)) : `unparsable: ${safeText(raw)}`;
   await context.route('**/*', async (route, request) => {
-    let requestedUrl: URL | null = null;
     try {
-      requestedUrl = new URL(request.url());
+      const requestedUrl = new URL(request.url());
       const isMainNavigation =
         request.isNavigationRequest() && request.frame().parentFrame() === null;
       if (['about:', 'blob:', 'data:'].includes(requestedUrl.protocol)) {
@@ -142,29 +106,19 @@ export async function installBrowserEvidencePolicy(
       ) {
         throw new Error('non-HTTP(S) browser request denied');
       }
-      if (request.method() !== 'GET' && request.method() !== 'HEAD') {
-        throw new Error(
-          'anonymous browser-evidence network policy permits only GET and HEAD',
-        );
-      }
-      if (requestedUrl.origin !== target.origin) {
-        throw new Error(
-          'browser request left the exact admitted target origin',
-        );
-      }
-      const addresses = await publicAddresses(target.hostname);
-      if (!sameAddresses(expectedTargetAddresses, addresses)) {
-        throw new Error(
-          'target DNS differs from the admitted pinned address set',
-        );
-      }
+      if (!readOnlyMethod(request.method()))
+        throw new Error('anonymous browser-evidence network policy permits only methods that carry no body (GET and HEAD)');
+      if (requestedUrl.origin !== target.origin)
+        throw new Error('browser request left the exact admitted target origin');
+      if (!sameAddresses(expectedTargetAddresses, await publicAddresses(target.hostname)))
+        throw new Error('target DNS differs from the admitted pinned address set');
       await route.continue();
     } catch (error) {
       recordEdge(label, {
         category: 'network_policy',
         reason: describeEdgeFailure(error),
         source: 'browser_context',
-        url: requestedUrl ? networkEvidenceUrl(requestedUrl) : 'invalid-url',
+        url: evidenceUrl(request.url()),
       });
       try {
         await route.abort('blockedbyclient');
@@ -176,21 +130,24 @@ export async function installBrowserEvidencePolicy(
           category: 'network_policy_unenforced',
           reason: `request refusal was not delivered: ${describeEdgeFailure(abortError)}; the refusal was: ${describeEdgeFailure(error)}`,
           source: 'browser_context',
-          url: requestedUrl ? networkEvidenceUrl(requestedUrl) : 'invalid-url',
+          url: evidenceUrl(request.url()),
         });
       }
     }
   });
   await context.exposeBinding('__welesRecordWithheldEdge', (_source, raw) => {
-    const edge =
-      raw && typeof raw === 'object' && !Array.isArray(raw)
-        ? (raw as Record<string, unknown>)
-        : { category: 'browser_permission_api', api: 'unknown' };
-    recordEdge(label, {
-      category: safeText(edge.category) || 'browser_permission_api',
-      api: safeText(edge.api) || 'unknown',
-      source: 'page_api',
-    });
+    const edge = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+    const category = edge ? safeText(edge.category) : '';
+    const api = edge ? safeText(edge.api) : '';
+    // The page script reports every withheld call with its category and api;
+    // a report without them is kept as itself, not named for it.
+    if (!category || !api)
+      recordEdge(label, {
+        category: 'withheld_edge_report_malformed',
+        reason: `the page reported a withheld call without its category and api: ${JSON.stringify(raw)}`,
+        source: 'page_api',
+      });
+    else recordEdge(label, { category, api, source: 'page_api' });
   });
   await context.addInitScript(initScript, SPIS_BROWSER_EVIDENCE_POLICY.version);
   attachPageEdgeGuards(context, label);
@@ -206,49 +163,29 @@ export async function enforceBrowserEvidenceToolPolicy(
   args: Record<string, unknown>,
 ): Promise<BrowserEvidenceToolAuthorization | null> {
   if (!enabled()) return null;
-  const pageUrl = safeText(session.page.url?.() ?? '');
+  const pageUrl = safeText(session.page.url());
   let decision: { category: string; reason: string } | null =
-    ALWAYS_WITHHELD_TOOLS[tool] ?? null;
+    Object.hasOwn(ALWAYS_WITHHELD_TOOLS, tool) ? ALWAYS_WITHHELD_TOOLS[tool] : null;
   let control: ControlDescriptor | null = null;
   let authorization: BrowserEvidenceToolAuthorization | null = null;
   const text = targetText(tool, args);
 
   if (!decision && tool === 'navigate') {
-    try {
-      const requested = new URL(String(args.url ?? ''));
-      const target = configuredTarget();
-      if (
-        requested.protocol !== 'https:' ||
-        requested.username ||
-        requested.password ||
-        requested.origin !== target.origin
-      ) {
-        decision = {
-          category: 'network_policy',
-          reason: 'navigation left the exact admitted public target origin',
-        };
-      }
-    } catch {
-      decision = {
-        category: 'network_policy',
-        reason: 'navigation URL is invalid or has no admitted target binding',
-      };
-    }
+    const requested = typeof args.url === 'string' && URL.canParse(args.url) ? new URL(args.url) : null;
+    const target = configuredTarget();
+    if (!requested)
+      decision = { category: 'network_policy', reason: 'navigation URL is invalid or has no admitted target binding' };
+    else if (requested.protocol !== 'https:' || requested.username || requested.password || requested.origin !== target.origin)
+      decision = { category: 'network_policy', reason: 'navigation left the exact admitted public target origin' };
   }
-
   if (!decision && tool === 'press_key') {
-    const key = String(args.key ?? 'Enter');
-    if (Object.hasOwn(SAFE_PAGE_KEYS, key)) return null;
-    decision = {
-      category:
-        key.toLowerCase() === 'enter'
-          ? 'form_submission'
-          : 'system_ui_keyboard',
-      reason:
-        key.toLowerCase() === 'enter'
-          ? 'Enter is withheld because it can submit the active form'
-          : 'keyboard chord or system-capable key withheld',
-    };
+    const key = typeof args.key === 'string' ? args.key : null;
+    if (key && Object.hasOwn(SAFE_PAGE_KEYS, key)) return null;
+    // A key press that names no key, or Enter, can submit the active form.
+    decision =
+      !key || key.toLowerCase() === 'enter'
+        ? { category: 'form_submission', reason: 'Enter, or a key press that names no key, is withheld because it can submit the active form' }
+        : { category: 'system_ui_keyboard', reason: 'keyboard chord or system-capable key withheld' };
   }
 
   if (
@@ -263,10 +200,8 @@ export async function enforceBrowserEvidenceToolPolicy(
     ].includes(tool)
   ) {
     const descriptors = await controlDescriptors(session);
-    control =
-      tool === 'type_text'
-        ? (descriptors.find((candidate) => candidate.active) ?? null)
-        : matchingControl(text, descriptors);
+    const active = descriptors.find((candidate) => candidate.active);
+    control = tool === 'type_text' ? (active ? active : null) : matchingControl(text, descriptors);
     decision = classify(text, control, pageUrl);
     if (!decision && !control) {
       decision = {
@@ -323,10 +258,8 @@ export async function enforceBrowserEvidenceToolPolicy(
         };
       }
     } else if (!decision && control && tool === 'select_option') {
-      const filterControl =
-        control.tag === 'select' &&
-        /\b(?:filter|sort|search)\b/i.test(control.label) &&
-        readOnlyForm(control, pageUrl);
+      // A select inside a read-only (GET) form only changes the query it reads.
+      const filterControl = control.tag === 'select' && readOnlyForm(control, pageUrl);
       if (!filterControl || typeof args.value !== 'string') {
         decision = {
           category: 'ambiguous_input_control',

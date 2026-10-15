@@ -18,7 +18,7 @@
       "inputs": {
         "EMAIL": "required",
         "PASSWORD": "required",
-        "DISPLAY_NAME": "optional"
+        "DISPLAY_NAME": "required"
       },
       "objective": "Register a new Umami Cloud account."
     },

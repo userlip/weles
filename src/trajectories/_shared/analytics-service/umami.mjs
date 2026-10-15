@@ -6,12 +6,7 @@ import {
   fillOffered,
   pageShows,
 } from '../page/judged/seen.mjs';
-import {
-  UMAMI_BASE,
-  UMAMI_APP_BASE,
-  input,
-  defaultInput,
-} from './action-catalog.mjs';
+import { UMAMI_BASE, UMAMI_APP_BASE, input } from './action-catalog.mjs';
 import {
   escapeRegExp,
   safeGoto,
@@ -29,11 +24,7 @@ async function umamiRegisterAccount(s) {
 
   const email = input('EMAIL');
   const password = input('PASSWORD');
-  const displayName = defaultInput(
-    'DISPLAY_NAME',
-    email.split('@')[0] || 'Weles User',
-  );
-  await fillOffered(s.page, 'the name field of the sign-up form', displayName);
+  await fillOffered(s.page, 'the name field of the sign-up form', input('DISPLAY_NAME'));
   const emailInput = s.page
     .locator('input[type="email"], input[name="email"]')
     .filter({ visible: true })
@@ -86,13 +77,14 @@ async function umamiCreateWebsite(s) {
   await dialog.waitFor({ state: 'visible' });
 
   // The dialog's two fields are the website's name and its domain, in order.
-  const fields = dialog
+  const [nameField, domainField] = await dialog
     .locator('input:not([type="hidden"]), textarea')
-    .filter({ visible: true });
-  if (!(await fields.nth(1).isVisible()))
-    throw new Error('Umami Add website dialog fields were not fillable');
-  await humanFill(s.page, fields.first(), input('DISPLAY_NAME'));
-  await humanFill(s.page, fields.nth(1), input('DOMAIN'));
+    .filter({ visible: true })
+    .all();
+  if (!domainField)
+    throw new Error('Umami Add website dialog shows no name and domain fields');
+  await humanFill(s.page, nameField, input('DISPLAY_NAME'));
+  await humanFill(s.page, domainField, input('DOMAIN'));
 
   const saveButton = dialog
     .locator('button[data-test="button-submit"], button[type="submit"]')

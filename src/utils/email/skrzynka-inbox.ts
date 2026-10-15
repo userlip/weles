@@ -4,7 +4,8 @@
 // and sender; Weles asks it through the `skrzynka` program it already runs
 // for app passwords, for the organization the mailbox belongs to. A refusal is
 // Skrzynka's own sentence, so a mail-path failure is diagnosed in Skrzynka.
-// The journeys' twin is src/_shared/mail/skrzynka-inbox.mjs.
+// The journeys read it through src/_shared/mail/skrzynka-inbox.mjs, which
+// re-exports this module.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -30,6 +31,11 @@ function program(): string {
   const named = process.env[PROGRAM_VARIABLE]?.trim();
   if (named) return named;
   return PROGRAM;
+}
+
+/** Whether a session can read mail at all: an organization is named. */
+export function inboxConfigured(): boolean {
+  return Boolean(process.env[ORGANIZATION_VARIABLE]?.trim());
 }
 
 /**

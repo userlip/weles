@@ -22,27 +22,10 @@
         "TIMEZONE": "optional",
         "CURRENCY": "optional",
         "INDUSTRY_CATEGORY": "optional",
-        "BUSINESS_SIZE": "optional",
-        "BUSINESS_OBJECTIVE": "optional"
+        "BUSINESS_SIZE": "required",
+        "BUSINESS_OBJECTIVE": "required"
       },
       "objective": "Create a GA4 account, property, and web stream from scratch."
-    },
-    "googleanalytics_register_needher": {
-      "risk": "admin",
-      "scrolls": false,
-      "url": "{GA_BASE}",
-      "inputs": {
-        "ACCOUNT_NAME": "optional",
-        "PROPERTY_NAME": "optional",
-        "SITE_URL": "optional",
-        "STREAM_NAME": "optional",
-        "TIMEZONE": "optional",
-        "CURRENCY": "optional",
-        "INDUSTRY_CATEGORY": "optional",
-        "BUSINESS_SIZE": "optional",
-        "BUSINESS_OBJECTIVE": "optional"
-      },
-      "objective": "Create the NeedHer GA4 account, property, and web stream from scratch."
     },
     "googleanalytics_login": {
       "risk": "verify",
@@ -94,7 +77,8 @@
     },
     "googleanalytics_get_global_site_tag": {
       "risk": "read",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/admin/streams/table",
+      "showsTagInstructions": true,
       "inputs": {
         "PROPERTY_ID": "required",
         "STREAM_ID": "optional",
@@ -124,12 +108,13 @@
       "risk": "verify",
       "opens": "target_site_then_dashboard",
       "url": "{GA_BASE}",
+      "section": "the realtime report",
       "inputs": { "SITE_URL": "required", "MEASUREMENT_ID": "required" },
       "objective": "Verify GA4 realtime tracking."
     },
     "googleanalytics_view_debugview": {
       "risk": "read",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/admin/debugview",
       "inputs": {
         "PROPERTY_ID": "required",
         "DEBUG_DEVICE_OR_EVENT": "required"
@@ -138,7 +123,7 @@
     },
     "googleanalytics_view_realtime": {
       "risk": "read",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/realtime",
       "inputs": { "PROPERTY_ID": "required" },
       "objective": "Open GA4 realtime analytics."
     },
@@ -155,37 +140,37 @@
     },
     "googleanalytics_view_acquisition": {
       "risk": "read",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/reports/acquisition",
       "inputs": { "PROPERTY_ID": "required", "DATE_RANGE": "required" },
       "objective": "Read GA4 acquisition reports."
     },
     "googleanalytics_view_engagement": {
       "risk": "read",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/reports/engagement",
       "inputs": { "PROPERTY_ID": "required", "DATE_RANGE": "required" },
       "objective": "Read GA4 engagement reports."
     },
     "googleanalytics_view_pages": {
       "risk": "read",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/reports/engagement/pages-and-screens",
       "inputs": { "PROPERTY_ID": "required", "DATE_RANGE": "required" },
       "objective": "Read GA4 pages and screens."
     },
     "googleanalytics_create_key_event": {
       "risk": "admin",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/admin/events/key-events",
       "inputs": { "PROPERTY_ID": "required", "EVENT_NAME": "required" },
       "objective": "Create or mark a GA4 key event."
     },
     "googleanalytics_view_key_events": {
       "risk": "read",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/admin/events/key-events",
       "inputs": { "PROPERTY_ID": "required", "DATE_RANGE": "required" },
       "objective": "Read GA4 key events."
     },
     "googleanalytics_create_audience": {
       "risk": "admin",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/admin/audiences",
       "inputs": {
         "PROPERTY_ID": "required",
         "AUDIENCE_DEFINITION": "required"
@@ -194,7 +179,7 @@
     },
     "googleanalytics_create_custom_dimension": {
       "risk": "admin",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/admin/custom-definitions",
       "inputs": {
         "PROPERTY_ID": "required",
         "DIMENSION_NAME": "required",
@@ -205,7 +190,7 @@
     },
     "googleanalytics_create_custom_metric": {
       "risk": "admin",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/admin/custom-definitions",
       "inputs": {
         "PROPERTY_ID": "required",
         "METRIC_NAME": "required",
@@ -234,7 +219,7 @@
     },
     "googleanalytics_update_data_retention": {
       "risk": "admin",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/admin/data-retention",
       "inputs": { "PROPERTY_ID": "required", "RETENTION_DURATION": "required" },
       "objective": "Read or update GA4 retention settings."
     },
@@ -250,7 +235,7 @@
     },
     "googleanalytics_export_report": {
       "risk": "read",
-      "url": "{GA_BASE}",
+      "url": "{GA_BASE}#/p{PROPERTY_ID}/reports/engagement/pages-and-screens",
       "inputs": {
         "PROPERTY_ID": "required",
         "REPORT_NAME": "required",

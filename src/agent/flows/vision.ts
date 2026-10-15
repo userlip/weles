@@ -1,5 +1,5 @@
 /**
- * Typed vision extractors — 1:1 port of weles/agent/vision.py
+ * Typed vision extractors
  *
  * number/text/boolean/click/fill take a page and a description in
  * plain English. No selectors, no regex, no per-site code.

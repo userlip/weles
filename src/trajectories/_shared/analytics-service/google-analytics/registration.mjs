@@ -4,11 +4,10 @@ import {
   fillOffered,
   pageShows,
 } from '../../page/judged/seen.mjs';
-import { GA_BASE, defaultInput, siteHost } from '../action-catalog.mjs';
+import { GA_BASE, input, siteHost } from '../action-catalog.mjs';
 import {
   safeGoto,
   bodyText,
-  waitRendered,
   clickDomElement,
   clickAnyLocator,
   clickLocator,
@@ -19,7 +18,6 @@ import {
   clickGaNext,
   waitForGaStep,
   waitForGaStepOrShown,
-  selectVisibleChoice,
   setOptionalDropdown,
   setGoogleAnalyticsIndustry,
   setGoogleAnalyticsBusinessSize,
@@ -32,16 +30,18 @@ import {
   openGoogleAnalyticsCreatedStreamDetail,
 } from './web-stream.mjs';
 
+// The register action's inputs as the catalog declares them: the names and
+// the site are required (the run is refused without them before it starts);
+// the time zone and currency are optional and, unstated, keep GA's own.
 function gaRegistrationInputs() {
-  const siteUrl = defaultInput('SITE_URL', 'https://www.needher.ai');
-  const propertyName = defaultInput('PROPERTY_NAME', 'NeedHer AI');
+  const siteUrl = input('SITE_URL');
   return {
-    accountName: defaultInput('ACCOUNT_NAME', propertyName),
-    propertyName,
+    accountName: input('ACCOUNT_NAME'),
+    propertyName: input('PROPERTY_NAME'),
     siteUrl,
-    streamName: defaultInput('STREAM_NAME', `${propertyName} Web`),
-    timezone: defaultInput('TIMEZONE', 'United States'),
-    currency: defaultInput('CURRENCY', 'US Dollar'),
+    streamName: input('STREAM_NAME'),
+    timezone: input('TIMEZONE'),
+    currency: input('CURRENCY'),
     domain: siteHost(siteUrl),
   };
 }
@@ -52,7 +52,7 @@ async function openGoogleAnalyticsCreateAccount(s) {
   await dismissGoogleAnalyticsOverlays(s.page);
 
   const currentHash = new URL(s.page.url()).hash;
-  const scope = currentHash.match(/^#\/(a\d+p\d+)\b/)?.[1];
+  const scope = currentHash.match(/^#\/(?<scope>a\d+p\d+)\b/)?.groups.scope;
   const adminUrl = scope ? `${GA_BASE}#/${scope}/admin` : `${GA_BASE}#/admin`;
   await safeGoto(s, adminUrl);
   await pageSettled(s.page);
@@ -62,7 +62,7 @@ async function openGoogleAnalyticsCreateAccount(s) {
     s.page.locator('button[data-guidedhelpid="create-entity-trigger"]'),
     s.page.locator('.create-entity-menu-trigger'),
   ];
-  if (!(await clickAnyLocator(s.page, createButton).catch(() => false))) {
+  if (!(await clickAnyLocator(s.page, createButton))) {
     await safeGoto(s, adminUrl);
     await pageSettled(s.page);
     await dismissGoogleAnalyticsOverlays(s.page);
@@ -70,7 +70,7 @@ async function openGoogleAnalyticsCreateAccount(s) {
   }
   await pageSettled(s.page);
   await clickDescribed(s.page, 'the menu item that creates a new account');
-  await waitRendered(s.page, 40);
+  await pageSettled(s.page);
 }
 
 async function fillGoogleAnalyticsAccountStep(s, values) {
@@ -149,9 +149,8 @@ async function fillGoogleAnalyticsPropertyStep(s, values) {
 }
 
 async function fillGoogleAnalyticsBusinessStep(s) {
-  await setGoogleAnalyticsIndustry(s.page).catch(() => false);
-  if (!(await setGoogleAnalyticsBusinessSize(s.page)))
-    await selectVisibleChoice(s.page, 'the smallest business size option');
+  await setGoogleAnalyticsIndustry(s.page);
+  await setGoogleAnalyticsBusinessSize(s.page);
   await clickGaNext(
     s.page,
     'GA business details next button',
@@ -160,11 +159,7 @@ async function fillGoogleAnalyticsBusinessStep(s) {
 }
 
 async function fillGoogleAnalyticsObjectivesStep(s) {
-  if (!(await setGoogleAnalyticsObjective(s.page)))
-    await selectVisibleChoice(
-      s.page,
-      'the business objective about understanding web traffic',
-    );
+  await setGoogleAnalyticsObjective(s.page);
   await clickGoogleAnalyticsCreateButton(s.page);
   await waitForGaStepOrShown(
     s.page,
