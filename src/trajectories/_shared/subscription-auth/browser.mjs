@@ -20,19 +20,27 @@ import {
 import { AuthenticationFailure } from './oauth.mjs';
 import { emailCodeSignIn, grantConsent } from './email_code.mjs';
 import { captureRedirect } from './redirect.mjs';
+import {
+  GOOGLE_ACCOUNTS_HOST,
+  onGoogleSignIn,
+} from '../profile/google_session.mjs';
 
 const controls = { humanFill, humanType, humanClickLocator };
 
-// The authorization code the provider page shows, read on every animation
-// frame until it appears.
+// The authorization code the provider page shows (`<code>#<state>`), read on
+// every animation frame until a field holds it, or a line of the page is it,
+// whole.
 async function displayedCode(page) {
   return pageCondition(page, () => {
-    const pattern = /\b[A-Za-z0-9_-]{30,}#[A-Za-z0-9_-]{6,}\b/;
+    const code = /^[\w-]+#[\w-]+$/;
     for (const input of document.querySelectorAll('input,textarea')) {
-      const match = String(input.value || '').match(pattern);
-      if (match) return match[0];
+      if (code.test(input.value.trim())) return input.value.trim();
     }
-    return (document.body?.innerText || '').match(pattern)?.[0] || null;
+    const line = document.body.innerText
+      .split('\n')
+      .map((text) => text.trim())
+      .find((text) => code.test(text));
+    return line ? line : false;
   });
 }
 
@@ -63,7 +71,7 @@ async function approveDevice(session, transaction, login, mark) {
     for (const page of context.pages()) {
       if (page.isClosed()) continue;
       const url = new URL(page.url());
-      if (url.hostname === 'accounts.google.com') {
+      if (onGoogleSignIn(page.url())) {
         const emailField = page
           .locator('input[name="identifier"],input[type="email"]')
           .filter({ visible: true })
@@ -79,7 +87,7 @@ async function approveDevice(session, transaction, login, mark) {
           });
         } else {
           const view = await observeGisPage(page, login.email);
-          if (view?.host === 'accounts.google.com' && view.accountRow) {
+          if (view?.host === GOOGLE_ACCOUNTS_HOST && view.accountRow) {
             const hit = await clickGisTarget(page, 'account_row');
             if (!hit.clicked) {
               throw new AuthenticationFailure(
