@@ -14,6 +14,16 @@
 // TOPUP_CONFIRM, REQUIRE_APPROVAL) live here for the same reason: they gate the
 // spending verbs this vocabulary describes.
 
+/**
+ * A yes or no a caller states as true/false, 1/0 or '1'/'0'; undefined when
+ * it states neither.
+ */
+function statedFlag(value: unknown): boolean | undefined {
+  if (value === true || String(value) === '1') return true;
+  if (value === false || String(value) === '0') return false;
+  return undefined;
+}
+
 export function applyPaidAdsActionParams(
   params: Record<string, unknown>,
   action: string,
@@ -242,19 +252,9 @@ export function applyPaidAdsActionParams(
     else if (params[k] && typeof params[k] === 'object')
       env[ek] = JSON.stringify(params[k]);
   }
-  if (params.submit === true || params.submit === '1' || params.submit === 1)
-    env.SUBMIT = '1';
-  else if (
-    params.submit === false ||
-    params.submit === '0' ||
-    params.submit === 0
-  )
-    env.SUBMIT = '0';
-  if (
-    params.apple_ads_confirm === true ||
-    params.apple_ads_confirm === '1' ||
-    params.apple_ads_confirm === 1
-  )
+  const submit = statedFlag(params.submit);
+  if (submit !== undefined) env.SUBMIT = submit ? '1' : '0';
+  if (statedFlag(params.apple_ads_confirm) === true)
     env.APPLE_ADS_CONFIRM = '1';
   // Capability-bootstrap override: forces a specific proxy URL into the
   // trajectory so we can test (provider, action) cells deterministically.
@@ -278,18 +278,14 @@ export function applyPaidAdsActionParams(
   // src/trajectories/_shared/services/topup_common.mjs#topupOpts.
   if (typeof params.topup_usd === 'number')
     env.TOPUP_USD = String(params.topup_usd);
-  if (
-    params.topup_confirm === true ||
-    params.topup_confirm === '1' ||
-    params.topup_confirm === 1
-  )
-    env.TOPUP_CONFIRM = '1';
+  if (statedFlag(params.topup_confirm) === true) env.TOPUP_CONFIRM = '1';
   if (action.endsWith('_submit_promote')) env.POST_PROMOTE = '1';
   for (const [k, ek] of [
     ['repo_name', 'REPO_NAME'],
     ['repo_desc', 'REPO_DESC'],
     ['file_path', 'FILE_PATH'],
     ['file_append', 'FILE_APPEND'],
+    ['commit_branch', 'COMMIT_BRANCH'],
     ['commit_message', 'COMMIT_MESSAGE'],
     ['issue_title', 'ISSUE_TITLE'],
     ['issue_body', 'ISSUE_BODY'],

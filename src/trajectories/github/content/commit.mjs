@@ -1,26 +1,34 @@
-import {
-  getSocialAccount,
-  resolveAccountSession,
-} from '../../../../dist/utils/credentials.js';
-import { WSession } from '../../../../dist/session/wsession.js';
-import { detectGitHubBanSignals } from '../../../../dist/platforms/github/ban_signals.js';
-import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { checkReachable } from '../../_shared/action-runner.mjs';
+// Append text to a file in a GitHub repository and commit it through the
+// web editor, via the shared action runner: the account's fresh jar, the
+// signed-in gate, the verdict and its record are the runner's.
+//
+// Env (all required; a commit lands in a real repository's history under
+// the account's name):
+//   REPO_URL         the repository, as owner/name or its URL
+//   COMMIT_BRANCH    the branch the commit lands on
+//   FILE_PATH        the file the text is appended to
+//   FILE_APPEND      the text appended, kept exactly as given
+//   COMMIT_MESSAGE   the commit message
+//
+// The text is typed at the end of the file in GitHub's editor, the message
+// replaces GitHub's default and is read back, and the commit counts as made
+// when GitHub leaves the edit page. An edit page with no editor (a missing
+// repository, branch or file, or no write access) is refused.
 import { humanType } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
-import { pageSettled, submitAnswered } from '../../_shared/page/settled.mjs';
-import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { detectGitHubBanSignals } from '../../../../dist/platforms/github/ban_signals.js';
+import { runAction } from '../../_shared/action-runner.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
+import { pageSettled, submitAnswered } from '../../_shared/page/settled.mjs';
+import { repositoryUrl } from '../repository.mjs';
 
-// The repository, file, message and text are the caller's: a commit lands in
-// a real repository's history under the account's name, so none is written
-// here.
-const REPO_URL = statedText(
-  ['REPO_URL'],
-  'the GitHub repository (URL or owner/name) the commit goes to',
-);
+const repoBase = repositoryUrl(
+  statedText(
+    ['REPO_URL'],
+    'the GitHub repository (URL or owner/name) the commit goes to',
+  ),
+).replace(/\/$/, '');
+const BRANCH = statedText(['COMMIT_BRANCH'], 'the branch the commit lands on');
 const FILE_PATH = statedText(
   ['FILE_PATH'],
   'the repository file the commit appends to',
@@ -35,161 +43,77 @@ if (!FILE_APPEND?.trim())
   throw new Error(
     'FILE_APPEND is not set: the text the commit appends to the file; nothing is assumed',
   );
+const EDIT_ROUTE = '/edit/';
 
-function normalize(raw) {
-  const url = new URL(raw, 'https://github.com/');
-  const [, owner, repo, ...remaining] = url.pathname.split('/');
-  if (
-    url.protocol !== 'https:' ||
-    url.hostname !== 'github.com' ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    !owner ||
-    !repo ||
-    remaining.some(Boolean)
-  )
-    return '';
-  return `${url.origin}/${owner}/${repo}`;
-}
-const repoBase = normalize(REPO_URL);
-if (!repoBase) {
-  console.log(
-    'FAIL: REPO_URL must name a GitHub repository URL or owner/name; nothing was opened',
-  );
-  process.exit(1);
-}
-
-const acct = await getSocialAccount('github');
-if (!acct) {
-  console.log('FAIL: no active github account');
-  process.exit(1);
-}
-const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({
-  label: 'github_commit',
-  proxy: proxyUrl,
-  persona,
-});
-let ban = null;
-try {
-  const cookies = (acct.metadata?.cookies ?? []).filter((c) =>
-    (c.domain ?? '').includes('github.com'),
-  );
-  if (cookies.length) await s.ctx.addCookies(cookies);
-  await s.goto(`${repoBase}/edit/main/${FILE_PATH}`);
-  checkReachable(s, 'github');
-  await pageSettled(s.page);
-  const loggedOut = await s.page.evaluate(
-    () => !!document.querySelector('a[href="/login"]'),
-  );
-  if (loggedOut) throw new Error('not_logged_in: cookies stale');
-  const is404 = await s.page.evaluate(() =>
-    /page not found/i.test(document.body.innerText || ''),
-  );
-  if (is404) throw new Error(`repo_or_file_404: url=${s.page.url?.() ?? ''}`);
-
-  // Move to the end of the file and type only the caller's requested bytes.
-  // Direct DOM manipulation on CodeMirror would bypass GitHub's diff-tracking.
-  await humanClickLocator(
-    s.page,
-    s.page
+await runAction({
+  platform: 'github',
+  action: 'commit',
+  feedUrl: `${repoBase}${EDIT_ROUTE}${encodeURIComponent(BRANCH)}/${FILE_PATH}`,
+  banDetector: detectGitHubBanSignals,
+  act: async (s) => {
+    const editor = s.page
       .locator(
         '.CodeMirror, [data-codemirror], textarea[name="value"], div[contenteditable="true"]',
       )
-      .first(),
-  );
-  await s.page.keyboard.press('ControlOrMeta+End');
-  await humanType(s.page, FILE_APPEND);
-  await pageSettled(s.page);
-
-  // Open the Commit-changes modal: toolbar button text is "Commit changes...".
-  // GitHub's React editor renders it as <button> with primary styling.
-  const openCommit = s.page
-    .locator('button:has-text("Commit changes")')
-    .filter({ visible: true })
-    .first();
-  await openCommit.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, openCommit);
-  await pageSettled(s.page);
-  // Modal commit message textarea — id="commit-message-input" / aria-label="Commit message".
-  const msgIn = s.page
-    .locator(
-      'textarea[id="commit-message-input"], textarea[aria-label*="ommit message"], dialog textarea[name="commit_message"]',
-    )
-    .filter({ visible: true })
-    .first();
-  if (!(await msgIn.count()))
-    throw new Error(
-      'COMMIT_MESSAGE_FIELD_UNAVAILABLE: no visible commit message input',
-    );
-  await humanClickLocator(s.page, msgIn);
-  await s.page.keyboard.press('ControlOrMeta+A');
-  await s.page.keyboard.press('Delete');
-  await humanType(s.page, COMMIT_MESSAGE);
-  // GitHub's default message must never replace or prefix the requested one.
-  const held = await msgIn.inputValue();
-  if (held !== COMMIT_MESSAGE)
-    throw new Error(
-      `commit message field holds ${JSON.stringify(held)}, not the message typed`,
-    );
-  await pageSettled(s.page);
-  // Modal confirm button — second "Commit changes" inside dialog/Box--overlay.
-  const confirmCommit = s.page
-    .locator(
-      'dialog button:has-text("Commit changes"), [role="dialog"] button:has-text("Commit changes"), .Box--overlay button:has-text("Commit changes")',
-    )
-    .filter({ visible: true })
-    .first();
-  await confirmCommit.waitFor({ state: 'visible' });
-  await humanClickLocator(s.page, confirmCommit);
-
-  await submitAnswered(
-    s.page,
-    /\/edit\//,
-    s.page
-      .locator('.flash-error, [role="alert"]')
-      .filter({ hasText: /\S/ })
-      .first(),
-  );
-  const finalUrl = s.page.url?.() ?? '';
-  if (/\/edit\//.test(finalUrl))
-    throw new Error(`commit_not_applied: still at ${finalUrl}`);
-  ban = await banSignalOf(detectGitHubBanSignals, s, 'after the commit');
-  console.log(
-    `[ban-signal] ${ban?.signal}  PASS: committed to ${repoBase}/${FILE_PATH}`,
-  );
-} catch (e) {
-  ban =
-    e.banSignal ??
-    (await banSignalOf(detectGitHubBanSignals, s, 'after the failure'));
-  console.log(`[ban-signal] ${ban?.signal}  FAIL: ${e.message}`);
-  process.exitCode = 1;
-} finally {
-  if (ban) {
-    try {
-      const dir = runRecordingsDir('github_commit');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'ban_signal.json'),
-        JSON.stringify(
-          {
-            account_id: acct.id,
-            username: acct.username,
-            action: 'github_commit',
-            repo_url: repoBase,
-            file_path: FILE_PATH,
-            ...ban,
-            ts: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
+      .filter({ visible: true })
+      .first();
+    if (!(await editor.count()))
+      throw new Error(
+        `GITHUB_EDITOR_UNAVAILABLE: ${s.page.url()} shows no file editor (repository, branch or file missing, or no write access); nothing was committed`,
       );
-    } catch (e) {
-      console.log('[ban-signal] persist err:', e.message);
-    }
-  }
-  await s.close();
-}
+    // Typed at the end of the file: direct DOM writes would bypass GitHub's
+    // own change tracking.
+    await humanClickLocator(s.page, editor);
+    await s.page.keyboard.press('ControlOrMeta+End');
+    await humanType(s.page, FILE_APPEND);
+    await pageSettled(s.page);
+    const openCommit = s.page
+      .locator('button:has-text("Commit changes")')
+      .filter({ visible: true })
+      .first();
+    await openCommit.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, openCommit);
+    await pageSettled(s.page);
+    const msgIn = s.page
+      .locator(
+        'textarea[id="commit-message-input"], textarea[aria-label*="ommit message"], dialog textarea[name="commit_message"]',
+      )
+      .filter({ visible: true })
+      .first();
+    if (!(await msgIn.count()))
+      throw new Error(
+        'COMMIT_MESSAGE_FIELD_UNAVAILABLE: no visible commit message input',
+      );
+    await humanClickLocator(s.page, msgIn);
+    await s.page.keyboard.press('ControlOrMeta+A');
+    await s.page.keyboard.press('Delete');
+    await humanType(s.page, COMMIT_MESSAGE);
+    // GitHub's default message must never replace or prefix the requested one.
+    const held = await msgIn.inputValue();
+    if (held !== COMMIT_MESSAGE)
+      throw new Error(
+        `commit message field holds ${JSON.stringify(held)}, not the message typed`,
+      );
+    await pageSettled(s.page);
+    const confirmCommit = s.page
+      .locator(
+        'dialog button:has-text("Commit changes"), [role="dialog"] button:has-text("Commit changes"), .Box--overlay button:has-text("Commit changes")',
+      )
+      .filter({ visible: true })
+      .first();
+    await confirmCommit.waitFor({ state: 'visible' });
+    await humanClickLocator(s.page, confirmCommit);
+    await submitAnswered(
+      s.page,
+      /\/edit\//,
+      s.page
+        .locator('.flash-error, [role="alert"]')
+        .filter({ hasText: /\S/ })
+        .first(),
+    );
+    const finalUrl = s.page.url();
+    if (new URL(finalUrl).pathname.includes(EDIT_ROUTE))
+      throw new Error(`commit_not_applied: still at ${finalUrl}`);
+    return `committed to ${repoBase}/${FILE_PATH} on ${BRANCH}`;
+  },
+});
