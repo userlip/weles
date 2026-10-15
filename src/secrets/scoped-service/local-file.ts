@@ -12,6 +12,13 @@ import { basename, dirname, join } from 'node:path';
 
 type Items = Record<string, Record<string, string>>;
 
+/** Read and write for the owner, nothing for group or others. */
+const OWNER_ONLY = 0o600; // https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_stat.h.html S_IRUSR | S_IWUSR
+/** Every permission bit of the group and of others. */
+const GROUP_AND_OTHERS = 0o077; // https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_stat.h.html S_IRWXG | S_IRWXO
+/** The indentation the file is written with, for a person to read. */
+const INDENT = '  ';
+
 export function localCredentialsFile(): string | null {
   const path = process.env.WELES_CREDENTIALS_FILE?.trim();
   return path ? path : null;
@@ -40,7 +47,7 @@ function readItems(path: string): Items {
     metadata.isSymbolicLink() ||
     (typeof process.getuid === 'function' &&
       metadata.uid !== process.getuid()) ||
-    (metadata.mode & 0o077) !== 0
+    Boolean(metadata.mode & GROUP_AND_OTHERS)
   ) {
     throw new Error(
       `refusing WELES_CREDENTIALS_FILE ${path}: it must be a regular file owned by this user with mode 600`,
@@ -74,7 +81,10 @@ function readItems(path: string): Items {
   return parsed as Items;
 }
 
-/** The field's value, or `undefined` when the file does not hold it. */
+/**
+ * The field's value, or `undefined` when the file does not hold it or holds
+ * it empty: an empty string is no credential.
+ */
 export function readLocalField(
   path: string,
   item: string,
@@ -85,7 +95,8 @@ export function readLocalField(
   const items = readItems(path);
   if (!Object.hasOwn(items, item) || !Object.hasOwn(items[item], field))
     return undefined;
-  return items[item][field] || undefined;
+  const value = items[item][field];
+  return value === '' ? undefined : value;
 }
 
 /** Merge `fields` into `item` and replace the file in one rename. */
@@ -105,8 +116,8 @@ export function writeLocalFields(
     dirname(path),
     `.${basename(path)}.${process.pid}.staged`,
   );
-  writeFileSync(staged, JSON.stringify(items, null, 2) + '\n', {
-    mode: 0o600,
+  writeFileSync(staged, JSON.stringify(items, null, INDENT) + '\n', {
+    mode: OWNER_ONLY,
     flag: 'wx',
   });
   renameSync(staged, path);
