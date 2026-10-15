@@ -1,164 +1,57 @@
-// Collect Claude subscription metadata from a verified Weles keeper UI.
+// Collect a Claude subscription from a verified keeper session open on
+// claude.ai Settings -> Billing, through the shared keeper collector
+// (./billing/collect.mjs; --session, --account, --service-credential-id).
 //
-// Expected UI:
-//   claude.ai -> Settings -> Billing
-//   "Max plan"
-//   "Your subscription will be canceled on Jul 7, 2026."
-//   invoice rows like "Jun 7, 2026  $200  Paid"
-//
-// This reads UI text from a keeper session that was verified interactively
-// first. It does not call provider billing APIs and it does not run a fresh
-// login trajectory.
-
-import { keeperRequest, keeperSocket } from '../_shared/keeper/client.mjs';
-import { upsertSubscription } from '../../lib/service_subscriptions.mjs';
+// The page names the plan on a "<plan name> plan" line, with the usage line
+// under it; a cancelled subscription says when it ends ("Your subscription
+// will be canceled on <date>"); invoices are rows of a date, a dollar amount
+// and the status Claude shows. The monthly cost is the latest paid invoice's
+// amount. A page that names no plan is not the billing page and is refused.
+// SUBSCRIPTION_PROVIDER states the provider as the subscription store names it.
 import { statedText } from '../_shared/inputs/stated.mjs';
 import { dayIn, invoiceRows, linesOf } from './billing_text.mjs';
+import { runKeeperCollector } from './billing/collect.mjs';
 
 /** Claude's invoice amounts, written in dollars. */
 const AMOUNT = /^\$(?<amount>[\d.]+)$/;
 /** The line naming the plan: "<plan name> plan", whatever the plan is called. */
 const PLAN_LINE = /^\S+ plan$/i;
-/** The provider as the subscription store names it, stated by the caller. */
-const PROVIDER = statedText(
+const CANCEL_LINE = /subscription will be canceled on/i;
+const PAID = /^Paid$/i;
+
+const provider = statedText(
   ['SUBSCRIPTION_PROVIDER'],
   'the provider this subscription is billed by, as the subscription store names it',
 );
 
-function parseArgs() {
-  const out = {
-    session: process.env.SESSION || '',
-    account: process.env.SUBSCRIPTION_ACCOUNT || '',
-    serviceCredentialId: '',
-  };
-  for (let i = 2; i < process.argv.length; i += 1) {
-    const arg = process.argv[i];
-    if (arg === '--session') out.session = process.argv[++i] || '';
-    else if (arg === '--account')
-      out.account = process.argv[++i] || out.account;
-    else if (arg === '--service-credential-id')
-      out.serviceCredentialId = process.argv[++i] || out.serviceCredentialId;
-    else throw new Error(`unknown arg: ${arg}`);
-  }
-  if (!out.session) throw new Error('missing --session or SESSION');
-  if (!out.account.trim())
-    throw new Error(
-      'missing --account or SUBSCRIPTION_ACCOUNT: the account the subscription is billed to',
-    );
-  if (!out.serviceCredentialId.trim())
-    throw new Error(
-      'missing --service-credential-id: the credential for this subscription account',
-    );
-  return out;
-}
-
-async function action(session, cmd) {
-  const answer = await keeperRequest(keeperSocket(session), cmd);
-  if (!answer.ok)
-    throw new Error(answer.error || `keeper action failed: ${cmd.action}`);
-  return answer;
-}
-
-async function readText(session) {
-  const result = await action(session, {
-    action: 'eval',
-    js: 'document.body.innerText',
-  });
-  return String(result.result || '');
-}
-
-function parseHumanDate(value) {
-  return dayIn(value);
-}
-
-function parseInvoices(lines) {
-  return invoiceRows(lines, AMOUNT);
-}
-
-function extractBilling(text) {
-  const lines = linesOf(text);
-  const billingIdx = lines.findIndex((line) => line === 'Billing');
-  const planIdx = lines.findIndex((line) => PLAN_LINE.test(line));
-  const plan = planIdx >= 0 ? lines[planIdx] : null;
-  const usageLine = planIdx >= 0 ? lines[planIdx + 1] || null : null;
-  const cancelLine = lines.find((line) =>
-    /subscription will be canceled on/i.test(line),
-  );
-  const expiresAt = cancelLine ? parseHumanDate(cancelLine) : null;
-  const invoices = parseInvoices(lines);
-  const latestPaid =
-    invoices.find((item) => /^Paid$/i.test(item.status)) || null;
-  const monthlyCost = latestPaid?.amount_usd ?? null;
-  return {
-    service_name: 'Claude Code',
-    provider: PROVIDER,
-    status: plan ? 'active' : 'unknown',
-    plan,
-    expires_at: expiresAt,
-    monthly_cost_usd: monthlyCost,
-    metadata: {
-      collector: 'weles_keeper_claude_billing_ui',
-      source: 'claude.ai settings billing UI',
-      collected_at: new Date().toISOString(),
-      usage_line: usageLine,
-      cancel_line: cancelLine || null,
-      latest_paid_invoice: latestPaid,
-      invoices,
-      ui_excerpt: lines.slice(
-        Math.max(0, billingIdx),
-        billingIdx >= 0 ? billingIdx + 44 : 90,
-      ),
-    },
-  };
-}
-
-async function main() {
-  const args = parseArgs();
-  const text = await readText(args.session);
-  if (!/Billing/i.test(text) || !/(Invoices|Payment|plan)/i.test(text)) {
-    throw new Error('keeper page does not look like Claude billing UI');
-  }
-  const collected = extractBilling(text);
-  const row = {
-    ...collected,
-    account_identifier: args.account,
-    service_credential_id: args.serviceCredentialId,
-    last_verified_at: new Date().toISOString(),
-  };
-  const saved = await upsertSubscription(row);
-  console.log(
-    JSON.stringify(
-      {
-        ok: true,
-        row: {
-          service_name: row.service_name,
-          provider: row.provider,
-          account_identifier: row.account_identifier,
-          status: row.status,
-          plan: row.plan,
-          monthly_cost_usd: row.monthly_cost_usd,
-          expires_at: row.expires_at,
-          invoice_rows: row.metadata.invoices.length,
-        },
-        saved: saved.map((item) => ({
-          id: item.id,
-          service_name: item.service_name,
-          provider: item.provider,
-          account_identifier: item.account_identifier,
-          status: item.status,
-          plan: item.plan,
-          monthly_cost_usd: item.monthly_cost_usd,
-          expires_at: item.expires_at,
-          last_verified_at: item.last_verified_at,
-        })),
+await runKeeperCollector({
+  needsCredential: true,
+  read: async (page) => {
+    const lines = linesOf(await page.text());
+    const planAt = lines.findIndex((line) => PLAN_LINE.test(line));
+    if (planAt < 0)
+      throw new Error('CLAUDE_BILLING_UNREAD: the keeper page names no "<plan> plan" line, so it is not the Claude billing page');
+    const [plan, usageLine] = lines.slice(planAt);
+    const cancelLine = lines.find((line) => CANCEL_LINE.test(line));
+    const invoices = invoiceRows(lines, AMOUNT);
+    const latestPaid = invoices.find((invoice) => PAID.test(invoice.status));
+    return {
+      service_name: 'Claude Code',
+      provider,
+      status: 'active',
+      plan,
+      expires_at: cancelLine ? dayIn(cancelLine) : null,
+      monthly_cost_usd: latestPaid ? latestPaid.amount_usd : null,
+      metadata: {
+        collector: 'weles_keeper_claude_billing_ui',
+        source: 'claude.ai settings billing UI',
+        collected_at: new Date().toISOString(),
+        usage_line: usageLine,
+        cancel_line: cancelLine,
+        latest_paid_invoice: latestPaid,
+        invoices,
+        page_lines: lines,
       },
-      null,
-      2,
-    ),
-  );
-}
-
-main().catch((error) => {
-  console.error(error.stack || error.message || String(error));
-  process.exit(1);
+    };
+  },
 });

@@ -1,313 +1,67 @@
-import { pageSettled } from '../_shared/page/settled.mjs';
-// Scrape unusualwhales.com ticker data using cached session cookies.
-// Usage: node src/trajectories/unusualwhales/scrape.mjs --ticker ORCL --page overview
-//   pages: overview | flow | darkpool | gex
-//   optional: --screenshot /path/to/out.png
-// Outputs JSON to stdout on success, non-zero exit on failure.
-
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import { exitStatusFor } from '../../../dist/cli/usage.js';
+// Scrape Unusual Whales pages for a symbol through the shared market scrape
+// (../_shared/market/scrape.mjs): TICKER, and PAGE or PAGES (comma-separated)
+// from the catalog below. The session signs in with the Unusual Whales login
+// (UW_EMAIL, UW_PASSWORD, both required) through ./session/login.mjs. Dated
+// pages carry the window the run states (START_DATE, END_DATE; a start alone
+// is that one day); without one, Unusual Whales shows its own current window.
+//
+// Every path is one the authenticated Unusual Whales sidebar links to; a page
+// it does not link answers 404.
+import { runMarketScrape } from '../_shared/market/scrape.mjs';
+import { statedText } from '../_shared/inputs/stated.mjs';
 import { loginUnusualWhales } from './session/login.mjs';
-import { statedProxy } from '../_shared/inputs/stated.mjs';
 
-// Redirect all console.log to stderr so stdout is pure JSON output.
-console.log = (...a) => process.stderr.write(a.map(String).join(' ') + '\n');
-
-const { WSession } = await import('../../../dist/session/wsession.js');
-const { loadEnv } = await import('./_envload.mjs');
-const { persistContext } = await import('./_persist.mjs');
-
-loadEnv();
-
-// Parse args
-const args = {};
-for (let i = 2; i < process.argv.length; i += 2) {
-  args[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];
-}
-const ticker = (args.ticker || process.env.TICKER || '').toUpperCase();
-const page = args.page || process.env.PAGE;
-// `pages` is comma-separated; if present, scrape all of them in one
-// Playwright session (login once, navigate per page, persist per page).
-// Single-job-per-ticker shape — replaces the old one-job-per-page blast.
-const pagesArg = args.pages || process.env.PAGES || '';
-const pagesList = pagesArg
-  ? pagesArg
-      .split(',')
-      .map((p) => p.trim())
-      .filter(Boolean)
-  : null;
-const screenshotPath = args.screenshot;
-const startDate = args['start-date'] || process.env.START_DATE || '';
-const endDate = args['end-date'] || process.env.END_DATE || '';
-const qs = (() => {
-  const p = new URLSearchParams();
-  if (startDate) p.set('start_date', startDate);
-  if (endDate) p.set('end_date', endDate);
-  if (startDate && !endDate) p.set('end_date', startDate);
-  const s = p.toString();
-  return s ? `?${s}` : '';
-})();
-if (!ticker) throw new Error('--ticker required: name the symbol to scrape');
-if (!page && !pagesList) {
-  throw new Error('--page or --pages required: name the Unusual Whales pages to scrape');
-}
-
-// Every path below was extracted live from the authenticated UW sidebar
-// via src/trajectories/unusualwhales/_probe_urls.mjs. Do not add a
-// page here without verifying it appears in the <a href> list that probe
-// emits, otherwise the scrape will hit a 404.
-const PAGE_URLS = {
-  // The options-flow page accepts a ticker and a bounded history limit.
-  option_flow_alerts: (t) =>
-    `https://unusualwhales.com/option-flow-alerts?ticker_symbol=${t}&limit=500`,
-  overview: (t) => `https://unusualwhales.com/stock/${t}/overview${qs}`,
-  chart: (t) => `https://unusualwhales.com/stock/${t}/chart${qs}`,
-  flow_alerts: (t) => `https://unusualwhales.com/stock/${t}/flow-alerts${qs}`,
-  flow_history: (t) =>
-    `https://unusualwhales.com/stock/${t}/options-flow-history${qs}`,
-  flow_overview: (t) =>
-    `https://unusualwhales.com/stock/${t}/flow-overview${qs}`,
-  net_premium: (t) => `https://unusualwhales.com/stock/${t}/net-premium${qs}`,
-  nope: (t) => `https://unusualwhales.com/stock/${t}/nope${qs}`,
-  darkpool: (t) => `https://unusualwhales.com/stock/${t}/darkpool${qs}`,
-  greeks: (t) => `https://unusualwhales.com/stock/${t}/greeks`,
-  greek_exposure: (t) => `https://unusualwhales.com/stock/${t}/greek-exposure`,
-  chains: (t) => `https://unusualwhales.com/stock/${t}/option-chains`,
-  oi_changes: (t) =>
-    `https://unusualwhales.com/stock/${t}/open-interest-changes`,
-  options_charting: (t) =>
-    `https://unusualwhales.com/stock/${t}/options-charting`,
-  volatility: (t) => `https://unusualwhales.com/stock/${t}/volatility`,
-  insiders: (t) => `https://unusualwhales.com/stock/${t}/insiders`,
-  institutions: (t) => `https://unusualwhales.com/stock/${t}/institutions`,
-  shorts: (t) => `https://unusualwhales.com/stock/${t}/shorts`,
-  analysts: (t) => `https://unusualwhales.com/stock/${t}/analysts`,
-  earnings: (t) => `https://unusualwhales.com/stock/${t}/earnings`,
-  dividends: (t) => `https://unusualwhales.com/stock/${t}/dividends`,
-  financials: (t) => `https://unusualwhales.com/stock/${t}/financials`,
-  risk: (t) => `https://unusualwhales.com/stock/${t}/risk`,
-  seasonality: (t) => `https://unusualwhales.com/stock/${t}/seasonality`,
-  stock_talk: (t) => `https://unusualwhales.com/stock/${t}/stock-talk`,
+const ORIGIN = 'https://unusualwhales.com';
+// The page's path, and whether it takes the stated date window.
+const PAGES = {
+  option_flow_alerts: { path: '/option-flow-alerts?ticker_symbol={ticker}', dated: false },
+  overview: { path: '/stock/{ticker}/overview', dated: true },
+  chart: { path: '/stock/{ticker}/chart', dated: true },
+  flow_alerts: { path: '/stock/{ticker}/flow-alerts', dated: true },
+  flow_history: { path: '/stock/{ticker}/options-flow-history', dated: true },
+  flow_overview: { path: '/stock/{ticker}/flow-overview', dated: true },
+  net_premium: { path: '/stock/{ticker}/net-premium', dated: true },
+  nope: { path: '/stock/{ticker}/nope', dated: true },
+  darkpool: { path: '/stock/{ticker}/darkpool', dated: true },
+  greeks: { path: '/stock/{ticker}/greeks', dated: false },
+  greek_exposure: { path: '/stock/{ticker}/greek-exposure', dated: false },
+  chains: { path: '/stock/{ticker}/option-chains', dated: false },
+  oi_changes: { path: '/stock/{ticker}/open-interest-changes', dated: false },
+  options_charting: { path: '/stock/{ticker}/options-charting', dated: false },
+  volatility: { path: '/stock/{ticker}/volatility', dated: false },
+  insiders: { path: '/stock/{ticker}/insiders', dated: false },
+  institutions: { path: '/stock/{ticker}/institutions', dated: false },
+  shorts: { path: '/stock/{ticker}/shorts', dated: false },
+  analysts: { path: '/stock/{ticker}/analysts', dated: false },
+  earnings: { path: '/stock/{ticker}/earnings', dated: false },
+  dividends: { path: '/stock/{ticker}/dividends', dated: false },
+  financials: { path: '/stock/{ticker}/financials', dated: false },
+  risk: { path: '/stock/{ticker}/risk', dated: false },
+  seasonality: { path: '/stock/{ticker}/seasonality', dated: false },
+  stock_talk: { path: '/stock/{ticker}/stock-talk', dated: false },
 };
-if (!PAGE_URLS[page]) {
-  console.error(
-    `FAIL: unknown page '${page}', must be one of: ${Object.keys(PAGE_URLS).join(', ')}`,
-  );
-  process.exit(1);
+
+function pageUrl(ticker, page) {
+  const url = new URL(PAGES[page].path.replace('{ticker}', encodeURIComponent(ticker)), ORIGIN);
+  const { START_DATE: start, END_DATE: end } = process.env;
+  if (PAGES[page].dated && start) {
+    url.searchParams.set('start_date', start);
+    url.searchParams.set('end_date', end ? end : start);
+  }
+  return url.href;
 }
 
-const email = process.env.UW_EMAIL;
-const password = process.env.UW_PASSWORD;
-if (!email || !password) {
-  console.error('FAIL: UW_EMAIL and UW_PASSWORD must be set in weles/.env');
-  process.exit(1);
-}
-
-// UW is a paid SaaS dashboard read through one authenticated session; the
-// caller states whether it goes through a proxy (PROXY_URL=direct for none).
-const proxyUrl = statedProxy('the Unusual Whales scrape');
-const s = await WSession.start({
-  label: `uw_scrape_${ticker}`,
-  proxy: proxyUrl,
+await runMarketScrape({
+  site: 'Unusual Whales',
+  code: 'UW',
+  label: 'uw_scrape',
+  catalog: PAGES,
+  signIn: (s) =>
+    loginUnusualWhales(
+      s,
+      statedText(['UW_EMAIL'], 'the Unusual Whales login email'),
+      statedText(['UW_PASSWORD'], 'the Unusual Whales login password'),
+    ),
+  urlFor: (s, ticker, page) => pageUrl(ticker, page),
+  rowPage: (page) => page,
 });
-global._s = s;
-
-// Scrape one UW page within an already-authenticated Playwright session.
-async function scrapeOnePage(sess, tk, pg, ssPath) {
-  if (!PAGE_URLS[pg]) {
-    console.error(`[uw_scrape] unknown page '${pg}'`);
-    return { skipped: true, reason: 'unknown_page' };
-  }
-  const url = PAGE_URLS[pg](tk);
-  console.error(`[uw_scrape] [${pg}] -> ${url}`);
-  await sess.goto(url);
-  // The page has rendered when it has loaded and its DOM has gone quiet; a
-  // count of seconds, a 500-character body and a reload at the fifteenth were
-  // guesses at that.
-  await pageSettled(sess.page);
-  // Select the available time-range preset before extracting alerts.
-  if (pg === 'option_flow_alerts') {
-    try {
-      const timeBtn = sess.page
-        .locator('button:has-text("TIME RANGE")')
-        .first();
-      if (await timeBtn.count()) {
-        await timeBtn.click();
-        await pageSettled(sess.page);
-        const last7 = sess.page
-          .locator('button:has-text("Last 7 Days")')
-          .first();
-        if (await last7.count()) {
-          await last7.click();
-          await pageSettled(sess.page);
-        }
-        const applyBtn = sess.page.locator('button:has-text("Apply")').first();
-        if (await applyBtn.count()) {
-          await applyBtn.click();
-          await pageSettled(sess.page);
-        }
-        console.error(`[uw_scrape] [${pg}] applied Last 7 Days TIME RANGE`);
-      }
-    } catch (e) {
-      console.error(`[uw_scrape] [${pg}] TIME RANGE drive threw: ${e.message}`);
-    }
-  }
-  const authStatus = await sess.page.evaluate(() => {
-    const b = document.body?.innerText || '';
-    return {
-      stale: /Viewing data from.*days ago.*Subscribe for live/i.test(b),
-      guest: /Sign In/.test(b) && !/Sign Out/.test(b),
-    };
-  }); // allow-raw-playwright: read-only DOM
-  // UW renders inside inner scroll container; `fullPage:true` misses it.
-  // Resize viewport to deepest scrollHeight, snapshot, restore.
-  if (ssPath) {
-    try {
-      // The deepest scroll container's own height, plus nothing chosen here.
-      const maxH = await sess.page.evaluate(() => {
-        let h = Math.max(
-          document.documentElement.scrollHeight || 0,
-          document.body?.scrollHeight || 0,
-        );
-        for (const el of document.querySelectorAll('*')) {
-          const st = getComputedStyle(el);
-          if (
-            /^(auto|scroll)$/.test(st.overflowY) &&
-            el.scrollHeight > el.clientHeight
-          )
-            h = Math.max(h, el.scrollHeight);
-        }
-        return h;
-      });
-      const origVp = sess.page.viewportSize();
-      if (maxH > origVp.height)
-        await sess.page.setViewportSize({ width: origVp.width, height: maxH }); // allow-raw-playwright: viewport resize for full-content capture
-      await pageSettled(sess.page);
-      await sess.page.screenshot({ path: ssPath, fullPage: false }); // allow-raw-playwright: viewport-sized PNG (sized to full content)
-      if (maxH > origVp.height) await sess.page.setViewportSize(origVp); // allow-raw-playwright: restore
-      console.error(`[uw_scrape] [${pg}] screenshot at ${maxH}px tall`);
-    } catch (e) {
-      console.error(`[uw_scrape] [${pg}] screenshot threw: ${e.message}`);
-    }
-  }
-  const data = await sess.page.evaluate(() => {
-    // allow-raw-playwright: read-only DOM extraction
-    const out = { url: location.href, title: document.title };
-    out.tables = Array.from(document.querySelectorAll('table')).map((t) => ({
-      headers: Array.from(t.querySelectorAll('thead th, thead td')).map((h) =>
-        h.innerText.trim(),
-      ),
-      rows: Array.from(t.querySelectorAll('tbody tr')).map((r) =>
-        Array.from(r.querySelectorAll('td, th')).map((c) => c.innerText.trim()),
-      ),
-    }));
-    // Non-table extractors for UW pages that render charts/cards/SVG instead of tables.
-    out.cards = Array.from(
-      document.querySelectorAll(
-        '[class*="card" i], [class*="Card" i], [class*="kpi" i], [class*="metric" i]',
-      ),
-    )
-      .map((el) => {
-        const label =
-          el
-            .querySelector('[class*="label" i], [class*="title" i], h3, h4, h5')
-            ?.innerText?.trim() || '';
-        const value =
-          el
-            .querySelector('[class*="value" i], [class*="figure" i], strong, b')
-            ?.innerText?.trim() ||
-          el.innerText?.trim() ||
-          '';
-        return { label, value };
-      })
-      .filter((c) => c.label || c.value);
-    // ChartIQ / Highcharts / Recharts / D3 series data — every <path d="M...">
-    // SVG path that draws a line or bar plus the data-point text labels.
-    out.svgSeries = Array.from(document.querySelectorAll('svg')).map((svg) => ({
-      pathCount: svg.querySelectorAll('path').length,
-      circleCount: svg.querySelectorAll('circle').length,
-      rectCount: svg.querySelectorAll('rect').length,
-      textLabels: Array.from(svg.querySelectorAll('text'))
-        .map((t) => t.innerText?.trim() || t.textContent?.trim() || '')
-        .filter(Boolean),
-      ariaLabels: Array.from(svg.querySelectorAll('[aria-label]'))
-        .map((e) => e.getAttribute('aria-label'))
-        .filter(Boolean),
-    }));
-    // ChartIQ canvas charts expose data via window.CIQ — capture if present.
-    out.ciq =
-      typeof window.CIQ !== 'undefined' ? Object.keys(window.CIQ) : null;
-    // Highcharts data accessor
-    if (typeof window.Highcharts !== 'undefined' && window.Highcharts.charts) {
-      out.highcharts = window.Highcharts.charts.filter(Boolean).map((c) =>
-        c.series?.map((s) => ({
-          name: s.name,
-          dataLen: s.data?.length || 0,
-          data: (s.data || []).map((d) => ({ x: d.x, y: d.y })),
-        })),
-      );
-    }
-    out.bodyText = document.body?.innerText || '';
-    return out;
-  });
-  const persisted = await persistContext({
-    ticker: tk,
-    page: pg,
-    data,
-    screenshotPath: ssPath,
-    metadata: { auth: authStatus, source: 'scrape.mjs' },
-  });
-  console.error(`[uw_scrape] [${pg}] persisted=${persisted.id}`);
-  return { data, persisted };
-}
-
-try {
-  console.error('[uw_scrape] logging in');
-  await loginUnusualWhales(s, email, password);
-  await pageSettled(s.page);
-  const allPages = pagesList && pagesList.length > 0 ? pagesList : [page];
-  const results = [];
-  for (const pg of allPages) {
-    // Per-page screenshot: in single-page mode, honor the --screenshot CLI
-    // path if provided; otherwise (multi-page or no path) write a temp PNG
-    // per page so persistContext can upload each to Stado alongside its
-    // stock_context row. Previously multi-page mode silently passed null
-    // here, so 25-page jobs produced zero screenshots.
-    const ssPath =
-      allPages.length === 1 && screenshotPath
-        ? screenshotPath
-        : path.join(os.tmpdir(), `uw_${ticker}_${pg}_${Date.now()}.png`);
-    try {
-      results.push({
-        page: pg,
-        ...(await scrapeOnePage(s, ticker, pg, ssPath)),
-      });
-    } catch (e) {
-      console.error(`[uw_scrape] [${pg}] threw: ${e.message}`);
-      results.push({ page: pg, error: e.message });
-    }
-    if (ssPath !== screenshotPath) {
-      try {
-        fs.unlinkSync(ssPath);
-      } catch (e) {
-        /* tolerable */
-      }
-    }
-    // Free renderer memory before next page (SIGKILL 137 happened at 24000px cap).
-    try {
-      await s.goto('about:blank');
-    } catch (e) {
-      console.error(`[uw_scrape] about:blank: ${e.message}`);
-    }
-  }
-  process.stdout.write(
-    JSON.stringify({ ticker, pages: allPages, results }) + '\n',
-  );
-} catch (e) {
-  console.error(`FAIL: ${e.message}`);
-  process.exitCode = exitStatusFor(e);
-} finally {
-  await (global._s || s).close().catch(() => {});
-}

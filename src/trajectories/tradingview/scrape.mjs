@@ -1,137 +1,56 @@
+// Scrape public TradingView symbol pages through the shared market scrape
+// (../_shared/market/scrape.mjs): TICKER, and PAGE or PAGES (comma-separated)
+// from the catalog below. No sign-in: these pages are public. The symbol's
+// exchange is TradingView's own answer: /symbols/<TICKER>/ redirects to
+// /symbols/<EXCHANGE>-<TICKER>/, and every page sits under that address.
+import { runMarketScrape } from '../_shared/market/scrape.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
-import { statedProxy } from '../_shared/inputs/stated.mjs';
-// Scrape a public tradingview.com per-symbol page for a ticker.
-// No login required — all pages here are public.
-// Usage: node src/trajectories/tradingview/scrape.mjs --ticker ORCL --page technicals [--screenshot /path.png]
-// Pages (verified from the TV symbol page DOM):
-//   technicals, forecast, analysis, analysis-overview
-//   financials-overview, financials-income-statement, financials-revenue, financials-dividends
-//   news, ideas, options-chain, seasonals, holdings, etfs
-//   economic-calendar, reports-history, minds, documents, overview
 
-console.log = (...a) => process.stderr.write(a.map(String).join(' ') + '\n');
-const { WSession } = await import('../../../dist/session/wsession.js');
-const { loadEnv } = await import('../unusualwhales/_envload.mjs');
-const { persistContext } = await import('../unusualwhales/_persist.mjs');
-loadEnv();
+const ORIGIN = 'https://www.tradingview.com';
+const SYMBOL_PATH = /^\/symbols\/(?<symbol>[A-Z]+-[A-Z\d.]+)\//;
+// The symbol page's own sub-pages, by the path segment each sits at.
+const PAGES = Object.fromEntries(
+  [
+    'technicals',
+    'forecast',
+    'financials-overview',
+    'financials-income-statement',
+    'financials-revenue',
+    'financials-dividends',
+    'analysis',
+    'analysis-overview',
+    'news',
+    'ideas',
+    'options-chain',
+    'seasonals',
+    'holdings',
+    'etfs',
+    'economic-calendar',
+    'reports-history',
+    'minds',
+    'documents',
+  ].map((segment) => [segment, `${segment}/`]),
+);
+PAGES.overview = '';
 
-const args = {};
-for (let i = 2; i < process.argv.length; i += 2)
-  args[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];
-const ticker = (args.ticker || process.env.TICKER || '').toUpperCase();
-const pageKey = args.page || process.env.PAGE;
-const screenshotPath = args.screenshot;
-if (!ticker) throw new Error('--ticker required: name the symbol to scrape');
-if (!pageKey) throw new Error('--page required: name the TradingView page to scrape');
+const symbols = new Map();
 
-const ALLOWED = new Set([
-  'overview',
-  'technicals',
-  'forecast',
-  'financials-overview',
-  'financials-income-statement',
-  'financials-revenue',
-  'financials-dividends',
-  'analysis',
-  'analysis-overview',
-  'news',
-  'ideas',
-  'options-chain',
-  'seasonals',
-  'holdings',
-  'etfs',
-  'economic-calendar',
-  'reports-history',
-  'minds',
-  'documents',
-]);
-if (!ALLOWED.has(pageKey)) {
-  console.error(
-    `FAIL: unknown page '${pageKey}'. Allowed: ${Array.from(ALLOWED).join(', ')}`,
-  );
-  process.exit(1);
+/** The exchange-qualified symbol TradingView redirects the bare ticker to. */
+async function exchangeSymbol(s, ticker) {
+  if (symbols.has(ticker)) return symbols.get(ticker);
+  await s.goto(`${ORIGIN}/symbols/${encodeURIComponent(ticker)}/`);
+  await pageSettled(s.page);
+  const symbol = new URL(s.page.url()).pathname.match(SYMBOL_PATH)?.groups.symbol;
+  if (!symbol) throw new Error(`TV_SYMBOL_UNRESOLVED: /symbols/${ticker}/ led to ${s.page.url()}, which names no exchange`);
+  symbols.set(ticker, symbol);
+  return symbol;
 }
 
-const s = await WSession.start({
-  label: `tv_scrape_${ticker}_${pageKey}`,
-  proxy: statedProxy('the TradingView scrape'),
+await runMarketScrape({
+  site: 'TradingView',
+  code: 'TV',
+  label: 'tv_scrape',
+  catalog: PAGES,
+  urlFor: async (s, ticker, page) => `${ORIGIN}/symbols/${await exchangeSymbol(s, ticker)}/${PAGES[page]}`,
+  rowPage: (page) => `tv_${page}`,
 });
-
-try {
-  // Resolve exchange prefix by navigating /symbols/TICKER/ and reading the
-  // redirected URL. TV sends ORCL to NYSE-ORCL, NVDA to NASDAQ-NVDA, etc.
-  console.error(`[tv] resolving exchange prefix for ${ticker}`);
-  await s.goto(`https://www.tradingview.com/symbols/${ticker}/`);
-  await pageSettled(s.page);
-  const finalUrl = s.page.url();
-  const m = finalUrl.match(/\/symbols\/([A-Z]+-[A-Z0-9.]+)\//);
-  const symbolId = m ? m[1] : null;
-  if (!symbolId)
-    throw new Error(`could not resolve exchange prefix, landed at ${finalUrl}`);
-  console.error(`[tv] resolved ${ticker} -> ${symbolId}`);
-
-  const base = `https://www.tradingview.com/symbols/${symbolId}`;
-  const url = pageKey === 'overview' ? `${base}/` : `${base}/${pageKey}/`;
-  if (pageKey !== 'overview' || s.page.url() !== url) {
-    console.error(`[tv] navigating to ${url}`);
-    await s.goto(url);
-  }
-
-  // The page has rendered when it has loaded and its DOM has gone quiet; a
-  // count of seconds, a 500-character body and a reload at the twentieth were
-  // guesses at that.
-  await pageSettled(s.page);
-
-  if (screenshotPath) {
-    await s.page
-      .screenshot({ path: screenshotPath, fullPage: true })
-      .catch(() => {});
-    console.error(`[tv] screenshot: ${screenshotPath}`);
-  }
-
-  const data = await s.page.evaluate(`(() => {
-    const out = {
-      url: location.href,
-      title: document.title,
-      symbolId: ${JSON.stringify(symbolId)},
-    };
-    out.tables = Array.from(document.querySelectorAll('table')).map(t => ({
-      headers: Array.from(t.querySelectorAll('thead th, thead td')).map(h => h.innerText.trim()),
-      rows: Array.from(t.querySelectorAll('tbody tr')).map(r =>
-        Array.from(r.querySelectorAll('td, th')).map(c => c.innerText.trim())
-      ),
-    }));
-    out.statItems = Array.from(document.querySelectorAll('[class*="item-"], [class*="stats-"], dl dt, dl dd'))
-      .map(e => (e.innerText || '').trim())
-      .filter(Boolean);
-    out.bodyText = document.body?.innerText || '';
-    return out;
-  })()`);
-
-  const persisted = await persistContext({
-    ticker,
-    page: `tv_${pageKey}`,
-    data,
-    screenshotPath,
-    metadata: { source: 'tradingview/scrape.mjs', symbolId },
-  });
-  console.error(
-    `[tv] persisted row id=${persisted.id} uri=${persisted.screenshot_uri || 'none'}`,
-  );
-
-  process.stdout.write(
-    JSON.stringify({
-      ticker,
-      page: `tv_${pageKey}`,
-      ...data,
-      stock_context: persisted,
-    }) + '\n',
-  );
-} catch (e) {
-  console.error(`FAIL: ${e.message}`);
-  process.exitCode = 1;
-} finally {
-  await s
-    .close()
-    .catch((e) => console.log(`[session] close failed: ${e.message}`));
-}

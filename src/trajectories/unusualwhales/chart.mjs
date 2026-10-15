@@ -1,120 +1,53 @@
+// Capture one chart of a symbol's Unusual Whales flow overview: the tab the
+// run states (CHART_TAB, as the page labels it) is clicked (found by the
+// vision model), and the page's largest drawn chart (svg or canvas, by drawn
+// area) is kept as a screenshot in the run's recordings, then persisted
+// through the Trading Tools ingest. TICKER, CHART_TAB, UW_EMAIL and
+// UW_PASSWORD are required; PROXY_URL states the proxy ('direct' for none).
+import { join } from 'node:path';
+import { WSession } from '../../../dist/session/wsession.js';
+import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
+import { statedProxy, statedText } from '../_shared/inputs/stated.mjs';
+import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { loginUnusualWhales } from './session/login.mjs';
-import { statedProxy } from '../_shared/inputs/stated.mjs';
-// Fetch a specific sub-chart from the UW flow-overview page by clicking its
-// tab and screenshotting just that chart element.
-// Usage: node src/trajectories/unusualwhales/chart.mjs \
-//          --ticker ORCL --tab "Net Prem" --out /path/to/out.png
+import { persistContext } from './_persist.mjs';
 
-console.log = (...a) => process.stderr.write(a.map(String).join(' ') + '\n');
-const { WSession } = await import('../../../dist/session/wsession.js');
-const { loadEnv } = await import('./_envload.mjs');
-const { persistContext } = await import('./_persist.mjs');
-loadEnv();
+const ticker = statedText(['TICKER'], 'the symbol whose flow overview chart is captured').toUpperCase();
+const tab = statedText(['CHART_TAB'], 'the flow overview tab whose chart is captured, as the page labels it');
+const email = statedText(['UW_EMAIL'], 'the Unusual Whales login email');
+const password = statedText(['UW_PASSWORD'], 'the Unusual Whales login password');
 
-const args = {};
-for (let i = 2; i < process.argv.length; i += 2)
-  args[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];
-const ticker = (args.ticker || '').toUpperCase();
-const tab = args.tab || 'Net Prem';
-const outPath = args.out;
-if (!ticker || !outPath) {
-  console.error('FAIL: --ticker and --out required');
-  process.exit(1);
-}
-
-const email = process.env.UW_EMAIL;
-const password = process.env.UW_PASSWORD;
-if (!email || !password) {
-  console.error('FAIL: UW creds not set');
-  process.exit(1);
-}
-
-const s = await WSession.start({
-  label: `uw_chart_${ticker}`,
-  proxy: statedProxy('the Unusual Whales chart capture'),
-});
-
+const s = await WSession.start({ label: `uw_chart_${ticker}`, proxy: statedProxy('the Unusual Whales chart capture') });
 try {
   await loginUnusualWhales(s, email, password);
-  const url = `https://unusualwhales.com/stock/${ticker}/flow-overview`;
-  console.error(`[chart] navigating to ${url}`);
+  const url = `https://unusualwhales.com/stock/${encodeURIComponent(ticker)}/flow-overview`;
   await s.goto(url);
-  // The page has rendered when it has loaded and its DOM has gone quiet.
   await pageSettled(s.page);
-
-  // Click the tab by matching button text — use Playwright locator with
-  // exact-text filter so the click dispatches with isTrusted=true.
-  const tabLoc = s.page
-    .locator('button, a, div[role="tab"], [class*="tab"]')
-    .filter({
-      hasText: new RegExp(
-        `^${tab.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}$`,
-      ),
-    })
-    .first();
-  const tabCount = await tabLoc.count();
-  let clicked = { ok: false, count: tabCount };
-  if (tabCount) {
-    await tabLoc.scrollIntoViewIfNeeded().catch(() => {});
-    await tabLoc.click().catch(() => {});
-    clicked = { ok: true, tag: 'locator' };
-  }
-  console.error(`[chart] clicked tab "${tab}": ${JSON.stringify(clicked)}`);
-  if (!clicked.ok)
-    throw new Error(
-      `tab "${tab}" not found in page (candidates=${clicked.count})`,
-    );
-  await pageSettled(s.page); // let chart re-render
-
-  // Find the chart container: the page's largest svg/canvas by drawn area is
-  // the chart (icons are smaller than it), and its container is the nearest
-  // ancestor it shares with the clicked tab. No size thresholds are chosen.
-  const box = await s.page.evaluate(`(tabText => {
-    const all = Array.from(document.querySelectorAll('button, a, div[role="tab"], [class*="tab"]'));
-    const active = all.find(e => e.innerText.trim() === tabText);
-    if (!active) return { err: 'tab not found' };
-    const area = (el) => { const r = el.getBoundingClientRect(); return r.width * r.height; };
-    const chart = Array.from(document.querySelectorAll('svg, canvas'))
-      .reduce((best, c) => (best && area(best) >= area(c) ? best : c), null);
-    if (!chart || !area(chart)) return { err: 'no drawn svg or canvas on the page' };
-    let node = chart.parentElement;
-    while (node && !node.contains(active)) node = node.parentElement;
-    if (!node) return { err: 'the chart shares no container with the tab' };
-    const r = node.getBoundingClientRect();
-    return { x: r.x, y: r.y, width: r.width, height: r.height, chartArea: area(chart) };
-  })(${JSON.stringify(tab)})`);
-  console.error(`[chart] container search: ${JSON.stringify(box)}`);
-
-  if (box && !box.err && box.width && box.height) {
-    console.error(`[chart] screenshotting clip: ${JSON.stringify(box)}`);
-    await s.page.screenshot({
-      path: outPath,
-      clip: { x: box.x, y: box.y, width: box.width, height: box.height },
-    });
-  } else {
-    throw new Error(
-      `no chart container found for tab "${tab}": ${JSON.stringify(box)}`,
-    );
-  }
-  console.error(`[chart] saved to ${outPath}`);
-
+  await clickDescribed(s.page, `the tab labelled "${tab}" above the flow overview chart`);
+  await pageSettled(s.page);
+  const chart = await s.page.evaluateHandle(() => {
+    const area = (node) => node.getBoundingClientRect().width * node.getBoundingClientRect().height;
+    const [largest] = Array.from(document.querySelectorAll('svg, canvas')).sort((a, b) => area(b) - area(a));
+    return largest && area(largest) ? largest.parentElement : null;
+  });
+  const element = chart.asElement();
+  if (!element) throw new Error(`UW_CHART_MISSING: the "${tab}" tab of ${url} draws no svg or canvas chart`);
+  const screenshotPath = join(runRecordingsDir('uw_chart'), `${ticker}_${tab.replace(/\W+/g, '_')}.png`);
+  await element.screenshot({ path: screenshotPath });
   const persisted = await persistContext({
     ticker,
     page: 'chart',
     tab,
-    data: { url, box, clickedTag: clicked.tag },
-    screenshotPath: outPath,
-    metadata: { source: 'chart.mjs' },
+    data: { url },
+    screenshotPath,
+    metadata: { source: 'uw_chart' },
   });
-  console.error(
-    `[chart] persisted row id=${persisted.id} uri=${persisted.screenshot_uri || 'none'}`,
-  );
-} catch (e) {
-  console.error(`FAIL: ${e.message}`);
-  process.exitCode = 1;
+  console.log(`PASS: chart "${tab}" for ${ticker} kept at ${screenshotPath}, persisted ${persisted.id}`);
+} catch (error) {
+  console.error(`FAIL: ${error.message}`);
+  process.exitCode = exitStatusFor(error);
 } finally {
-  await s
-    .close()
-    .catch((e) => console.log(`[session] close failed: ${e.message}`));
+  await s.close();
 }

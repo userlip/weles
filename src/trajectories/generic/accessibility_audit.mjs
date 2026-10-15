@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 import { parseAccessibilityAuditParams } from '../../../dist/worker/params/capture-params.js';
 import {
   captureKeyPrefix,
@@ -28,6 +29,7 @@ import {
 } from '../_shared/runner/capture-runtime.mjs';
 
 const label = 'generic_accessibility_audit';
+const INDENT = '  ';
 const AXE_SOURCE_PATH = new URL(
   '../../../vendor/axe-core/axe.min.js',
   import.meta.url,
@@ -48,7 +50,7 @@ try {
   const { session, renderer } = started;
   const version = welesVersion();
   await session.goto(plan.source_url);
-  await session.page.waitForLoadState('load').catch(() => {});
+  await session.page.waitForLoadState('load');
 
   const axeSource = readFileSync(AXE_SOURCE_PATH, 'utf8');
   await session.page.evaluate(axeSource);
@@ -81,20 +83,18 @@ try {
     renderer,
     weles_version: version,
     axe_version: axeVersion,
+    // axe's own result shape: violations, passes and incomplete are arrays,
+    // and each violation carries its id, impact (null when axe rates none),
+    // help text and nodes.
     violation_count: axeResult.violations.length,
     violations: axeResult.violations.map((violation) => ({
-      id: String(violation.id ?? ''),
-      impact:
-        violation.impact === undefined || violation.impact === null
-          ? null
-          : String(violation.impact),
-      help: String(violation.help ?? ''),
-      node_count: Array.isArray(violation.nodes) ? violation.nodes.length : 0,
+      id: violation.id,
+      impact: violation.impact,
+      help: violation.help,
+      node_count: violation.nodes.length,
     })),
-    passes_count: Array.isArray(axeResult.passes) ? axeResult.passes.length : 0,
-    incomplete_count: Array.isArray(axeResult.incomplete)
-      ? axeResult.incomplete.length
-      : 0,
+    passes_count: axeResult.passes.length,
+    incomplete_count: axeResult.incomplete.length,
     bytes: rawBytes.byteLength,
     sha256: createHash('sha256').update(rawBytes).digest('hex'),
     capture_method: `Loaded ${plan.source_url} in ${renderer} on the Stado-selected Weles host at ${plan.viewport.width}x${plan.viewport.height} CSS px and device scale factor ${plan.viewport.device_scale_factor}, then ran the repository-vendored axe-core ${axeVersion} against the live document.`,
@@ -109,7 +109,7 @@ try {
   const summaryUri = await uploadCaptureObject(
     keyPrefix,
     'axe-summary.json',
-    JSON.stringify(summary, null, 2),
+    JSON.stringify(summary, null, INDENT),
     'application/json',
   );
 
@@ -140,7 +140,7 @@ try {
         completed_at: new Date().toISOString(),
       },
       null,
-      2,
+      INDENT,
     ),
   );
   console.log(
@@ -161,13 +161,11 @@ try {
         completed_at: new Date().toISOString(),
       },
       null,
-      2,
+      INDENT,
     ),
   );
   console.log('FAIL:', message);
-  process.exitCode = 1;
+  process.exitCode = exitStatusFor(error);
 } finally {
   if (started) await started.session.close();
 }
-
-process.exit(process.exitCode ?? 0);
