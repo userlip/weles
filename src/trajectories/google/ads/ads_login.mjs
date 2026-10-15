@@ -1,11 +1,14 @@
 import { pageSettled } from '../../_shared/page/settled.mjs';
 // Google Ads persistent login bootstrap.
+//
+// Signs the Google Ads profile in through the shared Google SSO with the
+// login item granted to googleAds, then confirms the profile holds Google's
+// session cookies for Ads, so later Google Ads trajectories reuse it.
 
-import { generatePersona } from '../../../../dist/browser/persona.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { googleSso } from '../../_shared/services/google_sso.mjs';
 import { dismissGooglePostLogin } from '../../_shared/services/google_sso/sign_in/redirect_watch.mjs';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -16,30 +19,22 @@ import {
 import { closeGoogleAdsSession } from './_close_session.mjs';
 import { readScopedLogin } from '../../../_shared/scoped-secrets.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
+import { stableProfilePersona } from '../../_shared/profile/persona.mjs';
 
-const ALLOW_MANUAL_LOGIN =
-  process.env.ALLOW_MANUAL_LOGIN === '1' || process.env.WAIT_FOR_LOGIN === '1';
+const GOOGLE_ADS_URL = 'https://ads.google.com/aw/campaigns';
+// Google signs every product in on its accounts host.
+const GOOGLE_ACCOUNTS_HOST = 'accounts.google.com';
 const USER_DATA_DIR =
   process.env.WELES_USER_DATA_DIR ||
   process.env.ADS_PROFILE_DIR ||
   join(homedir(), '.weles', 'browser_profiles', 'google_ads');
+// The login is read from Skarbiec before anything opens; an unreadable or
+// ungranted item ends the run with Skarbiec's own refusal.
 const GOOGLE_ADS_LOGIN = readScopedLogin('googleAds');
 mkdirSync(USER_DATA_DIR, { recursive: true });
 
-async function resolveSsoCreds() {
-  return { ...GOOGLE_ADS_LOGIN, source: 'skarbiec' };
-}
-
-function stableProfilePersona() {
-  const p = join(USER_DATA_DIR, 'persona.json');
-  if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8'));
-  const persona = generatePersona({ os: 'macos', browser: 'chromium' });
-  writeFileSync(p, JSON.stringify(persona, null, 2));
-  return persona;
-}
-
 async function bringBrowserToFront(s) {
-  await s.page.bringToFront().catch(() => {});
+  await s.page.bringToFront();
   if (process.platform !== 'darwin') return;
   spawnSync('osascript', ['-e', 'tell application "Chromium" to activate'], {
     stdio: 'ignore',
@@ -54,16 +49,18 @@ async function bringBrowserToFront(s) {
   );
 }
 
-function isLoginUrl(url) {
-  return /accounts\.google\.com|ServiceLogin|signin/i.test(url);
+function onSignInPage(url) {
+  return new URL(url).hostname === GOOGLE_ACCOUNTS_HOST;
 }
 
-function hasGoogleAuthCookie(cookies) {
-  const names = new Set(
-    cookies
-      .filter((c) => /google\.com$|\.google\.com$/.test(c.domain || ''))
-      .map((c) => c.name),
-  );
+/** The names of the cookies Google Ads would be sent. */
+async function adsCookieNames(s) {
+  const cookies = await s.ctx.cookies(GOOGLE_ADS_URL);
+  return new Set(cookies.map((c) => c.name));
+}
+
+/** Google's signed-in session: its SID cookie in any of its forms. */
+function signedIn(names) {
   return (
     names.has('SID') ||
     names.has('__Secure-1PSID') ||
@@ -77,61 +74,35 @@ console.log(
 assertGoogleAdsProfileNotAlreadyOpen(USER_DATA_DIR, 'google_ads_login');
 const s = await WSession.start({
   label: 'google_ads_login',
-  browser: 'chromium',
   proxy: statedProxy('the Google Ads login'),
-  persona: stableProfilePersona(),
+  persona: stableProfilePersona(USER_DATA_DIR),
   userDataDir: USER_DATA_DIR,
 });
 
 try {
   await bringBrowserToFront(s);
-  await s.goto('https://ads.google.com/aw/campaigns');
+  await s.goto(GOOGLE_ADS_URL);
   await pageSettled(s.page);
-  let cookies = await s.ctx.cookies().catch(() => []);
-  if (!hasGoogleAuthCookie(cookies) || isLoginUrl(s.page.url?.() ?? '')) {
-    const creds = await resolveSsoCreds();
-    if (creds) {
-      console.log(
-        `[google-ads-login] running automated Google SSO for ${creds.email} source=${creds.source}`,
-      );
-      const ok = await googleSso(s, creds);
-      if (!ok) {
-        console.log(
-          `FAIL: automated Google SSO did not complete (url=${s.page.url?.() ?? ''})`,
-        );
-        process.exit(2);
-      }
-      await dismissGooglePostLogin(s.page);
-      await s.goto('https://ads.google.com/aw/campaigns');
-      await pageSettled(s.page);
-    } else if (ALLOW_MANUAL_LOGIN) {
-      console.log(
-        '[google-ads-login] waiting for manual login in the open window',
-      );
-      await bringBrowserToFront(s);
-      await s.page.waitForURL((u) => !isLoginUrl(String(u)));
-      await pageSettled(s.page);
-    } else {
-      console.log(
-        'FAIL: Google Ads browser session is logged out and no SSO credentials are available',
-      );
-      process.exit(2);
-    }
-  }
-  cookies = await s.ctx.cookies().catch(() => []);
-  const names = cookies
-    .filter((c) => /google\.com$|\.google\.com$/.test(c.domain || ''))
-    .map((c) => c.name)
-    .sort();
-  console.log(
-    `[google-ads-login] cookie names: ${Array.from(new Set(names)).join(', ')}`,
-  );
-  if (!hasGoogleAuthCookie(cookies)) {
+  if (!signedIn(await adsCookieNames(s)) || onSignInPage(s.page.url())) {
     console.log(
-      `FAIL: login not persisted; missing Google auth cookies (url=${s.page.url?.() ?? ''})`,
+      `[google-ads-login] running automated Google SSO for ${GOOGLE_ADS_LOGIN.email} source=skarbiec`,
     );
-    process.exit(2);
+    if (!(await googleSso(s, { ...GOOGLE_ADS_LOGIN, source: 'skarbiec' })))
+      throw new Error(
+        `GOOGLE_ADS_SSO_INCOMPLETE: automated Google SSO did not complete (url=${s.page.url()})`,
+      );
+    await dismissGooglePostLogin(s.page);
+    await s.goto(GOOGLE_ADS_URL);
+    await pageSettled(s.page);
   }
+  const names = await adsCookieNames(s);
+  console.log(
+    `[google-ads-login] cookie names: ${Array.from(names).sort().join(', ')}`,
+  );
+  if (!signedIn(names))
+    throw new Error(
+      `GOOGLE_ADS_LOGIN_NOT_PERSISTED: the profile holds no Google session cookie for Ads (url=${s.page.url()})`,
+    );
   console.log('PASS: Google Ads login persisted');
 } finally {
   if (closeAllowedByEnv('GOOGLE_ADS_LOGIN_CLOSE_AFTER'))
