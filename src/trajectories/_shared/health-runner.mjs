@@ -3,10 +3,21 @@
  *   platform:            string — 'reddit' | 'twitter' | etc
  *   loggedInUrl:         string | (username) => string — absolute URL; captured response body parsed
  *   loggedInRegex:       RegExp — matches captured response URL to extract the body
- *   loggedOutUrl:        (username) => string — absolute URL; 200 vs 404 determines shadowban
- *   loggedOutRegex:      RegExp — matches captured response URL
+ *   loggedOutUrl:        optional (username) => string — the public profile, read signed out
+ *   loggedOutRegex:      RegExp — matches captured response URL of the signed-out read
  *   banDetector:         async (page, responses) => BanSignal
- *   extractLoggedIn:     (body) => { ok, karma, is_suspended } — from parsed JSON or HTML
+ *   extractLoggedIn:     (body, response) => { ok, karma, is_suspended }
+ *   extractLoggedOut:    optional (response) => whether the public profile is visible
+ *   beforeGoto:          optional async (session, acct) => void — auth that is not a cookie
+ *
+ * The account's signal is, in order: suspended when the signed-in read says
+ * so; the platform detector's verdict on the signed-in page when it is not
+ * healthy (proxy failures, declared sign-in and block routes, the page as the
+ * model judges it, API answers including rate limits); shadowbanned when the
+ * signed-in read is ok but the public profile is not visible signed out;
+ * healthy when the signed-in read or the detector says so. Anything else is
+ * unknown and fails the probe with what was observed. A probe whose own auth
+ * setup failed observed nothing about the account and fails.
  *
  * Writes recordings/<platform>_health/<username>_<ts>.json.
  */
@@ -19,104 +30,94 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 import { submitWelesRun } from '../../../dist/worker/run-submit/index.js';
+import { banSignalOf } from './auth/ban-signal.mjs';
+import { navigationRefusal } from './page/navigation/refused.mjs';
+import { HTTP_OK } from '../../worker/weles-api-server/routes/http-status.mjs';
 
+const INDENT = '  ';
 const HEADLESS =
   process.env.HEADLESS === '1' || process.env.WELES_HEADLESS === '1';
+// Account states written by registration before it completed: such an account
+// has no working login, so no automatic re-login is started for it.
+const UNREGISTERED = new Set([
+  'captcha_blocked',
+  'unverified',
+  'needs_verification',
+  'captcha_signup_failed',
+]);
+
+/** A captured body as JSON when it is JSON, otherwise as the text it is. */
+function bodyOf(text) {
+  try {
+    return JSON.parse(text);
+  } catch (notJson) {
+    return text;
+  }
+}
+
+/** One read of `url` in its own session: the matching response and its verdict. */
+async function probe(session, url, matching, detector, moment) {
+  const read = { url: null, status: null, body: null };
+  try {
+    await session.goto(url);
+    const response = session.capturedResponses.find((r) => matching.test(r.url));
+    read.url = response ? response.url : session.page.url();
+    if (response) {
+      read.status = response.status;
+      read.body = bodyOf(response.body);
+    }
+  } catch (error) {
+    read.error = error.message;
+    read.refusal = navigationRefusal(error.message, session.page.url());
+  }
+  if (detector) read.signal = await banSignalOf(detector, session, moment);
+  return read;
+}
 
 export async function runHealthProbe(cfg) {
   const acct = await getSocialAccount(cfg.platform);
-  if (!acct) {
-    console.log(`FAIL: no active ${cfg.platform} account`);
-    process.exit(1);
-  }
+  if (!acct)
+    throw new Error(
+      `HEALTH_ACCOUNT_REQUIRED: no active ${cfg.platform} account in the accounts store`,
+    );
   console.log(`[health:${cfg.platform}] acct=${acct.username}`);
   const { proxyUrl, persona } = await resolveAccountSession(acct);
 
-  const loggedIn = { url: null, status: null, body: null, signal: null };
   const sIn = await WSession.start({
     label: `${cfg.platform}_health_in`,
     proxy: proxyUrl,
     persona,
     headless: HEADLESS,
   });
+  let loggedIn;
   try {
-    // Inject stored auth cookies so the "logged in" probe actually is authed.
-    // Without these the authed API endpoints 401 / redirect to authwall and
-    // every health probe reports 'unknown' even on a healthy account.
+    // The signed-in read carries the account's stored cookies, and the
+    // platform's non-cookie auth when it has one; auth that cannot be set up
+    // fails the probe rather than reading a signed-out page as the account.
     const stored = Array.isArray(acct.metadata?.cookies)
-      ? acct.metadata.cookies
+      ? acct.metadata.cookies.filter(
+          (c) => c && c.name && c.value && (c.domain || c.url),
+        )
       : [];
-    const prepared = stored
-      .filter((c) => c && c.name && c.value && (c.domain || c.url))
-      .map((c) => ({ ...c, path: c.path || '/' }));
-    // Auth that could not be set up would land the probe on a login wall and
-    // read as stale cookies, which starts a re-login; the probe fails instead.
-    if (prepared.length > 0)
-      await sIn.ctx.addCookies(prepared).catch((error) => {
-        loggedIn.setup_error = `stored cookies could not be injected: ${error.message}`;
-        throw new Error(loggedIn.setup_error);
-      });
-    // Optional per-platform hook — e.g. Discord injects its localStorage
-    // token via addInitScript since its auth doesn't live in cookies.
-    if (cfg.beforeGoto)
-      await cfg.beforeGoto(sIn, acct).catch((error) => {
-        loggedIn.setup_error = `the pre-navigation auth hook failed: ${error.message}`;
-        throw new Error(loggedIn.setup_error);
-      });
-    const inUrl =
+    if (stored.length) await sIn.ctx.addCookies(stored);
+    if (cfg.beforeGoto) await cfg.beforeGoto(sIn, acct);
+    loggedIn = await probe(
+      sIn,
       typeof cfg.loggedInUrl === 'function'
         ? cfg.loggedInUrl(acct.username)
-        : cfg.loggedInUrl;
-    await sIn.goto(inUrl);
-    const resp = sIn.capturedResponses.find((r) =>
-      cfg.loggedInRegex.test(r.url),
+        : cfg.loggedInUrl,
+      cfg.loggedInRegex,
+      cfg.banDetector,
+      'after the signed-in read',
     );
-    if (resp) {
-      loggedIn.url = resp.url;
-      loggedIn.status = resp.status;
-      try {
-        loggedIn.body = JSON.parse(resp.body);
-      } catch {
-        loggedIn.body = resp.body ?? null;
-      }
-    } else {
-      // No matching captured response — fall back to the page's current URL.
-      // Discord SPA does client-side redirects (no HTTP response captured for /login).
-      // Without this, loggedIn.url stays null and the cookies-stale heuristic
-      // can't fire even when the page is clearly on a login wall.
-      try {
-        loggedIn.url = sIn.page.url?.() ?? null;
-      } catch {
-        loggedIn.url = null;
-      }
-    }
-    loggedIn.signal = await cfg
-      .banDetector(sIn.page, sIn.capturedResponses)
-      .catch(() => null);
-  } catch (e) {
-    loggedIn.error = e.message;
-    // Surface proxy CONNECT failures distinctly so signal isn't 'unknown'.
-    if (
-      /ERR_TUNNEL_CONNECTION_FAILED|chrome-error|net::ERR_PROXY_CONNECTION_FAILED/.test(
-        e.message || '',
-      )
-    ) {
-      loggedIn.signal = {
-        signal: 'proxy_failed',
-        healthy: false,
-        details: { reason: 'goto threw tunnel/chrome-error' },
-      };
-    }
   } finally {
     await sIn.close();
   }
 
-  const loggedOut = { url: null, status: null, body: null };
+  // The signed-out read uses the same persona as the signed-in one, so the
+  // same browser engine reads both.
+  let loggedOut = null;
   if (cfg.loggedOutUrl) {
-    // Re-use the same persona we used for the logged-in probe. Without this,
-    // WSession.start picks a random persona and may land on Firefox, which
-    // breaks any platform that needs CDP (TikTok's network-bytes counter,
-    // mssdk-info synthesis, etc.) and silently degrades the probe.
     const sOut = await WSession.start({
       label: `${cfg.platform}_health_out`,
       proxy: proxyUrl,
@@ -124,111 +125,37 @@ export async function runHealthProbe(cfg) {
       headless: HEADLESS,
     });
     try {
-      await sOut.goto(cfg.loggedOutUrl(acct.username));
-      const resp = sOut.capturedResponses.find((r) =>
-        cfg.loggedOutRegex.test(r.url),
+      loggedOut = await probe(
+        sOut,
+        cfg.loggedOutUrl(acct.username),
+        cfg.loggedOutRegex,
+        null,
+        'after the signed-out read',
       );
-      if (resp) {
-        loggedOut.url = resp.url;
-        loggedOut.status = resp.status;
-        try {
-          loggedOut.body = JSON.parse(resp.body);
-        } catch {
-          loggedOut.body = resp.body ?? null;
-        }
-      }
-    } catch (e) {
-      loggedOut.error = e.message;
     } finally {
       await sOut.close();
     }
   }
 
-  const extracted = cfg.extractLoggedIn?.(loggedIn.body, loggedIn) ?? {
-    ok: !!loggedIn.body,
-    karma: null,
-    is_suspended: false,
-  };
-  // No loggedOutUrl configured (e.g. discord — no public profile pages) means
-  // we can't distinguish healthy from shadowbanned. Skip both checks: if the
-  // logged-in probe is ok, treat as healthy; the shadowban check requires the
-  // logged-out probe to have actually run.
-  const skipLoggedOut = !cfg.loggedOutUrl;
-  // Proxy CONNECT can fail mid-probe (chrome-error://chromewebdata/, tunnel
-  // failed). loggedOut.status stays null AND loggedOut.error is set — that's
-  // an infra failure, not a shadowban. Only mark shadowbanned when we actually
-  // got a non-200 (e.g. 404 / blocked-page) response back.
-  const loggedOutErrored = !!loggedOut.error;
-  const outOk =
-    skipLoggedOut || loggedOutErrored
-      ? true
+  const extracted = cfg.extractLoggedIn(loggedIn.body, loggedIn);
+  // A signed-out read that failed to reach the site says nothing about
+  // visibility; only one that reached it can show a hidden profile.
+  const publicVisible =
+    !loggedOut || loggedOut.error
+      ? null
       : cfg.extractLoggedOut
         ? cfg.extractLoggedOut(loggedOut)
-        : loggedOut.status === 200;
-  const shadowbanned =
-    !skipLoggedOut &&
-    !loggedOutErrored &&
-    extracted.ok &&
-    !outOk &&
-    (loggedOut.status === 404 || loggedOut.status == null);
-
-  // Detect cookies-stale: logged-in probe failed, page ended up on a login
-  // wall. Check both the captured-response URL (initial 200 page load) AND
-  // signal.details.final_url (page.url() after JS redirects). Discord SPA
-  // loads /channels/@me with 200 then JS-redirects to /login — captured URL
-  // stays /channels/@me, only signal.details.final_url has the login wall.
-  const candidateUrls = [loggedIn.url, loggedIn.signal?.details?.final_url]
-    .filter(Boolean)
-    .join(' ');
-  const LOGIN_WALLS = [
-    '/login',
-    '/signin',
-    '/sessions/new',
-    '/uas/login',
-    '/checkpoint',
-    '/accounts/login',
-    '/authwall',
-  ];
-  const cookiesStale =
-    !extracted.ok && LOGIN_WALLS.some((wall) => candidateUrls.includes(wall));
+        : loggedOut.status === HTTP_OK;
+  const shadowbanned = Boolean(extracted.ok) && publicVisible === false;
+  const detected = loggedIn.signal;
 
   let signal;
-  // A probe whose own auth setup failed observed nothing about the account.
-  if (loggedIn.setup_error) signal = 'unknown';
-  else if (extracted.is_suspended) signal = 'suspended';
-  // Cookies-stale check needs to win over captcha_challenge specifically.
-  // PerimeterX iframe loads on every /uas/login page, so loggedIn.signal
-  // will be captcha_challenge whenever LinkedIn's session is dead — that's
-  // a fingerprint-gated login wall (cookies stale), not a real challenge.
-  // Same on Discord (/login + Cloudflare hcaptcha widget).
-  else if (cookiesStale && loggedIn.signal?.signal === 'captcha_challenge')
-    signal = 'checkpoint';
-  else if (
-    !extracted.ok &&
-    loggedIn.signal?.signal &&
-    loggedIn.signal.signal !== 'healthy'
-  )
-    signal = loggedIn.signal.signal;
+  if (extracted.is_suspended) signal = 'suspended';
+  else if (detected && !detected.healthy) signal = detected.signal;
   else if (shadowbanned) signal = 'shadowbanned';
-  else if (extracted.ok && outOk) signal = 'healthy';
-  // Trust the platform's banDetector when it returns healthy: extractLoggedIn
-  // may not parse every API response shape (LinkedIn 403 CSRF, Reddit 403
-  // anti-bot on logged-out probe, etc.) but the detector reads the same
-  // capturedResponses and is the authority on platform-side health.
-  else if (loggedIn.signal?.healthy === true) signal = 'healthy';
-  else if (cookiesStale) signal = 'checkpoint';
-  // Total network failure: no response captured AND no detector signal.
-  // Classify as proxy_failed instead of opaque unknown so the dashboard
-  // gets an actionable signal.
-  else if (loggedIn.url == null && loggedIn.status == null && !loggedIn.signal)
-    signal = 'proxy_failed';
-  else if (loggedIn.status === 429) signal = 'ratelimited';
-  else if (
-    typeof loggedIn.status === 'number' &&
-    loggedIn.status >= 400 &&
-    loggedIn.status < 500
-  )
-    signal = 'edge_blocked';
+  else if (extracted.ok || detected?.healthy) signal = 'healthy';
+  else if (loggedIn.refusal && loggedIn.refusal !== 'reached')
+    signal = loggedIn.refusal;
   else signal = 'unknown';
 
   const snapshot = {
@@ -238,64 +165,56 @@ export async function runHealthProbe(cfg) {
     checked_at: new Date().toISOString(),
     signal,
     shadowbanned,
-    is_suspended: extracted.is_suspended,
+    is_suspended: Boolean(extracted.is_suspended),
     karma: extracted.karma,
     logged_in: loggedIn,
     logged_out: loggedOut,
   };
+
+  // A checkpoint starts the platform's login for this account, unless its
+  // registration never completed.
+  const status = acct.metadata?.status;
+  if (signal === 'checkpoint' && acct.id && UNREGISTERED.has(status)) {
+    snapshot.recovery = {
+      skipped: `metadata.status=${status}: registration never completed, so a login cannot recover it`,
+    };
+  } else if (signal === 'checkpoint' && acct.id) {
+    const accountItem =
+      acct.metadata?.login_item || acct.metadata?.vault_login_item;
+    snapshot.recovery = { accountItem };
+    if (!accountItem)
+      snapshot.recovery.error = 'the account names no Skarbiec login item';
+    else {
+      try {
+        snapshot.recovery.run = await submitWelesRun({
+          action: `${cfg.platform}_login`,
+          accountItem,
+          params: { reason: 'auto-recovery from checkpoint health signal' },
+        });
+      } catch (error) {
+        snapshot.recovery.error = `the login run could not be submitted: ${error.message}`;
+      }
+    }
+  }
+
   const outDir = runRecordingsDir(`${cfg.platform}_health`);
   mkdirSync(outDir, { recursive: true });
   const filePath = join(
     outDir,
     `${acct.username}_${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
   );
-  writeFileSync(filePath, JSON.stringify(snapshot, null, 2));
+  writeFileSync(filePath, JSON.stringify(snapshot, null, INDENT));
   console.log(
     `[health:${cfg.platform}] signal=${signal} karma=${extracted.karma} shadowbanned=${shadowbanned}`,
   );
   console.log(`[health:${cfg.platform}] snapshot -> ${filePath}`);
-  // Self-heal: when the probe detects checkpoint (cookies stale), submit the
-  // exact login trajectory to Stado for this account.
-  // BUT: skip auto-recovery for accounts whose registration never completed.
-  // metadata.status in {captcha_blocked, unverified, needs_verification,
-  // captcha_signup_failed} means the saveAccount stub got written but the
-  // signup form didn't submit — there are no working cookies and the password
-  // never actually mapped to a real account. Form-login on these stubs always
-  // fails (GitHub returns "incorrect credentials") and the storm just churns
-  // every 6h via health-probe. See ../github/register.mjs:245 for where the
-  // stub gets written.
-  const acctStatus = acct.metadata?.status;
-  const brokenRegistration = [
-    'captcha_blocked',
-    'unverified',
-    'needs_verification',
-    'captcha_signup_failed',
-  ].includes(acctStatus);
-  if (signal === 'checkpoint' && acct.id && !brokenRegistration) {
-    try {
-      const accountItem = String(
-        acct.metadata?.login_item || acct.metadata?.vault_login_item || '',
-      );
-      if (!accountItem)
-        throw new Error('account has no exact Skarbiec login item');
-      const runId = await submitWelesRun({
-        action: `${cfg.platform}_login`,
-        accountItem,
-        params: { reason: 'auto-recovery from checkpoint health signal' },
-      });
-      console.log(
-        `[health:${cfg.platform}] started ${cfg.platform}_login as Weles run ${runId}`,
-      );
-    } catch (e) {
-      console.log(
-        `[health:${cfg.platform}] auto-recovery enqueue err: ${e.message}`,
-      );
-    }
-  } else if (signal === 'checkpoint' && brokenRegistration) {
-    console.log(
-      `[health:${cfg.platform}] skip auto-recovery: ${acct.username} metadata.status=${acctStatus} (registration never completed; login can't recover)`,
+  if (snapshot.recovery?.error)
+    throw new Error(
+      `HEALTH_RECOVERY_NOT_STARTED: ${acct.username} reads checkpoint and ${snapshot.recovery.error} (snapshot ${filePath})`,
     );
-  }
-  if (signal === 'unknown') process.exitCode = 2;
+  if (signal === 'unknown')
+    throw new Error(
+      `HEALTH_UNKNOWN: the probe of ${acct.username} read neither a verdict nor a signed-in page (snapshot ${filePath})`,
+    );
   return snapshot;
 }
