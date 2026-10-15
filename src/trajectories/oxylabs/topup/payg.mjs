@@ -1,231 +1,115 @@
-// The pay-as-you-go top-up: Add more traffic, the GB amount, the non-refundable
-// acknowledgement, and the Stripe form. Throws when any step or the charge fails.
-import { humanIdlePause } from '../../../../dist/human/mouse.js';
+// The pay-as-you-go top-up: Add more traffic, the whole GB the stated budget
+// buys at the price the purchase dialog states, the non-refundable
+// acknowledgement, and the Stripe card form. Throws when any step or the
+// charge fails.
+//
+// The per-GB price is read from the dialog, never written here, and the GB
+// count is the budget divided by it, rounded down so the charge never
+// exceeds the budget; a budget below one GB is refused. The amount is set
+// through the dialog's own increase control and read back before anything
+// is paid. The purchase is made when Stripe's confirm request goes out.
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
-import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import {
+  clickDescribed,
+  shownAmount,
+  shownText,
+} from '../../_shared/page/judged/seen.mjs';
+import { fillStripeElements } from '../../_shared/services/topup_common.mjs';
+
+/** The GB of traffic the purchase dialog has selected, as it prints it. */
+async function selectedGb(page) {
+  const shown = await shownText(
+    page,
+    'number of GB of traffic the purchase dialog has selected, as a number alone',
+  );
+  const gb = Number(shown);
+  if (!shown || !Number.isFinite(gb))
+    throw new Error(
+      `OXYLABS_PAYG_AMOUNT_UNREAD: the purchase dialog's selected amount reads ${JSON.stringify(shown)}; nothing was charged`,
+    );
+  return gb;
+}
+
+/** Tick the dialog's non-refundable acknowledgement and read it back. */
+async function acknowledgeNonRefundable(page) {
+  const box = page.locator('input[name="nonrefundableCondition"]').first();
+  if (!(await box.count()))
+    throw new Error(
+      `OXYLABS_PAYG_ACKNOWLEDGEMENT: ${page.url()} shows no non-refundable acknowledgement; nothing was charged`,
+    );
+  // The input is hidden behind its styled label, which takes the click.
+  if (!(await box.isChecked()))
+    await humanClickLocator(page, page.locator('label', { has: box }).first());
+  if (!(await box.isChecked()))
+    throw new Error(
+      'OXYLABS_PAYG_ACKNOWLEDGEMENT: the non-refundable acknowledgement did not read back as ticked; nothing was charged',
+    );
+}
 
 export async function topUpPayAsYouGo(s, usd) {
-  // Pay-as-you-go path: click "Add more traffic" to top up GB credit.
-  // No tier change, no duplicate subscription, no monthly recurring charge.
-  console.log(
-    `[trajectory] Pay-as-you-go account — using "Add more traffic" topup path`,
+  console.log('[trajectory] pay-as-you-go account: buying traffic by amount');
+  await clickDescribed(s.page, 'the Add more traffic button');
+  const gbPrice = await shownAmount(
+    s.page,
+    'price of one GB of traffic in the purchase dialog',
   );
-  const addTrafficBtn = s.page
-    .locator(
-      'button:has-text("Add more traffic"), a:has-text("Add more traffic")',
-    )
-    .filter({ visible: true })
-    .first();
-  if (!(await addTrafficBtn.isVisible().catch(() => false)))
+  if (!gbPrice)
     throw new Error(
-      '"Add more traffic" button not visible on /overview/MP — Pay-as-you-go topup path requires this button',
+      `OXYLABS_PAYG_PRICE_UNREAD: the purchase dialog at ${s.page.url()} states no per-GB price; nothing was charged`,
     );
-  // The PAYG modal states its own per-GB price next to the amount input.
-  // The price is read from that modal, never assumed: a price written here
-  // would buy the wrong amount the day Oxylabs changes it. GB is computed
-  // with floor so the charge never exceeds the budget ceiling.
-  await addTrafficBtn.click({ force: true });
-  await humanIdlePause('long');
-  await s.page
-    .screenshot({
-      path: `${runRecordingsDir('oxylabs_topup')}/oxylabs-add-traffic.png`,
-      fullPage: true,
-    })
-    .catch(() => {});
-  const modalText = await s.page.evaluate(() => document.body.innerText || '');
-  const priceMatch = modalText.match(/\$\s*(\d+(?:\.\d+)?)\s*(?:\/|per)\s*GB/i);
-  if (!priceMatch)
-    throw new Error(
-      `the "Add more traffic" modal states no per-GB price; read: ${JSON.stringify(modalText.replace(/\s+/g, ' '))}`,
-    );
-  const gbPrice = Number(priceMatch[1]);
   const targetGb = Math.floor(usd / gbPrice);
-  // Rounding a budget below one GB up to a whole GB would charge more than
-  // the caller allowed, so it is refused instead.
   if (!targetGb)
     throw new Error(
       `the budget $${usd} buys no whole GB at $${gbPrice}/GB; nothing was bought`,
     );
   console.log(
-    `[trajectory] targeting ${targetGb} GB at $${gbPrice}/GB read from the modal (total $${targetGb * gbPrice} for budget $${usd})`,
+    `[trajectory] buying ${targetGb} GB at $${gbPrice}/GB (total $${targetGb * gbPrice} of budget $${usd})`,
   );
-  let amountSet = false;
-  const sliderInput = s.page
-    .locator('input[type="range"]')
-    .filter({ visible: true })
-    .first();
-  if (await sliderInput.isVisible().catch(() => false)) {
-    await sliderInput.focus();
-    const cur = Number(await sliderInput.evaluate((el) => el.value));
-    const delta = targetGb - cur;
-    const key = delta >= 0 ? 'ArrowRight' : 'ArrowLeft';
-    for (let i = 0; i < Math.abs(delta); i++) await s.page.keyboard.press(key);
-    const after = Number(await sliderInput.evaluate((el) => el.value));
+  const startGb = await selectedGb(s.page);
+  if (startGb > targetGb)
+    throw new Error(
+      `OXYLABS_PAYG_AMOUNT: the dialog starts at ${startGb} GB, above the ${targetGb} GB the budget buys; nothing was charged`,
+    );
+  for (const step of Array(targetGb - startGb).keys()) {
+    await clickDescribed(
+      s.page,
+      'the control that increases the GB of traffic in the purchase dialog',
+    );
     console.log(
-      `[trajectory] slider moved ${cur} -> ${after} (target ${targetGb})`,
+      `[trajectory] increased the amount after ${step} earlier steps of ${targetGb - startGb}`,
     );
-    if (after !== targetGb)
-      throw new Error(`slider stopped at ${after} not target ${targetGb}`);
-    amountSet = true;
   }
-  if (!amountSet) {
-    const numIn = s.page
-      .locator('input[type="number"], input[inputmode="numeric"]')
-      .filter({ visible: true })
-      .first();
-    if (await numIn.isVisible().catch(() => false)) {
-      await numIn.click();
-      await numIn.fill(String(targetGb));
-      console.log(`[trajectory] number input filled: ${targetGb}`);
-      amountSet = true;
-    }
-  }
-  if (!amountSet) {
-    // The PAYG modal renders icon-only "−" / "+"
-    // stepper buttons (textContent="") flanking the GB display. Find
-    // every empty-text visible button and click each, watching the
-    // "Amount of traffic" digit. The one that increments is the +.
-    const readGb = async () =>
-      s.page.evaluate(() => {
-        const m = (document.body.innerText.match(
-          /Amount of traffic[^\d]*(\d+)\s*GB/,
-        ) || [])[1];
-        return m ? Number(m) : null;
-      });
-    // The stepper row has this structure:
-    // stepper row is "− [N GB] +" — circular icon buttons at the row's
-    // left/right edges, with the "<N> GB" big text in the middle. Find
-    // the row by structure: <div> with ≥3 children where the middle has
-    // "<N> GB" text and the first+last contain SVG (icon stepper).
-    const iconBtns = await s.page.evaluateHandle(() => {
-      const h1 = Array.from(document.querySelectorAll('h1, h2, h3')).find(
-        (el) => /Purchase traffic/i.test(el.textContent || ''),
-      );
-      if (!h1) return [];
-      let modal = h1.parentElement;
-      while (modal && modal !== document.body) {
-        const t = modal.textContent || '';
-        if (/Cancel/.test(t) && /Continue/.test(t)) break;
-        modal = modal.parentElement;
-      }
-      if (!modal || modal === document.body) return [];
-      return Array.from(
-        modal.querySelectorAll('button, [role="button"], div, span'),
-      ).filter((el) => {
-        if (
-          !el.offsetParent ||
-          (el.textContent || '').trim() !== '' ||
-          !el.querySelector('svg')
-        )
-          return false;
-        const r = el.getBoundingClientRect();
-        return (
-          r.width >= 16 && r.width <= 80 && r.height >= 16 && r.height <= 80
-        );
-      });
-    });
-    const iconBtnCount = await iconBtns.evaluate((arr) => arr.length);
-    console.log(`[diag] icon-with-svg count: ${iconBtnCount}`);
-    for (let i = 0; i < iconBtnCount; i++) {
-      const before = await readGb();
-      // Use page.mouse.click via getBoundingClientRect to issue a real
-      // synthetic mouse click — el.click() dispatches a click event that
-      // many React components ignore for security-sensitive paths.
-      const box = await iconBtns.evaluate((arr, idx) => {
-        const r = arr[idx].getBoundingClientRect();
-        return {
-          x: r.left + r.width / 2,
-          y: r.top + r.height / 2,
-          w: r.width,
-          h: r.height,
-        };
-      }, i);
-      if (box.w === 0 || box.h === 0) continue;
-      await s.page.mouse.click(box.x, box.y);
-      await humanIdlePause('short');
-      const after = await readGb();
-      if (after != null && before != null && after > before) {
-        console.log(
-          `[trajectory] + button at icon idx=${i} pos=(${Math.round(box.x)},${Math.round(box.y)}) (${before}->${after})`,
-        );
-        for (let j = 0; j < targetGb - after; j++) {
-          await s.page.mouse.click(box.x, box.y);
-          await humanIdlePause('short');
-        }
-        const final = await readGb();
-        console.log(`[trajectory] final GB: ${final} (target ${targetGb})`);
-        if (final === targetGb) amountSet = true;
-        break;
-      }
-    }
-  }
-  if (!amountSet) throw new Error('no working increment button found');
-  // The confirmation checkbox starts unchecked, and Continue is
-  // disabled until ticked. Click the wrapper label (input itself is
-  // hidden by Stripe-style styling so direct click is no-op).
-  const refundCb = s.page
-    .locator('input[name="nonrefundableCondition"]')
-    .first();
-  if ((await refundCb.count()) > 0) {
-    const was = await refundCb.isChecked().catch(() => false);
-    if (!was) {
-      const box = await refundCb.evaluate((el) => {
-        const lab = el.closest('label');
-        const r = (lab || el).getBoundingClientRect();
-        return { x: r.left + 10, y: r.top + r.height / 2 };
-      });
-      await s.page.mouse.click(box.x, box.y);
-      await humanIdlePause('short');
-    }
-    const now = await refundCb.isChecked().catch(() => false);
-    console.log(`[trajectory] non-refundable: was=${was} now=${now}`);
-    if (!now) throw new Error('could not check non-refundable acknowledgement');
-  }
+  const chosenGb = await selectedGb(s.page);
+  if (chosenGb !== targetGb)
+    throw new Error(
+      `OXYLABS_PAYG_AMOUNT: the dialog reads ${chosenGb} GB after stepping to ${targetGb}; nothing was charged`,
+    );
+  await acknowledgeNonRefundable(s.page);
 
-  // CONFIRM: Click Continue → Stripe form → fill + submit.
-  let stripeChargeFired = false;
+  let stripeConfirmed = false;
   s.ctx.on('request', (req) => {
+    const url = new URL(req.url());
     if (
-      /api\.stripe\.com\/v1\/(payment_intents|setup_intents).*confirm/.test(
-        req.url(),
-      )
+      url.hostname === 'api.stripe.com' &&
+      url.pathname.endsWith('/confirm')
     )
-      stripeChargeFired = true;
+      stripeConfirmed = true;
   });
-  const continueBtn = s.page
-    .locator('button:has-text("Continue")')
-    .filter({ visible: true })
-    .first();
-  if (!(await continueBtn.isVisible().catch(() => false)))
-    throw new Error('Continue button not visible');
-  await continueBtn.click({ force: true });
-  console.log('[trajectory] clicked Continue — expecting Stripe form');
-  await humanIdlePause('long');
-  const { fillStripeElements } = await import(
-    '../_shared/services/topup_common.mjs'
-  );
+  console.log(`[trajectory] CONFIRM: continuing to pay for ${targetGb} GB`);
+  await clickDescribed(s.page, 'the Continue button of the purchase dialog');
   const fill = await fillStripeElements(s.page);
-  console.log(`[trajectory] stripe elements fill: ${JSON.stringify(fill)}`);
   if (!fill.ok)
-    throw new Error(`stripe elements not filled: ${JSON.stringify(fill)}`);
-  const finalBtn = s.page
-    .locator(
-      'button:has-text("Pay"), button:has-text("Subscribe"), button[type="submit"]',
-    )
-    .filter({ visible: true })
-    .last();
-  if (!(await finalBtn.isVisible()))
     throw new Error(
-      `no Stripe submit button is visible at ${s.page.url()}; nothing was charged`,
+      `the Stripe card form was not filled: ${JSON.stringify(fill)}; nothing was charged`,
     );
-  await finalBtn.click({ force: true });
-  console.log('[trajectory] clicked final Stripe submit');
+  await clickDescribed(s.page, 'the button that pays for the traffic');
   await pageSettled(s.page);
-  if (!stripeChargeFired)
+  if (!stripeConfirmed)
     throw new Error(
-      `no Stripe charge POST observed by the time the page settled, url=${s.page.url()}`,
+      `no Stripe confirm request went out by the time the page settled at ${s.page.url()}`,
     );
   console.log(
-    `PASS-CHARGED: Stripe payment_intents/confirm POST fired — purchased ${targetGb} GB at $${gbPrice}/GB ($${targetGb * gbPrice})`,
+    `PASS-CHARGED: Stripe confirmed the payment for ${targetGb} GB at $${gbPrice}/GB ($${targetGb * gbPrice})`,
   );
 }

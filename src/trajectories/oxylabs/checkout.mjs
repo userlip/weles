@@ -1,22 +1,23 @@
-// The Cleverbridge steps up to Stripe, then Stripe's own checkout.
+// Oxylabs's checkout for anything it sells by subscription (an ISP plan, a
+// Mobile Proxies tier): the Cleverbridge steps up to Stripe, then Stripe's
+// own checkout.
 //
 // Cleverbridge's steps (plan, payment method) are each a form; each is
 // submitted through its own submit control until the browser is handed to
 // checkout.stripe.com. There the shared payer (stripe/hosted_checkout.mjs)
 // enters the topup card by hand, never through Link, and answers Stripe's own
-// verdict on the payment: the subscription is bought when Stripe says the
-// payment intent succeeded, not when an address holds a success word. A step
-// that offers no form to submit stops the run naming the page and its
-// buttons.
-import { pageSettled } from '../../../_shared/page/settled.mjs';
+// verdict on the payment: the purchase is made when Stripe says the payment
+// intent succeeded, not when an address holds a success word. A step that
+// offers no form to submit stops the run naming the page and its buttons.
+// `shot(s, name)` records each step in the caller's evidence.
+import { pageSettled } from '../_shared/page/settled.mjs';
 import {
   CHECKOUT_HOST,
   payHostedCheckout,
   topupCard,
-} from '../../../stripe/hosted_checkout.mjs';
-import { shot } from './evidence.mjs';
+} from '../stripe/hosted_checkout.mjs';
 
-export async function completeCheckout(s) {
+export async function completeCheckout(s, shot) {
   const card = topupCard();
   for (;;) {
     await pageSettled(s.page);
@@ -26,7 +27,7 @@ export async function completeCheckout(s) {
     if (at.hostname === CHECKOUT_HOST) {
       const intent = await payHostedCheckout(s, { card, email: null });
       console.log(
-        `[trajectory] Stripe charged the subscription: payment intent ${intent.id}; now at ${s.page.url()}`,
+        `[trajectory] Stripe charged the purchase: payment intent ${intent.id}; now at ${s.page.url()}`,
       );
       await shot(s, 'success');
       return intent;
