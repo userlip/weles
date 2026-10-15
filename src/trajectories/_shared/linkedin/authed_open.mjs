@@ -6,11 +6,8 @@
 import { assertAuthed, AuthProbeError } from '../auth/auth-probe.mjs';
 import { reloginLinkedinInline } from './relogin.mjs';
 
-function isAuthWall(error) {
-  return (
-    error instanceof AuthProbeError || /auth_wall/.test(String(error?.message))
-  );
-}
+// The auth wall is the auth probe's own error type; no message is read.
+const isAuthWall = (error) => error instanceof AuthProbeError;
 
 /**
  * `open` loads the page and checks it is reachable; `label` names the run in
