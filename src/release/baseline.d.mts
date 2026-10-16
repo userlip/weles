@@ -25,7 +25,8 @@ export function adoptedDocuments(request: {
   publishedSurface: { surface?: unknown };
   released: string;
   reason: string;
-  recorded?: string;
+  /** The version the baseline records, or null when there is no baseline. */
+  recorded: string | null;
   correcting?: string;
 }): AdoptedDocuments;
 export function adoptBaseline(request: {
