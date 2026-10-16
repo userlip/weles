@@ -21,46 +21,71 @@ export type DomainRow = {
   updated_at?: string;
 };
 
+/** The recorded inbound domains; none recorded is an empty list, and a record that is not a list is refused. */
 export function readDomainRows(): DomainRow[] {
-  const rows = readSetting<DomainRow[]>(DOMAIN_STATE_KEY, []);
-  return Array.isArray(rows) ? rows : [];
+  const rows = readSetting<unknown>(DOMAIN_STATE_KEY, []);
+  if (!Array.isArray(rows)) {
+    throw new Error(
+      `Weles setting ${DOMAIN_STATE_KEY} holds ${JSON.stringify(rows)}, not a list of domains`,
+    );
+  }
+  return rows as DomainRow[];
 }
 
 export function writeDomainRows(rows: DomainRow[]): void {
   writeSetting(DOMAIN_STATE_KEY, rows);
 }
 
+/** A resolver failure is a broken MX until the next check, logged with its cause. */
+function mxUnreadable(domain: string, error: unknown): boolean {
+  const cause =
+    (error as NodeJS.ErrnoException).code ?? (error as Error).message;
+  console.log(`[email] mx_lookup_failed: ${domain}: ${cause}`);
+  return false;
+}
+
 // Asked on every pick; the resolver's own record TTL decides how long an
 // answer is reused, not a window chosen here.
 async function hasValidMx(domain: string): Promise<boolean> {
-  // One lookup; a resolver failure is a broken MX until the next check.
   try {
-    return (await resolveMx(domain)).length > 0;
+    return Boolean((await resolveMx(domain)).length);
   } catch (error) {
-    console.log(
-      `[email] mx_lookup_failed: ${domain}: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}`,
-    );
-    return false;
+    return mxUnreadable(domain, error);
   }
 }
 
+/** A domain from AGENT_EMAIL_DOMAINS, or AGENT_DOMAIN; with neither stated, no domain is assumed. */
 function envDerived(): string {
-  const domains =
-    process.env.AGENT_EMAIL_DOMAINS?.split(',')
+  const listed = process.env.AGENT_EMAIL_DOMAINS;
+  if (listed) {
+    const domains = listed
+      .split(',')
       .map((value) => value.trim())
-      .filter(Boolean) ?? [];
-  if (domains.length)
-    return domains[Math.floor(Math.random() * domains.length)];
-  return process.env.AGENT_DOMAIN ?? 'wisentmedia.com';
+      .filter(Boolean);
+    if (domains.length)
+      return domains[Math.floor(Math.random() * domains.length)];
+  }
+  const single = process.env.AGENT_DOMAIN?.trim();
+  if (single) return single;
+  throw new Error(
+    'no inbound email domain is recorded and none of FORCE_EMAIL_DOMAIN, AGENT_EMAIL_DOMAINS or AGENT_DOMAIN is set; no domain is assumed',
+  );
 }
 
 function platformBlock(row: DomainRow, platform?: string): boolean {
   if (!platform) return false;
   const key = platform.toLowerCase();
-  const metadata = row.metadata ?? {};
+  const metadata = row.metadata;
+  if (!metadata) return false;
   return Boolean(
-    metadata.platform_blocks?.[key] ?? metadata.blocked_platforms?.[key],
+    metadata.platform_blocks?.[key] || metadata.blocked_platforms?.[key],
   );
+}
+
+/** The time the domain was last picked; a domain never picked sorts before any that was. */
+function lastUsed(row: DomainRow): string {
+  if (row.last_used_at) return row.last_used_at;
+  return '';
 }
 
 async function pickStoredDomain(platform?: string): Promise<string | null> {
@@ -81,9 +106,7 @@ async function pickStoredDomain(platform?: string): Promise<string | null> {
     .sort(
       (left, right) =>
         left.signup_count - right.signup_count ||
-        String(left.last_used_at ?? '').localeCompare(
-          String(right.last_used_at ?? ''),
-        ),
+        lastUsed(left).localeCompare(lastUsed(right)),
     );
   for (const row of candidates) {
     if (!(await hasValidMx(row.domain))) {
@@ -107,28 +130,34 @@ async function pickStoredDomain(platform?: string): Promise<string | null> {
 export async function pickDomain(platform?: string): Promise<string> {
   const forced = process.env.FORCE_EMAIL_DOMAIN?.trim();
   if (forced) return forced;
-  return (await pickStoredDomain(platform)) ?? envDerived();
+  const stored = await pickStoredDomain(platform);
+  if (stored) return stored;
+  return envDerived();
+}
+
+function domainOf(emailOrDomain: string): string {
+  const [local, domain] = emailOrDomain.split('@');
+  if (domain) return domain;
+  return local;
 }
 
 export async function markSignupSuccess(
   emailOrDomain: string,
   platform?: string,
 ): Promise<void> {
-  const domain = emailOrDomain.includes('@')
-    ? emailOrDomain.split('@')[1]
-    : emailOrDomain;
+  const domain = domainOf(emailOrDomain);
   const rows = readDomainRows();
   const row = rows.find((candidate) => candidate.domain === domain);
   if (!row) return;
   const now = new Date().toISOString();
-  row.signup_count = (row.signup_count ?? 0) + 1;
+  row.signup_count++;
   row.last_used_at = now;
   row.updated_at = now;
   if (platform) {
     row.metadata = {
-      ...(row.metadata ?? {}),
+      ...row.metadata,
       platform_success: {
-        ...(row.metadata?.platform_success ?? {}),
+        ...row.metadata?.platform_success,
         [platform.toLowerCase()]: now,
       },
     };
@@ -136,33 +165,27 @@ export async function markSignupSuccess(
   writeDomainRows(rows);
 }
 
+/** Records that a platform blocked the domain, with the reason the platform gave. */
 export async function reportBlocked(
   domainOrEmail: string,
-  reason?: string,
+  reason: string,
   platform?: string,
 ): Promise<void> {
-  const domain = domainOrEmail.includes('@')
-    ? domainOrEmail.split('@')[1]
-    : domainOrEmail;
+  const domain = domainOf(domainOrEmail);
   const rows = readDomainRows();
   const row = rows.find((candidate) => candidate.domain === domain);
   if (!row) return;
   const now = new Date().toISOString();
-  const platformKey = platform?.toLowerCase();
-  row.block_count = (row.block_count ?? 0) + 1;
+  if (!row.block_count) row.block_count = Number();
+  row.block_count++;
   row.last_block_at = now;
   row.updated_at = now;
-  row.metadata = {
-    ...(row.metadata ?? {}),
-    last_block_reason: reason ?? 'unspecified',
-    ...(platformKey
-      ? {
-          platform_blocks: {
-            ...(row.metadata?.platform_blocks ?? {}),
-            [platformKey]: { reason: reason ?? 'unspecified', at: now },
-          },
-        }
-      : {}),
-  };
+  row.metadata = { ...row.metadata, last_block_reason: reason };
+  if (platform) {
+    row.metadata.platform_blocks = {
+      ...row.metadata.platform_blocks,
+      [platform.toLowerCase()]: { reason, at: now },
+    };
+  }
   writeDomainRows(rows);
 }
