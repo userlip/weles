@@ -8,10 +8,16 @@ import { tmpdir } from 'node:os';
 import sharp from 'sharp';
 
 function stadoObjectConfig() {
-  const rawUrl = String(process.env.STADO_API_URL || '').trim();
-  const token = String(process.env.WELES_STADO_OBJECT_API_TOKEN || '').trim();
-  if (!rawUrl || !token)
-    throw new Error('missing exact Weles object client configuration');
+  const rawUrl = process.env.STADO_API_URL?.trim();
+  const token = process.env.WELES_STADO_OBJECT_API_TOKEN?.trim();
+  if (!rawUrl)
+    throw new Error(
+      'STADO_API_URL is not set: the Weles object client has no Stado origin to read the avatar from',
+    );
+  if (!token)
+    throw new Error(
+      'WELES_STADO_OBJECT_API_TOKEN is not set: the Weles object client has no bearer for the avatar read',
+    );
   const endpoint = new URL(rawUrl);
   if (
     endpoint.username ||
@@ -46,7 +52,7 @@ export async function loadAvatarFile(rawUrl) {
   );
   if (!r.ok) {
     throw new Error(
-      `avatar ${rawUrl} could not be read from Stado's object store: HTTP ${r.status}`,
+      `avatar ${rawUrl} could not be read from Stado's object store: HTTP ${r.status}: ${await r.text()}`,
     );
   }
   const buf = Buffer.from(await r.arrayBuffer());
