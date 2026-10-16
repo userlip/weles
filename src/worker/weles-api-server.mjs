@@ -11,18 +11,19 @@
 // Credential modes (POST /run field "creds", default "redact"):
 //   "redact"  -> result passes through the secret-shape redactor (default;
 //                a login/register trajectory cannot exfiltrate a token).
-//   "raw"     -> result returned UNREDACTED (raw creds in the response). Gated
-//                by WELES_API_ALLOW_RAW_CREDS (default "1"; set "0" to forbid).
+//   "raw"     -> result returned UNREDACTED (raw creds in the response). Only
+//                when WELES_API_ALLOW_RAW_CREDS=1; otherwise 403 raw_creds_forbidden.
 //   "store"   -> Weles persists the extracted creds into service_credentials
 //                (the entitlements-router source of truth) and returns ONLY a
 //                reference { credential_id, provider, login_email, has_password }
 //                — no raw run output leaves the process.
 //
-//   WELES_API_TOKEN  (or WELES_CONSOLE_API_TOKEN) required for the general API
+//   WELES_API_TOKEN  required for the general API
 //   BRAMA_WELES_REAUTH_TOKEN required for Brama's POST /reauth admission
 //   WELES_API_HOST   required; the address the service declaration assigns
 //   WELES_API_PORT   required; the port the service declaration assigns
-//   WELES_API_ALLOW_RAW_CREDS  default "1"
+//   WELES_API_ALLOW_RAW_CREDS  "1" grants creds "raw"; unset refuses it
+//   WELES_RECORDINGS_ROOT  required; the release launcher exports it
 //   WELES_API_BASE, WELES_TOKEN, WISENT_ORGANIZATION_ID for destination imports
 //   WELES_KEYWORD_PLANNER_API_TOKEN and the model-router variables for the
 //                    keyword-planner routes (see keyword_planner/api_server.mjs)
@@ -117,7 +118,6 @@ const {
   ALLOW_UNAUTH,
   HOST,
   PORT,
-  PUBLIC_TASK_CONCURRENCY,
   RECORDINGS_ROOT,
   RUN_RESULTS_DIR,
   TOKEN,
@@ -147,12 +147,12 @@ const publicTaskService = createPublicTaskService({
   uploadArtifacts,
   readArtifactIdentity: readPrivateStadoObjectIdentity,
   redact: redactSecrets,
-  concurrency: PUBLIC_TASK_CONCURRENCY,
   trajectoryReady: Boolean(resolveTrajectory('generic_browser_task')),
+  // Whether the object client is declared at all. Its whole rule (origin,
+  // token strength, distinct siblings) is upload-artifacts' and refuses by
+  // name on the first retention, so it is not restated here.
   artifactRetentionReady: Boolean(
-    process.env.STADO_API_URL &&
-      process.env.WELES_STADO_OBJECT_API_TOKEN &&
-      Buffer.byteLength(process.env.WELES_STADO_OBJECT_API_TOKEN) >= 32,
+    process.env.STADO_API_URL && process.env.WELES_STADO_OBJECT_API_TOKEN,
   ),
   readServiceIdentity: readPublicServiceIdentity,
   resolveTarget: resolveBrowserEvidenceTarget,
@@ -213,7 +213,7 @@ async function shutdownApi(signal) {
     publicTaskService.shutdown(),
     credentialOperationService.shutdown(),
   ]);
-  process.exit(0);
+  process.exit();
 }
 process.on('SIGTERM', () => {
   void shutdownApi('SIGTERM');

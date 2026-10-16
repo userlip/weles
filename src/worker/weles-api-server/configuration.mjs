@@ -2,10 +2,15 @@
 //
 // Every value here is a boundary the whole process is held to: the address it
 // binds, the credentials it accepts, the two directories its evidence lives in,
-// and the limits a single request may not exceed. They are read in one place so
-// that a misconfigured host fails while the port is still closed rather than on
-// the request that first happens to cross a limit, and so that no route can
+// and what a request may ask for. They are read in one place so that a
+// misconfigured host fails while the port is still closed rather than on the
+// request that first happens to cross a boundary, and so that no route can
 // invent a second reading of the same variable.
+//
+// Nothing here has a built-in value. The release launcher
+// (release/stado-launcher.sh) and Stado's service declaration state the
+// address, port, recordings directory and bearer; a value they do not state is
+// refused by name or read as not configured, never replaced by a guess.
 //
 // Values that only one route understands are not here: the builder's bootstrap
 // page and preamble belong to the builder route, and the Stado-published
@@ -17,42 +22,43 @@ import { join } from 'node:path';
 // Where a detached run records what happened, outside the repository so a
 // rebuild cannot delete the answer.
 export const RUN_RESULTS_DIR = join(homedir(), '.stado', 'weles-detached-runs');
-export const RECORDINGS_ROOT =
-  process.env.WELES_RECORDINGS_ROOT ||
-  join(homedir(), '.stado', 'var', 'weles', 'recordings');
 
-function boundedIntegerEnvironment(name, declaredDefault, minimum, maximum) {
-  const raw = String(process.env[name] ?? declaredDefault);
-  if (!/^[1-9][0-9]*$/.test(raw))
-    throw new Error(`${name} must be a positive base-10 integer`);
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
-    throw new Error(`${name} must be between ${minimum} and ${maximum}`);
-  }
-  return value;
-}
-// The address comes from the service declaration (Stado's catalog writes
-// WELES_API_HOST and WELES_API_PORT into the unit's environment); none is
-// built in, so a host is never exposed on an interface or port nobody chose.
-function declaredAddress(name) {
+// A value the declaration must state; the server does not start without it.
+function declared(name, meaning) {
   const value = process.env[name]?.trim();
-  if (!value)
-    throw new Error(
-      `${name} is not set: set it to the address the Weles service declaration assigns`,
-    );
+  if (!value) throw new Error(`${name} is not set: set it to ${meaning}`);
   return value;
 }
-export const HOST = declaredAddress('WELES_API_HOST');
-export const PORT = Number(declaredAddress('WELES_API_PORT'));
-export const TOKEN =
-  process.env.WELES_API_TOKEN || process.env.WELES_CONSOLE_API_TOKEN || '';
-export const BRAMA_REAUTH_TOKEN = process.env.BRAMA_WELES_REAUTH_TOKEN || '';
-export const ALLOW_UNAUTH = process.env.WELES_API_ALLOW_UNAUTH === '1';
-export const ALLOW_RAW_CREDS =
-  (process.env.WELES_API_ALLOW_RAW_CREDS ?? '1') === '1';
-export const PUBLIC_TASK_CONCURRENCY = boundedIntegerEnvironment(
-  'WELES_PUBLIC_TASK_CONCURRENCY',
-  1,
-  1,
-  1,
+
+// A value the declaration may leave out. Unset and empty both mean "not
+// configured", which each consumer answers for itself (a missing bearer is a
+// misconfigured server, not an open one).
+function stated(name) {
+  const value = process.env[name]?.trim();
+  if (!value) return null;
+  return value;
+}
+
+// A permission is off unless the declaration turns it on with "1".
+function granted(name) {
+  return process.env[name] === '1';
+}
+
+export const RECORDINGS_ROOT = declared(
+  'WELES_RECORDINGS_ROOT',
+  'the recordings directory the Weles release launcher exports',
 );
+export const HOST = declared(
+  'WELES_API_HOST',
+  'the address the Weles service declaration assigns',
+);
+export const PORT = Number(
+  declared('WELES_API_PORT', 'the port the Weles service declaration assigns'),
+);
+export const TOKEN = stated('WELES_API_TOKEN');
+export const BRAMA_REAUTH_TOKEN = stated('BRAMA_WELES_REAUTH_TOKEN');
+export const ALLOW_UNAUTH = granted('WELES_API_ALLOW_UNAUTH');
+// Returning a run's credentials unredacted is a grant the declaration makes,
+// never the default: without WELES_API_ALLOW_RAW_CREDS=1 a "raw" request is
+// refused with 403 raw_creds_forbidden and "redact" or "store" is the answer.
+export const ALLOW_RAW_CREDS = granted('WELES_API_ALLOW_RAW_CREDS');

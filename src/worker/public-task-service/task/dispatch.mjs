@@ -1,11 +1,40 @@
 import { canonicalJson, digest, isObject } from '../wire/canonical-json.mjs';
 
-export function terminalCompletion(
-  output,
-  aborted,
-  _redact,
-  requestedUrl = null,
-) {
+// A promise's outcome as a value: the error stays whole for whoever reports it.
+function settled(promise) {
+  return promise.then(
+    (value) => ({ failed: false, value }),
+    (error) => ({ failed: true, error }),
+  );
+}
+
+function messageOf(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// The run id a trajectory reported; null records that it reported none.
+function reportedRunId(output) {
+  return typeof output?.run_id === 'string' ? output.run_id : null;
+}
+
+// One URL field of a capture: absent, parsed, or refused naming field and text.
+function captureUrl(captureResult, field) {
+  const text = captureResult?.[field];
+  if (typeof text !== 'string') return { url: null, problem: null };
+  if (!URL.canParse(text)) {
+    return {
+      url: null,
+      problem: `${field} ${JSON.stringify(text)} does not parse as a URL`,
+    };
+  }
+  return { url: new URL(text).toString(), problem: null };
+}
+
+function emptyList(list) {
+  while (list.length) list.pop();
+}
+
+export function terminalCompletion(output, aborted, _redact, requestedUrl) {
   let completion;
   if (aborted || output?.cancelled) {
     completion = {
@@ -16,23 +45,11 @@ export function terminalCompletion(
     };
   } else if (output?.ok) {
     const captureResult = isObject(output.result) ? output.result : null;
-    let effectiveUrl = null;
-    let finalUrl = null;
-    // A capture URL that does not parse is named with the parser's cause, not
-    // folded into "missing".
-    let urlProblem = null;
-    try {
-      effectiveUrl =
-        typeof captureResult?.url === 'string'
-          ? new URL(captureResult.url).toString()
-          : null;
-      finalUrl =
-        typeof captureResult?.final_url === 'string'
-          ? new URL(captureResult.final_url).toString()
-          : null;
-    } catch (error) {
-      urlProblem = error instanceof Error ? error.message : String(error);
-    }
+    const effective = captureUrl(captureResult, 'url');
+    const final = captureUrl(captureResult, 'final_url');
+    const effectiveUrl = effective.url;
+    const finalUrl = final.url;
+    const urlProblem = effective.problem ? effective.problem : final.problem;
     const captureValid =
       typeof requestedUrl === 'string' &&
       effectiveUrl === requestedUrl &&
@@ -41,7 +58,7 @@ export function terminalCompletion(
     if (!captureValid) {
       completion = {
         status: 'failed',
-        result: { state: 'failed', executionRunId: output.run_id ?? null },
+        result: { state: 'failed', executionRunId: reportedRunId(output) },
         error: urlProblem
           ? `browser evidence capture reported a URL that does not parse: ${urlProblem}`
           : 'browser evidence capture identity is missing or inconsistent',
@@ -59,7 +76,7 @@ export function terminalCompletion(
   } else {
     completion = {
       status: 'failed',
-      result: { state: 'failed', executionRunId: output?.run_id ?? null },
+      result: { state: 'failed', executionRunId: reportedRunId(output) },
       error: 'browser evidence task failed',
       capture: { requestedUrl, effectiveUrl: null, finalUrl: null },
     };
@@ -70,8 +87,10 @@ export function terminalCompletion(
   };
 }
 
+// Public tasks run one at a time: a browser evidence capture owns the host's
+// browser while it runs, so the next queued task starts only when no task is
+// active. There is no concurrency setting to state.
 export function createDispatcher({
-  concurrency,
   redact,
   config,
   store,
@@ -93,7 +112,6 @@ export function createDispatcher({
 
   function dispatcherStatus() {
     return {
-      configuredConcurrency: concurrency,
       active: active.size,
       queued: queue.length,
       healthy: dispatcherHealthy,
@@ -106,25 +124,27 @@ export function createDispatcher({
   }
 
   async function executeTask(taskId, controller) {
-    let output;
-    try {
-      const task = await loadTask(taskId);
-      output = await runTrajectory({
-        action: task.request.action,
-        params: task.executionInput,
-        runId: task.id,
-        signal: controller.signal,
-        policy: config.policy,
-        networkTarget: task.networkTarget,
-      });
-    } catch (error) {
-      // The completion keeps its fixed public error; the service log names
-      // the load or run failure behind it.
+    const run = await settled(
+      loadTask(taskId).then((task) =>
+        runTrajectory({
+          action: task.request.action,
+          params: task.executionInput,
+          runId: task.id,
+          signal: controller.signal,
+          policy: config.policy,
+          networkTarget: task.networkTarget,
+        }),
+      ),
+    );
+    // The completion keeps its fixed public error; the service log names the
+    // load or run failure behind it.
+    if (run.failed)
       console.error(
-        `[public-task] task ${taskId} run failed: ${error instanceof Error ? error.message : String(error)}`,
+        `[public-task] task ${taskId} run failed: ${messageOf(run.error)}`,
       );
-      output = { ok: false, run_id: taskId, result: null };
-    }
+    const output = run.failed
+      ? { ok: false, run_id: taskId, result: null }
+      : run.value;
     await withTaskLock(taskId, async () => {
       const task = await loadTask(taskId);
       if (task.receipt) return;
@@ -182,35 +202,25 @@ export function createDispatcher({
   async function dispatchQueue() {
     if (dispatching || draining || recovering || paused) return;
     dispatching = true;
-    try {
-      while (
-        !draining &&
-        !recovering &&
-        !paused &&
-        active.size < concurrency &&
-        queue.length > 0
-      ) {
-        const taskId = queue.shift();
-        queued.delete(taskId);
-        try {
-          await startTask(taskId);
-          dispatcherHealthy = true;
-          failure = null;
-        } catch (error) {
-          queue.unshift(taskId);
-          queued.add(taskId);
-          dispatcherHealthy = false;
-          failure = {
-            operation: 'start-task',
-            taskId,
-            message: redact(String(error?.message ?? error)),
-          };
-          break;
-        }
+    while (!draining && !recovering && !paused && !active.size && queue.length) {
+      const taskId = queue.shift();
+      queued.delete(taskId);
+      const start = await settled(startTask(taskId));
+      if (start.failed) {
+        queue.unshift(taskId);
+        queued.add(taskId);
+        dispatcherHealthy = false;
+        failure = {
+          operation: 'start-task',
+          taskId,
+          message: redact(messageOf(start.error)),
+        };
+        break;
       }
-    } finally {
-      dispatching = false;
+      dispatcherHealthy = true;
+      failure = null;
     }
+    dispatching = false;
   }
 
   async function enqueue(taskId) {
@@ -223,17 +233,18 @@ export function createDispatcher({
 
   function removeQueued(taskId) {
     if (!queued.delete(taskId)) return;
-    const index = queue.indexOf(taskId);
-    if (index >= 0) queue.splice(index, 1);
+    const kept = queue.filter((queuedId) => queuedId !== taskId);
+    emptyList(queue);
+    queue.push(...kept);
   }
 
   function beginRecovery() {
-    if (draining || dispatching || active.size > 0 || (recovering && !failure))
+    if (draining || dispatching || active.size || (recovering && !failure))
       return false;
     recovering = true;
     paused = false;
     failure = null;
-    queue.length = 0;
+    emptyList(queue);
     queued.clear();
     return true;
   }
@@ -247,21 +258,19 @@ export function createDispatcher({
     await dispatchQueue();
   }
 
-  async function finishRecovery(error = null) {
-    failure = error
-      ? {
-          operation: 'recover-tasks',
-          message: redact(String(error?.message ?? error)),
-        }
+  async function finishRecovery(error) {
+    const failed = error !== undefined;
+    failure = failed
+      ? { operation: 'recover-tasks', message: redact(messageOf(error)) }
       : null;
-    dispatcherHealthy = !error;
-    recovering = Boolean(error);
-    if (!error) await dispatchQueue();
+    dispatcherHealthy = !failed;
+    recovering = failed;
+    if (!failed) await dispatchQueue();
   }
 
   async function shutdown() {
     draining = true;
-    queue.length = 0;
+    emptyList(queue);
     queued.clear();
     for (const running of active.values()) running.controller.abort();
     await Promise.allSettled(

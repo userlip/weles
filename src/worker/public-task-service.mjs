@@ -1,3 +1,4 @@
+import { constants as http } from 'node:http2';
 import { join } from 'node:path';
 
 import {
@@ -13,6 +14,7 @@ import {
   createDeployedIdentity,
   loadConfig,
 } from './public-task-service/admission.mjs';
+import { declaredClientWindow } from './public-task-service/admission/client-window.mjs';
 import {
   RECEIPT_SCHEMA,
   createEvidenceRetention,
@@ -25,15 +27,25 @@ export { publicTaskErrorResponse };
 
 const VERSION_SCHEMA = 'weles.version.v1';
 
+// A promise's outcome as a value: the error stays whole for whoever reports it.
+function settled(promise) {
+  return promise.then(
+    (value) => ({ failed: false, value }),
+    (error) => ({ failed: true, error }),
+  );
+}
+
 export function createPublicTaskService(options) {
-  const config = loadConfig(options.environment ?? process.env, options.policy);
+  const config = loadConfig(options.environment, options.policy);
+  const clientWindow = declaredClientWindow(options.environment);
   const taskRoot = join(options.runResultsRoot, 'public-tasks');
   const mappingRoot = join(taskRoot, 'idempotency');
   const identity = options.releaseIdentity;
-  const expectedReleaseId = `weles-worker@${identity.release_version ?? ''}`;
-  if (options.concurrency !== 1) {
-    throw new Error('public task concurrency must be exactly 1');
-  }
+  // An unreleased tree has no version; the readiness check refuses it
+  // (admission/identity.mjs releaseVersion), so the id is not dressed up.
+  const expectedReleaseId = `weles-worker@${identity.release_version}`;
+  const causeOf = (error) =>
+    options.redact(error instanceof Error ? error.message : String(error));
 
   const deployedIdentity = createDeployedIdentity({
     identity,
@@ -56,7 +68,6 @@ export function createPublicTaskService(options) {
     readArtifactIdentity: options.readArtifactIdentity,
   });
   const dispatcher = createDispatcher({
-    concurrency: options.concurrency,
     redact: options.redact,
     config,
     store,
@@ -110,18 +121,16 @@ export function createPublicTaskService(options) {
 
   async function handle(request, url, readBody) {
     if (request.method === 'GET' && url.pathname === '/api/v1/version') {
-      let serviceIdentity;
-      try {
-        serviceIdentity = await deployedIdentity.currentServiceIdentity();
-      } catch (error) {
-        // The public answer stays the fixed code (the cause can carry local
-        // paths); the operator's log carries what actually failed, since an
-        // unreadable identity and a mismatched one answer the same code.
+      const read = await settled(deployedIdentity.currentServiceIdentity());
+      if (read.failed) {
+        // The anonymous answer stays the fixed code (the cause can carry local
+        // paths); the operator's log carries what actually failed, and the
+        // authenticated /worker/status reports it as serviceIdentityFailure.
         console.error(
-          `[weles-admission] /api/v1/version: deployed service identity: ${error instanceof Error ? error.message : String(error)}`,
+          `[weles-admission] /api/v1/version: deployed service identity: ${causeOf(read.error)}`,
         );
         return {
-          status: 503,
+          status: http.HTTP_STATUS_SERVICE_UNAVAILABLE,
           payload: {
             schema: VERSION_SCHEMA,
             service: 'weles-admission',
@@ -133,9 +142,12 @@ export function createPublicTaskService(options) {
           },
         };
       }
+      const serviceIdentity = read.value;
       const admissionReady = health.ready;
       return {
-        status: admissionReady ? 200 : 503,
+        status: admissionReady
+          ? http.HTTP_STATUS_OK
+          : http.HTTP_STATUS_SERVICE_UNAVAILABLE,
         payload: {
           schema: VERSION_SCHEMA,
           service: 'weles-admission',
@@ -147,11 +159,7 @@ export function createPublicTaskService(options) {
           ready: admissionReady,
           prerequisites: deployedIdentity.readinessStatus(),
           dispatcher: dispatcher.dispatcherStatus(),
-          client: {
-            currentVersion: '0.1.0',
-            minimumVersion: '0.1.0',
-            supportedGenerations: 2,
-          },
+          client: clientWindow,
           apiSchemas: [
             TASK_SCHEMA,
             CANCELLATION_SCHEMA,
@@ -164,8 +172,8 @@ export function createPublicTaskService(options) {
       };
     }
 
-    const taskMatch = /^\/api\/v1\/tasks\/([0-9a-f-]+)$/.exec(url.pathname);
-    const cancelMatch = /^\/api\/v1\/tasks\/([0-9a-f-]+)\/cancel$/.exec(
+    const taskMatch = /^\/api\/v1\/tasks\/([\da-f-]+)$/.exec(url.pathname);
+    const cancelMatch = /^\/api\/v1\/tasks\/([\da-f-]+)\/cancel$/.exec(
       url.pathname,
     );
     const isSubmit =
@@ -173,43 +181,47 @@ export function createPublicTaskService(options) {
     const isGet = request.method === 'GET' && Boolean(taskMatch);
     const isCancel = request.method === 'POST' && Boolean(cancelMatch);
     if (!isSubmit && !isGet && !isCancel) return null;
+    const [mediaType] = String(request.headers['content-type']).split(';');
     if (
       (isSubmit || isCancel) &&
-      String(request.headers['content-type'] ?? '')
-        .split(';', 1)[0]
-        .trim()
-        .toLowerCase() !== 'application/json'
+      mediaType.trim().toLowerCase() !== 'application/json'
     ) {
       throw new PublicTaskError(
-        415,
+        http.HTTP_STATUS_UNSUPPORTED_MEDIA_TYPE,
         'unsupported-media-type',
         'public task bodies require Content-Type: application/json',
       );
     }
     if (!bearerAuthorized(request, config.bearer)) {
-      throw new PublicTaskError(401, 'unauthorized', 'unauthorized');
+      throw new PublicTaskError(
+        http.HTTP_STATUS_UNAUTHORIZED,
+        'unauthorized',
+        'unauthorized',
+      );
     }
     if (isSubmit && dispatcher.dispatcherStatus().recovering) {
       throw new PublicTaskError(
-        503,
+        http.HTTP_STATUS_SERVICE_UNAVAILABLE,
         'worker-recovering',
         'task admission is paused while the worker recovers its durable state',
       );
     }
     if (isSubmit) return operations.submit(request, await readBody(request));
     if (isGet) {
+      const [, taskId] = taskMatch;
       const wait = url.searchParams.get('wait');
-      if (wait === null) return operations.getTask(taskMatch[1]);
+      if (wait === null) return operations.getTask(taskId);
       if (wait !== 'terminal') {
         throw new PublicTaskError(
-          400,
+          http.HTTP_STATUS_BAD_REQUEST,
           'invalid-wait',
           'wait accepts only "terminal"',
         );
       }
-      return operations.awaitTask(taskMatch[1]);
+      return operations.awaitTask(taskId);
     }
-    return operations.cancel(request, cancelMatch[1], await readBody(request));
+    const [, cancelId] = cancelMatch;
+    return operations.cancel(request, cancelId, await readBody(request));
   }
 
   async function restartWorker() {
@@ -220,13 +232,13 @@ export function createPublicTaskService(options) {
         dispatcher: dispatcher.dispatcherStatus(),
       };
     }
-    try {
-      await operations.recover();
-    } catch (error) {
-      await dispatcher.finishRecovery(error);
+    const recovery = await settled(operations.recover());
+    if (recovery.failed) {
+      await dispatcher.finishRecovery(recovery.error);
       return {
         ok: false,
         error: 'worker_recovery_failed',
+        detail: causeOf(recovery.error),
         dispatcher: dispatcher.dispatcherStatus(),
       };
     }
