@@ -37,10 +37,15 @@ export class CDPConnection {
       resolve();
     });
     ws.on('message', (data: WebSocket.Data) => this._onMessage(data));
-    ws.on('close', () => {
+    ws.on('close', (code: number, reason: Buffer) => {
       this._closed = true;
       if (this._failure) this._rejectAllPending(this._failure);
-      else this._rejectAllPending(new CDPTargetClosedError());
+      else
+        this._rejectAllPending(
+          new CDPTargetClosedError(
+            `the browser closed the DevTools connection (close code ${code}${reason.length ? `: ${reason.toString()}` : ''})`,
+          ),
+        );
     });
     ws.on('error', (err: Error) => {
       if (this._ws) this._fail(err);
@@ -56,7 +61,11 @@ export class CDPConnection {
   ): Promise<any> {
     if (this._failure) return Promise.reject(this._failure);
     if (this._closed || !this._ws) {
-      return Promise.reject(new CDPTargetClosedError());
+      return Promise.reject(
+        new CDPTargetClosedError(
+          `the DevTools connection is closed, so ${method} was not sent`,
+        ),
+      );
     }
 
     const id = ++this._lastId;
@@ -94,7 +103,11 @@ export class CDPConnection {
     const ws = this._ws;
     if (!ws) return;
     this._closed = true;
-    this._rejectAllPending(new CDPTargetClosedError());
+    this._rejectAllPending(
+      new CDPTargetClosedError(
+        'this client closed the DevTools connection while the command was in flight',
+      ),
+    );
     const { promise, resolve } = Promise.withResolvers<void>();
     ws.once('close', () => resolve());
     ws.close();

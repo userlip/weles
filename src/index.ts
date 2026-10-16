@@ -2,7 +2,6 @@ export { CDPConnection } from './cdp/connection.js';
 export { launchChromium } from './cdp/launcher.js';
 export {
   CDPError,
-  CDPTimeoutError,
   CDPNavigationError,
   CDPTargetClosedError,
 } from './cdp/errors.js';
