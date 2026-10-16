@@ -38,9 +38,14 @@ function forwardedAddress(service) {
 
 export async function startup() {
   // Secret acquisition authenticates the workload itself, so the identity is
-  // set before the first acquisition, not only before the broker starts.
-  process.env.SKARBIEC_WORKLOAD_ID =
-    process.env.SKARBIEC_WORKLOAD_ID || 'weles-credential-worker-local';
+  // checked before the first acquisition, not only before the broker starts.
+  // It is the name Skarbiec's workload registry knows this service by, which
+  // the service unit declares; a name chosen here would sign as a workload
+  // the registry may not hold.
+  if (!process.env.SKARBIEC_WORKLOAD_ID?.trim())
+    refuse(
+      "SKARBIEC_WORKLOAD_ID is not set: the service unit names the workload Skarbiec's registry knows Weles by",
+    );
   delete process.env.SEMANTIC_SCHOLAR_API_KEY;
   delete process.env.S2_API_KEY;
   process.env.WELES_REPO = REPO;
@@ -148,7 +153,11 @@ export async function startup() {
   process.env.STADO_MODEL_ROUTER_URL = forwardedAddress('brama');
   process.env.STADO_API_URL = forwardedAddress('stado-object-api');
   process.env.STADO_API_TOKEN = process.env.WELES_STADO_OBJECT_API_TOKEN;
-  process.env.SKARBIEC_VAULT_FILE = join(HOME, '.stado/skarbiec.vault.json');
+  // Which vault serves Weles is Skarbiec's to choose: the one Stado declares
+  // for this machine, or the fleet owner it forwards to. Naming the account's
+  // ~/.stado vault file here turned that forwarding off and tied the API to
+  // whichever host held the file.
+  delete process.env.SKARBIEC_VAULT_FILE;
   delete process.env.SKARBIEC_CAPABILITY_FILE;
   delete process.env.SKARBIEC_CAPABILITY_ROUTES_FILE;
   // The shared broker is the one Stado declares for the Skarbiec unit on this
@@ -206,13 +215,21 @@ export async function startup() {
       ],
       `Skarbiec route declaration ${resource}`,
     );
-    if (declared.error || declared.status !== 0) {
-      const why = (
-        declared.error?.message ||
-        declared.stderr ||
-        declared.stdout ||
-        'no diagnostic output'
-      ).trim();
+    // A run failed when it could not start, exited with a status, or was
+    // ended by a signal; success is none of the three.
+    if (declared.error || declared.status || declared.signal) {
+      // Everything the run said about why, in its own words.
+      const why = JSON.stringify(
+        [
+          declared.error?.message,
+          declared.signal && `ended by signal ${declared.signal}`,
+          declared.status && `exited with status ${declared.status}`,
+          declared.stderr,
+          declared.stdout,
+        ]
+          .filter((said) => typeof said === 'string' && said.trim())
+          .map((said) => said.trim()),
+      );
       process.stdout.write(
         `route ${resource} not declared as ${tag}#${field}: ${why}; ` +
           'sign-ins on that origin use the row the shared table already holds, if any, ' +

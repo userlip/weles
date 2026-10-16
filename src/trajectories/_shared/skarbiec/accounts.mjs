@@ -1,74 +1,24 @@
-import { execFileSync } from 'node:child_process';
+// Weles' trajectory records in Skarbiec: accounts, the characters and
+// products they carry, service credentials and email-domain status. The
+// Skarbiec primitives, and why no vault file is named, are in records.mjs.
 import { randomUUID } from 'node:crypto';
-import os from 'node:os';
-import path from 'node:path';
-import { activeSkarbiecBinary } from '../../../_shared/skarbiec-runtime.mjs';
+import {
+  liveIds,
+  objectMember,
+  patchContext,
+  readWelesRecord,
+  recordIds,
+  requireItem,
+  run,
+  setRecord,
+} from './records.mjs';
 
-const HOME = os.homedir();
-let resolvedSkarbiecBinary;
-const VAULT =
-  process.env.SKARBIEC_VAULT_FILE ??
-  path.join(HOME, '.stado', 'skarbiec.vault.json');
-// Weles marks each record with the kind it is (Skarbiec namespace
-// weles:record:<kind>) and finds one by that tag and its own context; an
-// item's id is random and nothing reads meaning out of it.
-const RECORD_TAG_PREFIX = 'weles:record:';
 const ACCOUNT_KIND = 'trajectory-account';
-const ITEM_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$/;
+const DOMAIN_KIND = 'email-domain-status';
 
-function run(args, input) {
-  return execFileSync(
-    (resolvedSkarbiecBinary ??= activeSkarbiecBinary()),
-    args,
-    {
-      input,
-      encoding: 'utf8',
-      env: { ...process.env, SKARBIEC_VAULT_FILE: VAULT },
-    },
-  );
-}
+export { readWelesRecord };
 
-function requireItem(id) {
-  if (!ITEM_ID.test(String(id)))
-    throw new Error('invalid Weles Skarbiec record id');
-  return String(id);
-}
-
-/** The ids of the live items marked as Weles records of `kind`. */
-function recordIds(kind) {
-  const tag = `${RECORD_TAG_PREFIX}${kind}`;
-  return JSON.parse(run(['list']))
-    .filter(
-      (row) =>
-        !row.deleted && Array.isArray(row.tags) && row.tags.includes(tag),
-    )
-    .map((row) => String(row.id ?? row.name ?? ''))
-    .filter(Boolean);
-}
-
-/**
- * Write a record of `kind` under `id` as an `itemKind` payload holding
- * exactly `fields`, tagging it when it is new. The payload travels on
- * standard input, so no credential value is ever in an argv.
- */
-function setRecord(kind, id, itemKind, fields) {
-  const fresh = !recordIds(kind).includes(id);
-  run(
-    [
-      'set-json',
-      id,
-      '--type',
-      itemKind,
-      ...(fresh ? ['--tags', `${RECORD_TAG_PREFIX}${kind}`] : []),
-    ],
-    JSON.stringify({
-      schema: 'skarbiec.item.v2',
-      kind: itemKind,
-      fields,
-      context: {},
-    }),
-  );
-}
+const freshId = () => randomUUID().replaceAll('-', '');
 
 /**
  * The account of `platform` signed in as `username` — active or not — or a
@@ -83,133 +33,125 @@ export function accountItemFor(platform, username) {
         account.platform === String(platform) &&
         account.username.trim().toLowerCase() === wanted,
     );
-  return existing?.id ?? randomUUID().replaceAll('-', '');
+  return existing ? existing.id : freshId();
 }
 
-export function readWelesRecord(id) {
-  return JSON.parse(run(['get', requireItem(id)]));
-}
-
-export function updateWelesRecord(id, contextPatch = {}, fieldPatch = {}) {
+/** Merge the patches into item `id`'s context and fields; either may be absent. */
+export function updateWelesRecord(id, contextPatch, fieldPatch) {
   const document = readWelesRecord(id);
-  document.context = { ...(document.context ?? {}), ...contextPatch };
-  document.fields = { ...(document.fields ?? {}), ...fieldPatch };
-  run(['set-json', String(id)], JSON.stringify(document));
+  document.context = { ...objectMember(id, document, 'context'), ...contextPatch };
+  document.fields = { ...objectMember(id, document, 'fields'), ...fieldPatch };
+  run(['set-json', requireItem(id)], JSON.stringify(document));
   return true;
 }
+
+/** The first live item `predicate` accepts, or null when none does. */
 export function findWelesRecordId(predicate) {
-  const rows = JSON.parse(run(['list']));
-  for (const row of rows) {
-    if (row.deleted) continue;
-    const id = String(row.name ?? row.id ?? '');
-    if (!id) continue;
-    const document = readWelesRecord(id);
-    if (predicate(document, id)) return id;
+  for (const id of liveIds()) {
+    if (predicate(readWelesRecord(id), id)) return id;
   }
   return null;
 }
 
-function recordPayload(document, fieldName) {
-  const raw = document.fields?.[fieldName] ?? document.fields?.value_json;
-  return raw ? JSON.parse(String(raw)) : { ...(document.context ?? {}) };
+// A record's payload is the JSON its named field holds (an older record keeps
+// it in value_json); a record with neither is its context.
+function recordPayload(id, document, fieldName) {
+  const fields = objectMember(id, document, 'fields');
+  const raw = fieldName in fields ? fields[fieldName] : fields.value_json;
+  if (raw) return JSON.parse(String(raw));
+  return { ...objectMember(id, document, 'context') };
 }
 
 export function accountCharacter(account) {
   const embedded = account?.metadata?.character;
   if (embedded && typeof embedded === 'object') return embedded;
-  const characterId = String(account?.metadata?.character_id ?? '');
-  if (!characterId) return null;
+  const characterId = account?.metadata?.character_id;
+  if (typeof characterId !== 'string' || !characterId) return null;
   const document = readWelesRecord(characterId);
-  return { id: characterId, ...recordPayload(document, 'character_json') };
+  return {
+    id: characterId,
+    ...recordPayload(characterId, document, 'character_json'),
+  };
 }
 
 export function findProduct(productId) {
-  const wanted = String(productId ?? '').trim();
-  if (!wanted) return null;
+  if (typeof productId !== 'string' || !productId.trim()) return null;
+  const wanted = productId.trim();
   const id = findWelesRecordId((document, recordId) => {
-    const context = document.context ?? {};
+    const context = objectMember(recordId, document, 'context');
     return (
       context.record_kind === 'product' &&
-      (recordId === wanted || String(context.product_id ?? '') === wanted)
+      (recordId === wanted || context.product_id === wanted)
     );
   });
   if (!id) return null;
-  const document = readWelesRecord(id);
-  return { id, ...recordPayload(document, 'product_json') };
+  return { id, ...recordPayload(id, readWelesRecord(id), 'product_json') };
 }
 
 export function writeServiceCredentials(service, { username, password }) {
   const kind = 'service-credential';
-  const id =
-    recordIds(kind).find(
-      (recordId) =>
-        readWelesRecord(recordId).context?.service === String(service),
-    ) ?? randomUUID().replaceAll('-', '');
+  const existing = recordIds(kind).find(
+    (recordId) =>
+      readWelesRecord(recordId).context?.service === String(service),
+  );
+  const id = existing ? existing : freshId();
   setRecord(kind, id, 'login', {
     username: String(username),
     password: String(password),
   });
-  const document = readWelesRecord(id);
-  document.context = {
-    ...(document.context ?? {}),
+  patchContext(id, {
     owner: 'weles',
     record_kind: kind,
     service: String(service),
-  };
-  run(['set-json', id], JSON.stringify(document));
+  });
   return id;
 }
 
+/** The status record of `domain`, if one exists. */
+function domainRecordId(domain) {
+  return recordIds(DOMAIN_KIND).find(
+    (recordId) => readWelesRecord(recordId).fields?.domain === String(domain),
+  );
+}
+
 export function writeDomainStatus(domain, status) {
-  const kind = 'email-domain-status';
-  const id =
-    recordIds(kind).find(
-      (recordId) => readWelesRecord(recordId).fields?.domain === String(domain),
-    ) ?? randomUUID().replaceAll('-', '');
-  setRecord(kind, id, 'bundle', {
+  const existing = domainRecordId(domain);
+  const id = existing ? existing : freshId();
+  setRecord(DOMAIN_KIND, id, 'bundle', {
     domain: String(domain),
     status: String(status),
   });
-  const document = readWelesRecord(id);
-  document.context = {
-    ...(document.context ?? {}),
+  patchContext(id, {
     owner: 'weles',
-    record_kind: kind,
+    record_kind: DOMAIN_KIND,
     updated_at: new Date().toISOString(),
-  };
-  run(['set-json', id], JSON.stringify(document));
+  });
   return id;
 }
 
 // The receiving probe last sent to `domain`, kept in its status record so the
 // next health run looks for exactly that mail in the inbox.
 export function writeDomainProbe(domain, marker) {
-  const kind = 'email-domain-status';
-  let id = recordIds(kind).find(
-    (recordId) => readWelesRecord(recordId).fields?.domain === String(domain),
-  );
+  let id = domainRecordId(domain);
   if (!id) {
-    id = randomUUID().replaceAll('-', '');
-    setRecord(kind, id, 'bundle', {
+    id = freshId();
+    setRecord(DOMAIN_KIND, id, 'bundle', {
       domain: String(domain),
       status: 'unprobed',
     });
   }
-  const document = readWelesRecord(id);
-  document.context = {
-    ...(document.context ?? {}),
+  patchContext(id, {
     owner: 'weles',
-    record_kind: kind,
+    record_kind: DOMAIN_KIND,
     probe_marker: String(marker),
     probe_sent_at: new Date().toISOString(),
-  };
-  run(['set-json', id], JSON.stringify(document));
+  });
 }
 
 // domain -> { marker, sentAt } for every domain with a recorded probe.
 export function readDomainProbes() {
   return Object.fromEntries(
-    recordIds('email-domain-status')
+    recordIds(DOMAIN_KIND)
       .map((id) => readWelesRecord(id))
       .filter(
         (document) => document.context?.probe_marker && document.fields?.domain,
@@ -223,7 +165,9 @@ export function readDomainProbes() {
       ]),
   );
 }
-export function listAccounts(platform = '') {
+
+/** Every active account, of `platform` when one is named. */
+export function listAccounts(platform) {
   return recordIds(ACCOUNT_KIND)
     .map((id) => readAccount(id))
     .filter((account) => {
@@ -232,93 +176,96 @@ export function listAccounts(platform = '') {
     });
 }
 
+/** The active account of `platform` signed in as `username`, if any. */
 export function findAccount(platform, username) {
-  const normalized = String(username ?? '')
-    .trim()
-    .toLowerCase();
-  return (
-    listAccounts(platform).find(
-      (account) => account.username.trim().toLowerCase() === normalized,
-    ) ?? null
+  const normalized = String(username).trim().toLowerCase();
+  return listAccounts(platform).find(
+    (account) => account.username.trim().toLowerCase() === normalized,
   );
 }
 
+/** Member `name` of an account record, which writeAccount always stores as text. */
+function accountText(id, holder, where, name) {
+  const value = holder[name];
+  if (typeof value !== 'string')
+    throw new Error(`Weles account record ${id} has no ${where}.${name} text`);
+  return value;
+}
+
 export function readAccount(id) {
-  const document = JSON.parse(run(['get', requireItem(id)]));
-  const fields = document.fields ?? {};
+  const document = readWelesRecord(id);
+  const fields = objectMember(id, document, 'fields');
+  const context = objectMember(id, document, 'context');
   return {
     id,
-    platform: document.context?.platform ?? '',
-    username: fields.username ?? '',
-    password: fields.password ?? '',
-    metadata: fields.metadata_json ? JSON.parse(fields.metadata_json) : {},
+    platform: accountText(id, context, 'context', 'platform'),
+    username: accountText(id, fields, 'fields', 'username'),
+    password: accountText(id, fields, 'fields', 'password'),
+    metadata: JSON.parse(accountText(id, fields, 'fields', 'metadata_json')),
     document,
   };
 }
 
+/** Store an account; it is shown under `displayName`, or its username when none is given. */
 export function writeAccount({
   id,
   platform,
   username,
   password,
   metadata,
-  displayName = '',
+  displayName,
 }) {
   const item = requireItem(id);
+  if (!metadata || typeof metadata !== 'object')
+    throw new Error(`Weles account ${item}: metadata must be an object`);
   setRecord(ACCOUNT_KIND, item, 'bundle', {
     username: String(username),
     password: String(password),
-    metadata_json: JSON.stringify(metadata ?? {}),
+    metadata_json: JSON.stringify(metadata),
   });
-  const document = JSON.parse(run(['get', item]));
-  document.context = {
-    ...(document.context ?? {}),
+  patchContext(item, {
     owner: 'weles',
-    record_kind: 'trajectory-account',
+    record_kind: ACCOUNT_KIND,
     platform: String(platform),
-    display_name: String(displayName || username),
-  };
-  run(['set-json', item], JSON.stringify(document));
+    display_name: String(displayName ? displayName : username),
+  });
   return item;
 }
 
-export function replaceAccountMetadata(id, metadata) {
+/** Rewrite account `id` with `change` applied to what it holds now. */
+function rewriteAccount(id, change) {
   const account = readAccount(id);
   writeAccount({
     id: account.id,
     platform: account.platform,
     username: account.username,
     password: account.password,
-    metadata,
-    displayName: account.document.context?.display_name,
+    metadata: account.metadata,
+    displayName: account.document.context.display_name,
+    ...change(account),
   });
 }
 
+export function replaceAccountMetadata(id, metadata) {
+  rewriteAccount(id, () => ({ metadata }));
+}
+
+/** Merge `update` (an object, or a function of the metadata) into the metadata. */
 export function updateAccountMetadata(id, update) {
-  const account = readAccount(id);
-  const metadata =
-    typeof update === 'function'
-      ? update(account.metadata)
-      : { ...account.metadata, ...(update ?? {}) };
-  writeAccount({
-    id: account.id,
-    platform: account.platform,
-    username: account.username,
-    password: account.password,
-    metadata,
-    displayName: account.document.context?.display_name,
+  let metadata;
+  rewriteAccount(id, (account) => {
+    metadata =
+      typeof update === 'function'
+        ? update(account.metadata)
+        : { ...account.metadata, ...update };
+    return { metadata };
   });
   return metadata;
 }
 
-export function updateAccountPassword(id, password, metadataPatch = {}) {
-  const account = readAccount(id);
-  writeAccount({
-    id: account.id,
-    platform: account.platform,
-    username: account.username,
+export function updateAccountPassword(id, password, metadataPatch) {
+  rewriteAccount(id, (account) => ({
     password,
     metadata: { ...account.metadata, ...metadataPatch },
-    displayName: account.document.context?.display_name,
-  });
+  }));
 }

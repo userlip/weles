@@ -1,144 +1,90 @@
 // The proxy fleet, read from and written to Skarbiec — the one credential
 // store. Each `weles-*-proxy` item carries credentials in its fields and all
 // non-secret configuration and observed state in its context. A row's
-// provider is derived from its endpoint and its pool type is what the item's
-// context declares as `proxy_type` (isp, mobile or residential).
+// provider is what its context declares, else what its endpoint shows.
 //
-// Nothing here prints a secret.
+// Nothing here prints a secret. Which vault serves the items is Skarbiec's
+// to choose (the vault Stado declares for this machine, or the fleet owner
+// it forwards to, or the one SKARBIEC_VAULT_FILE names when the caller names
+// one): naming a vault file here kept the fleet on whichever host held it.
 
 import { execFileSync } from 'node:child_process';
-import os from 'node:os';
-import path from 'node:path';
 import { activeSkarbiecBinary } from '../../../_shared/skarbiec-runtime.mjs';
 import { providerFromHost } from '../../../../dist/proxy/policy.js';
-import {
-  proxyTypeOf,
-  stickyCredentials,
-} from '../../../../dist/proxy/sources/provider_credentials.js';
 
-const HOME = os.homedir();
+const PROXY_ITEM = /^weles-.*-proxy$/;
 let resolvedSkarbiecBinary;
-const VAULT =
-  process.env.SKARBIEC_VAULT_FILE ??
-  path.join(HOME, '.stado', 'skarbiec.vault.json');
 
 function skarbiec(args, input) {
   return execFileSync(
     (resolvedSkarbiecBinary ??= activeSkarbiecBinary()),
     args,
-    {
-      input,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        SKARBIEC_VAULT_FILE: VAULT,
-        PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? '/usr/bin:/bin'}`,
-      },
-    },
+    { input, encoding: 'utf8' },
   );
+}
+
+/** The member `name` of `document`, which must be an object. */
+function objectMember(id, document, name) {
+  const value = document?.[name];
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error(`Skarbiec proxy item ${id} carries no ${name} object`);
+  return value;
 }
 
 function readItem(id) {
   return JSON.parse(skarbiec(['get', id]));
 }
 
+/** The provider the context declares, else the one its endpoint shows. */
+function providerOf(context, fields) {
+  if (typeof context.provider === 'string') return context.provider;
+  if (typeof context.host === 'string')
+    return providerFromHost(context.host, fields.username);
+  return undefined;
+}
+
+/** The Brightdata zone the item declares, in its context or its metadata. */
+function zoneOf(id, context) {
+  if (typeof context.zone === 'string') return context.zone;
+  if (context.metadata === undefined) return undefined;
+  return objectMember(id, context, 'metadata').zone;
+}
+
+// A row holds what the item declares; an attribute it does not declare is
+// absent from the row, and a caller that needs it decides what that means.
 function proxyRecord(id, document) {
-  const fields = document?.fields ?? {};
-  const context = document?.context ?? {};
-  const host = context.host ?? null;
+  const fields = objectMember(id, document, 'fields');
+  const context = objectMember(id, document, 'context');
   return {
     id,
-    displayName: context.display_name ?? id,
-    host,
-    port: context.port ? Number(context.port) : null,
-    provider:
-      typeof context.provider === 'string'
-        ? context.provider
-        : ((host ? providerFromHost(host, fields.username) : undefined) ??
-          null),
-    proxyType: proxyTypeOf(context.proxy_type) ?? null,
-    username: fields.username ?? null,
-    password: fields.password ?? null,
-    notes: context.notes ?? '',
-    balanceUsd: context.balance_usd ?? null,
-    metadata: context.metadata ?? {},
-    context,
+    displayName:
+      typeof context.display_name === 'string' ? context.display_name : id,
+    host: context.host,
+    port: context.port === undefined ? undefined : Number(context.port),
+    provider: providerOf(context, fields),
+    zone: zoneOf(id, context),
+    username: fields.username,
+    password: fields.password,
   };
 }
 
-// The credentials for one sticky session on this row, pinned to a country
-// and, for a provider that takes one, the row's city for `platform`.
-export function stickySession(proxy, sessionId, country, platform) {
-  const metadata = proxy.metadata ?? {};
-  const city =
-    String(metadata.city_overrides?.[platform] ?? metadata.city ?? '')
-      .toLowerCase()
-      .replace(/\s+/g, '_') || undefined;
-  return stickyCredentials(
-    proxy.provider ?? undefined,
-    proxy.proxyType ?? undefined,
-    { username: proxy.username, password: proxy.password },
-    { country, city, sessionId },
-  );
-}
-
-// An include list such as `oxylabs/mobile,packetstream,brightdata/residential`:
-// each entry names a provider and, after a slash, one pool type; a provider
-// alone admits every rotating pool it has. Parsed into a predicate over rows.
-export function parseInclude(text) {
-  const entries = String(text ?? '')
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean)
-    .map((entry) => {
-      const [provider, proxyType] = entry.split('/');
-      return { provider, proxyType: proxyType || null };
-    });
-  return (proxy) =>
-    entries.some(
-      (e) =>
-        e.provider === proxy.provider &&
-        (e.proxyType === null || e.proxyType === proxy.proxyType),
-    );
-}
-
-// Splits the fleet into the rotating rows an include predicate admits, and
-// the rows that cannot be judged because their item declares no pool type.
-export function rotatingRows(include) {
-  const rows = listProxies().filter(
-    (proxy) => proxy.host && proxy.port && proxy.username && proxy.password,
-  );
-  return {
-    candidates: rows.filter(
-      (proxy) =>
-        proxy.proxyType !== null && proxy.proxyType !== 'isp' && include(proxy),
-    ),
-    undeclared: rows.filter((proxy) => proxy.proxyType === null),
-  };
-}
-
-export function listProxies() {
-  const items = JSON.parse(skarbiec(['list']));
-  return items
+function listProxies() {
+  return JSON.parse(skarbiec(['list']))
     .filter((item) => !item.deleted && item.kind === 'proxy')
-    .map((item) => item.name ?? item.id)
-    .filter((id) => /^weles-.*-proxy$/.test(id))
+    .map((item) => item.id)
+    .filter((id) => PROXY_ITEM.test(id))
     .map((id) => proxyRecord(id, readItem(id)));
 }
 
-export function getProxy(id) {
-  return proxyRecord(id, readItem(id));
-}
-
+/** The row named `name` (its display name or a part of it), if any is. */
 export function findProxyByDisplayName(name) {
   const wanted = String(name).toLowerCase();
-  return (
-    listProxies().find(
-      (proxy) =>
-        proxy.displayName.toLowerCase() === wanted ||
-        proxy.displayName.toLowerCase().includes(wanted) ||
-        proxy.id.includes(wanted.replace(/[^a-z0-9]+/g, '-')),
-    ) ?? null
+  const slug = wanted.replace(/[^a-z\d]+/g, '-');
+  return listProxies().find(
+    (proxy) =>
+      proxy.displayName.toLowerCase() === wanted ||
+      proxy.displayName.toLowerCase().includes(wanted) ||
+      proxy.id.includes(slug),
   );
 }
 
@@ -146,7 +92,7 @@ export function findProxyByDisplayName(name) {
 // attributes already in the item's context; credentials are never touched.
 export function persistProxyContext(id, patch) {
   const document = readItem(id);
-  document.context = { ...(document.context ?? {}), ...patch };
+  document.context = { ...objectMember(id, document, 'context'), ...patch };
   skarbiec(['set-json', id], JSON.stringify(document));
   return true;
 }
