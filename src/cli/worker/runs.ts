@@ -9,7 +9,7 @@
 // account. `list` shows each live run with how long ago it last wrote anything
 // and what it waits for, `show` prints what it wrote last, `answer` tells a
 // run waiting for a person what the person did, and `cancel` ends a run so the
-// next run of that account starts fresh.
+// next run of that account starts fresh. The verb is always named; none is assumed.
 
 import type { ParsedCli } from '../../cli.js';
 import { UsageError } from '../usage.js';
@@ -25,12 +25,17 @@ import type { OperatorAnswer } from '../../operator/request.mjs' with {
   'resolution-mode': 'import',
 };
 
+const elapsed = new Intl.NumberFormat(undefined, {
+  style: 'unit',
+  unit: 'millisecond',
+});
+
 function silence(lastOutputAt: string | null, startedAt: string): string {
-  const since = Date.parse(lastOutputAt ?? startedAt);
-  const seconds = Math.max(0, Math.round((Date.now() - since) / 1000));
+  const since = Date.parse(lastOutputAt ? lastOutputAt : startedAt);
+  const quiet = elapsed.format(Date.now() - since);
   return lastOutputAt
-    ? `last wrote ${seconds}s ago`
-    : `wrote nothing in ${seconds}s`;
+    ? `last wrote ${quiet} ago`
+    : `wrote nothing in ${quiet}`;
 }
 
 /** Whether the person was told, and whether the waiting process still runs. */
@@ -97,12 +102,14 @@ function detail(run: RunningRun): string {
       lines.push(
         `page         ${attempt.at} ${attempt.ok ? 'delivered' : 'not delivered'}: ${attempt.detail}`,
       );
-    for (const said of request.answers ?? [])
-      lines.push(
-        `answered     ${said.at} ${said.answer}${said.detail ? `: ${said.detail}` : ''}`,
-      );
-    for (const note of request.notes ?? [])
-      lines.push(`run noted    ${note.at} ${note.note}`);
+    if (request.answers)
+      for (const said of request.answers)
+        lines.push(
+          `answered     ${said.at} ${said.answer}${said.detail ? `: ${said.detail}` : ''}`,
+        );
+    if (request.notes)
+      for (const note of request.notes)
+        lines.push(`run noted    ${note.at} ${note.note}`);
     lines.push(
       `answer it    weles runs answer ${run.run_id} --ready | --approved | --not-received [--detail <text>]`,
     );
@@ -111,12 +118,12 @@ function detail(run: RunningRun): string {
     lines.push(
       `cancelled    ${run.cancel_requested.at}: ${run.cancel_requested.detail}`,
     );
-  for (const [stream, text] of [
-    ['stderr', run.stderr_tail],
-    ['stdout', run.stdout_tail],
+  for (const [label, text] of [
+    ['stderr       ', run.stderr_tail],
+    ['stdout       ', run.stdout_tail],
   ]) {
     for (const line of text.split('\n').filter((written) => written.trim())) {
-      lines.push(`${stream.padEnd(13)}${line}`);
+      lines.push(`${label}${line}`);
     }
   }
   lines.push(
@@ -157,13 +164,20 @@ function recordDetail(
   return lines.join('\n');
 }
 
+/** The run id a verb acts on, refused by name when the caller gave none. */
+function runId(parsed: ParsedCli, verb: string): string {
+  const [, id] = parsed.positional;
+  if (!id) throw new UsageError(`runs ${verb} requires <run-id>`);
+  return id;
+}
+
 async function listRuns(parsed: ParsedCli): Promise<void> {
   const runs = await readRunningRuns();
   if (parsed.options.json === true) {
     process.stdout.write(`${JSON.stringify(runs, null, 2)}\n`);
     return;
   }
-  if (runs.length === 0) {
+  if (!runs.length) {
     process.stdout.write('no runs are running on the selected Weles worker\n');
     return;
   }
@@ -171,8 +185,7 @@ async function listRuns(parsed: ParsedCli): Promise<void> {
 }
 
 async function showRun(parsed: ParsedCli): Promise<void> {
-  const id = parsed.positional[1];
-  if (!id) throw new UsageError('runs show requires <run-id>');
+  const id = runId(parsed, 'show');
   const observed = await readRun(id);
   if (parsed.options.json === true) {
     process.stdout.write(`${JSON.stringify(observed, null, 2)}\n`);
@@ -184,8 +197,7 @@ async function showRun(parsed: ParsedCli): Promise<void> {
 }
 
 async function cancel(parsed: ParsedCli): Promise<void> {
-  const id = parsed.positional[1];
-  if (!id) throw new UsageError('runs cancel requires <run-id>');
+  const id = runId(parsed, 'cancel');
   const said =
     typeof parsed.options.detail === 'string'
       ? parsed.options.detail.trim()
@@ -218,8 +230,7 @@ const ANSWER_FLAGS: ReadonlyArray<{ flag: string; answer: OperatorAnswer }> = [
  * `cancel`.
  */
 async function answer(parsed: ParsedCli): Promise<void> {
-  const id = parsed.positional[1];
-  if (!id) throw new UsageError('runs answer requires <run-id>');
+  const id = runId(parsed, 'answer');
   const [chosen, ...more] = ANSWER_FLAGS.filter(
     ({ flag }) => parsed.options[flag] === true,
   );
@@ -246,13 +257,22 @@ async function answer(parsed: ParsedCli): Promise<void> {
   process.stdout.write(`${detail(run)}\n`);
 }
 
+/** What `weles runs` can do, by the verb the caller names. */
+const RUN_ACTIONS: Record<string, (parsed: ParsedCli) => Promise<void>> = {
+  list: listRuns,
+  show: showRun,
+  answer,
+  cancel,
+};
+
 export async function runRuns(parsed: ParsedCli): Promise<void> {
-  const action = parsed.positional[0] ?? 'list';
-  if (action === 'list') return listRuns(parsed);
-  if (action === 'show') return showRun(parsed);
-  if (action === 'answer') return answer(parsed);
-  if (action === 'cancel') return cancel(parsed);
-  throw new UsageError(
-    `unknown runs action: ${action}; weles runs takes list, show, answer or cancel`,
-  );
+  const [action] = parsed.positional;
+  const verbs = Object.keys(RUN_ACTIONS).join(', ');
+  if (action === undefined)
+    throw new UsageError(`weles runs needs an action: ${verbs}`);
+  if (!Object.hasOwn(RUN_ACTIONS, action))
+    throw new UsageError(
+      `unknown runs action: ${action}; weles runs takes ${verbs}`,
+    );
+  return RUN_ACTIONS[action](parsed);
 }
