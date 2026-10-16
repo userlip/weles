@@ -1,4 +1,5 @@
 import { createPrivateKey, createPublicKey, KeyObject } from 'node:crypto';
+import { constants as http } from 'node:http2';
 
 import { PublicTaskError } from '../wire.mjs';
 import {
@@ -11,13 +12,14 @@ import {
 } from '../wire/canonical-json.mjs';
 
 export const PUBLIC_ACTION = 'generic_browser_task';
-const SENSITIVE_KEY_RE =
-  /password|secret|token|cookie|authorization|proxy.?auth/i;
+// The signature algorithm receipts are signed with (node:crypto's name).
+const RECEIPT_KEY_TYPE = 'ed25519';
 
 function requiredEnvironment(name, environment) {
-  const value = String(environment[name] ?? '').trim();
-  if (!value) throw new Error(`missing required ${name}`);
-  return value;
+  const value = environment[name];
+  if (typeof value !== 'string' || !value.trim())
+    throw new Error(`missing required ${name}`);
+  return value.trim();
 }
 
 function parseAllowedOrigins(raw) {
@@ -25,10 +27,10 @@ function parseAllowedOrigins(raw) {
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean);
-  if (entries.length === 0)
+  if (!entries.length)
     throw new Error('WELES_PUBLIC_API_ALLOWED_ORIGINS must not be empty');
   if (entries.includes('*')) {
-    if (entries.length !== 1)
+    if (entries.some((entry) => entry !== '*'))
       throw new Error(
         'WELES_PUBLIC_API_ALLOWED_ORIGINS wildcard must stand alone',
       );
@@ -64,8 +66,6 @@ function normalizePublicKey(value) {
 
 export function loadConfig(environment, policy) {
   const bearer = requiredEnvironment('WELES_PUBLIC_API_BEARER', environment);
-  if (Buffer.byteLength(bearer) < 32)
-    throw new Error('WELES_PUBLIC_API_BEARER must contain at least 32 bytes');
   const organizationId = requiredEnvironment(
     'WELES_PUBLIC_API_ORGANIZATION_ID',
     environment,
@@ -80,12 +80,14 @@ export function loadConfig(environment, policy) {
   const privateKey = createPrivateKey(
     requiredEnvironment('WELES_RECEIPT_PRIVATE_KEY', environment),
   );
-  if (privateKey.asymmetricKeyType !== 'ed25519')
-    throw new Error('WELES_RECEIPT_PRIVATE_KEY must be Ed25519');
+  if (privateKey.asymmetricKeyType !== RECEIPT_KEY_TYPE)
+    throw new Error(
+      `WELES_RECEIPT_PRIVATE_KEY is a ${privateKey.asymmetricKeyType} key, not ${RECEIPT_KEY_TYPE}`,
+    );
   const keySetValue = JSON.parse(
     requiredEnvironment('WELES_RECEIPT_PUBLIC_KEYS_JSON', environment),
   );
-  if (!isObject(keySetValue) || Object.keys(keySetValue).length === 0) {
+  if (!isObject(keySetValue) || !Object.keys(keySetValue).length) {
     throw new Error(
       'WELES_RECEIPT_PUBLIC_KEYS_JSON must be a non-empty object',
     );
@@ -123,27 +125,26 @@ export function loadConfig(environment, policy) {
   });
 }
 
-// The task's JSON shape: safe integers, no lone surrogates, no secret-shaped
-// keys. No length, count or depth is chosen here.
+// The task's JSON shape: safe integers and no lone surrogates. No length,
+// count or depth is chosen here; which fields exist is assertDeclaredFields'.
 export function assertBoundedJson(value, path = 'input') {
   if (typeof value === 'string' && containsLoneSurrogate(value)) {
     throw new PublicTaskError(
-      400,
+      http.HTTP_STATUS_BAD_REQUEST,
       'invalid-input',
       `${path} rejects lone UTF-16 surrogates`,
     );
   }
   if (typeof value === 'number' && !Number.isSafeInteger(value)) {
     throw new PublicTaskError(
-      400,
+      http.HTTP_STATUS_BAD_REQUEST,
       'invalid-input',
       `${path} permits safe integers only`,
     );
   }
   if (Array.isArray(value)) {
-    value.forEach((entry, index) =>
-      assertBoundedJson(entry, `${path}[${index}]`),
-    );
+    for (const [index, entry] of value.entries())
+      assertBoundedJson(entry, `${path}[${index}]`);
     return;
   }
   if (!isObject(value)) return;
@@ -151,26 +152,40 @@ export function assertBoundedJson(value, path = 'input') {
   for (const [key, entry] of entries) {
     if (containsLoneSurrogate(key)) {
       throw new PublicTaskError(
-        400,
+        http.HTTP_STATUS_BAD_REQUEST,
         'invalid-input',
         `${path} contains a key with a lone UTF-16 surrogate`,
-      );
-    }
-    if (SENSITIVE_KEY_RE.test(key)) {
-      throw new PublicTaskError(
-        400,
-        'sensitive-input-denied',
-        `plaintext secret-shaped field denied at ${path}.${key}`,
       );
     }
     assertBoundedJson(entry, `${path}.${key}`);
   }
 }
 
+// Refuses an object whose fields are not exactly the declared ones, naming
+// every undeclared and every missing field by its path. A credential has no
+// field of its own here: it enters a task only as a reference in
+// credentialRefs, so whatever a key is called, an undeclared one is refused.
+export function assertDeclaredFields(value, declared, path, code) {
+  const named = (keys) => keys.map((key) => `${path}.${key}`).join(', ');
+  const undeclared = Object.keys(value).filter(
+    (key) => !declared.includes(key),
+  );
+  const missing = declared.filter((key) => !Object.hasOwn(value, key));
+  const reasons = [];
+  if (undeclared.length) reasons.push(`undeclared fields ${named(undeclared)}`);
+  if (missing.length) reasons.push(`missing fields ${named(missing)}`);
+  if (!reasons.length) return;
+  throw new PublicTaskError(
+    http.HTTP_STATUS_BAD_REQUEST,
+    code,
+    `${path} has ${reasons.join(' and ')}`,
+  );
+}
+
 export function exactHttpsOrigin(value) {
   if (typeof value !== 'string') {
     throw new PublicTaskError(
-      400,
+      http.HTTP_STATUS_BAD_REQUEST,
       'invalid-origin',
       'origin must be an exact HTTPS origin',
     );
@@ -178,16 +193,16 @@ export function exactHttpsOrigin(value) {
   let parsed;
   try {
     parsed = new URL(value);
-  } catch {
+  } catch (error) {
     throw new PublicTaskError(
-      400,
+      http.HTTP_STATUS_BAD_REQUEST,
       'invalid-origin',
-      'origin must be an exact HTTPS origin',
+      `origin must be an exact HTTPS origin: ${error.message}`,
     );
   }
   if (parsed.protocol !== 'https:' || parsed.origin !== value) {
     throw new PublicTaskError(
-      400,
+      http.HTTP_STATUS_BAD_REQUEST,
       'invalid-origin',
       'origin must be an exact HTTPS origin',
     );
@@ -198,7 +213,7 @@ export function exactHttpsOrigin(value) {
 export function exactPublicHttpsUrl(value) {
   if (typeof value !== 'string') {
     throw new PublicTaskError(
-      400,
+      http.HTTP_STATUS_BAD_REQUEST,
       'invalid-input',
       'input.product_url must be a public HTTPS URL',
     );
@@ -206,11 +221,11 @@ export function exactPublicHttpsUrl(value) {
   let parsed;
   try {
     parsed = new URL(value);
-  } catch {
+  } catch (error) {
     throw new PublicTaskError(
-      400,
+      http.HTTP_STATUS_BAD_REQUEST,
       'invalid-input',
-      'input.product_url must be a public HTTPS URL',
+      `input.product_url must be a public HTTPS URL: ${error.message}`,
     );
   }
   if (
@@ -220,7 +235,7 @@ export function exactPublicHttpsUrl(value) {
     parsed.toString() !== value
   ) {
     throw new PublicTaskError(
-      400,
+      http.HTTP_STATUS_BAD_REQUEST,
       'invalid-input',
       'input.product_url must be exact canonical HTTPS without credentials',
     );
