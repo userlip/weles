@@ -23,8 +23,8 @@ export async function admitPublicTarget(raw, publicAddresses) {
   let url;
   try {
     url = new URL(raw);
-  } catch {
-    throw new PageTargetRefused(`not a URL: ${String(raw)}`);
+  } catch (error) {
+    throw new PageTargetRefused(`not a URL: ${String(raw)}: ${error.message}`);
   }
   if (url.protocol !== 'https:' || url.username || url.password || url.port) {
     throw new PageTargetRefused(
