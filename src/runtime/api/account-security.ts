@@ -43,13 +43,7 @@ function parseRun(value: unknown): AccountSecurityRun {
       typeof row.params?.login_item !== 'string')
   ) {
     throw new Error(
-      `Weles returned an unrelated account-security run: ${JSON.stringify({
-        id: row?.id ?? null,
-        action: row?.action ?? null,
-        status: row?.status ?? null,
-        login_role: row?.params?.login_role ?? null,
-        login_item: row?.params?.login_item ?? null,
-      })}; the executor must return the run identifier, google_mfa_status action and requested login binding`,
+      `Weles returned an unrelated account-security run: ${JSON.stringify(row)}; the executor must return the run identifier, google_mfa_status action and requested login binding`,
     );
   }
   if (row.result !== null && row.result !== undefined) {
@@ -70,7 +64,27 @@ function parseRun(value: unknown): AccountSecurityRun {
     )
       throw new Error('Weles returned an invalid 2FA observation');
   }
-  return { ...row, result: row.result ?? null } as AccountSecurityRun;
+  return {
+    ...row,
+    result: row.result === undefined ? null : row.result,
+  } as AccountSecurityRun;
+}
+
+/** A recorded value, or null when the run file does not record it. */
+function recorded<T>(value: T | undefined): T | null {
+  return value === undefined ? null : value;
+}
+
+/**
+ * Why the run failed, as Weles recorded it: its error, else the run's stderr
+ * tail; a failed run that recorded neither is reported with what it did
+ * record. A run that did not fail has none.
+ */
+function runFailure(body: Record<string, unknown>): string | null {
+  if (typeof body.error === 'string') return body.error;
+  if (body.ok !== false) return null;
+  if (typeof body.stderr_tail === 'string') return body.stderr_tail;
+  return `the run failed and recorded neither an error nor stderr: ${JSON.stringify(body)}`;
 }
 
 export async function accountSecurityRun(
@@ -106,10 +120,12 @@ export async function accountSecurityRun(
     const body = await operatorJson(response);
     if (!response.ok)
       throw new Error(
-        `HTTP ${response.status}: ${typeof body.error === 'string' ? body.error : 'Weles refused the account-security request'}`,
+        `HTTP ${response.status}: ${typeof body.error === 'string' ? body.error : JSON.stringify(body)}`,
       );
     if (creating && body.ok !== true)
-      throw new Error('Weles did not accept the account-security request');
+      throw new Error(
+        `Weles did not accept the account-security request: ${JSON.stringify(body)}`,
+      );
     const row = parseRun(
       creating
         ? {
@@ -126,13 +142,9 @@ export async function accountSecurityRun(
             action: body.action,
             params: body.params,
             status: body.status,
-            completed_at: body.completed_at ?? null,
-            result: body.result ?? null,
-            error:
-              body.error ??
-              (body.ok === false
-                ? (body.stderr_tail ?? 'Account security execution failed')
-                : null),
+            completed_at: recorded(body.completed_at),
+            result: recorded(body.result),
+            error: runFailure(body),
           },
     );
     if (creating ? row.params.login_role !== value : row.id !== value) {
