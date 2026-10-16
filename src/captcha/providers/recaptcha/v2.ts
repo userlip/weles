@@ -34,16 +34,29 @@ export async function solveRecaptchaV2Token(
   },
 ): Promise<string | boolean | null> {
   markCaptchaChallenge(); // G8: a challenge was faced (flips challenge_faced even if every provider fails)
+  // The services solve for a page address; one that names none is refused
+  // here rather than sent as an empty websiteURL.
   const url =
     options?.url ??
-    (typeof page?.url === 'function' ? page.url() : page?.url) ??
-    '';
+    (typeof page?.url === 'function' ? page.url() : page?.url);
+  if (!url) {
+    markAllProvidersFailed('recaptcha_v2');
+    throw new Error(
+      'reCAPTCHA v2 solve names no page URL: neither options.url nor the page states one',
+    );
+  }
   const isInv = !!options?.invisible;
   const isEnt = !!options?.enterprise;
-  const proxy = await proxyTaskFields(options?.proxy).catch((e: any) => {
-    console.log(`[captcha:solver] proxy parse skipped: ${e.message}`);
-    return null;
-  });
+  // A proxy the run states is the exit the token must be solved from; one the
+  // services cannot use fails the solve with its cause instead of the token
+  // being solved proxyless from another address.
+  let proxy: Record<string, any> | null;
+  try {
+    proxy = await proxyTaskFields(options?.proxy);
+  } catch (error) {
+    markAllProvidersFailed('recaptcha_v2');
+    throw error;
+  }
 
   // NopeCHA Token API first — different token provenance may bypass LinkedIn rejection.
   if (creds.nopecha) {

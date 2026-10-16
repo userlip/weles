@@ -1,3 +1,5 @@
+import { lookup } from 'node:dns/promises';
+
 // What every captcha provider call shares: the credential set, the
 // createTask/getTaskResult exchange, and the proxy fields a task carries in
 // the two dialects the providers speak.
@@ -61,8 +63,16 @@ export async function apiSolve(
     );
     return null;
   }
-  const t = res.solution?.gRecaptchaResponse ?? res.solution?.token ?? null;
-  console.log(`[captcha:api] ${svc} solved, token_chars=${t?.length}`);
+  // Two token fields are in use across the services: reCAPTCHA's own name and
+  // the generic one. A ready task carrying neither is named, not passed on.
+  const t = res.solution?.gRecaptchaResponse ?? res.solution?.token;
+  if (!t) {
+    console.log(
+      `[captcha:api] ${svc} task ${taskId} is ready but its solution carries no token: ${JSON.stringify(res.solution)}`,
+    );
+    return null;
+  }
+  console.log(`[captcha:api] ${svc} solved, token_chars=${t.length}`);
   return t;
 }
 
@@ -72,21 +82,41 @@ export type ProxyCredentials = {
   password?: string;
 };
 
+// The proxy URL a task names, which must carry its port: the services take
+// the proxy as address and port, and a URL without one read as port NaN, so
+// the task went out naming no usable proxy.
+function proxyUrl(server: string): URL {
+  const u = new URL(server);
+  if (!u.port)
+    throw new Error(
+      `captcha proxy ${u.hostname} names no port; the solving services need one`,
+    );
+  return u;
+}
+
+// The proxy fields of a createTask task. The services require the proxy by IP
+// address, so a host that does not resolve fails here with its cause rather
+// than going out as a name the services refuse.
 export async function proxyTaskFields(
   proxy?: ProxyCredentials,
 ): Promise<Record<string, any> | null> {
   if (!proxy?.server) return null;
-  const u = new URL(proxy.server);
-  const { lookup } = await import('node:dns');
-  const ip = await new Promise<string>((res, rej) =>
-    lookup(u.hostname, (e: any, a: string) => (e ? rej(e) : res(a))),
-  );
+  const u = proxyUrl(proxy.server);
+  let ip: string;
+  try {
+    ({ address: ip } = await lookup(u.hostname));
+  } catch (error) {
+    throw new Error(
+      `captcha proxy ${u.hostname} did not resolve to an address the solving services accept: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
   return {
-    proxyType: u.protocol.replace(':', '') || 'http',
+    proxyType: u.protocol.replace(':', ''),
     proxyAddress: ip,
-    proxyPort: parseInt(u.port, 10),
-    proxyLogin: proxy.username ?? '',
-    proxyPassword: proxy.password ?? '',
+    proxyPort: Number(u.port),
+    proxyLogin: proxy.username,
+    proxyPassword: proxy.password,
   };
 }
 
@@ -94,11 +124,11 @@ export function nopechaProxyFields(
   proxy?: ProxyCredentials,
 ): Record<string, any> | null {
   if (!proxy?.server) return null;
-  const u = new URL(proxy.server);
+  const u = proxyUrl(proxy.server);
   const out: Record<string, any> = {
-    scheme: u.protocol.replace(':', '') || 'http',
+    scheme: u.protocol.replace(':', ''),
     host: u.hostname,
-    port: parseInt(u.port, 10),
+    port: Number(u.port),
   };
   if (proxy.username) out.username = proxy.username;
   if (proxy.password) out.password = proxy.password;
