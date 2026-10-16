@@ -8,24 +8,33 @@
 import { spawnSync } from 'node:child_process';
 import { stadoBinary } from '../_shared/skarbiec-runtime.mjs';
 
+const EXIT_SUCCESS = 0; // https://pubs.opengroup.org/onlinepubs/9799919799/functions/exit.html EXIT_SUCCESS
+
+/**
+ * One Stado command's JSON answer; a failure names the command and says what
+ * Stado said on stderr. Its stdout is never quoted: an issue-capabilities
+ * answer carries capabilities, so only its length is named.
+ */
 function readStadoJson(argv) {
+  const command = `stado ${argv.join(' ')}`;
   const result = spawnSync(stadoBinary(), argv, { encoding: 'utf8' });
-  if (result.error || typeof result.stdout !== 'string') {
-    throw new Error(`Stado could not be asked: ${argv.join(' ')}`);
+  if (result.error) {
+    throw new Error(`${command} could not be run: ${result.error.message}`);
   }
-  if (result.status !== 0) {
-    const detail = String(
-      result.stderr || result.stdout || `exit ${result.status}`,
-    )
-      .trim()
-      .split(/\r?\n/)
-      .at(-1);
-    throw new Error(detail || `Stado refused: ${argv.join(' ')}`);
+  if (result.status !== EXIT_SUCCESS) {
+    let ended = `exited ${result.status}`;
+    if (result.status === null) ended = `ended on signal ${result.signal}`;
+    const said = result.stderr.trim();
+    throw new Error(
+      `${command} ${ended}: ${said === '' ? 'it printed nothing on stderr' : said}`,
+    );
   }
   try {
     return JSON.parse(result.stdout);
-  } catch {
-    throw new Error('Stado returned unreadable JSON');
+  } catch (error) {
+    throw new Error(
+      `${command} printed ${result.stdout.length} characters that are not JSON: ${error.message}`,
+    );
   }
 }
 
