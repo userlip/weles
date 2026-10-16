@@ -139,12 +139,23 @@ function immutableReleaseIdentity(
   };
 }
 
+/**
+ * The worker's instance id: WELES_INSTANCE_ID or INSTANCE_ID when declared,
+ * otherwise this machine's host name and this process id. A machine that
+ * reports no host name is refused, since its id would name no machine.
+ */
 export function deploymentInstanceId(env: EnvLike = process.env): string {
-  return (
-    env.WELES_INSTANCE_ID?.trim() ||
-    env.INSTANCE_ID?.trim() ||
-    `weles-${os.hostname() || 'host'}-${process.pid}`
-  );
+  const declared = [env.WELES_INSTANCE_ID, env.INSTANCE_ID]
+    .map((value) => value?.trim())
+    .find(Boolean);
+  if (declared) return declared;
+  const host = os.hostname();
+  if (!host) {
+    throw new Error(
+      'Weles worker instance id: neither WELES_INSTANCE_ID nor INSTANCE_ID is set and this machine reports no host name',
+    );
+  }
+  return `weles-${host}-${process.pid}`;
 }
 
 export function buildDeploymentVersionValue(
@@ -159,23 +170,23 @@ export function buildDeploymentVersionValue(
     instance_id: instanceId,
     updated_at: now.toISOString(),
     ...(release ? { release } : {}),
-    capture_failures: versions.version_capture_failures ?? [],
+    capture_failures: versions.version_capture_failures,
     deployment: {
-      weles_pkg_version: versions.weles_pkg_version ?? null,
-      weles_commit: versions.weles_commit ?? null,
-      weles_commit_short: versions.weles_commit_short ?? null,
-      weles_branch: versions.weles_branch ?? null,
-      weles_dirty: versions.weles_dirty ?? null,
-      weles_dist_sha256: versions.weles_dist_sha256 ?? null,
-      trajectories_tree_sha256: versions.trajectories_tree_sha256 ?? null,
-      runner_entry_sha256: versions.runner_entry_sha256 ?? null,
-      worker_started_at: versions.worker_started_at ?? null,
-      recorded_at: versions.recorded_at ?? null,
+      weles_pkg_version: versions.weles_pkg_version,
+      weles_commit: versions.weles_commit,
+      weles_commit_short: versions.weles_commit_short,
+      weles_branch: versions.weles_branch,
+      weles_dirty: versions.weles_dirty,
+      weles_dist_sha256: versions.weles_dist_sha256,
+      trajectories_tree_sha256: versions.trajectories_tree_sha256,
+      runner_entry_sha256: versions.runner_entry_sha256,
+      worker_started_at: versions.worker_started_at,
+      recorded_at: versions.recorded_at,
     },
     runner: {
-      worker_host: versions.worker_host ?? null,
-      worker_user: versions.worker_user ?? null,
-      node_version: versions.node_version ?? process.version,
+      worker_host: versions.worker_host,
+      worker_user: versions.worker_user,
+      node_version: versions.node_version,
       pid: process.pid,
       platform: process.platform,
       arch: process.arch,
