@@ -1,39 +1,49 @@
 // CRUD helper for Weles subscription records in Skarbiec. A record is marked
 // weles:record:service-subscription and found by its own context — service,
 // provider and account — never by a name built from them; its id is random.
-import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { activeSkarbiecBinary } from '../_shared/skarbiec-runtime.mjs';
+// Which vault serves the records is Skarbiec's to choose: the vault Stado
+// declares for this machine, or the fleet owner it forwards to, or the one
+// SKARBIEC_VAULT_FILE names when the caller names one. Naming a vault file
+// here kept the records on whichever host held that file.
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { activeSkarbiecBinary } from "../_shared/skarbiec-runtime.mjs";
 
 let resolvedSkarbiecBinary;
-const VAULT =
-  process.env.SKARBIEC_VAULT_FILE ??
-  join(homedir(), '.stado', 'skarbiec.vault.json');
-const RECORD_TAG = 'weles:record:service-subscription';
+const RECORD_TAG = "weles:record:service-subscription";
 const run = (args, input) =>
   execFileSync((resolvedSkarbiecBinary ??= activeSkarbiecBinary()), args, {
     input,
-    encoding: 'utf8',
-    env: { ...process.env, SKARBIEC_VAULT_FILE: VAULT },
+    encoding: "utf8",
   });
-const read = (id) => JSON.parse(run(['get', id]));
-const record = (id, document) => ({
-  id,
-  ...(document.context?.subscription ?? {}),
-});
+const read = (id) => JSON.parse(run(["get", id]));
+
+// A record is the subscription its context carries; an item tagged as one
+// without it is named, never listed as an empty record.
+function record(id, document) {
+  const subscription = document.context?.subscription;
+  if (!subscription || typeof subscription !== "object")
+    throw new Error(
+      `Skarbiec item ${id} is tagged ${RECORD_TAG} but its context carries no subscription`,
+    );
+  return { id, ...subscription };
+}
 
 function subscriptionIds() {
-  return JSON.parse(run(['list']))
+  return JSON.parse(run(["list"]))
     .filter(
       (row) =>
         !row.deleted &&
         Array.isArray(row.tags) &&
         row.tags.includes(RECORD_TAG),
     )
-    .map((row) => String(row.id ?? row.name ?? ''))
-    .filter(Boolean);
+    .map((row) => {
+      if (typeof row.id !== "string" || !row.id)
+        throw new Error(
+          `skarbiec list answered a ${RECORD_TAG} row without an id: ${JSON.stringify(row)}`,
+        );
+      return row.id;
+    });
 }
 
 export async function listSubscriptions({
@@ -57,8 +67,10 @@ export async function listSubscriptions({
 }
 
 function requireObservation(row) {
-  if (!row || typeof row !== 'object' || Array.isArray(row))
-    throw new Error('subscription row must be a JSON object; nothing was written');
+  if (!row || typeof row !== "object" || Array.isArray(row))
+    throw new Error(
+      "subscription row must be a JSON object; nothing was written",
+    );
   const missing = Object.entries({
     service_name: row.service_name,
     provider: row.provider,
@@ -66,15 +78,23 @@ function requireObservation(row) {
     status: row.status,
     last_verified_at: row.last_verified_at,
   })
-    .filter(([, value]) => typeof value !== 'string' || !value.trim())
+    .filter(([, value]) => typeof value !== "string" || !value.trim())
     .map(([name]) => name);
   if (missing.length)
     throw new Error(
-      `subscription record for ${row.service_name}/${row.account_identifier} has no ${missing.join(', ')}: what was observed, and when, is the collector's to state; nothing was written`,
+      `subscription record for ${row.service_name}/${row.account_identifier} has no ${missing.join(", ")}: what was observed, and when, is the collector's to state; nothing was written`,
+    );
+  if (
+    !row.metadata ||
+    typeof row.metadata !== "object" ||
+    Array.isArray(row.metadata)
+  )
+    throw new Error(
+      `subscription record for ${row.service_name}/${row.account_identifier} has no metadata object: the collector states what it read; nothing was written`,
     );
   if (Number.isNaN(Date.parse(row.last_verified_at)))
     throw new Error(
-      'subscription last_verified_at must be a date-time the collector observed; nothing was written',
+      "subscription last_verified_at must be a date-time the collector observed; nothing was written",
     );
 }
 
@@ -93,46 +113,51 @@ export async function upsertSubscription(row) {
       account: row.account_identifier,
     })
   )[0]?.id;
-  const id = existing ?? randomUUID().replaceAll('-', '');
+  const id = existing ?? randomUUID().replaceAll("-", "");
   run(
     [
-      'set-json',
+      "set-json",
       id,
-      '--type',
-      'bundle',
-      ...(existing ? [] : ['--tags', RECORD_TAG]),
+      "--type",
+      "bundle",
+      ...(existing ? [] : ["--tags", RECORD_TAG]),
     ],
     JSON.stringify({
-      schema: 'skarbiec.item.v2',
-      kind: 'bundle',
-      fields: { value_json: JSON.stringify(row.metadata ?? {}) },
+      schema: "skarbiec.item.v2",
+      kind: "bundle",
+      fields: { value_json: JSON.stringify(row.metadata) },
       context: {},
     }),
   );
   const document = read(id);
+  if (!document.context || typeof document.context !== "object")
+    throw new Error(
+      `Skarbiec item ${id} was written with a context and read back without one; nothing more was written`,
+    );
   document.context = {
-    ...(document.context ?? {}),
-    owner: 'weles',
-    record_kind: 'service-subscription',
+    ...document.context,
+    owner: "weles",
+    record_kind: "service-subscription",
     subscription: {
       ...row,
       id,
       updated_at: new Date().toISOString(),
     },
   };
-  run(['set-json', id], JSON.stringify(document));
+  run(["set-json", id], JSON.stringify(document));
   return [record(id, document)];
 }
 
 export async function updateSubscription(id, patch) {
-  if (!patch || typeof patch !== 'object' || Array.isArray(patch))
-    throw new Error('subscription patch must be a JSON object; nothing was written');
+  if (!patch || typeof patch !== "object" || Array.isArray(patch))
+    throw new Error(
+      "subscription patch must be a JSON object; nothing was written",
+    );
   if (
-    Object.hasOwn(patch, 'status') !==
-    Object.hasOwn(patch, 'last_verified_at')
+    Object.hasOwn(patch, "status") !== Object.hasOwn(patch, "last_verified_at")
   )
     throw new Error(
-      'subscription status and last_verified_at must be supplied together for a new observation; nothing was written',
+      "subscription status and last_verified_at must be supplied together for a new observation; nothing was written",
     );
   const current = await getSubscription(id);
   requireObservation({ ...current, ...patch });
@@ -142,13 +167,13 @@ export async function updateSubscription(id, patch) {
     ...patch,
     updated_at: new Date().toISOString(),
   };
-  run(['set-json', id], JSON.stringify(document));
+  run(["set-json", id], JSON.stringify(document));
   return [record(id, document)];
 }
 
 export async function deleteSubscription(id) {
   await getSubscription(id);
-  run(['delete', String(id)]);
+  run(["delete", String(id)]);
   return true;
 }
 
@@ -160,24 +185,24 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     return value;
   };
   let result;
-  if (command === 'list') result = await listSubscriptions();
-  else if (command === 'get')
-    result = await getSubscription(required(id, 'record id'));
-  else if (command === 'upsert')
-    result = await upsertSubscription(JSON.parse(required(id, 'row JSON')));
-  else if (command === 'update')
+  if (command === "list") result = await listSubscriptions();
+  else if (command === "get")
+    result = await getSubscription(required(id, "record id"));
+  else if (command === "upsert")
+    result = await upsertSubscription(JSON.parse(required(id, "row JSON")));
+  else if (command === "update")
     result = await updateSubscription(
-      required(id, 'record id'),
-      JSON.parse(required(input, 'patch JSON')),
+      required(id, "record id"),
+      JSON.parse(required(input, "patch JSON")),
     );
-  else if (command === 'delete')
+  else if (command === "delete")
     result = {
-      id: required(id, 'record id'),
+      id: required(id, "record id"),
       deleted: await deleteSubscription(id),
     };
   else
     throw new Error(
       "Usage: node src/lib/service_subscriptions.mjs list|get ID|upsert '<row-json>'|update ID '<patch-json>'|delete ID",
     );
-  console.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result, null, "  "));
 }
