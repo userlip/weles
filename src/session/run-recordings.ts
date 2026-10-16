@@ -43,17 +43,22 @@ export function runRecordingsRoot(): string {
   return d;
 }
 
-// Where recordings live: WELES_RECORDINGS_ROOT when the host service
-// environment declares it (e.g. a larger data volume), else <cwd>/recordings,
-// because the worker runs from the repo root. The worker does not read a fleet
-// registry for it.
+// Where recordings live: WELES_RECORDINGS_ROOT, which the release launcher
+// exports; with none declared a run is refused rather than writing evidence
+// under whatever directory it happened to start in.
+// The worker does not read a fleet registry for it.
 //
 // Exported because the store's size is a property of the store, not of one
 // run: pruning was pointed at `runRecordingsDir()`, a directory created empty
-// moments earlier, so a size budget never removed a byte.
+// moments earlier, so a size budget never removed a byte. The run importer
+// and the artifact uploader read the same root through it.
 export function recordingsBase(): string {
-  const declared = process.env.WELES_RECORDINGS_ROOT;
-  return declared ? declared : join(process.cwd(), 'recordings');
+  const declared = process.env.WELES_RECORDINGS_ROOT?.trim();
+  if (!declared)
+    throw new Error(
+      'WELES_RECORDINGS_ROOT is not set: the directory that holds run recordings is declared, never assumed',
+    );
+  return declared;
 }
 
 // recordings/<run_uuid>/<...segments>/ (mkdir -p). Callers pass the action

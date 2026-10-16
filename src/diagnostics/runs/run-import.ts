@@ -7,8 +7,24 @@ import {
   type ChallengeOutcome,
 } from './challenge_outcome.js';
 import { snapshotSanitizedEnvironment } from '../../utils/sanitize-env.js';
+import { recordingsBase } from '../../session/run-recordings.js';
 
-const RECORDINGS_ROOT = process.env.RECORDINGS_ROOT ?? 'recordings';
+type JsonRead = { value: any | null; failure: string | null };
+
+/** A run file that exists but could not be found, read or parsed, named with its cause. */
+function readFailed(where: string, error: unknown): JsonRead {
+  const cause = error instanceof Error ? error.message : String(error);
+  return { value: null, failure: where ? `${where}: ${cause}` : cause };
+}
+
+/** A HAR that could not be analysed, named with its cause. */
+function unanalysed(error: unknown): {
+  outcome: ChallengeOutcome | null;
+  failure: string;
+} {
+  const cause = error instanceof Error ? error.message : String(error);
+  return { outcome: null, failure: `session.har could not be analysed: ${cause}` };
+}
 
 // Artifacts live under recordings/<run_uuid>/ across varying sub-action/label
 // dirs. Find a file by name anywhere in the run's tree.
@@ -37,7 +53,7 @@ async function findInRun(
     }
     return null;
   }
-  return walk(join(RECORDINGS_ROOT, runId));
+  return walk(join(recordingsBase(), runId));
 }
 // The run's file and its parsed content: value null when the file is absent;
 // failure names a file that exists but cannot be read or is not JSON, which
@@ -46,18 +62,18 @@ async function findInRun(
 async function readJsonInRun(
   runId: string,
   filename: string,
-): Promise<{ value: any | null; failure: string | null }> {
+): Promise<JsonRead> {
   let p: string | null;
   try {
     p = await findInRun(runId, filename);
   } catch (error) {
-    return { value: null, failure: (error as Error).message };
+    return readFailed('', error);
   }
   if (!p) return { value: null, failure: null };
   try {
     return { value: JSON.parse(await readFile(p, 'utf8')), failure: null };
   } catch (error) {
-    return { value: null, failure: `${p}: ${(error as Error).message}` };
+    return readFailed(p, error);
   }
 }
 
@@ -87,10 +103,7 @@ export async function readChallengeOutcome(
     const co = analyzeChallengeOutcome(entries);
     return { outcome: co.present ? co : null, failure: null };
   } catch (error) {
-    return {
-      outcome: null,
-      failure: `session.har could not be analysed: ${(error as Error).message}`,
-    };
+    return unanalysed(error);
   }
 }
 
@@ -110,7 +123,7 @@ export async function importRunProvenance(
       proxy_host: m.proxy_host,
       proxy_port: m.proxy_port,
       proxy_user_present: !!m.proxy_user_present,
-      proxy_user_hash: m.proxy_user_hash ?? null,
+      proxy_user_hash: m.proxy_user_hash,
       exit_ip: m.exit_ip,
       platform: m.platform,
       provider: m.provider,
@@ -138,9 +151,8 @@ export async function importRunProvenance(
       ...(meta.failure
         ? { meta_unreadable: meta.failure }
         : { meta_missing: true }),
-      proxy_requested:
-        (params as Record<string, unknown> | undefined)?.proxy_url_override ??
-        null,
+      proxy_requested: (params as Record<string, unknown> | undefined)
+        ?.proxy_url_override,
       env_all: snapshotSanitizedEnvironment(),
     };
   }
