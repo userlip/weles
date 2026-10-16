@@ -8,9 +8,12 @@
 import { spawnSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 
+const EXIT_SUCCESS = 0; // https://pubs.opengroup.org/onlinepubs/9799919799/functions/exit.html EXIT_SUCCESS
+const EXIT_FAILURE = 1; // https://pubs.opengroup.org/onlinepubs/9799919799/functions/exit.html EXIT_FAILURE
+
 export function refuse(message) {
   process.stderr.write(`${message}\n`);
-  process.exit(1);
+  process.exit(EXIT_FAILURE);
 }
 
 /** Announce the operation before waiting; retain its completion separately. */
@@ -56,9 +59,14 @@ export async function runAsync(label, operation) {
 export function run(command, args, label) {
   const result = runCommand(command, args, label);
   if (result.error) refuse(`${label} could not run: ${result.error.message}`);
-  if (result.status !== 0) {
+  if (result.status !== EXIT_SUCCESS) {
+    let ended = `exit ${result.status}`;
+    if (result.status === null) ended = `signal ${result.signal}`;
+    // Stdout is never quoted: the Skarbiec acquisitions run here print the
+    // secret they acquired on it. Its length says whether it said anything.
+    const said = result.stderr.trim();
     refuse(
-      `${label} refused (exit ${result.status ?? 'none'}, signal ${result.signal ?? 'none'}): ${(result.stderr || result.stdout || 'no diagnostic output').trim()}`,
+      `${label} refused (${ended}): ${said === '' ? 'nothing on stderr' : said}; ${result.stdout.length} characters on stdout`,
     );
   }
   return result.stdout.trim();
