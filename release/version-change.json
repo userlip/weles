@@ -1,7 +1,7 @@
 {
   "schema": "weles.version-change.v1",
-  "current": "0.7.32",
-  "candidate": "0.7.33",
+  "current": "0.7.62",
+  "candidate": "0.7.62",
   "breaking": false,
-  "reason": "Started as com.wisent.weles-admission, the launcher retires the Weles units whose work runs in this one process (the launchd worker job, the keyword-planner server, earlier API and worker labels, the checkout auto-deploy job and the release cutover service) before it checks its port, and reports a system LaunchDaemon it cannot retire."
+  "reason": "weles-worker 0.7.62 is the release Stado serves; its darwin-arm64 archive, built from efced2a50dd82d002da31cb7779fd01f454e3d3e, published this surface."
 }
