@@ -5,17 +5,22 @@
 // into a scratch copy of the checkout under build/real-tests/, never into the
 // checkout itself. The written baseline must name the served version and
 // carry the surface of the published payload; the declaration must name it
-// as current. A missing --platform is refused before anything is read, and
-// declare-candidate refuses a package.json that names the served version.
+// as current. The checkout's own documents must agree with each other: its
+// baseline names the declaration's current version and package.json names
+// the declaration's candidate. A missing --platform is refused before
+// anything is read, and declare-candidate refuses a package.json that names
+// the served version.
 //
 //   node --test tests/release/published-baseline.mjs
 //
 // It needs a stado on PATH that can read the release register; the report
 // (revision, every command with its exit, the written documents) is kept in
-// report.json beside the scratch copy.
+// report.json beside the scratch copy. With WELES_TEST_DEFECT and
+// WELES_TEST_CRITERION named together, a passing run on committed source also
+// writes criterion.json there.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +29,22 @@ import test from 'node:test';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 // https://www.gnu.org/software/bash/manual/html_node/Exit-Status.html
 const SUCCEEDED = 0;
+const defectId = process.env.WELES_TEST_DEFECT?.trim();
+const criterion = process.env.WELES_TEST_CRITERION?.trim();
+assert.equal(
+  Boolean(defectId),
+  Boolean(criterion),
+  'WELES_TEST_DEFECT and WELES_TEST_CRITERION are named together or not at all',
+);
+const documentsOf = (directory) => ({
+  baseline: JSON.parse(
+    readFileSync(join(directory, 'released-surface.json'), 'utf8'),
+  ),
+  declaration: JSON.parse(
+    readFileSync(join(directory, 'release', 'version-change.json'), 'utf8'),
+  ),
+  manifest: JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')),
+});
 
 test('the version gate documents are written from the release Stado serves', () => {
   const scratch = join(
@@ -56,15 +77,47 @@ test('the version gate documents are written from the release Stado serves', () 
       executable,
       args,
       exit: result.status,
-      stderr: result.stderr.trim().split('\n').at(-1),
+      stderr: result.stderr.trim().split('\n').pop(),
     });
     return result;
   };
   try {
     report.revision = run('git', ['rev-parse', 'HEAD']).stdout.trim();
+    const uncommitted = run('git', [
+      'status',
+      '--porcelain',
+      '--',
+      'scripts/release',
+      'tests/release',
+      'release',
+      'released-surface.json',
+      'package.json',
+    ]).stdout.trim();
+    assert.ok(
+      !defectId || uncommitted === '',
+      'commit the release scripts, documents and this test before qualification',
+    );
     const product = JSON.parse(
       readFileSync(join(root, '.wisent-release.json'), 'utf8'),
     ).product;
+
+    const checkout = documentsOf(root);
+    assert.equal(
+      checkout.baseline.version,
+      checkout.declaration.current,
+      'released-surface.json names a version the declaration does not hold as current',
+    );
+    assert.equal(
+      checkout.manifest.version,
+      checkout.declaration.candidate,
+      'package.json names a version the declaration does not hold as candidate',
+    );
+    report.checkout = {
+      baseline: checkout.baseline.version,
+      current: checkout.declaration.current,
+      candidate: checkout.declaration.candidate,
+      manifest: checkout.manifest.version,
+    };
 
     const unnamed = run(process.execPath, [
       'scripts/release/version/adopt-published.mjs',
@@ -86,7 +139,7 @@ test('the version gate documents are written from the release Stado serves', () 
       scratch,
     ]);
     assert.equal(adopted.status, SUCCEEDED, adopted.stderr);
-    const written = JSON.parse(adopted.stdout.trim().split('\n').at(-1));
+    const written = JSON.parse(adopted.stdout.trim().split('\n').pop());
     assert.ok(
       served.includes(written.released),
       `${written.released} is not what Stado serves: ${served.join(', ')}`,
@@ -138,4 +191,36 @@ test('the version gate documents are written from the release Stado serves', () 
       `${JSON.stringify(report, null, '  ')}\n`,
     );
   }
+  if (!defectId) return;
+  const digest = (path) =>
+    createHash('sha256').update(readFileSync(path)).digest('hex');
+  const succeeded = report.commands.filter(
+    (command) => command.exit === SUCCEEDED,
+  );
+  const path = join(scratch, 'criterion.json');
+  writeFileSync(
+    path,
+    `${JSON.stringify(
+      {
+        defectId,
+        criterion,
+        sourceRevision: report.revision,
+        result: report.verdict,
+        binarySha256: digest(process.execPath),
+        testSha256: digest(fileURLToPath(import.meta.url)),
+        observedFinalState: {
+          checkout: report.checkout,
+          adopted: report.baseline,
+          declaration: report.declaration,
+          refusals: report.commands.filter(
+            (command) => command.exit !== SUCCEEDED,
+          ),
+        },
+        commands: succeeded,
+      },
+      null,
+      '  ',
+    )}\n`,
+  );
+  console.log(`criterion report: ${path}`);
 });
