@@ -9,9 +9,15 @@ export class UsageError extends Error {
   }
 }
 
+/** The status of a usage error, as shell builtins report incorrect usage. */
+const USAGE_STATUS = 2; // https://www.gnu.org/software/bash/manual/html_node/Exit-Status.html
+
+/** The status of any other failure. */
+const FAILURE_STATUS = 1; // https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/stdlib.h.html
+
 /** The exit status for a failure the CLI caught. */
 export function exitStatusFor(error: unknown): number {
-  return error instanceof UsageError ? 2 : 1;
+  return error instanceof UsageError ? USAGE_STATUS : FAILURE_STATUS;
 }
 
 /**
@@ -45,7 +51,7 @@ export function printAnswer(value: unknown, json: boolean): void {
 export const HELP = `Weles CLI
 
 Usage:
-  weles onboarding [status|next|import|verify|reset] [--subject <stable-id>] [--json]
+  weles onboarding <status|next|reset> [--subject <stable-id>] [--json]
   weles onboarding import <trajectory-export.json> --host <managed-worker-hostname> [--subject <stable-id>] [--json]
   weles onboarding verify --receipt <receipt.json> --keys <receipt-keys.json> [--subject <stable-id>] [--json]
   weles import <trajectory-export.json> --host <managed-worker-hostname> [--json]
