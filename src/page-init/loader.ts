@@ -38,12 +38,17 @@ export function buildInitScript(
   config: Record<string, any>,
   exclude?: string[],
 ): string {
-  const excludeSet = new Set(exclude ?? []);
-  const browser = (config.browser ?? 'chromium') as string;
-
-  const scripts = [...SHARED_SCRIPTS];
-  if (browser === 'chromium') scripts.push(...CHROMIUM_ONLY_SCRIPTS);
-  else scripts.push(...FIREFOX_ONLY_SCRIPTS);
+  // An absent list skips nothing: a Set built from undefined is empty.
+  const excludeSet = new Set(exclude);
+  const browser = config.browser;
+  let browserScripts: string[];
+  if (browser === 'chromium') browserScripts = CHROMIUM_ONLY_SCRIPTS;
+  else if (browser === 'firefox') browserScripts = FIREFOX_ONLY_SCRIPTS;
+  else
+    throw new Error(
+      `page init scripts exist for chromium and firefox; the fingerprint config names browser ${JSON.stringify(browser)}`,
+    );
+  const scripts = [...SHARED_SCRIPTS, ...browserScripts];
 
   const parts: string[] = [`const __weles = ${JSON.stringify(config)};`];
   for (const name of scripts) {
@@ -62,7 +67,7 @@ export function readPageInitScript(name: string): string {
 export function buildChromiumSupplementScripts(
   fpConfig: FingerprintConfig,
 ): string[] {
-  const screenPreamble = `const __weles = { screen: ${JSON.stringify(fpConfig.screen ?? {})} };`;
+  const screenPreamble = `const __weles = { screen: ${JSON.stringify(fpConfig.screen)} };`;
   const screenPatch =
     screenPreamble + '\n' + readPageInitScript('screen_webrtc_patch.js');
   const navPreamble =
