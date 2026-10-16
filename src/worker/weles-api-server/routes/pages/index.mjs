@@ -68,39 +68,49 @@ const BROWSER_FAILURE = {
 };
 const SERVED = { status: HTTP_OK, code: 'ok' };
 
-let openPages = 0;
+/** The requests that hold an open page now; its size is the open count. */
+const openPages = new Set();
 
 export function isPageRoute(req, url) {
   return req.method === 'POST' && Object.hasOwn(ROUTES, url.pathname);
 }
 
+/**
+ * The host the request asks for, for the log line. A body whose url does not
+ * parse names none; the request parser refuses that body by itself.
+ */
 function targetHost(body) {
-  try {
-    return new URL(body?.url).hostname;
-  } catch {
-    return null;
-  }
+  const asked = body?.url;
+  if (typeof asked !== 'string' || !URL.canParse(asked)) return null;
+  return new URL(asked).hostname;
 }
 
+/**
+ * The answer for a failed page: a refusal the page code classified keeps its
+ * class; anything else went wrong while the browser rendered, so it is the
+ * browser's failure.
+ */
 function refusalOf(error) {
+  const classified = REFUSALS.find(({ type }) => error instanceof type);
   const { status, code } =
-    REFUSALS.find(({ type }) => error instanceof type) || BROWSER_FAILURE;
-  return { status, code, message: String(error?.message || error) };
+    classified === undefined ? BROWSER_FAILURE : classified;
+  const message = error instanceof Error ? error.message : String(error);
+  return { status, code, message };
 }
 
 export async function respondToPage(req, res, url, browser) {
   if (!requireTokenAuthorization(req, res)) return;
-  if (openPages >= CONCURRENT_PAGES) {
+  if (openPages.size >= CONCURRENT_PAGES) {
     json(res, HTTP_BUSY, {
       ok: false,
       code: 'pages_busy',
-      error: `pages_busy: ${openPages} of ${CONCURRENT_PAGES} pages are open`,
-      open: openPages,
+      error: `pages_busy: ${openPages.size} of ${CONCURRENT_PAGES} pages are open`,
+      open: openPages.size,
       limit: CONCURRENT_PAGES,
     });
     return;
   }
-  openPages += 1;
+  openPages.add(req);
   const started = Date.now();
   let body = null;
   let outcome = SERVED;
@@ -118,7 +128,7 @@ export async function respondToPage(req, res, url, browser) {
       ...(error instanceof PageRequestRefused ? { field: error.field } : {}),
     });
   } finally {
-    openPages -= 1;
+    openPages.delete(req);
     console.log(
       JSON.stringify({
         event: 'page_route',
