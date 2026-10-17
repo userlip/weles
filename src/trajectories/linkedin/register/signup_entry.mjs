@@ -3,231 +3,172 @@
  * guest warm-up, then the one declared entry path. There is no second route —
  * an entry path that does not reach the form ends the run with a refusal that
  * says where it stopped.
+ *
+ * The signup affordance is found by where it leads, not by what it says: a
+ * visible link whose target is the signup route LinkedIn serves (the path of
+ * SIGNUP_URL), so the entry works in any locale and wording.
  */
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
-import { DEFAULT_ENTRY_URL, SIGNUP_URL } from './run_request.mjs';
+import { SIGNUP_URL } from './run_request.mjs';
 import { writeSubmitDiagnostics } from './diagnostics.mjs';
+
+const SIGNUP_PATH = new URL(SIGNUP_URL).pathname;
+const LINKEDIN_HOST = /(^|\.)linkedin\.com$/i;
+
+/** Whether `url` is LinkedIn's signup route or a page beneath it. */
+function isSignupRoute(url) {
+  return (
+    LINKEDIN_HOST.test(url.hostname) &&
+    (url.pathname === SIGNUP_PATH || url.pathname.startsWith(`${SIGNUP_PATH}/`))
+  );
+}
 
 export async function prewarmLinkedinGuestSession(session, urls) {
   if (!urls.length) return null;
-  const diagnostics = {
-    urls,
-    transitions: [],
-  };
+  const diagnostics = { urls, transitions: [] };
   for (const url of urls) {
-    try {
-      await session.runStep(
-        `prewarm_${diagnostics.transitions.length}`,
-        async () => {
-          await session.page.goto(url, { waitUntil: 'domcontentloaded' });
-          return `prewarm ${session.page.url()}`;
-        },
-      );
-      // Fast scroll to generate behavioral signal without spending human-like time
-      // on a cold guest session. The goal is cookie/telemetry warm-up, not realism.
-      await session.scroll('down', 400);
-      await pageSettled(session.page);
-    } catch (prewarmErr) {
-      console.log(`[register] prewarm skip ${url}: ${prewarmErr.message}`);
-      diagnostics.transitions.push({
-        url,
-        stage: 'prewarm_error',
-        error: String(prewarmErr?.message ?? prewarmErr),
-      });
-      continue;
-    }
+    await session.runStep(
+      `prewarm_${diagnostics.transitions.length}`,
+      async () => {
+        await session.page.goto(url, { waitUntil: 'domcontentloaded' });
+        return `prewarm ${session.page.url()}`;
+      },
+    );
+    // One viewport of scrolling gives the guest session a behavioural
+    // signal; the distance is the page's own measured height.
+    const viewport = await session.page.evaluate(() => window.innerHeight);
+    await session.scroll('down', viewport);
+    await pageSettled(session.page);
     diagnostics.transitions.push(
-      await session.page
-        .evaluate(() => {
-          const attr = (el, name) => {
-            const raw = el?.getAttribute(name);
-            return typeof raw === 'string' ? raw : null;
-          };
-          return {
-            url: location.href,
-            title: document.title,
-            referrer: document.referrer,
-            cookie_count: document.cookie
-              ? document.cookie.split(';').filter(Boolean).length
-              : 0,
-            page_key: attr(
-              document.querySelector('meta[name="pageKey"]'),
-              'content',
-            ),
-            authwall: /\/authwall/.test(location.href),
-            visible_text_sample: (document.body?.innerText || '')
-              .replace(/\s+/g, ' ')
-              .trim(),
-          };
-        })
-        .catch((e) => ({
-          url: session.page.url(),
-          error: String(e?.message ?? e),
-        })),
+      await session.page.evaluate(() => ({
+        url: location.href,
+        title: document.title,
+        referrer: document.referrer,
+        cookie_count: document.cookie.split(';').filter(Boolean).length,
+        page_key: document
+          .querySelector('meta[name="pageKey"]')
+          ?.getAttribute('content'),
+        authwall: /\/authwall/.test(location.href),
+        visible_text_sample: document.body.innerText.replace(/\s+/g, ' ').trim(),
+      })),
     );
   }
   await writeSubmitDiagnostics('guest_prewarm_diagnostics', diagnostics);
   return diagnostics;
 }
 
+/** The page's state at `stage`, with every link on it that leads to signup. */
+async function pageState(page, stage) {
+  const state = await page.evaluate((s) => ({
+    stage: s,
+    url: location.href,
+    title: document.title,
+    referrer: document.referrer,
+    links: Array.from(document.querySelectorAll('a[href]'), (a) => ({
+      text: a.textContent.replace(/\s+/g, ' ').trim(),
+      href: a.href,
+      tracking_control: a.getAttribute('data-tracking-control-name'),
+      visible: a.checkVisibility(),
+    })),
+  }), stage);
+  const { links, ...rest } = state;
+  return {
+    ...rest,
+    signup_links: links
+      .filter((link) => isSignupRoute(new URL(link.href)))
+      .map((link) => ({
+        ...link,
+        trk_param: new URL(link.href).searchParams.get('trk'),
+      })),
+  };
+}
+
+/**
+ * The first visible link on the page whose target is the signup route, as a
+ * locator the human click can drive; null when the page shows none.
+ */
+async function signupAffordance(page) {
+  const links = page.locator('a[href]').filter({ visible: true });
+  for (const link of await links.all()) {
+    const href = await link.evaluate((a) => a.href);
+    if (isSignupRoute(new URL(href))) return link;
+  }
+  return null;
+}
+
 export async function enterLinkedinSignup(session, entryUrl) {
-  const entry = String(entryUrl || DEFAULT_ENTRY_URL);
-  if (/trk=cold_join_sign_in/i.test(entry)) {
+  if (typeof entryUrl !== 'string' || !entryUrl) {
+    throw new Error(
+      'bad_entry_path: no entry URL was given; LINKEDIN_REGISTER_ENTRY_URL or the declared signup URL names it',
+    );
+  }
+  if (/trk=cold_join_sign_in/i.test(entryUrl)) {
     throw new Error('bad_entry_path: refusing trk=cold_join_sign_in');
   }
+  let entryHost;
   try {
-    const u = new URL(entry);
-    if (!/(^|\.)linkedin\.com$/i.test(u.hostname))
-      throw new Error(`non-linkedin host: ${u.hostname}`);
+    entryHost = new URL(entryUrl).hostname;
   } catch (e) {
-    throw new Error(`bad_entry_path: ${String(e?.message ?? e)}`);
+    throw new Error(`bad_entry_path: ${entryUrl} is not a URL: ${e.message}`, {
+      cause: e,
+    });
   }
-  const direct = entry.replace(/\/$/, '') === SIGNUP_URL;
+  if (!LINKEDIN_HOST.test(entryHost)) {
+    throw new Error(`bad_entry_path: non-linkedin host: ${entryHost}`);
+  }
+  const direct = entryUrl.replace(/\/$/, '') === SIGNUP_URL;
   const diagnostics = {
     mode: direct ? 'direct_signup' : 'entry_chain',
-    entry_url: entry,
+    entry_url: entryUrl,
     signup_url: SIGNUP_URL,
     transitions: [],
   };
   const record = async (stage) => {
-    diagnostics.transitions.push(
-      await session.page
-        .evaluate((s) => {
-          const attr = (el, name) => {
-            const raw = el?.getAttribute(name);
-            return typeof raw === 'string' ? raw : null;
-          };
-          return {
-            stage: s,
-            url: location.href,
-            title: document.title,
-            referrer: document.referrer,
-            signup_links: Array.from(
-              document.querySelectorAll('a[href*="/signup"], a[href*="/join"]'),
-            ).map((a) => ({
-              text: (a.textContent || '').replace(/\s+/g, ' ').trim(),
-              href: a.href,
-              trk:
-                attr(a, 'data-tracking-control-name') ??
-                new URL(a.href, location.href).searchParams.get('trk'),
-              visible: !!(
-                a.offsetWidth ||
-                a.offsetHeight ||
-                a.getClientRects().length
-              ),
-            })),
-            signup_affordances: Array.from(
-              document.querySelectorAll('a, button'),
-            )
-              .map((el) => ({
-                tag: el.tagName.toLowerCase(),
-                text: (el.textContent || '').replace(/\s+/g, ' ').trim(),
-                href: el instanceof HTMLAnchorElement ? el.href : '',
-                trk: attr(el, 'data-tracking-control-name'),
-                visible: !!(
-                  el.offsetWidth ||
-                  el.offsetHeight ||
-                  el.getClientRects().length
-                ),
-              }))
-              .filter(
-                (el) =>
-                  ['/signup', '/join'].some((route) =>
-                    el.href.includes(route),
-                  ) || String(el.trk).includes('signup'),
-              ),
-          };
-        }, stage)
-        .catch((e) => ({
-          stage,
-          error: String(e?.message ?? e),
-          url: session.page.url(),
-        })),
-    );
+    diagnostics.transitions.push(await pageState(session.page, stage));
   };
 
   if (direct) {
-    try {
-      await session.runStep('goto_signup', async () => {
-        await session.page.goto(SIGNUP_URL, { waitUntil: 'domcontentloaded' });
-        return `signup ${session.page.url()}`;
-      });
-    } catch (e) {
-      const formVisible = await session.page
-        .locator(
-          'input[name="email-address"], input#email-address, input[type="email"]',
-        )
-        .first()
-        .isVisible()
-        .catch(() => false);
-      if (!formVisible) throw e;
-      diagnostics.direct_signup_goto_timeout_form_visible = true;
-      diagnostics.direct_signup_goto_timeout_error = String(e?.message ?? e);
-      console.log(
-        '[register] signup goto timed out, but signup form is visible — continuing',
-      );
-    }
+    await session.runStep('goto_signup', async () => {
+      await session.page.goto(SIGNUP_URL, { waitUntil: 'domcontentloaded' });
+      return `signup ${session.page.url()}`;
+    });
     await record('after_direct_signup');
     await writeSubmitDiagnostics('entry_path_diagnostics', diagnostics);
     return diagnostics;
   }
 
   await session.runStep('goto_entry', async () => {
-    await session.page.goto(entry, { waitUntil: 'domcontentloaded' });
+    await session.page.goto(entryUrl, { waitUntil: 'domcontentloaded' });
     return `entry ${session.page.url()}`;
   });
   await pageSettled(session.page);
   await record('after_entry');
 
-  const explicitSelector =
-    process.env.LINKEDIN_REGISTER_ENTRY_CLICK_SELECTOR || '';
-  const clickCandidates = explicitSelector
-    ? [session.page.locator(explicitSelector).filter({ visible: true }).first()]
-    : [
-        session.page.getByRole('link', { name: /^Join now$/i }).first(),
-        session.page.getByRole('button', { name: /^Join now$/i }).first(),
-        session.page.getByRole('link', { name: /^Sign up$/i }).first(),
-        session.page.getByRole('button', { name: /^Sign up$/i }).first(),
-      ];
-  let clicked = false;
-  let clickError = '';
-  let clickedAffordance = null;
-  for (const loc of clickCandidates) {
-    try {
-      if ((await loc.count()) && (await loc.isVisible())) {
-        clickedAffordance = await loc.evaluate((el) => ({
-          tag: el.tagName.toLowerCase(),
-          text: (el.textContent || '').replace(/\s+/g, ' ').trim(),
-          href: el instanceof HTMLAnchorElement ? el.href : '',
-          trk: el.getAttribute('data-tracking-control-name'),
-        }));
-        await humanClickLocator(session.page, loc);
-        clicked = true;
-        break;
-      }
-    } catch (e) {
-      clickError = String(e?.message ?? e);
-    }
-  }
-  diagnostics.clicked_signup_link = clicked;
-  diagnostics.clicked_signup_affordance = clickedAffordance;
-  diagnostics.click_error = clickError;
-  if (!clicked) {
+  const affordance = await signupAffordance(session.page);
+  if (!affordance) {
+    diagnostics.clicked_signup_link = false;
     await writeSubmitDiagnostics('entry_path_diagnostics', diagnostics);
     throw new Error(
-      `entry_path_no_signup_click: the declared entry path offered no clickable "Sign up" or "Join now" affordance, so the run never reached the signup form; it stopped at ${session.page.url()}`,
+      `entry_path_no_signup_click: the declared entry path shows no visible link to ${SIGNUP_PATH}, so the run never reached the signup form; it stopped at ${session.page.url()}`,
     );
   }
+  diagnostics.clicked_signup_affordance = await affordance.evaluate((el) => ({
+    tag: el.tagName.toLowerCase(),
+    text: el.textContent.replace(/\s+/g, ' ').trim(),
+    href: el.href,
+    tracking_control: el.getAttribute('data-tracking-control-name'),
+  }));
+  await humanClickLocator(session.page, affordance);
+  diagnostics.clicked_signup_link = true;
   try {
-    await session.page.waitForURL(/\/signup(?:$|[/?#])/);
+    await session.page.waitForURL(isSignupRoute);
   } catch (transitionError) {
-    diagnostics.signup_transition_error = String(
-      transitionError?.message ?? transitionError,
-    );
+    diagnostics.signup_transition_error = transitionError.message;
     await writeSubmitDiagnostics('entry_path_diagnostics', diagnostics);
     throw new Error(
       `entry_path_no_signup_transition: the entry affordance was clicked but the browser never arrived at the signup form; it stopped at ${session.page.url()}`,
+      { cause: transitionError },
     );
   }
   await pageSettled(session.page);
