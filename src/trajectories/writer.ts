@@ -1,4 +1,5 @@
-import { callJeden, parseJsonFrom } from '../agent/loop.js';
+import { callJeden } from '../agent/loop.js';
+import type { FunctionTool } from '../agent/jeden.js';
 
 export type WelesTrajectoryWriterInput = {
   objective: string;
@@ -18,7 +19,7 @@ function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item) => (typeof item === 'string' ? item.trim() : ''))
-    .filter((item) => item.length > 0);
+    .filter((item) => item !== '');
 }
 
 function fallbackSteps(): string[] {
@@ -46,11 +47,32 @@ function formatGuidance(
   );
 }
 
+/** The draft's fields: short imperative steps, and risk or extraction notes. */
+const draftFields = {
+  steps: { type: 'array', items: { type: 'string' } },
+  notes: { type: 'array', items: { type: 'string' } },
+};
+
+/** The one function the writer answers through: its arguments are the draft. */
+const draftTool: FunctionTool = {
+  type: 'function',
+  function: {
+    name: 'write_trajectory',
+    description:
+      'The trajectory draft: short imperative steps, and optional risk or extraction notes.',
+    parameters: {
+      type: 'object',
+      properties: draftFields,
+      required: Object.keys(draftFields),
+      additionalProperties: false,
+    },
+  },
+};
+
 function writerPrompt(input: WelesTrajectoryWriterInput): string {
   return [
     'You write Weles browser trajectories for the generic browser agent.',
-    'Return ONLY a JSON object with this shape:',
-    '{"steps":["short imperative step", "..."], "notes":["optional risk or extraction note"]}',
+    'Answer through write_trajectory: steps are short imperative steps, notes are optional risk or extraction notes.',
     '',
     'Weles execution contract:',
     '- The downstream browser agent has tools: navigate, click, fill, fill_credential, store_credential, type_text, focus, press_key, scroll, wait, read, select_option, set_control, js_click, solve_captcha, check_email, generate_identity, save_account, done, give_up.',
@@ -90,20 +112,21 @@ export async function writeWelesTrajectoryDraft(
   if (process.env.WELES_DISABLE_TRAJECTORY_WRITER === '1')
     return fallbackWelesTrajectoryDraft(input);
   try {
-    const routed = await callJeden(writerPrompt(input));
-    const parsed = parseJsonFrom(routed.raw);
+    const routed = await callJeden(writerPrompt(input), { tools: [draftTool] });
+    const parsed = JSON.parse(routed.raw);
     const steps = [
       ...stringArray(parsed.steps),
       ...stringArray(parsed.notes).map((note) => `Note: ${note}`),
     ];
-    const normalizedSteps = steps.length > 0 ? steps : fallbackSteps();
+    if (!steps.length)
+      throw new Error(`the trajectory writer answered no step: ${routed.raw}`);
     return {
       source: 'model-router',
       model: routed.model,
       routerUrl: routed.routerUrl,
       raw: routed.raw,
-      steps: normalizedSteps,
-      guidance: formatGuidance(normalizedSteps, 'model-router', routed.model),
+      steps,
+      guidance: formatGuidance(steps, 'model-router', routed.model),
     };
   } catch (error) {
     return fallbackWelesTrajectoryDraft(input, error);
