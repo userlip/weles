@@ -16,7 +16,6 @@ import { callJeden } from './jeden.js';
 import {
   askLlm,
   buildState,
-  parseJsonFrom,
   type ModelDecisionProvider,
 } from './loop/observe.js';
 import {
@@ -280,4 +279,4 @@ export async function execute(
   throw new AgentFailure(`browser agent exceeded ${maxSteps} steps`, history);
 }
 
-export { callJeden, parseJsonFrom };
+export { callJeden };

@@ -3,7 +3,7 @@
  */
 
 // Authenticated Stado-routed tool-use loop (screenshot → model → dispatch → repeat)
-export { execute, AgentFailure, parseJsonFrom } from './loop.js';
+export { execute, AgentFailure } from './loop.js';
 export type { ToolCall, LoopResult } from './loop.js';
 export { dispatch } from './tools.js';
 

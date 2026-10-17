@@ -26,30 +26,6 @@ function visionDir(label?: string): string {
   return dir;
 }
 
-export function parseJsonFrom(raw: string): Record<string, any> {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    /* continue */
-  }
-  const matches = raw.matchAll(/\{/g);
-  for (const m of matches) {
-    try {
-      const candidate = raw.slice(m.index!);
-      const end = candidate.lastIndexOf('}');
-      if (end === -1) continue;
-      const parsed = JSON.parse(candidate.slice(0, end + 1));
-      if ('tool' in parsed) return parsed;
-    } catch {
-      /* skip */
-    }
-  }
-  return {
-    tool: 'give_up',
-    args: { reason: `unparseable LLM output: ${raw}` },
-  };
-}
-
 export type ModelDecisionProvider = typeof callJeden;
 
 export async function askLlm(
@@ -125,24 +101,35 @@ export async function askLlm(
         JSON.stringify(
           { step, raw, parsed: decision, router: routerMeta },
           null,
-          2,
+          '  ',
         ),
       );
-    } catch {
-      /* skip */
+    } catch (error) {
+      console.error(`[weles] the step record ${logPath} could not be written: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   return decision;
 }
 
+/** What the model is shown when the page could not be observed, with the cause. */
+function observationError(cause: unknown): string {
+  return `PAGE OBSERVATION ERROR: ${cause instanceof Error ? cause.message : String(cause)}`;
+}
+
 async function pageObservation(page: any): Promise<string> {
-  const summarizeControls = (controls: string[]): string =>
-    controls.length
+  // A control list the frame did not report, or an empty one, reads (none).
+  const summarizeControls = (controls: string[] | undefined): string =>
+    controls?.length
       ? controls.map((control) => `  ${control}`).join('\n')
       : '  (none)';
+  // Only the fields an observation reported are shown.
+  const stated = (fields: Array<[string, string | undefined]>): string[] =>
+    fields
+      .filter(([, value]) => value !== undefined)
+      .map(([label, value]) => `${label}: ${value}`);
   try {
     const data = await readFrameObservation(page.mainFrame?.() ?? page);
-    if (data.error) return `PAGE OBSERVATION ERROR: ${data.error}`;
+    if (data.error) return observationError(data.error);
     const frameSummaries: string[] = [];
     // Every child frame: a control the task needs can sit in any of them, and
     // the twelve-frame cut once here hid the rest from the model. A page type
@@ -159,16 +146,26 @@ async function pageObservation(page: any): Promise<string> {
         );
         continue;
       }
-      const controls = summarizeControls(frameData.controls ?? []);
-      if (frameData.text || controls !== '  (none)') {
-        frameSummaries.push(
-          `FRAME name=${frame.name?.() ?? ''} url=${frame.url?.() ?? ''}\nTEXT: ${frameData.text ?? ''}\nCONTROLS:\n${controls}`,
-        );
-      }
+      if (!frameData.text && !frameData.controls?.length) continue;
+      frameSummaries.push(
+        [
+          `FRAME name=${frame.name()} url=${frame.url()}`,
+          ...stated([['TEXT', frameData.text]]),
+          `CONTROLS:\n${summarizeControls(frameData.controls)}`,
+        ].join('\n'),
+      );
     }
-    return `TITLE: ${data.title ?? ''}\nVISIBLE TEXT: ${data.text ?? ''}\nCONTROLS:\n${summarizeControls(data.controls ?? [])}${frameSummaries.length ? `\n\nFRAMES:\n${frameSummaries.join('\n\n')}` : ''}`;
-  } catch (e: any) {
-    return `PAGE OBSERVATION ERROR: ${String(e.message ?? e)}`;
+    const observed = [
+      ...stated([
+        ['TITLE', data.title],
+        ['VISIBLE TEXT', data.text],
+      ]),
+      `CONTROLS:\n${summarizeControls(data.controls)}`,
+    ].join('\n');
+    if (!frameSummaries.length) return observed;
+    return `${observed}\n\nFRAMES:\n${frameSummaries.join('\n\n')}`;
+  } catch (error) {
+    return observationError(error);
   }
 }
 
@@ -177,7 +174,7 @@ export async function buildState(
   history: ToolCall[],
   envHints: Record<string, string>,
 ): Promise<string> {
-  const url = (typeof page.url === 'function' ? page.url() : page.url) ?? '';
+  const url = typeof page.url === 'function' ? page.url() : page.url;
   // The whole action history, numbered from the run's first action: the
   // model decides the next step knowing everything it already tried, not
   // only its last ten actions.
@@ -189,10 +186,10 @@ export async function buildState(
         )
         .join('\n')
     : '  (none)';
-  const eLines =
-    Object.keys(envHints)
-      .map((key) => `  ${key}=[value unavailable to model]`)
-      .join('\n') || '  (none)';
+  const envNames = Object.keys(envHints);
+  const eLines = envNames.length
+    ? envNames.map((key) => `  ${key}=[value unavailable to model]`).join('\n')
+    : '  (none)';
   const observation = await pageObservation(page);
   return `CURRENT URL: ${url}\n\nPAGE OBSERVATION:\n${observation}\n\nACTION HISTORY:\n${hLines}\n\nAVAILABLE ENV VARS:\n${eLines}\n`;
 }
