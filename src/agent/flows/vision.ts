@@ -2,63 +2,51 @@
  * Typed vision extractors
  *
  * number/text/boolean/click/fill take a page and a description in
- * plain English. No selectors, no regex, no per-site code.
+ * plain English. No selectors, no regex, no per-site code. Each value is the
+ * argument of a function the model calls, or its declared statement that the
+ * page does not show it; no answer is read for words such as "none".
  */
 
 import {
-  askPage,
+  askPageFunction,
+  checkPage,
   findClickTarget,
   type ScreenshottablePage,
 } from '../../vision/analyze.js';
+import { notShownTool, pageFunction } from '../../vision/escalation.js';
 import { humanType } from '../../human/keyboard.js';
 
-const NONE_MARKERS = [
-  'none',
-  'null',
-  'n/a',
-  'not visible',
-  'no balance',
-  'not found',
-];
-
-function isNoneAnswer(answer: string): boolean {
-  const low = answer.trim().toLowerCase();
-  if (!low) return true;
-  return NONE_MARKERS.some((m) => low.includes(m));
+/** The value `what` names, as the model reads it off the page, or null. */
+async function shown(
+  page: ScreenshottablePage,
+  what: string,
+  type: string,
+): Promise<unknown> {
+  const valueTool = pageFunction('value', `The value of ${what} shown.`, {
+    value: { type },
+  });
+  const { name, args } = await askPageFunction(
+    page,
+    `What is ${what} shown on this page?`,
+    [valueTool, notShownTool],
+  );
+  return name === valueTool.function.name ? args.value : null;
 }
 
 export async function number(page: any, what: string): Promise<number | null> {
-  const answer = await askPage(
-    page as ScreenshottablePage,
-    `What is ${what} shown on this page? ` +
-      'Return ONLY the numeric value (e.g. 12.34) - no currency ' +
-      'symbol, no commas, no words. If no such value is visible, ' +
-      'return NONE.',
-  );
-  if (isNoneAnswer(answer)) return null;
-  const cleaned = answer.trim().replace(/[^\d.\-]/g, '');
-  if (!cleaned) return null;
-  const val = parseFloat(cleaned);
-  return isNaN(val) ? null : val;
+  const value = await shown(page as ScreenshottablePage, what, 'number');
+  if (value === null || typeof value === 'number') return value;
+  throw new Error(`the value of ${what} is not a number: ${String(value)}`);
 }
 
 export async function text(page: any, what: string): Promise<string | null> {
-  const answer = await askPage(
-    page as ScreenshottablePage,
-    `What is ${what} shown on this page? ` +
-      'Return ONLY the text value, no other words. If no such ' +
-      'value is visible, return NONE.',
-  );
-  if (isNoneAnswer(answer)) return null;
-  return answer.trim();
+  const value = await shown(page as ScreenshottablePage, what, 'string');
+  if (value === null || typeof value === 'string') return value;
+  throw new Error(`the value of ${what} is not text: ${String(value)}`);
 }
 
 export async function boolean(page: any, question: string): Promise<boolean> {
-  const answer = await askPage(
-    page as ScreenshottablePage,
-    `${question} Answer ONLY YES or NO.`,
-  );
-  return answer.trim().toUpperCase().startsWith('YES');
+  return checkPage(page as ScreenshottablePage, question);
 }
 
 export async function click(
