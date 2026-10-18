@@ -132,16 +132,29 @@ export class SessionStore {
     this.saveCookies(label, result.cookies);
   }
 
-  /** Inject cookies into a Playwright BrowserContext (uses addCookies API). */
+  /**
+   * Inject stored cookies into a Playwright BrowserContext (uses the
+   * addCookies API). Playwright sets a cookie from its name and value
+   * strings and its domain; a stored cookie without them is refused by name
+   * rather than dropped, since a session missing one of its cookies signs in
+   * as nobody without saying so. Answers whether any cookie was injected.
+   */
   async injectPlaywright(
     context: { addCookies(cookies: any[]): Promise<void> },
     label: string,
   ): Promise<boolean> {
     const cookies = this.loadCookies(label);
     if (!cookies?.length) return false;
-    const valid = cookies.filter((c) => c.name && c.value && c.domain);
-    await context.addCookies(valid);
-    return Boolean(valid.length);
+    const incomplete = cookies.filter(
+      (c) => typeof c.name !== 'string' || typeof c.value !== 'string' || !c.domain,
+    );
+    if (incomplete.length) {
+      throw new Error(
+        `session ${label} in ${this._persistPath} holds cookies without a name, value or domain, which Playwright cannot set: ${incomplete.map((c) => JSON.stringify({ name: c.name, domain: c.domain })).join(', ')}`,
+      );
+    }
+    await context.addCookies(cookies);
+    return true;
   }
 
   /** Capture cookies from a Playwright BrowserContext and persist them. */
