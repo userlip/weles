@@ -18,11 +18,16 @@ const root = resolve(import.meta.dirname, '..');
 const [, , revision, pattern, ...paths] = process.argv;
 assert.ok(revision && pattern && paths.length, 'usage: node tests/inventory.mjs <revision> <extended-regex> <path>...');
 
-const found = spawnSync('git', ['-C', root, 'grep', '-n', '-E', '-e', pattern, revision, '--', ...paths], { encoding: 'utf8' });
+// git's answer goes straight to this process's standard output, so an
+// inventory of any size is passed on whole instead of filling a buffer that
+// ends the child; only git's own complaint is kept to report a failure.
+const found = spawnSync('git', ['-C', root, 'grep', '-n', '-E', '-e', pattern, revision, '--', ...paths], {
+  encoding: 'utf8',
+  stdio: ['ignore', 'inherit', 'pipe'],
+});
 // git grep answers 1 when nothing matched and above 1 when it failed
 // (https://git-scm.com/docs/git-grep#_exit_status).
 const matched = spawnSync('true').status;
 const nothing = spawnSync('false').status;
 assert.ok(found.status === matched || found.status === nothing,
-  `git grep ${pattern} at ${revision} failed (${found.status}): ${found.stderr}`);
-process.stdout.write(found.stdout);
+  `git grep ${pattern} at ${revision} failed (${found.status}${found.error ? `, ${found.error.message}` : ''}): ${found.stderr}`);
