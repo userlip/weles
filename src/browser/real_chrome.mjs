@@ -16,15 +16,14 @@ import {
   findCustomChromium,
 } from '../../dist/session/find_browser.js';
 
-// Use Weles Chromium (147), which Google's signin flow recognizes as a
-// real Chrome browser (per src/trajectories/google/_export_cookies.mjs
-// "Uses the custom Weles Chromium so Google doesn't reject with 'This
-// browser or app may not be secure'"). Real /Applications/Google Chrome.app
-// gets bot-detected even with stealth init scripts; Weles's anti-fingerprint
-// patches make it look like a normal user. Combined with launchPersistentContext
-// for cookie persistence, this lets the user log into Google ONCE
-// (interactively if passkey/2FA, or with stored password) and have all 4
-// OAuth-popup providers work non-interactively from there.
+// Use Weles Chromium, which Google's sign-in flow accepts as a real Chrome
+// browser instead of rejecting it with "This browser or app may not be
+// secure". Real /Applications/Google Chrome.app is bot-detected even with
+// stealth init scripts; Weles's anti-fingerprint patches make it look like
+// a normal user. Combined with launchPersistentContext for cookie
+// persistence, this lets the user sign in to Google once (interactively for
+// a passkey or 2FA, or with the stored password) and have every OAuth-popup
+// provider work non-interactively from there.
 // The Weles Chromium is the exact release Stado installed for this
 // deployment, found and verified by the same resolver every session uses;
 // no build directory under one person's home is assumed.
