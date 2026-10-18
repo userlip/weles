@@ -35,31 +35,25 @@ export function statedOnboardingProfile() {
       'LINKEDIN_FIELD_OF_STUDY',
       'the field studied at that school',
     ),
+    // A public profile of someone else, opened after onboarding to see
+    // whether LinkedIn still gates profiles behind adding a job or school.
+    gateProbeUrl: stated(
+      'LINKEDIN_GATE_PROBE_PROFILE_URL',
+      'a public LinkedIn profile URL of another person, opened to check that profiles are no longer gated',
+    ),
   };
 }
 
+// A failed visibility read is the step's error, raised to the caller's catch
+// with its cause, not an answer that the control is absent.
 async function clickIfVisible(page, locator) {
-  let visible = false;
-  try {
-    visible = await locator.isVisible();
-  } catch (e) {
-    console.log(`[onboarding] isVisible err: ${e.message}`);
-    return false;
-  }
-  if (!visible) return false;
+  if (!(await locator.isVisible())) return false;
   await humanClickLocator(page, locator);
   return true;
 }
 
 async function fillIfVisible(page, locator, value) {
-  let visible = false;
-  try {
-    visible = await locator.isVisible();
-  } catch (e) {
-    console.log(`[onboarding] isVisible err: ${e.message}`);
-    return false;
-  }
-  if (!visible) return false;
+  if (!(await locator.isVisible())) return false;
   await humanFill(page, locator, value);
   return true;
 }
@@ -179,7 +173,7 @@ export async function fillPostRegisterOnboarding(page, profile) {
 
   let viewable = false;
   try {
-    await page.goto('https://www.linkedin.com/in/williamhgates/', {
+    await page.goto(profile.gateProbeUrl, {
       waitUntil: 'domcontentloaded',
     });
     await pageSettled(page);
