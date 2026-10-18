@@ -51,7 +51,7 @@ export interface ResolvedProxy {
 /**
  * Build a full proxy URL from a config object.
  *
- * Example output: `http://user:pass@proxy.example.com:8080`
+ * Output: `<protocol>://<user>:<password>@<host>:<port>`, credentials encoded.
  */
 export function proxyUrl(config: ProxyConfig): string {
   const auth =
@@ -129,14 +129,16 @@ export function hydratePinnedProxy(pin: ProxyConfig): ProxyConfig | undefined {
   if (proxyType === 'isp')
     return { ...pin, provider, proxy_type: proxyType, username, password };
 
+  // A sticky exit is rebuilt in the country it was pinned in; a pin that
+  // never recorded one cannot be rebuilt, and the caller resolves a new exit.
   const sessionId = pin.sticky_session_id;
-  if (!sessionId) return undefined;
+  if (!sessionId || !pin.country) return undefined;
   const sticky = stickyCredentials(
     provider,
     proxyType,
     { username, password },
     {
-      country: pin.country ?? 'us',
+      country: pin.country,
       city: pin.city,
       sessionId,
     },
@@ -152,19 +154,19 @@ export function hydratePinnedProxy(pin: ProxyConfig): ProxyConfig | undefined {
 
 export class ProxyPool {
   private _proxies: ProxyConfig[] = [];
-  private _index = 0;
   get length(): number {
     return this._proxies.length;
   }
   add(config: ProxyConfig): void {
     this._proxies.push(config);
   }
+  /** A random proxy, or the next one in turn, which then moves to the back. */
   next(random = false): ProxyConfig {
-    if (this._proxies.length === 0) throw new Error('ProxyPool is empty');
+    if (!this._proxies.length) throw new Error('ProxyPool is empty');
     if (random)
       return this._proxies[Math.floor(Math.random() * this._proxies.length)];
-    const proxy = this._proxies[this._index % this._proxies.length];
-    this._index++;
-    return proxy;
+    const first = this._proxies.shift() as ProxyConfig;
+    this._proxies.push(first);
+    return first;
   }
 }

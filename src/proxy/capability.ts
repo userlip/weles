@@ -86,6 +86,14 @@ async function loadPaused(): Promise<PausedValue> {
   return loadSetting<PausedValue>('platform_routine_paused', {});
 }
 
+/** The provider's recorded cells; a provider never recorded has none. */
+function cellsOf(
+  value: MatrixValue,
+  provider: string,
+): Record<string, MatrixCell> {
+  return Object.hasOwn(value.matrix, provider) ? value.matrix[provider] : {};
+}
+
 /** One provider a route may use, in the order to try it. */
 export interface RankedProvider {
   provider: ProviderName;
@@ -115,12 +123,13 @@ export async function rankByCapability(action: string): Promise<{
     loadMatrix(),
     loadSetting<RatesValue>('proxy_rate_cards', { rates: {} }),
   ]);
-  const platformPrefix = action.includes('_') ? `${action.split('_')[0]}_` : '';
+  const [platformWord] = action.split('_');
+  const platformPrefix = action.includes('_') ? `${platformWord}_` : '';
   const candidates: RankedProvider[] = [];
   const failing: ProviderName[] = [];
   const unpriced: ProviderName[] = [];
   for (const p of ALL_PROVIDERS) {
-    const providerCells = matrix.matrix[p] ?? {};
+    const providerCells = cellsOf(matrix, p);
     const cell = providerCells[action]?.result;
     const platformCells = platformPrefix
       ? Object.entries(providerCells).filter(([act]) =>
@@ -195,11 +204,10 @@ export async function recordOutcome(
   platform: string | undefined,
 ): Promise<void> {
   if (!provider || !action) return;
-  const sig = signal ?? '';
   if (status === 'pending_review') return;
   let result: 'pass' | 'fail' | null = null;
-  if (FAIL_SIGNALS.has(sig)) result = 'fail';
-  else if (status === 'completed' && (HEALTHY_SIGNALS.has(sig) || sig === ''))
+  if (signal && FAIL_SIGNALS.has(signal)) result = 'fail';
+  else if (status === 'completed' && (!signal || HEALTHY_SIGNALS.has(signal)))
     result = 'pass';
   if (!result) return;
 
@@ -209,7 +217,7 @@ export async function recordOutcome(
   v.matrix[provider][action] = { result, at };
   await saveSetting('proxy_capability_matrix', v);
   console.log(
-    `[capability] +${provider}/${action} = ${result} (signal=${sig || 'none'})`,
+    `[capability] +${provider}/${action} = ${result} (${signal ? `signal=${signal}` : 'no signal'})`,
   );
 
   // Circuit-breaker: if every provider for this platform is now 'fail' for
@@ -220,7 +228,7 @@ export async function recordOutcome(
   // do the platform, which is good enough for the breaker.
   if (!platform) return;
   const someoneWorks = ALL_PROVIDERS.some((p) =>
-    Object.entries(v.matrix[p] ?? {}).some(
+    Object.entries(cellsOf(v, p)).some(
       ([act, cell]) => act.startsWith(`${platform}_`) && cell.result === 'pass',
     ),
   );
@@ -255,8 +263,8 @@ const DIRECT_EGRESS_PLATFORMS: Readonly<Record<string, true>> = Object.freeze({
 /**
  * Resolve network capabilities from task identity instead of allowing
  * trajectories to improvise fallback behavior. Account-bound platforms use a
- * stable ISP route; platforms that accept worker egress stay direct unless an
- * operator explicitly forces a proxy.
+ * stable ISP route, whose country is the pool row's, never one chosen here;
+ * platforms that accept worker egress stay direct unless forced to a proxy.
  */
 export function taskNetworkRequirements(
   action: string,
@@ -272,7 +280,6 @@ export function taskNetworkRequirements(
   return {
     route: 'proxy',
     proxyType: 'isp',
-    country: normalizedPlatform === 'discord' ? undefined : 'us',
     reason: `stable account-bound egress required for ${action || normalizedPlatform}`,
   };
 }
