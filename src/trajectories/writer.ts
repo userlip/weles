@@ -5,47 +5,19 @@ export type WelesTrajectoryWriterInput = {
   objective: string;
 };
 
+/**
+ * The guidance a draft-first run hands its agent. `model-router` is the
+ * writer's draft; `disabled` is a run started with
+ * WELES_DISABLE_TRAJECTORY_WRITER=1, which carries no draft at all.
+ */
 export type WelesTrajectoryDraft = {
-  source: 'model-router' | 'fallback';
+  source: 'model-router' | 'disabled';
   guidance: string;
   steps: string[];
   model?: string;
   routerUrl?: string;
   raw?: string;
-  error?: string;
 };
-
-function stringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => (typeof item === 'string' ? item.trim() : ''))
-    .filter((item) => item !== '');
-}
-
-function fallbackSteps(): string[] {
-  return [
-    'Follow only the supplied objective and constraints; report the observed outcome, not a presumed success.',
-    'For an existing-account sign-in, use only the supplied scoped credentials through fill_credential. Never invent credentials, change the selected account, or register a replacement.',
-    'Use a Weles-generated identity and registration profile only when the objective authorizes registration and that identity is provided for this run.',
-    'Use the actual observed field label as the credential target and preserve every field of the issued capability object.',
-    'Stop at an unavailable credential, provider refusal, or approval requirement with its actual operation and visible state. Do not select a notification or approval method prohibited by the objective.',
-    'Do not return raw API keys, tokens, passwords, or secrets. Store newly issued material only through an explicitly authorized store_credential operation.',
-  ];
-}
-
-function formatGuidance(
-  steps: string[],
-  source: WelesTrajectoryDraft['source'],
-  model?: string,
-): string {
-  const header =
-    source === 'model-router'
-      ? `Brama trajectory draft${model ? ` (${model})` : ''}:`
-      : 'Fallback Weles trajectory draft:';
-  return [header, ...steps.map((step, index) => `${index + 1}. ${step}`)].join(
-    '\n',
-  );
-}
 
 /** The draft's fields: short imperative steps, and risk or extraction notes. */
 const draftFields = {
@@ -87,48 +59,69 @@ function writerPrompt(input: WelesTrajectoryWriterInput): string {
   ].join('\n');
 }
 
-export function fallbackWelesTrajectoryDraft(
-  input: WelesTrajectoryWriterInput,
-  error?: unknown,
-): WelesTrajectoryDraft {
-  void input;
-  const steps = fallbackSteps();
-  return {
-    source: 'fallback',
-    steps,
-    guidance: formatGuidance(steps, 'fallback'),
-    error:
-      error instanceof Error
-        ? error.message
-        : error
-          ? String(error)
-          : undefined,
-  };
+/**
+ * The strings of a draft field, trimmed. An entry that is not a string, or
+ * is blank, is refused naming the field and its position, with the whole
+ * answer: the schema asked for strings, so anything else is the writer's
+ * failure, not a step to drop.
+ */
+function draftStrings(answer: Record<string, unknown>, field: string, raw: string): string[] {
+  const value = answer[field];
+  if (!Array.isArray(value)) {
+    throw new Error(`the trajectory writer's ${field} is not a list: ${raw}`);
+  }
+  return value.map((item, position) => {
+    if (typeof item !== 'string' || !item.trim()) {
+      throw new Error(`the trajectory writer's ${field} entry ${position} is not a nonblank string: ${raw}`);
+    }
+    return item.trim();
+  });
 }
 
+/**
+ * The writer's draft for a draft-first run, as one required write_trajectory
+ * call. A writer that cannot be reached, or answers anything but that call
+ * with at least one step, fails the run with its cause: no generic draft is
+ * put in its place.
+ */
 export async function writeWelesTrajectoryDraft(
   input: WelesTrajectoryWriterInput,
 ): Promise<WelesTrajectoryDraft> {
-  if (process.env.WELES_DISABLE_TRAJECTORY_WRITER === '1')
-    return fallbackWelesTrajectoryDraft(input);
-  try {
-    const routed = await callJeden(writerPrompt(input), { tools: [draftTool] });
-    const parsed = JSON.parse(routed.raw);
-    const steps = [
-      ...stringArray(parsed.steps),
-      ...stringArray(parsed.notes).map((note) => `Note: ${note}`),
-    ];
-    if (!steps.length)
-      throw new Error(`the trajectory writer answered no step: ${routed.raw}`);
+  if (process.env.WELES_DISABLE_TRAJECTORY_WRITER === '1') {
     return {
-      source: 'model-router',
-      model: routed.model,
-      routerUrl: routed.routerUrl,
-      raw: routed.raw,
-      steps,
-      guidance: formatGuidance(steps, 'model-router', routed.model),
+      source: 'disabled',
+      steps: [],
+      guidance:
+        'No trajectory draft: WELES_DISABLE_TRAJECTORY_WRITER is set, so the objective and constraints alone guide this run.',
     };
-  } catch (error) {
-    return fallbackWelesTrajectoryDraft(input, error);
   }
+  const routed = await callJeden(writerPrompt(input), { tools: [draftTool] });
+  let answer: unknown;
+  try {
+    answer = JSON.parse(routed.raw);
+  } catch (cause) {
+    throw new Error(
+      `the trajectory writer's write_trajectory arguments are not JSON (${cause instanceof Error ? cause.message : String(cause)}): ${routed.raw}`,
+    );
+  }
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) {
+    throw new Error(`the trajectory writer's write_trajectory arguments are not an object: ${routed.raw}`);
+  }
+  const fields = answer as Record<string, unknown>;
+  const steps = [
+    ...draftStrings(fields, 'steps', routed.raw),
+    ...draftStrings(fields, 'notes', routed.raw).map((note) => `Note: ${note}`),
+  ];
+  if (!steps.length) {
+    throw new Error(`the trajectory writer answered no step: ${routed.raw}`);
+  }
+  const header = `Brama trajectory draft${routed.model ? ` (${routed.model})` : ''}:`;
+  return {
+    source: 'model-router',
+    model: routed.model,
+    routerUrl: routed.routerUrl,
+    raw: routed.raw,
+    steps,
+    guidance: [header, ...steps.map((step, index) => `${index + 1}. ${step}`)].join('\n'),
+  };
 }
