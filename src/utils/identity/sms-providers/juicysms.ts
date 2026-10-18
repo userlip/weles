@@ -7,6 +7,9 @@ const BASE = 'https://juicysms.com/api';
 const ORDERED = /ORDER_ID_(?<order>\d+)_NUMBER_(?<number>\d+)/;
 const OPEN_ORDER = /OPEN_ORDER\D*(?<order>\d+)/;
 const SUCCESS = 'SUCCESS_';
+// GetSMS answers WAITING while the order is open and ORDER_EXPIRED once it is
+// cancelled or expired: https://juicysms.com/docs/api/v1
+const WAITING = 'WAITING';
 
 // JuicySMS's own service ids.
 const SERVICE_IDS: Record<string, string> = {
@@ -25,16 +28,21 @@ const SERVICE_IDS: Record<string, string> = {
 
 function key(): string {
   const value = readOptionalWelesServiceSecret('juicySms', 'api_key');
-  if (!value) throw new Error('sms_juicysms_unconfigured: Skarbiec holds no JuicySMS API key');
+  if (!value)
+    throw new Error(
+      'sms_juicysms_unconfigured: Skarbiec holds no JuicySMS API key',
+    );
   return value;
 }
 
 export const juicySms: SmsProvider = {
   name: 'juicysms',
-  configured: () => Boolean(readOptionalWelesServiceSecret('juicySms', 'api_key')),
+  configured: () =>
+    Boolean(readOptionalWelesServiceSecret('juicySms', 'api_key')),
   async rent(service, country) {
     const serviceId = SERVICE_IDS[service.toLowerCase()];
-    if (!serviceId) return { unavailable: `juicysms has no service id for ${service}` };
+    if (!serviceId)
+      return { unavailable: `juicysms has no service id for ${service}` };
     const url = `${BASE}/makeorder?key=${key()}&serviceId=${serviceId}&country=${country}`;
     let answer = await providerAnswer(url, 'juicysms makeorder');
     // JuicySMS holds one open order per service: an order an earlier run
@@ -43,18 +51,41 @@ export const juicySms: SmsProvider = {
     const open = OPEN_ORDER.exec(answer)?.groups;
     if (open) {
       await juicySms.cancel(open.order);
-      answer = await providerAnswer(url, `juicysms makeorder after releasing open order ${open.order}`);
+      answer = await providerAnswer(
+        url,
+        `juicysms makeorder after releasing open order ${open.order}`,
+      );
     }
     const ordered = ORDERED.exec(answer)?.groups;
-    if (!ordered) return { unavailable: `juicysms makeorder (${country}) answered ${answer}` };
+    if (!ordered)
+      return {
+        unavailable: `juicysms makeorder (${country}) answered ${answer}`,
+      };
     return { phone: ordered.number, orderId: ordered.order };
   },
   async read(orderId) {
-    const answer = await providerAnswer(`${BASE}/getsms?key=${key()}&orderId=${orderId}`, `juicysms getsms ${orderId}`);
-    if (answer.startsWith(SUCCESS)) return { code: codeDigits('juicysms', orderId, answer, answer.slice(SUCCESS.length)) };
-    return { waiting: answer };
+    const answer = await providerAnswer(
+      `${BASE}/getsms?key=${key()}&orderId=${orderId}`,
+      `juicysms getsms ${orderId}`,
+    );
+    if (answer.startsWith(SUCCESS))
+      return {
+        code: codeDigits(
+          'juicysms',
+          orderId,
+          answer,
+          answer.slice(SUCCESS.length),
+        ),
+      };
+    if (answer === WAITING) return { waiting: answer };
+    throw new Error(
+      `sms_juicysms_ended: order ${orderId} will receive no SMS: getsms answered ${answer}`,
+    );
   },
   async cancel(orderId) {
-    await providerAnswer(`${BASE}/cancelorder?key=${key()}&orderId=${orderId}`, `juicysms cancelorder ${orderId}`);
+    await providerAnswer(
+      `${BASE}/cancelorder?key=${key()}&orderId=${orderId}`,
+      `juicysms cancelorder ${orderId}`,
+    );
   },
 };
