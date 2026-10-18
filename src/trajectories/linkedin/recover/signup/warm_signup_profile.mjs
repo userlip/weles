@@ -1,10 +1,12 @@
 /**
  * Build a warm guest LinkedIn profile for a later linkedin_register attempt.
  *
- * This does not submit signup data. It visits public LinkedIn surfaces on a
- * persistent Weles profile, scrolls lightly, then lands on /signup so cookies,
- * localStorage, service workers, and LinkedIn/Google scoring telemetry are no
- * longer first-touch cold when linkedin_register reuses the same profile.
+ * This does not submit signup data. It visits the public LinkedIn pages the
+ * caller names on a persistent Weles profile, scrolls lightly, then lands on
+ * /signup so cookies, localStorage, service workers, and LinkedIn/Google
+ * scoring telemetry are no longer first-touch cold when linkedin_register
+ * reuses the same profile. Headless or not is the session's own
+ * WELES_HEADLESS switch.
  */
 import { WSession } from '../../../../../dist/session/wsession.js';
 import {
@@ -12,11 +14,15 @@ import {
   humanScrollPage,
 } from '../../../../../dist/human/mouse.js';
 import { runRecordingsDir } from '../../../../../dist/session/run-recordings.js';
+import { exitStatusFor } from '../../../../../dist/cli/usage.js';
 import { runOutputPath } from '#run-output';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+// The manifests are indented two spaces, as they have always been written.
+const JSON_INDENT = '  ';
 
 // The exit, browser and operating system the warm profile presents are the
 // caller's; the register run that reuses the profile must present the same.
@@ -24,10 +30,6 @@ const requestedProxy = statedText(
   ['LINKEDIN_REGISTER_PROXY', 'LINKEDIN_PROXY', 'PROXY_URL'],
   'the proxy (URL or provider filter) the warm profile browses through',
 );
-const HEADLESS =
-  process.env.HEADLESS === '1' ||
-  process.env.WELES_HEADLESS === '1' ||
-  process.env.LINKEDIN_WARM_HEADLESS === '1';
 const WARM_BROWSER = statedText(
   ['LINKEDIN_WARM_BROWSER'],
   'the browser engine the warm profile presents (chromium or firefox)',
@@ -36,6 +38,17 @@ const WARM_OS = statedText(
   ['LINKEDIN_WARM_OS'],
   'the operating system the warm profile presents (windows, macos or linux)',
 );
+// The public LinkedIn pages to warm the profile on, comma separated; a page
+// off linkedin.com is dropped.
+const urls = statedText(
+  ['LINKEDIN_WARM_URLS'],
+  'the public LinkedIn pages, comma separated, the warm profile visits before /signup',
+)
+  .split(',')
+  .map((u) => u.trim())
+  .filter(Boolean)
+  .map((u) => new URL(u, 'https://www.linkedin.com/').toString())
+  .filter((u) => /(^|\.)linkedin\.com$/i.test(new URL(u).hostname));
 // The profile lives in Weles' own state beside the other reused profiles,
 // never inside the checkout.
 const profileDir =
@@ -47,36 +60,23 @@ const profileDir =
     'linkedin_register_warm',
     new Date().toISOString().replace(/[:.]/g, '-'),
   );
-const urls = String(
-  process.env.LINKEDIN_WARM_URLS ||
-    [
-      'https://www.linkedin.com/',
-      'https://www.linkedin.com/jobs/search/?keywords=software%20engineer&location=United%20States',
-      'https://www.linkedin.com/company/linkedin/',
-      'https://www.linkedin.com/pulse/',
-    ].join(','),
-)
-  .split(',')
-  .map((u) => u.trim())
-  .filter(Boolean)
-  .map((u) => new URL(u, 'https://www.linkedin.com/').toString())
-  .filter((u) => /(^|\.)linkedin\.com$/i.test(new URL(u).hostname));
 
-function safeProxy(value = '') {
-  const raw = String(value ?? '');
-  return /^(https?:|socks)/i.test(raw) ? '[url-form]' : raw;
+function causeOf(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
-function buildProxyReplayUrl(cfg = {}) {
-  if (!cfg?.server) return '';
-  try {
-    const u = new URL(cfg.server);
-    if (cfg.username) u.username = encodeURIComponent(cfg.username);
-    if (cfg.password) u.password = encodeURIComponent(cfg.password);
-    return u.toString();
-  } catch {
-    return '';
-  }
+/** A proxy request as it may be logged: a URL form is never printed. */
+function safeProxy(value) {
+  return /^(https?:|socks)/i.test(value) ? '[url-form]' : value;
+}
+
+/** The proxy URL a later register run replays, with the session's credentials. */
+function proxyReplayUrl(cfg) {
+  if (!cfg?.server) return undefined;
+  const u = new URL(cfg.server);
+  if (cfg.username) u.username = encodeURIComponent(cfg.username);
+  if (cfg.password) u.password = encodeURIComponent(cfg.password);
+  return u.toString();
 }
 
 function visibleSummaryScript(stage) {
@@ -84,12 +84,10 @@ function visibleSummaryScript(stage) {
     stage,
     url: location.href,
     title: document.title,
-    page_key:
-      document.querySelector('meta[name="pageKey"]')?.getAttribute('content') ||
-      '',
-    body_text_sample: (document.body?.innerText || '')
-      .replace(/\s+/g, ' ')
-      .trim(),
+    page_key: document
+      .querySelector('meta[name="pageKey"]')
+      ?.getAttribute('content'),
+    body_text_sample: document.body?.innerText.replace(/\s+/g, ' ').trim(),
     signup_ready:
       Boolean(
         document.querySelector(
@@ -107,9 +105,7 @@ function visibleSummaryScript(stage) {
       width: Math.round(f.getBoundingClientRect().width),
       height: Math.round(f.getBoundingClientRect().height),
     })),
-    cookie_count: document.cookie
-      ? document.cookie.split(';').filter(Boolean).length
-      : 0,
+    cookie_count: document.cookie.split(';').filter(Boolean).length,
   };
 }
 
@@ -132,37 +128,27 @@ try {
     // Do not set targetHost here. linkedin targetHost triggers the cold
     // /signup curl preflight, but this trajectory's purpose is to warm a
     // profile before judging signup readiness.
-    headless: HEADLESS,
     browser: WARM_BROWSER,
     os: WARM_OS,
     userDataDir: profileDir,
     pageDiagnostics: false,
   });
 
+  // A page that cannot be warmed or summarized is recorded with its cause
+  // and the walk goes on to the next one.
   for (const url of urls) {
+    const stage = `warm_${transitions.length}`;
     try {
-      await s.runStep(`warm_${transitions.length}`, async () => {
+      await s.runStep(stage, async () => {
         await s.page.goto(url, { waitUntil: 'domcontentloaded' });
         return `warmed ${s.page.url()}`;
       });
       await humanScrollPage(s.page, 'down');
       await humanIdlePause('deliberate');
-      transitions.push(
-        await s.page
-          .evaluate(visibleSummaryScript, `warm_${transitions.length}`)
-          .catch((e) => ({
-            stage: `warm_${transitions.length}`,
-            url: s.page.url(),
-            error: String(e?.message ?? e),
-          })),
-      );
+      transitions.push(await s.page.evaluate(visibleSummaryScript, stage));
     } catch (e) {
-      transitions.push({
-        stage: `warm_${transitions.length}`,
-        url,
-        error: String(e?.message ?? e),
-      });
-      console.log(`[warm-signup] skip ${url}: ${String(e?.message ?? e)}`);
+      transitions.push({ stage, url, error: causeOf(e) });
+      console.log(`[warm-signup] skip ${url}: ${causeOf(e)}`);
     }
   }
 
@@ -174,92 +160,78 @@ try {
   });
   await humanScrollPage(s.page, 'down');
   await humanIdlePause('deliberate');
-  const signup = await s.page
-    .evaluate(visibleSummaryScript, 'signup_landing')
-    .catch((e) => ({
-      stage: 'signup_landing',
-      url: s.page.url(),
-      error: String(e?.message ?? e),
-    }));
+  const signup = await s.page.evaluate(visibleSummaryScript, 'signup_landing');
 
-  const storage = await s.ctx
-    .storageState()
-    .catch(() => ({ cookies: [], origins: [] }));
-  const proxyReplayUrl = buildProxyReplayUrl(s.proxyConfig);
+  const storage = await s.ctx.storageState();
+  const proxy = s.proxyConfig;
+  const manifestPath = join(profileDir, 'warm_manifest.json');
   const warmManifest = {
     schema: 'linkedin_register_warm_profile.v1',
     created_at: new Date().toISOString(),
     profile_dir: profileDir,
-    persona: s.personaConfig ?? null,
+    persona: s.personaConfig,
     proxy_replay: {
-      url: proxyReplayUrl,
-      server: s.proxyConfig?.server ?? null,
-      username_present: Boolean(s.proxyConfig?.username),
-      password_present: Boolean(s.proxyConfig?.password),
+      url: proxyReplayUrl(proxy),
+      server: proxy?.server,
+      username_present: Boolean(proxy?.username),
+      password_present: Boolean(proxy?.password),
     },
     proxy_metadata: {
-      exit_ip: s.proxyConfig?.exit_ip ?? null,
-      provider: s.proxyConfig?.provider ?? null,
-      proxy_type: s.proxyConfig?.proxy_type ?? null,
-      country: s.proxyConfig?.country ?? null,
-      platform: s.proxyConfig?.platform ?? null,
-      sticky_session_id: s.proxyConfig?.sticky_session_id ?? null,
-      sticky_hash: s.proxyConfig?.sticky_hash ?? null,
-      exit_reputation: s.proxyConfig?.exit_reputation ?? null,
+      exit_ip: proxy?.exit_ip,
+      provider: proxy?.provider,
+      proxy_type: proxy?.proxy_type,
+      country: proxy?.country,
+      platform: proxy?.platform,
+      sticky_session_id: proxy?.sticky_session_id,
+      sticky_hash: proxy?.sticky_hash,
+      exit_reputation: proxy?.exit_reputation,
     },
   };
-  writeFileSync(
-    join(profileDir, 'warm_manifest.json'),
-    JSON.stringify(warmManifest, null, 2),
-  );
+  writeFileSync(manifestPath, JSON.stringify(warmManifest, null, JSON_INDENT));
   const summary = {
     created_at: new Date().toISOString(),
     profile_dir: profileDir,
     proxy_request: safeProxy(requestedProxy),
-    manifest_path: join(profileDir, 'warm_manifest.json'),
-    persona: s.personaConfig ?? null,
+    manifest_path: manifestPath,
+    persona: s.personaConfig,
     proxy: {
-      server_present: Boolean(s.proxyConfig?.server),
-      exit_ip: s.proxyConfig?.exit_ip ?? null,
-      provider: s.proxyConfig?.provider ?? null,
-      proxy_type: s.proxyConfig?.proxy_type ?? null,
-      country: s.proxyConfig?.country ?? null,
-      sticky_session_id: s.proxyConfig?.sticky_session_id ?? null,
-      sticky_hash: s.proxyConfig?.sticky_hash ?? null,
+      server_present: Boolean(proxy?.server),
+      exit_ip: proxy?.exit_ip,
+      provider: proxy?.provider,
+      proxy_type: proxy?.proxy_type,
+      country: proxy?.country,
+      sticky_session_id: proxy?.sticky_session_id,
+      sticky_hash: proxy?.sticky_hash,
     },
     transitions,
     signup,
     storage: {
-      cookie_count: Array.isArray(storage.cookies) ? storage.cookies.length : 0,
-      linkedin_cookie_count: Array.isArray(storage.cookies)
-        ? storage.cookies.filter((c) => /linkedin\.com$/.test(c.domain ?? ''))
-            .length
-        : 0,
-      origin_count: Array.isArray(storage.origins) ? storage.origins.length : 0,
-      origins: Array.isArray(storage.origins)
-        ? storage.origins.map((o) => o.origin)
-        : [],
+      cookie_count: storage.cookies.length,
+      linkedin_cookie_count: storage.cookies.filter((c) =>
+        c.domain.endsWith('linkedin.com'),
+      ).length,
+      origin_count: storage.origins.length,
+      origins: storage.origins.map((o) => o.origin),
     },
-    next_register_env: {
-      LINKEDIN_REGISTER_WARM_PROFILE_DIR: profileDir,
-      LINKEDIN_REGISTER_ALLOW_WARMED_SIGNUP_EXIT: '1',
-      LINKEDIN_REGISTER_DEFAULT_PREWARM: '1',
-      HEADLESS: HEADLESS ? '1' : '0',
-      WELES_INPUT: 'cdp',
-    },
+    // The register run reuses this profile when it is named, and the two
+    // switches below are turned on for it to accept the warmed exit and
+    // skip its own prewarm.
+    next_register_env: { LINKEDIN_REGISTER_WARM_PROFILE_DIR: profileDir },
+    next_register_switches: [
+      'LINKEDIN_REGISTER_ALLOW_WARMED_SIGNUP_EXIT',
+      'LINKEDIN_REGISTER_DEFAULT_PREWARM',
+    ],
   };
-  writeFileSync(
-    join(outDir, 'warm_signup_profile.json'),
-    JSON.stringify(summary, null, 2),
-  );
-  writeFileSync(latestFile, JSON.stringify(summary, null, 2));
+  const summaryPath = join(outDir, 'warm_signup_profile.json');
+  writeFileSync(summaryPath, JSON.stringify(summary, null, JSON_INDENT));
+  writeFileSync(latestFile, JSON.stringify(summary, null, JSON_INDENT));
   console.log(`PASS: warm signup profile ready -> ${profileDir}`);
-  console.log(
-    `[warm-signup] summary -> ${join(outDir, 'warm_signup_profile.json')}`,
-  );
+  console.log(`[warm-signup] summary -> ${summaryPath}`);
 } catch (e) {
-  console.log(`FAIL: ${String(e?.message ?? e)}`);
-  process.exitCode = 1;
+  console.log(`FAIL: ${causeOf(e)}`);
+  process.exitCode = exitStatusFor(e);
 } finally {
-  await s?.close?.().catch(() => {});
+  // A failed close loses the network log, final dump and video, so it is
+  // the run's error, not something to pass over.
+  if (s) await s.close();
 }
