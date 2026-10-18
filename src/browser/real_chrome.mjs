@@ -6,7 +6,7 @@
 // are connecting only to our own providers' billing dashboards.
 
 import { chromium } from 'playwright';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pageSettled } from '../trajectories/_shared/page/settled.mjs';
@@ -40,85 +40,11 @@ function profileDir() {
   return dir;
 }
 
-/**
- * The two launches that need a genuine Chrome rather than the Weles build,
- * kept here because this file is the reviewed browser boundary and a
- * trajectory that launches Playwright itself is what the boundary check
- * refuses.
- *
- * `launchGenuineChrome` retains the genuine browser's command-line policy.
- * Its launch options below explicitly remove unsupported default flags. A
- * caller that names no viewport gets none (`null`): the genuine window keeps
- * the size the browser and the screen give it, so no size is invented here.
- */
-export async function launchGenuineChrome({
-  userDataDir,
-  executablePath,
-  proxy = null,
-  extensionDir = null,
-  viewport = null,
-  extraArgs = [],
-} = {}) {
-  if (!userDataDir)
-    throw new Error('launchGenuineChrome needs a userDataDir it may own');
-  if (!executablePath)
-    throw new Error('launchGenuineChrome needs the real Chrome executablePath');
-  const extension =
-    extensionDir && existsSync(extensionDir)
-      ? [
-          `--disable-extensions-except=${extensionDir}`,
-          `--load-extension=${extensionDir}`,
-        ]
-      : [];
-  return chromium.launchPersistentContext(userDataDir, {
-    executablePath,
-    channel: 'chrome',
-    headless: false,
-    viewport,
-    args: ['--disable-infobars', ...extension, ...extraArgs],
-    ignoreDefaultArgs: [
-      '--enable-automation',
-      '--disable-breakpad',
-      '--no-sandbox',
-      '--disable-blink-features=AutomationControlled',
-    ],
-    ...(proxy ? { proxy } : {}),
-  });
-}
-
-/**
- * The operator-assisted profile: a persistent context on a copy of a real
- * Chrome profile, so a provider that trusts a returning visitor keeps trusting
- * one. The argument set is the one those flows were verified with; with no
- * viewport named, the window keeps its own size.
- */
-export async function launchProfileChrome({
-  userDataDir,
-  executablePath,
-  viewport = null,
-  args = [
-    '--no-sandbox',
-    '--disable-blink-features=AutomationControlled',
-    '--disable-infobars',
-  ],
-  ignoreDefaultArgs = ['--enable-automation', '--disable-breakpad'],
-  channel = 'chrome',
-} = {}) {
-  if (!userDataDir)
-    throw new Error('launchProfileChrome needs a userDataDir it may own');
-  if (!executablePath)
-    throw new Error('launchProfileChrome needs the browser executablePath');
-  return chromium.launchPersistentContext(userDataDir, {
-    executablePath,
-    ...(channel ? { channel } : {}),
-    headless: false,
-    viewport,
-    args,
-    ignoreDefaultArgs,
-  });
-}
-
-export async function launchRealChrome({ label = 'real_chrome' } = {}) {
+export async function launchRealChrome({ label }) {
+  if (!label)
+    throw new Error(
+      'launchRealChrome needs the label its recordings are kept under',
+    );
   const dir = profileDir();
   const diagnosticsDir = runRecordingsDir('real_chrome', label);
   const context = await chromium.launchPersistentContext(dir, {
@@ -129,46 +55,22 @@ export async function launchRealChrome({ label = 'real_chrome' } = {}) {
     viewport: null,
     recordVideo: { dir: diagnosticsDir },
   });
-  await context.addInitScript(() => {
-    try {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    } catch {}
-    try {
-      if (!window.chrome) window.chrome = {};
-      if (!window.chrome.runtime) window.chrome.runtime = {};
-    } catch {}
-    try {
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en'],
-      });
-    } catch {}
-    try {
-      const orig = navigator.permissions?.query?.bind(navigator.permissions);
-      if (orig)
-        navigator.permissions.query = (p) =>
-          p?.name === 'notifications'
-            ? Promise.resolve({
-                state: Notification.permission,
-                onchange: null,
-              })
-            : orig(p);
-    } catch {}
-  });
-  const page = context.pages()[0] ?? (await context.newPage());
+  const [opened] = context.pages();
+  const page = opened ?? (await context.newPage());
   try {
     writeFileSync(
       join(diagnosticsDir, 'real_chrome_session.json'),
       JSON.stringify(
         {
           run_id: runId(),
-          action: process.env.ACTION || null,
+          ...(process.env.ACTION ? { action: process.env.ACTION } : {}),
           label,
           profile_dir: dir,
           executable_path: WELES_CHROMIUM,
           launched_at: new Date().toISOString(),
         },
         null,
-        2,
+        '  ',
       ),
     );
   } catch (e) {
