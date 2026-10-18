@@ -42,15 +42,15 @@ function routeConsoleToStderr(): void {
   consoleRoutedToStderr = true;
 }
 
+// The version the server reports in its initialize answer is the installed
+// package's; a package file that cannot be read or names no version is a
+// broken install, refused with its path rather than reported as "unknown".
 function packageVersion(): string {
-  try {
-    const pkg = JSON.parse(
-      readFileSync(join(__dirname, '..', 'package.json'), 'utf8'),
-    ) as { version?: string };
-    return pkg.version ?? 'unknown';
-  } catch {
-    return 'unknown';
-  }
+  const path = join(__dirname, '..', 'package.json');
+  const pkg = JSON.parse(readFileSync(path, 'utf8')) as { version?: string };
+  if (typeof pkg.version !== 'string')
+    throw new Error(`Weles package file ${path} names no version`);
+  return pkg.version;
 }
 
 function browserOptions(args: Record<string, unknown>): AsyncNewBrowserOptions {
@@ -100,10 +100,12 @@ export async function callWelesMcpTool(
             | 'commit')
         : 'domcontentloaded';
     const response = await page.goto(url, { waitUntil });
+    // Playwright answers no response for a navigation that stays on the
+    // document (a hash change, about:blank); its status is then none.
     return textResult({
       url: page.url(),
-      status: response?.status() ?? null,
-      title: await page.title().catch(() => ''),
+      status: response ? response.status() : null,
+      title: await page.title(),
     });
   }
 
@@ -154,10 +156,11 @@ export async function callWelesMcpTool(
   if (name === 'weles_page_evaluate') {
     const page = getPage(args.pageId);
     const expression = asString(args.expression, 'expression');
-    const value = await page.evaluate(
-      (source) => (0, eval)(source),
-      expression,
-    );
+    // Indirect eval runs the expression in the page's global scope.
+    const value = await page.evaluate((source) => {
+      const evaluate = eval;
+      return evaluate(source);
+    }, expression);
     // Always JSON text: a string value would otherwise reach the caller
     // unquoted and be indistinguishable from a JSON document.
     return textResult(JSON.stringify(value === undefined ? null : value));
@@ -174,9 +177,10 @@ function send(message: JsonRpcResponse | Record<string, unknown>): void {
 
 async function handle(request: JsonRpcRequest): Promise<void> {
   if (!request.method) return;
-  const hasResponseId = Object.prototype.hasOwnProperty.call(request, 'id');
-  if (!hasResponseId) return;
-  const id = request.id ?? null;
+  // A request without an id is a notification and is answered by nothing;
+  // JSON carries no undefined, so an id that is absent is one never sent.
+  const { id } = request;
+  if (id === undefined) return;
 
   try {
     if (request.method === 'initialize') {
@@ -203,7 +207,8 @@ async function handle(request: JsonRpcRequest): Promise<void> {
     }
 
     if (request.method === 'tools/call') {
-      const params = request.params ?? {};
+      const { params } = request;
+      if (!params) throw new Error('tools/call carries no params');
       const name = asString(params.name, 'name');
       const args =
         params.arguments && typeof params.arguments === 'object'
@@ -217,10 +222,12 @@ async function handle(request: JsonRpcRequest): Promise<void> {
     send({
       jsonrpc: '2.0',
       id,
+      // https://www.jsonrpc.org/specification#error_object (method not found)
       error: { code: -32601, message: `method not found: ${request.method}` },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    // https://www.jsonrpc.org/specification#error_object (server error range)
     send({ jsonrpc: '2.0', id, error: { code: -32000, message } });
   }
 }
@@ -230,21 +237,23 @@ export function startMcpServer(): void {
   let buffer = '';
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (chunk: string) => {
-    buffer += chunk;
-    for (;;) {
-      const newline = buffer.indexOf('\n');
-      if (newline === -1) break;
-      const line = buffer.slice(0, newline).trim();
-      buffer = buffer.slice(newline + 1);
+    // Each request is one line; the text after the last newline is a request
+    // still arriving and stays buffered for the next chunk.
+    const lines = `${buffer}${chunk}`.split('\n');
+    buffer = String(lines.pop());
+    for (const received of lines) {
+      const line = received.trim();
       if (!line) continue;
       let request: JsonRpcRequest;
       try {
         request = JSON.parse(line) as JsonRpcRequest;
-      } catch {
+      } catch (error) {
+        const cause = error instanceof Error ? error.message : String(error);
         send({
           jsonrpc: '2.0',
           id: null,
-          error: { code: -32700, message: 'parse error' },
+          // https://www.jsonrpc.org/specification#error_object (parse error)
+          error: { code: -32700, message: `parse error: ${cause}` },
         });
         continue;
       }
