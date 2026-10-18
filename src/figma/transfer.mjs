@@ -1,5 +1,5 @@
 // Transfer helpers the Figma exporter uses that carry no credential: naming,
-// digests, the retrying fetch, gzip, download and the node walk. The token
+// digests, the request that names its failure, gzip and download. The token
 // and the Figma API calls stay in export-design-assets.mjs.
 import { createHash } from 'node:crypto';
 import {
@@ -9,66 +9,105 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, extname } from 'node:path';
-import { createGzip } from 'node:zlib';
+import { constants, createGzip } from 'node:zlib';
 
+/**
+ * A file-name fragment of `value`: its letters and digits, accents removed,
+ * joined by dashes. A value with none gives an empty fragment; every caller
+ * appends the node id or file key, which keeps the name unique.
+ */
 export function slugify(value) {
-  const slug = String(value)
+  return String(value)
     .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\p{M}/gu, '')
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/[^a-z\d]+/g, '-')
     .replace(/^-|-$/g, '');
-  return slug || 'untitled';
 }
 
 export function sha256(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
+// The media types Figma serves image fills and renders as, and the file
+// extension each is written with.
+const EXTENSION_BY_TYPE = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/svg+xml': '.svg',
+  'image/webp': '.webp',
+  'application/pdf': '.pdf',
+};
+
+/**
+ * The extension for a download Figma served as `contentType` from `url`: the
+ * declared media type's, else the URL path's own when it is one of the same
+ * extensions. A download that is neither is refused, naming both, rather
+ * than written under an extension nobody chose.
+ */
 export function extensionFor(contentType, url) {
-  const mime = String(contentType || '')
-    .split(';')[0]
-    .toLowerCase();
-  const byMime = {
-    'image/png': '.png',
-    'image/jpeg': '.jpg',
-    'image/gif': '.gif',
-    'image/svg+xml': '.svg',
-    'image/webp': '.webp',
-    'application/pdf': '.pdf',
-  };
-  const fromUrl = extname(new URL(url).pathname).toLowerCase();
-  return (
-    byMime[mime] ||
-    (/^\.(?:png|jpe?g|gif|svg|webp|pdf)$/.test(fromUrl) ? fromUrl : '.bin')
+  const [mediaType] = String(contentType).split(';');
+  const declared = EXTENSION_BY_TYPE[mediaType.trim().toLowerCase()];
+  if (declared) return declared;
+  const fromPath = extname(new URL(url).pathname).toLowerCase();
+  if (Object.values(EXTENSION_BY_TYPE).includes(fromPath)) return fromPath;
+  throw new Error(
+    `Figma served ${new URL(url).pathname} as ${contentType}, a media type the exporter writes no extension for (${Object.keys(EXTENSION_BY_TYPE).join(', ')})`,
   );
 }
-/** One request. A network failure or a non-2xx answer is the error, with the
- * status, the server's Retry-After when it sent one, and the redacted body. */
-export async function request(url, options = {}) {
+
+/**
+ * Every value a request carries that must not appear in an error: its
+ * header values and its URL's query parameter values (a signed asset URL
+ * carries its signature there).
+ */
+function sentValues(url, init) {
+  const values = [...new URL(url).searchParams.values()];
+  if (init.headers) values.push(...Object.values(init.headers).map(String));
+  return values.filter(Boolean);
+}
+
+function redacted(text, values) {
+  return values.reduce(
+    (out, value) => out.split(value).join('[redacted]'),
+    text,
+  );
+}
+
+/**
+ * One request. A network failure or a non-success answer is the error, with
+ * the status, the server's Retry-After when it sent one, and the body with
+ * every header and query value the request sent replaced by [redacted].
+ */
+export async function request(url, init) {
   const path = new URL(url).pathname;
   let response;
   try {
-    response = await fetch(url, options);
+    response = await fetch(url, init);
   } catch (error) {
-    const code = error?.cause?.code || error?.code || 'network-error';
-    throw new Error(`Figma network failure for ${path}: ${code}`);
+    const cause = [error?.message, error?.cause?.code, error?.cause?.message]
+      .filter(Boolean)
+      .join(': ');
+    throw new Error(`Figma network failure for ${path}: ${cause}`, {
+      cause: error,
+    });
   }
   if (response.ok) return response;
   const body = await response.text();
   const retryAfter = response.headers.get('retry-after');
-  const reason = body.replace(/[A-Za-z0-9_-]{32,}/g, '[redacted]');
   const after = retryAfter ? ` (Retry-After: ${retryAfter})` : '';
   throw new Error(
-    `Figma HTTP ${response.status} for ${path}${after}: ${reason}`,
+    `Figma HTTP ${response.status} for ${path}${after}: ${redacted(body, sentValues(url, init))}`,
   );
 }
 
+/** Gzips `source` into `destination` at zlib's best compression. */
 export async function gzipFile(source, destination) {
   await new Promise((resolve, reject) => {
     const input = createReadStream(source);
     const output = createWriteStream(destination);
-    const gzip = createGzip({ level: 9, mtime: 0 });
+    const gzip = createGzip({ level: constants.Z_BEST_COMPRESSION });
     input.on('error', reject);
     gzip.on('error', reject);
     output.on('error', reject);
@@ -77,6 +116,7 @@ export async function gzipFile(source, destination) {
   });
 }
 
+/** Downloads `url` to `destination`; contentType is the one served, or null. */
 export async function download(url, destination) {
   const response = await request(url, {});
   const buffer = Buffer.from(await response.arrayBuffer());
@@ -85,41 +125,6 @@ export async function download(url, destination) {
   return {
     bytes: buffer.length,
     sha256: sha256(buffer),
-    contentType:
-      response.headers.get('content-type') || 'application/octet-stream',
+    contentType: response.headers.get('content-type'),
   };
-}
-
-export function collectNodes(document) {
-  const nodes = [];
-  const imageRefs = new Set();
-  const exportNodes = [];
-  const topLevelNodes = [];
-  const stack = [document];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (!node || typeof node !== 'object') continue;
-    nodes.push({ id: node.id, name: node.name || '', type: node.type || '' });
-    for (const fill of [...(node.fills || []), ...(node.strokes || [])]) {
-      if (fill?.type === 'IMAGE' && typeof fill.imageRef === 'string')
-        imageRefs.add(fill.imageRef);
-    }
-    if (Array.isArray(node.exportSettings) && node.exportSettings.length > 0) {
-      exportNodes.push({
-        id: node.id,
-        name: node.name || '',
-        settings: node.exportSettings,
-      });
-    }
-    if (node.type === 'CANVAS') {
-      for (const child of node.children || [])
-        topLevelNodes.push({
-          id: child.id,
-          name: child.name || '',
-          page: node.name || '',
-        });
-    }
-    for (const child of node.children || []) stack.push(child);
-  }
-  return { nodes, imageRefs, exportNodes, topLevelNodes };
 }

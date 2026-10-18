@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { randomFillSync } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -7,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import {
   download,
   extensionFor,
@@ -19,6 +20,9 @@ import {
 import { parseFigmaDocument } from './document/parse-figma-document.mjs';
 import { readExportRequest } from './export-request.mjs';
 import { prepareExport } from './export-checkout.mjs';
+
+// The manifests are indented two spaces, as they have always been written.
+const JSON_INDENT = '  ';
 
 export async function exportDesignAssets(requestPath) {
   const input = readExportRequest(requestPath);
@@ -71,38 +75,33 @@ export async function exportDesignAssets(requestPath) {
     };
   }
 
-  async function renderNodes(fileKey, nodes, destination, format, scale = 1) {
+  // One render request for every node, at Figma's own scale; a request Figma
+  // will not serve (too many ids, too long a URL) is refused with its status
+  // and body. A node Figma answers no image for is recorded as unavailable.
+  async function renderNodes(fileKey, nodes, destination, format) {
     const rendered = [];
-    const batches = [];
-    for (let index = 0; index < nodes.length; index += 80) {
-      batches.push(nodes.slice(index, index + 80));
-    }
-    for (const batch of batches) {
-      const ids = batch.map((node) => node.id).join(',');
-      const payload = await figmaJson(
-        `/v1/images/${fileKey}?ids=${encodeURIComponent(ids)}&format=${encodeURIComponent(format)}&scale=${scale}`,
-      );
-      for (const node of batch) {
-        const url = payload.images?.[node.id];
-        if (!url) {
-          rendered.push({ ...node, status: 'unavailable', format, scale });
-          continue;
-        }
-        const extension = format === 'jpg' ? '.jpg' : `.${format}`;
-        const path = join(
-          destination,
-          `${slugify(node.name)}-${node.id.replace(/[^a-z0-9]/gi, '-')}${extension}`,
-        );
-        const artifact = await download(url, path);
-        rendered.push({
-          ...node,
-          status: 'downloaded',
-          format,
-          scale,
-          path,
-          ...artifact,
-        });
+    const ids = nodes.map((node) => node.id).join(',');
+    const payload = await figmaJson(
+      `/v1/images/${fileKey}?ids=${encodeURIComponent(ids)}&format=${encodeURIComponent(format)}`,
+    );
+    for (const node of nodes) {
+      const url = payload.images?.[node.id];
+      if (!url) {
+        rendered.push({ ...node, status: 'unavailable', format });
+        continue;
       }
+      const path = join(
+        destination,
+        `${slugify(node.name)}-${node.id.replace(/[^a-z\d]/gi, '-')}.${format}`,
+      );
+      const artifact = await download(url, path);
+      rendered.push({
+        ...node,
+        status: 'downloaded',
+        format,
+        path,
+        ...artifact,
+      });
     }
     return rendered;
   }
@@ -119,16 +118,28 @@ export async function exportDesignAssets(requestPath) {
           SKARBIEC_WORKLOAD_ID: input.workloadId,
           SKARBIEC_WORKLOAD_SIGNING_KEY_FILE: input.signingKeyFile,
         },
-        maxBuffer: 65536,
       },
     );
     tokenBuffer = acquired.stdout;
-    if (acquired.status !== 0) {
-      const detail = String(
-        acquired.stderr || acquired.error?.message || acquired.signal || '',
-      ).replace(/[A-Za-z0-9_-]{32,}/g, '[redacted]');
+    if (acquired.error || acquired.signal || acquired.status) {
+      // Whatever the reader wrote as the secret is removed from its own
+      // diagnostics before they reach an error.
+      const secret = Buffer.isBuffer(tokenBuffer)
+        ? tokenBuffer.toString('utf8').trim()
+        : '';
+      const stderr = Buffer.isBuffer(acquired.stderr)
+        ? acquired.stderr.toString('utf8')
+        : '';
+      const said = secret ? stderr.split(secret).join('[redacted]') : stderr;
+      const ended = [
+        acquired.status !== null && `exit ${acquired.status}`,
+        acquired.signal && `signal ${acquired.signal}`,
+        acquired.error?.message,
+      ]
+        .filter(Boolean)
+        .join(', ');
       throw new Error(
-        `Figma credential acquisition failed (exit ${acquired.status}): ${detail.trim()}`,
+        `Figma credential acquisition by ${acquireScript} failed (${ended}): ${said.trim()}`,
       );
     }
     if (!Buffer.isBuffer(tokenBuffer) || !tokenBuffer.length)
@@ -156,42 +167,43 @@ export async function exportDesignAssets(requestPath) {
 
       console.error(`exporting ${file.name}: source images`);
       const sourceImages = await figmaJson(`/v1/files/${file.key}/images`);
+      const images = sourceImages.meta?.images;
+      if (!images)
+        throw new Error(
+          `Figma answered /v1/files/${file.key}/images without meta.images`,
+        );
       const imageManifest = [];
-      for (const [imageRef, url] of Object.entries(
-        sourceImages.meta?.images || {},
-      )) {
+      for (const [imageRef, url] of Object.entries(images)) {
         if (!url) continue;
         const response = await request(url, {});
         const buffer = Buffer.from(await response.arrayBuffer());
-        const extension = extensionFor(
-          response.headers.get('content-type'),
-          url,
+        const contentType = response.headers.get('content-type');
+        const path = join(
+          'assets',
+          'images',
+          `${imageRef}${extensionFor(contentType, url)}`,
         );
-        const relative = join('assets', 'images', `${imageRef}${extension}`);
-        const absolute = join(fileRoot, relative);
+        const absolute = join(fileRoot, path);
         mkdirSync(dirname(absolute), { recursive: true });
         writeFileSync(absolute, buffer);
         imageManifest.push({
           imageRef,
-          path: relative,
+          path,
           bytes: buffer.length,
           sha256: sha256(buffer),
-          contentType:
-            response.headers.get('content-type') || 'application/octet-stream',
+          contentType,
         });
       }
 
       console.error(`exporting ${file.name}: previews`);
-      const previewRoot = join(fileRoot, 'assets', 'previews');
       const previewManifest = await renderNodes(
         file.key,
         collected.topLevelNodes,
-        previewRoot,
+        join(fileRoot, 'assets', 'previews'),
         'png',
-        1,
       );
       for (const entry of previewManifest) {
-        if (entry.path) entry.path = entry.path.slice(fileRoot.length + 1);
+        if (entry.path) entry.path = relative(fileRoot, entry.path);
       }
 
       const explicitManifest = collected.exportNodes.map((node) => ({
@@ -207,7 +219,7 @@ export async function exportDesignAssets(requestPath) {
         sourceType: file.type,
         sourceUrl: `https://www.figma.com/${file.type}/${file.key}`,
         version: documentResponse.summary.version,
-        lastModified: documentResponse.summary.lastModified || null,
+        lastModified: documentResponse.summary.lastModified,
         documentBytes: documentResponse.bytes,
         documentSha256: sha256(readFileSync(documentResponse.cachePath)),
         compressedDocumentBytes: statSync(compressedPath).size,
@@ -223,11 +235,11 @@ export async function exportDesignAssets(requestPath) {
       };
       writeFileSync(
         join(fileRoot, 'assets.json'),
-        `${JSON.stringify({ images: imageManifest, previews: previewManifest, exports: explicitManifest }, null, 2)}\n`,
+        `${JSON.stringify({ images: imageManifest, previews: previewManifest, exports: explicitManifest }, null, JSON_INDENT)}\n`,
       );
       writeFileSync(
         join(fileRoot, 'metadata.json'),
-        `${JSON.stringify(metadata, null, 2)}\n`,
+        `${JSON.stringify(metadata, null, JSON_INDENT)}\n`,
       );
       exportSummary.push({ folder, ...metadata });
     }
@@ -235,7 +247,7 @@ export async function exportDesignAssets(requestPath) {
     const generatedAt = new Date().toISOString();
     writeFileSync(
       join(exportRoot, 'inventory.json'),
-      `${JSON.stringify({ generatedAt, teamId: input.teamId, files: exportSummary }, null, 2)}\n`,
+      `${JSON.stringify({ generatedAt, teamId: input.teamId, files: exportSummary }, null, JSON_INDENT)}\n`,
     );
     const publication = workspace.publish(generatedAt);
     success = true;
@@ -253,8 +265,9 @@ export async function exportDesignAssets(requestPath) {
       }),
     );
   } finally {
-    if (Buffer.isBuffer(tokenBuffer)) tokenBuffer.fill(0);
-    if (Buffer.isBuffer(acquired?.stderr)) acquired.stderr.fill(0);
+    // The secret and the reader's diagnostics are overwritten in memory.
+    if (Buffer.isBuffer(tokenBuffer)) randomFillSync(tokenBuffer);
+    if (Buffer.isBuffer(acquired?.stderr)) randomFillSync(acquired.stderr);
     workspace.close(success);
   }
 }
