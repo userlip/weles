@@ -89,16 +89,16 @@ export const gpuRendererRules: DetectionRule[] = [
     category: 'webgl',
     severity: 'critical',
     test(s) {
-      const r = String(
-        s?.js?.webgl1?.params?.UNMASKED_RENDERER || '',
-      ).toLowerCase();
-      if (r.includes('swiftshader')) {
+      const renderer = s?.js?.webgl1?.params?.UNMASKED_RENDERER;
+      // A capture without a renderer names no software rasteriser.
+      if (typeof renderer !== 'string') return null;
+      if (renderer.toLowerCase().includes('swiftshader')) {
         return {
           id: 'webgl_swiftshader',
           category: 'webgl',
           severity: 'critical',
-          message: `WebGL renderer is SwiftShader (${s.js.webgl1.params.UNMASKED_RENDERER}) — headless/software rendering signature flagged by PerimeterX/Cloudflare.`,
-          evidence: { renderer: s.js.webgl1.params.UNMASKED_RENDERER },
+          message: `WebGL renderer is SwiftShader (${renderer}) — headless/software rendering signature flagged by PerimeterX/Cloudflare.`,
+          evidence: { renderer },
         };
       }
       return null;

@@ -26,10 +26,11 @@ export const personaConsistencyRules: DetectionRule[] = [
     category: 'inconsistency',
     severity: 'critical',
     test(s) {
-      const ua = String(s?.js?.navigator?.userAgent || '');
-      const renderer = String(
-        s?.js?.webgl1?.params?.UNMASKED_RENDERER || '',
-      ).toLowerCase();
+      const ua = s?.js?.navigator?.userAgent;
+      const reported = s?.js?.webgl1?.params?.UNMASKED_RENDERER;
+      // A capture without both signals holds no contradiction between them.
+      if (typeof ua !== 'string' || typeof reported !== 'string') return null;
+      const renderer = reported.toLowerCase();
       const os = osFromUA(ua);
       if (!os) return null;
       // Apple GPU on non-macOS UA.
@@ -65,8 +66,10 @@ export const personaConsistencyRules: DetectionRule[] = [
     category: 'inconsistency',
     severity: 'critical',
     test(s) {
-      const ua = String(s?.js?.navigator?.userAgent || '');
-      const platform = String(s?.js?.navigator?.platform || '');
+      const ua = s?.js?.navigator?.userAgent;
+      const platform = s?.js?.navigator?.platform;
+      // A capture without both signals holds no contradiction between them.
+      if (typeof ua !== 'string' || typeof platform !== 'string') return null;
       const osUA = osFromUA(ua);
       const osPlatform = platformFromNav(platform);
       if (osUA && osPlatform && osUA !== osPlatform) {
