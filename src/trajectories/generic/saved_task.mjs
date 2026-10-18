@@ -6,8 +6,10 @@ import { pathToFileURL } from 'node:url';
 //
 //   * a declared engagement — GENERIC_ENGAGEMENT plus the reviewed trajectory
 //     the declaration names, both set by the dispatcher's admission step; and
-//   * a saved trajectory definition, named by id or by vault item and replayed
-//     step by step through browser_task.
+//   * a saved trajectory definition, replayed step by step through
+//     browser_task: either the one the run carries from Weles Web, which
+//     admission puts in GENERIC_SAVED_TRAJECTORY_JSON, or one held as a vault
+//     item named by GENERIC_SAVED_TRAJECTORY_ITEM.
 //
 // src/worker/deploy/weles-engagement-declaration.json is the only thing that
 // says which reviewed trajectory an engagement replays, so nothing here maps a
@@ -30,9 +32,17 @@ function setJsonEnv(name, value) {
   if (isObject(value)) process.env[name] = JSON.stringify(value);
 }
 
-/** The replay steps `definition` states, each refused by position when malformed. */
+/** The text `value` holds, or null when it holds none. */
+function text(value) {
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+/** The replay steps `definition` states — under `replay`, or under `steps`
+ * when it states no `replay` — each refused by position when malformed. */
 function replaySteps(definition, reference) {
-  const replay = definition.replay ?? definition.steps;
+  const replay = Object.hasOwn(definition, 'replay')
+    ? definition.replay
+    : definition.steps;
   if (!Array.isArray(replay) || !replay.length) {
     throw new Error(`saved trajectory ${reference} states no replay steps`);
   }
@@ -55,13 +65,14 @@ function replaySteps(definition, reference) {
   });
 }
 
-/** The text a saved definition or its row states for `field`, or a refusal. */
+/** The text the saved definition states for `field`, or else its row's, or a
+ * refusal naming the field. */
 function stated(field, definition, row, reference) {
-  const value = definition[field] ?? row[field];
-  if (typeof value !== 'string' || !value.trim()) {
-    throw new Error(`saved trajectory ${reference} states no ${field}`);
-  }
-  return value;
+  const fromDefinition = text(definition[field]);
+  if (fromDefinition !== null) return fromDefinition;
+  const fromRow = text(row[field]);
+  if (fromRow !== null) return fromRow;
+  throw new Error(`saved trajectory ${reference} states no ${field}`);
 }
 
 /** The trajectory row named by vault item `item`. */
@@ -71,7 +82,8 @@ async function vaultRow(item) {
   // declared engagement replays a reviewed trajectory without any of that.
   const { readWelesRecord } = await import('../_shared/skarbiec/accounts.mjs');
   const document = readWelesRecord(item);
-  if (document.context?.status !== 'active') {
+  const context = isObject(document.context) ? document.context : null;
+  if (context === null || context.status !== 'active') {
     throw new Error(`saved trajectory is not active: ${item}`);
   }
   const fields = document.fields;
@@ -88,13 +100,17 @@ async function vaultRow(item) {
       `saved trajectory ${item} definition_json does not parse: ${error.message}`,
     );
   }
-  // The managed host a trajectory is bound to, from its fields or its context;
-  // absent from both, it is bound to none.
-  const executionHost =
-    fields.execution_host ?? document.context?.execution_host;
+  // The managed host a trajectory is bound to, from its fields or else its
+  // context; stated in neither, it is bound to none. A trajectory without a
+  // display name is named by its item.
+  let executionHost = null;
+  if (text(fields.execution_host) !== null)
+    executionHost = fields.execution_host;
+  else if (text(context.execution_host) !== null)
+    executionHost = context.execution_host;
   return {
     id: item,
-    name: document.context?.display_name ?? item,
+    name: text(context.display_name) === null ? item : context.display_name,
     url: fields.url,
     objective: fields.objective,
     definition,
@@ -102,38 +118,25 @@ async function vaultRow(item) {
   };
 }
 
-/** The active trajectory row `id` in the database WELES_DATABASE_URL names. */
-async function databaseRow(id) {
-  const base = admitted('WELES_DATABASE_URL');
-  const token = admitted('WELES_DATABASE_TOKEN');
-  if (!base)
+/** The saved trajectory the run carries, as admission passed it on. */
+function carriedRow(id) {
+  const carried = admitted('GENERIC_SAVED_TRAJECTORY_JSON');
+  if (carried === null) {
     throw new Error(
-      `WELES_DATABASE_URL is required to read saved trajectory ${id}`,
-    );
-  if (!token)
-    throw new Error(
-      `WELES_DATABASE_TOKEN is required to read saved trajectory ${id}`,
-    );
-  const response = await fetch(
-    `${base}/rest/v1/weles_trajectories?id=eq.${encodeURIComponent(id)}&status=eq.active&select=id,name,action,url,objective,definition,execution_host`,
-    {
-      headers: {
-        apikey: token,
-        Authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
-      },
-    },
-  );
-  if (!response.ok) {
-    throw new Error(
-      `load saved trajectory HTTP ${response.status}: ${await response.text()}`,
+      `saved trajectory ${id} reached execution without the trajectory its run carries`,
     );
   }
-  const rows = await response.json();
-  if (!Array.isArray(rows))
-    throw new Error(`saved trajectory ${id} answered no list of rows`);
-  const [row] = rows;
-  if (!row) throw new Error(`saved trajectory not found: ${id}`);
+  let row;
+  try {
+    row = JSON.parse(carried);
+  } catch (error) {
+    throw new Error(
+      `saved trajectory ${id} as carried does not parse: ${error.message}`,
+    );
+  }
+  if (!isObject(row) || row.id !== id) {
+    throw new Error(`saved trajectory ${id} was carried as ${carried}`);
+  }
   return row;
 }
 
@@ -164,13 +167,18 @@ if (engagement !== null) {
 } else {
   const item = admitted('GENERIC_SAVED_TRAJECTORY_ITEM');
   const id = admitted('GENERIC_SAVED_TRAJECTORY_ID');
+  if (item !== null && id !== null) {
+    throw new Error(
+      'generic_saved_task takes GENERIC_SAVED_TRAJECTORY_ID or GENERIC_SAVED_TRAJECTORY_ITEM, not both',
+    );
+  }
   if (item === null && id === null) {
     throw new Error(
       'GENERIC_SAVED_TRAJECTORY_ID or GENERIC_SAVED_TRAJECTORY_ITEM required',
     );
   }
-  const reference = item ?? id;
-  const row = item !== null ? await vaultRow(item) : await databaseRow(id);
+  const reference = item === null ? id : item;
+  const row = item === null ? carriedRow(id) : await vaultRow(item);
   if (!isObject(row.definition)) {
     throw new Error(
       `saved trajectory ${reference} has a definition that is not an object`,

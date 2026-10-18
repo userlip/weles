@@ -1,19 +1,10 @@
-// Declared engagement: the capability that replaced one action verb per site.
+// Declared engagement: one reviewed trajectory replayed against a target the
+// submission names, in place of an action verb per site.
 //
-// An engagement is one reviewed trajectory replayed against a target the
-// submission names. Until this declaration existed, every (platform, verb)
-// pair was also a public action name in
-// src/worker/deploy/weles-action-allowlist.txt and a branch in ./dispatch.ts:
-// seven sites spelled the same twenty-two verbs, 154 of the 255 admitted
-// actions, and 108 of those rows resolved to a trajectory file nobody had
-// written. Admission said yes to all of them because the catalog was the gate,
-// and the run failed after the caller had already been told the work was
-// accepted.
-//
-// So the verb is no longer the unit of authorization. The declaration below
-// names, per engagement, its platform, its verb and the reviewed trajectory,
-// `generic_saved_task` consumes it, and the two failures that used to land at
-// execution land at admission instead:
+// The declaration names, per engagement, its platform, its verb and the
+// reviewed trajectory; `generic_saved_task` consumes it. Admission is the
+// gate, so a run that cannot execute is refused before the caller is told it
+// was accepted:
 //
 //   * an engagement nobody declared is refused when it is submitted, and
 //   * a declaration naming a missing reviewed trajectory is refused when it is
@@ -34,7 +25,7 @@ export const ENGAGEMENT_DECLARATION_SCHEMA =
 const TRAJECTORY_ROOT = 'src/trajectories/';
 
 /** `<platform>.<verb>` — a declaration name, deliberately not an action name. */
-const ENGAGEMENT_NAME = /^[a-z][a-z0-9]*\.[a-z][a-z0-9_]*$/;
+const ENGAGEMENT_NAME = /^[a-z][a-z\d]*\.[a-z][a-z\d_]*$/;
 
 export type DeclaredEngagement = {
   readonly engagement: string;
@@ -51,13 +42,17 @@ export type DeclaredEngagement = {
  * same file without any of them passing a path.
  */
 export function welesRepositoryRoot(): string {
-  const declared = (process.env.WELES_REPO ?? '').trim();
-  return declared ? resolve(declared) : resolve(__dirname, '..', '..', '..');
+  const declared = process.env.WELES_REPO?.trim();
+  if (declared) return resolve(declared);
+  return resolve(__dirname, '..', '..', '..');
 }
 
-function field(entry: Record<string, unknown>, name: string): string {
+/** The trimmed text an entry states for `name`, or null when it states none. */
+function field(entry: Record<string, unknown>, name: string): string | null {
   const value = entry[name];
-  return typeof value === 'string' ? value.trim() : '';
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text === '' ? null : text;
 }
 
 /**
@@ -184,11 +179,13 @@ export function admitEngagement(
 /**
  * What `generic_saved_task` admits, translated into the env its child reads.
  *
- * This is the whole admission step for the capability, and it runs where the
- * per-verb branches used to: in the dispatcher, before anything is spawned.
- * A run replays either one declared engagement or one reviewed trajectory
- * named by id, never both — two declarations for one run are two answers to
- * "what does this replay".
+ * This is the whole admission step for the capability, and it runs in the
+ * dispatcher, before anything is spawned. A run replays either one declared
+ * engagement or one saved trajectory named by id, never both — two
+ * declarations for one run are two answers to "what does this replay". A
+ * saved trajectory arrives with the run: Weles Web puts the trajectory, as it
+ * was when the run was queued, in `params.trajectory`, and a run whose
+ * trajectory is missing or names another id is refused here.
  */
 export function applySavedTaskEnv(
   params: Record<string, unknown>,
@@ -210,6 +207,24 @@ export function applySavedTaskEnv(
     env.PLATFORM = declared.platform;
     env.VERB = declared.verb;
   }
-  if (typeof trajectoryId === 'string')
+  if (typeof trajectoryId === 'string') {
+    const trajectory = params.trajectory;
+    if (
+      trajectory === null ||
+      typeof trajectory !== 'object' ||
+      Array.isArray(trajectory)
+    ) {
+      throw new Error(
+        `generic_saved_task run for trajectory ${trajectoryId} was queued without the saved trajectory; queue it through Weles Web, which carries it`,
+      );
+    }
+    const carriedId = (trajectory as Record<string, unknown>).id;
+    if (carriedId !== trajectoryId) {
+      throw new Error(
+        `generic_saved_task run for trajectory ${trajectoryId} carries trajectory ${JSON.stringify(carriedId)}`,
+      );
+    }
     env.GENERIC_SAVED_TRAJECTORY_ID = trajectoryId;
+    env.GENERIC_SAVED_TRAJECTORY_JSON = JSON.stringify(trajectory);
+  }
 }
