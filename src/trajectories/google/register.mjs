@@ -22,7 +22,7 @@ function clickNext(page) {
 }
 
 function hostOf(page) {
-  return new globalThis.URL(page.url()).hostname;
+  return new URL(page.url()).hostname;
 }
 
 // A visible phone input: Google rotates its name and id, but it autocompletes
@@ -68,7 +68,10 @@ async function reachPhoneField(page) {
   try {
     await approveQr(page);
   } catch (error) {
-    throw new Error(`qr_code_blocked: the QR approval Google asked for failed: ${error.message}`, { cause: error });
+    throw new Error(
+      `qr_code_blocked: the QR approval Google asked for failed: ${error.message}`,
+      { cause: error },
+    );
   }
   console.log('[google] QR approved — waiting for phone-entry page');
   while (!phone) {
@@ -144,7 +147,9 @@ async function signup(s) {
   await clickNext(page);
   await pageSettled(page);
   if (urlBefore === page.url())
-    throw new Error(`birthday_stuck: the birthday and gender page did not continue (${page.url()})`);
+    throw new Error(
+      `birthday_stuck: the birthday and gender page did not continue (${page.url()})`,
+    );
 
   console.log(`[google] step 4: username ${gmailUser}`);
   if (await clickOffered(page, 'the option to create your own Gmail address'))
@@ -159,14 +164,23 @@ async function signup(s) {
   let chosenUser = gmailUser;
   const refused = await refusedUsername(page);
   if (refused) {
-    if (!(await clickOffered(page, 'one of the available usernames Google suggests')))
-      throw new Error(`GOOGLE_USERNAME_REFUSED: Google refused ${gmailUser} and suggests no available username`);
+    if (
+      !(await clickOffered(
+        page,
+        'one of the available usernames Google suggests',
+      ))
+    )
+      throw new Error(
+        `GOOGLE_USERNAME_REFUSED: Google refused ${gmailUser} and suggests no available username`,
+      );
     await pageSettled(page);
     chosenUser = (await refused.inputValue()).toLowerCase();
     await clickNext(page);
     await pageSettled(page);
     if (await refusedUsername(page))
-      throw new Error(`GOOGLE_USERNAME_REFUSED: Google refused the suggested username ${chosenUser} too`);
+      throw new Error(
+        `GOOGLE_USERNAME_REFUSED: Google refused the suggested username ${chosenUser} too`,
+      );
   }
 
   console.log('[google] step 5: password');
@@ -217,7 +231,9 @@ async function signup(s) {
         'Does the page show terms or a privacy agreement to scroll through and agree to?',
       )
     ) {
-      await page.evaluate(() => window.scrollTo({ top: document.body.scrollHeight }));
+      await page.evaluate(() =>
+        window.scrollTo({ top: document.body.scrollHeight }),
+      );
       await pageSettled(page);
     }
     if (
@@ -237,7 +253,9 @@ async function signup(s) {
   // Success is the account session (Google's SID cookie), not what the page says.
   const cookies = await s.ctx.cookies();
   if (!cookies.some((c) => c.name === 'SID' && c.domain.endsWith('google.com')))
-    throw new Error(`no_auth_cookies: the signup ended on ${page.url()} without a Google SID cookie`);
+    throw new Error(
+      `no_auth_cookies: the signup ended on ${page.url()} without a Google SID cookie`,
+    );
 
   const result = await s.saveAccount('google', {
     username: chosenUser,
