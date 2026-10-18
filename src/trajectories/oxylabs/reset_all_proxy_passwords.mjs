@@ -10,6 +10,7 @@ import {
   humanClickLocator,
 } from '../../../dist/human/mouse.js';
 import { responseAfterAction, urlMatching } from '../_shared/page/settled.mjs';
+import { clickOffered } from '../_shared/page/judged/seen.mjs';
 import { humanType } from '../../../dist/human/keyboard.js';
 import {
   assertScopedSecretWriter,
@@ -18,6 +19,7 @@ import {
   writeScopedSecretItem,
 } from '../../_shared/scoped-secrets.mjs';
 import { registrationPassword } from '../../../dist/utils/identity/password.js';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 
 /** The calls a dashboard's script sends, as the browser classes them. */
 const SCRIPT_CALLS = { fetch: true, xhr: true };
@@ -45,11 +47,13 @@ for (const serviceName of [
   assertScopedSecretWriter(serviceName);
 }
 
+// Without the dashboard login nothing is opened: the refusal names the login
+// the run looked for, before any browser starts.
 const login = await getScopedGoogleLogin('oxylabsDashboard');
-if (!login) {
-  console.log('FAIL: no Google SSO creds');
-  process.exit(1);
-}
+if (!login)
+  throw new Error(
+    'OXYLABS_DASHBOARD_LOGIN_MISSING: no scoped Google SSO login is granted for oxylabsDashboard, so the dashboard cannot be signed into',
+  );
 console.log(`[reset] Using Google SSO: ${login.email}`);
 
 const s = await WSession.start({
@@ -92,21 +96,17 @@ try {
       await s.page.goto(usersUrl, { waitUntil: 'domcontentloaded' });
       await humanIdlePause('long');
 
-      // Click "Edit user" / "Change password" for the known username.
-      const editBtn = s.page
-        .locator('tr')
-        .filter({ hasText: username })
-        .locator('button, a')
-        .filter({ hasText: /Edit user|Change password/i })
-        .first();
-      const editVisible = await editBtn.isVisible().catch(() => false);
-      console.log(`[reset] ${product} edit/change visible=${editVisible}`);
-      if (!editVisible) {
+      // The control that edits this proxy user, as the page offers it in the
+      // user's row; a page without one is recorded, not guessed at.
+      const edited = await clickOffered(
+        s.page,
+        `the control in the row of proxy user ${username} that edits the user or changes its password`,
+      );
+      console.log(`[reset] ${product} edit control offered=${edited}`);
+      if (!edited) {
         results.push({ product, status: 'edit_button_not_found' });
         return;
       }
-      await editBtn.waitFor({ state: 'visible' });
-      await humanClickLocator(s.page, editBtn);
       await humanIdlePause('long');
 
       // The dashboard renders the password field as either type="password" or
@@ -118,7 +118,7 @@ try {
         )
         .filter({ visible: true })
         .first();
-      const passVisible = await passInput.isVisible().catch(() => false);
+      const passVisible = await passInput.isVisible();
       console.log(`[reset] ${product} password input visible=${passVisible}`);
       if (!passVisible) {
         results.push({ product, status: 'no_password_input' });
@@ -142,10 +142,10 @@ try {
       );
       // Without Oxylabs accepting it the new password exists only here;
       // storing it would replace a working credential with one never set.
+      // A refusal whose body cannot be read fails this product with that
+      // read's cause, through the catch below.
       if (!answer.ok()) {
-        const said = await answer
-          .text()
-          .catch((error) => `[answer body unreadable: ${error.message}]`);
+        const said = await answer.text();
         results.push({
           product,
           status: 'refused',
@@ -201,7 +201,7 @@ try {
     );
 } catch (e) {
   console.log('FAIL:', e.message || String(e));
-  process.exitCode = 1;
+  process.exitCode = exitStatusFor(e);
 } finally {
   await s.close();
 }
