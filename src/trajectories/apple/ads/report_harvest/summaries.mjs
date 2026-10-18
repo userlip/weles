@@ -22,7 +22,7 @@ export function sanitizeResponses(responses) {
 export function summarizeReport(pageState, responses) {
   const text = norm(pageState.text);
   const totalsMatch = text.match(
-    /TOTALS\s+(\$[0-9,.]+)\s+(\$[0-9,.]+)\s+(\$[0-9,.]+)\s+(\$[0-9,.]+)/i,
+    /TOTALS\s+(\$[\d,.]+)\s+(\$[\d,.]+)\s+(\$[\d,.]+)\s+(\$[\d,.]+)/i,
   );
   // The report table's rows, by the table's own structure; the totals row is
   // the one the totals pattern read above.
@@ -32,7 +32,7 @@ export function summarizeReport(pageState, responses) {
   return {
     url: pageState.url,
     title: pageState.title,
-    totals: totalsMatch ? totalsMatch.slice(1) : [],
+    totals: totalsMatch ? capturedGroups(totalsMatch) : [],
     campaignRows: campaigns,
     relevantResponseCount: responses.length,
     relevantResponseUrls: [
@@ -41,12 +41,32 @@ export function summarizeReport(pageState, responses) {
   };
 }
 
+/** A match's captured groups, without the whole match ahead of them. */
+function capturedGroups([, ...groups]) {
+  return groups;
+}
+
+/**
+ * A captured GraphQL request or response body read as JSON; a missing body is
+ * none. Apple's GraphQL endpoint answers JSON, so a body that does not parse is
+ * refused with the URL it came from and the parser's reason, instead of being
+ * summarised as a request with no operations.
+ */
+function readBody(text, url) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(
+      `Apple Ads captured a body from ${url} that is not JSON: ${error.message}`,
+      { cause: error },
+    );
+  }
+}
+
 export function summarizeGraphqlRequests(requests) {
   return requests.map((request) => {
-    let parsed = null;
-    try {
-      parsed = JSON.parse(request.postData || '{}');
-    } catch {}
+    const parsed = readBody(request.postData, request.url);
     const rows = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
     return {
       ts: request.ts,
@@ -55,18 +75,20 @@ export function summarizeGraphqlRequests(requests) {
       operations: rows.map((row) => ({
         operationName: row.operationName,
         variables: row.variables,
-        queryPreview: String(row.query || '').replace(/\s+/g, ' '),
+        queryPreview:
+          typeof row.query === 'string' ? row.query.replace(/\s+/g, ' ') : null,
       })),
     };
   });
 }
 
+// A response that declares another content type (an error page from the edge)
+// is summarised by its preview; only one that declares JSON is read as JSON.
 export function summarizeGraphqlResponses(responses) {
   return responses.map((response) => {
-    let parsed = null;
-    try {
-      parsed = JSON.parse(response.body || '{}');
-    } catch {}
+    const parsed = String(response.contentType).includes('json')
+      ? readBody(response.body, response.url)
+      : null;
     return {
       ts: response.ts,
       method: response.method,
@@ -82,16 +104,14 @@ export function summarizeGraphqlResponses(responses) {
 
 export function getCampaignReportPayload(requests) {
   for (const request of requests.slice().reverse()) {
-    try {
-      const parsed = JSON.parse(request.postData || '{}');
-      if (
-        parsed?.operationName === 'getReportsByCampaign' &&
-        parsed?.query &&
-        parsed?.variables?.reportOptions?.filter
-      ) {
-        return parsed;
-      }
-    } catch {}
+    const parsed = readBody(request.postData, request.url);
+    if (
+      parsed?.operationName === 'getReportsByCampaign' &&
+      parsed?.query &&
+      parsed?.variables?.reportOptions?.filter
+    ) {
+      return parsed;
+    }
   }
   return null;
 }
