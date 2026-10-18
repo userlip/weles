@@ -31,16 +31,16 @@ export function recordCommentForVerify(
     throw new Error(
       `deferred verify: reddit account ${acct.username} is not in Skarbiec, so the posted comment cannot be recorded for verification`,
     );
-  updateAccountMetadata(vaultAccount.id, {
-    pending_comment_verify: {
-      post_url: resolvedOldUrl || null,
-      comment_id: postedCommentId || null,
-      handle: handle || null,
-      posted_at: new Date().toISOString(),
-    },
-  });
+  // Only what the run captured is recorded; the verify probes with what is there.
+  const pending = { posted_at: new Date().toISOString() };
+  if (resolvedOldUrl) pending.post_url = resolvedOldUrl;
+  if (postedCommentId) pending.comment_id = postedCommentId;
+  if (handle) pending.handle = handle;
+  updateAccountMetadata(vaultAccount.id, { pending_comment_verify: pending });
+  let recorded = 'no comment id was captured, so the account probe stands in';
+  if (postedCommentId) recorded = `comment ${postedCommentId}`;
   console.log(
-    `[deferred-verify] recorded comment ${postedCommentId || '(no id)'} for the next run's clean-session probe`,
+    `[deferred-verify] recorded ${recorded} for the next run's clean-session probe`,
   );
 }
 
@@ -59,12 +59,11 @@ export async function verifyPreviousComment(acct) {
     const probe = await probeCommentVisibility({
       postPermalinkBase: postUrl,
       commentId,
-      expectedAuthor: handle || undefined,
+      expectedAuthor: handle,
     });
     if (probe.err) {
       // A probe that observed nothing says nothing about the comment: the
-      // pending verify stays for the next run and the account is not
-      // flagged. It used to read as "not visible" and deactivate it.
+      // pending verify stays for the next run and the account is not flagged.
       throw new Error(
         `deferred clean-session probe of ${commentId} posted ${postedAt} observed nothing: ${probe.err}; the pending verify is kept`,
       );
@@ -83,12 +82,23 @@ export async function verifyPreviousComment(acct) {
       ),
     );
     console.log(`[deferred-verify] account probe: verdict=${probe.verdict}`);
+    // Vantages that reached no verdict say nothing about the account either.
+    if (probe.verdict === 'indeterminate')
+      throw new Error(
+        `deferred account probe of ${handle} reached no verdict: ${JSON.stringify(probe.vantages)}; the pending verify is kept`,
+      );
     stillPublic = probe.verdict !== 'shadowbanned';
   }
   updateAccountMetadata(vaultAccount.id, (metadata) => {
-    const { pending_comment_verify: _verified, ...rest } = metadata ?? {};
+    const { pending_comment_verify: _verified, ...rest } = metadata;
     return rest;
   });
+  if (stillPublic === 'unprobed') {
+    console.log(
+      `[deferred-verify] the comment posted at ${postedAt} names neither its permalink nor a handle, so it cannot be verified; its pending record is cleared`,
+    );
+    return;
+  }
   if (stillPublic === false) {
     updateAccountMetadata(vaultAccount.id, {
       status: 'shadowbanned',

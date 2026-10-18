@@ -14,20 +14,34 @@
  *   - every vantage returns 404                 -> 'shadowbanned'
  *   - anything else (403/429/errors, a mix)     -> 'indeterminate'
  *
+ * A vantage that observed nothing names why in `err` (logged_out_read.ts):
+ * no residential proxy, a request that did not complete, a body that could
+ * not be read, or a 200 whose body is not JSON.
+ *
  * Used by:
  *   - src/trajectories/reddit/shadowban_check.mjs (standalone trajectory)
- *   - src/trajectories/reddit/actions/comment/organic_comment.mjs (post-submit verify)
- *   - src/trajectories/reddit/actions/comment.mjs (post-submit verify)
+ *   - src/trajectories/reddit/actions/comment/steps/deferred_verify.mjs (deferred verify)
  */
 
-import { WSession } from '../../session/wsession.js';
-import { resolveProxy } from '../../proxy/config.js';
+import { statusCode } from '../_shared/http-status.js';
+import {
+  causeOf,
+  field,
+  loggedOutRead,
+  parsedAnswer,
+  Unobserved,
+} from './logged_out_read.js';
+
+const HTTP_OK = statusCode('OK');
+const HTTP_NOT_FOUND = statusCode('Not Found');
 
 export type ShadowbanVerdict = 'shadowbanned' | 'healthy' | 'indeterminate';
 
 export interface VantageResult {
+  /** How many vantages were read before this one. */
   vantage: number;
-  status: number;
+  /** The about.json HTTP status; absent when no answer arrived. */
+  status?: number;
   has_body: boolean;
   exit_ip?: string;
   err?: string;
@@ -38,6 +52,38 @@ export interface MultiVantageProbeResult {
   username: string;
   vantages: VantageResult[];
   ts: string;
+}
+
+/** What `reason` left unobserved: its status and exit address when Reddit answered, and why. */
+function unobserved(reason: unknown) {
+  const read = reason instanceof Unobserved ? reason : undefined;
+  return { status: read?.status, exit_ip: read?.exitIp, err: causeOf(reason) };
+}
+
+/** The `vantage`-th logged-out read of the profile `url`; an unread vantage throws why. */
+async function observeVantage(
+  vantage: number,
+  url: string,
+): Promise<VantageResult> {
+  const answer = await loggedOutRead(
+    'www.reddit.com',
+    url,
+    `reddit_shadowban_probe_v${vantage}`,
+  );
+  const read = { vantage, status: answer.status, exit_ip: answer.exitIp };
+  if (answer.status !== HTTP_OK) return { ...read, has_body: false };
+  const name = field(field(parsedAnswer(url, answer), 'data'), 'name');
+  return { ...read, has_body: typeof name === 'string' && !!name };
+}
+
+/** The `vantage`-th read, or what it could not observe and why. */
+async function readVantage(
+  vantage: number,
+  url: string,
+): Promise<VantageResult> {
+  const [outcome] = await Promise.allSettled([observeVantage(vantage, url)]);
+  if (outcome.status === 'fulfilled') return outcome.value;
+  return { vantage, has_body: false, ...unobserved(outcome.reason) };
 }
 
 /**
@@ -55,108 +101,58 @@ export async function probeShadowban(
   username: string,
   vantages: number,
 ): Promise<MultiVantageProbeResult> {
-  const results: VantageResult[] = [];
   const url = `https://old.reddit.com/user/${encodeURIComponent(username)}/about.json`;
-
-  for (let i = 0; i < vantages; i++) {
-    let session: WSession | null = null;
-    try {
-      // Fresh proxy with a fresh sticky session id. resolveProxy() rolls
-      // a new sessId each call (see config.ts:213) so each vantage exits
-      // through a different residential IP. No account-cookie restoration
-      // — this is the "logged-out" view of the user.
-      const pw = await resolveProxy('residential us', 'www.reddit.com').catch(
-        () => undefined,
-      );
-      const proxyUrl = pw?.server
-        ? `${pw.server.replace(/^http(s?):\/\//, 'http$1://')}`
-        : undefined;
-      // Build the auth-embedded URL for WSession.start.
-      const proxyForSession =
-        pw?.server && pw.username && pw.password
-          ? `${pw.server.replace('://', `://${encodeURIComponent(pw.username)}:${encodeURIComponent(pw.password)}@`)}`
-          : proxyUrl;
-
-      session = await WSession.start({
-        label: `reddit_shadowban_probe_v${i + 1}`,
-        proxy: proxyForSession,
-      });
-
-      const resp = await session.page
-        .context()
-        .request.get(url, {
-          headers: {
-            Accept: 'application/json',
-            // Plain UA — about.json sometimes 403s for bare-fetch UAs but the
-            // session UA inherits the persona.
-          },
-          ignoreHTTPSErrors: true,
-          // Playwright's request client carries its own 30s limit; 0 removes it,
-          // so Reddit's answer or the network's error ends the read.
-          timeout: 0,
-        })
-        .catch((e: any) => ({
-          _err: e?.message ?? 'fetch_error',
-          status: () => 0,
-          text: async () => '',
-        }));
-
-      const status =
-        typeof (resp as any).status === 'function' ? (resp as any).status() : 0;
-      let body = '';
-      try {
-        body =
-          typeof (resp as any).text === 'function'
-            ? await (resp as any).text()
-            : '';
-      } catch {
-        /* skip */
-      }
-      let hasBody = false;
-      try {
-        const j = JSON.parse(body);
-        hasBody = typeof j?.data?.name === 'string' && j.data.name.length > 0;
-      } catch {
-        /* not JSON */
-      }
-      results.push({
-        vantage: i + 1,
-        status,
-        has_body: hasBody,
-        exit_ip: pw?.exit_ip,
-        err: (resp as any)._err,
-      });
-    } catch (e: any) {
-      results.push({
-        vantage: i + 1,
-        status: 0,
-        has_body: false,
-        err: e?.message ?? 'launch_error',
-      });
-    } finally {
-      if (session)
-        await session
-          .close()
-          .catch((e: any) =>
-            console.log(
-              `[shadowban] vantage session close failed: ${e?.message ?? e}`,
-            ),
-          );
-    }
-  }
+  const results: VantageResult[] = [];
+  for (const _vantage of Array.from({ length: vantages }))
+    results.push(await readVantage(results.length, url));
 
   // Tally: one logged-out vantage that sees the profile proves it public;
   // shadowbanned needs every vantage to answer 404, so no count is chosen.
-  const four_oh_four = results.filter((r) => r.status === 404).length;
-  const ok = results.filter((r) => r.status === 200 && r.has_body).length;
+  const notFound = results.filter((r) => r.status === HTTP_NOT_FOUND).length;
+  const seen = results.some((r) => r.status === HTTP_OK && r.has_body);
 
   let verdict: ShadowbanVerdict;
-  if (ok) verdict = 'healthy';
-  else if (results.length && four_oh_four === results.length)
+  if (seen) verdict = 'healthy';
+  else if (results.length && notFound === results.length)
     verdict = 'shadowbanned';
   else verdict = 'indeterminate';
 
   return { verdict, username, vantages: results, ts: new Date().toISOString() };
+}
+
+/** A comment visibility observation; `err` says why nothing was observed. */
+export interface CommentVisibility {
+  visible: boolean;
+  /** The permalink's HTTP status; absent when no answer arrived. */
+  status?: number;
+  exit_ip?: string;
+  err?: string;
+}
+
+/** Whether the comment is in its permalink JSON; a read that observed nothing throws why. */
+async function observeComment(
+  url: string,
+  commentId: string,
+  expectedAuthor: string | undefined,
+): Promise<CommentVisibility> {
+  const answer = await loggedOutRead(
+    'old.reddit.com',
+    url,
+    'reddit_visibility_probe',
+  );
+  if (!answer.ok)
+    throw new Unobserved(
+      `the permalink JSON answered HTTP ${answer.status}`,
+      answer.status,
+      answer.exitIp,
+    );
+  const node = permalinkComment(parsedAnswer(url, answer));
+  const nodeData = field(node, 'data');
+  const visible =
+    field(node, 'kind') === 't1' &&
+    field(nodeData, 'id') === commentId &&
+    (!expectedAuthor || field(nodeData, 'author') === expectedAuthor);
+  return { visible, status: answer.status, exit_ip: answer.exitIp };
 }
 
 /**
@@ -169,87 +165,20 @@ export async function probeShadowban(
  * comment node is in the permalink JSON, false if the JSON was read and the
  * node is missing (auto-removed or shadowbanned). A proxy that cannot be
  * resolved, a non-2xx answer (rate limit, block page), a body that cannot
- * be read or is not JSON all set `err` - they say nothing about the comment
- * and used to read as "not visible", which flagged the account shadowbanned.
+ * be read or is not JSON all set `err`: they say nothing about the comment.
  */
 export async function probeCommentVisibility(opts: {
   postPermalinkBase: string; // e.g. 'https://old.reddit.com/r/sub/comments/abc/post-slug'
   commentId: string; // base36 id, e.g. 'oj0vwon'
   expectedAuthor?: string; // optional sanity check
-}): Promise<{
-  visible: boolean;
-  /** The permalink's HTTP status; absent when no answer arrived. */
-  status?: number;
-  exit_ip?: string;
-  err?: string;
-}> {
+}): Promise<CommentVisibility> {
   const { postPermalinkBase, commentId, expectedAuthor } = opts;
   const url = `${postPermalinkBase.replace(/\/$/, '')}/${commentId}/.json`;
-
-  let session: WSession | null = null;
-  try {
-    const pw = await resolveProxy('residential us', 'old.reddit.com');
-    const proxyForSession =
-      pw?.server && pw.username && pw.password
-        ? `${pw.server.replace('://', `://${encodeURIComponent(pw.username)}:${encodeURIComponent(pw.password)}@`)}`
-        : pw?.server;
-    session = await WSession.start({
-      label: 'reddit_visibility_probe',
-      proxy: proxyForSession,
-    });
-    const resp = await session.page.context().request.get(url, {
-      headers: { Accept: 'application/json' },
-      ignoreHTTPSErrors: true,
-      timeout: 0,
-    });
-    const status = resp.status();
-    if (!resp.ok()) {
-      return {
-        visible: false,
-        status,
-        exit_ip: pw?.exit_ip,
-        err: `the permalink JSON answered HTTP ${status}`,
-      };
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(await resp.text());
-    } catch (e: unknown) {
-      return {
-        visible: false,
-        status,
-        exit_ip: pw?.exit_ip,
-        err: `the permalink JSON could not be read: ${e instanceof Error ? e.message : String(e)}`,
-      };
-    }
-    const node = permalinkComment(parsed);
-    const nodeData = field(node, 'data');
-    const visible =
-      field(node, 'kind') === 't1' &&
-      field(nodeData, 'id') === commentId &&
-      (!expectedAuthor || field(nodeData, 'author') === expectedAuthor);
-    return { visible, status, exit_ip: pw?.exit_ip };
-  } catch (e: unknown) {
-    return { visible: false, err: e instanceof Error ? e.message : String(e) };
-  } finally {
-    if (session)
-      await session
-        .close()
-        .catch((e: any) =>
-          console.log(
-            `[shadowban] probe session close failed: ${e?.message ?? e}`,
-          ),
-        );
-  }
-}
-
-/** `value[key]` when `value` is an object carrying `key`, else undefined. */
-function field(value: unknown, key: string): unknown {
-  if (value === null || typeof value !== 'object' || !(key in value)) {
-    return undefined;
-  }
-  const found: unknown = Reflect.get(value, key);
-  return found;
+  const [outcome] = await Promise.allSettled([
+    observeComment(url, commentId, expectedAuthor),
+  ]);
+  if (outcome.status === 'fulfilled') return outcome.value;
+  return { visible: false, ...unobserved(outcome.reason) };
 }
 
 /**

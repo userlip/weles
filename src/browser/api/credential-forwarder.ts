@@ -7,21 +7,12 @@ import {
 } from 'node:http';
 import { type AddressInfo, connect } from 'node:net';
 import { networkInterfaces } from 'node:os';
+import { statusCode } from '../../platforms/_shared/http-status.js';
 
 function securelyEqual(left: string, right: string): boolean {
   const leftDigest = createHash('sha256').update(left).digest();
   const rightDigest = createHash('sha256').update(right).digest();
   return timingSafeEqual(leftDigest, rightDigest);
-}
-
-/** The status code node:http knows by its reason phrase. */
-function statusCode(reason: string): number {
-  const entry = Object.entries(STATUS_CODES).find(
-    ([, text]) => text === reason,
-  );
-  if (!entry) throw new Error(`node:http knows no status "${reason}"`);
-  const [code] = entry;
-  return Number(code);
 }
 
 /** HTTP Basic credentials for `user:password` text, encoded as UTF-8. */
