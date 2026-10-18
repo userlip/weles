@@ -6,9 +6,10 @@
 //   node tests/sizes.mjs <revision> <line-limit> <path>...
 //
 // Standard output carries one `revision:path:lines` per file over the limit
-// and is empty when none is. A line is a newline character, as wc -l counts
-// it; a file holding a NUL byte is binary and is not counted. A revision or
-// path git cannot read fails the command with git's reason.
+// and is empty when none is. Lines are counted by git grep, which reads every
+// pathspec form git accepts (globs and exclusions included) and leaves binary
+// files out. A revision or pattern git refuses fails the command with git's
+// reason.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -20,17 +21,19 @@ assert.ok(revision && stated && paths.length, 'usage: node tests/sizes.mjs <revi
 const limit = Number(stated);
 assert.ok(Number.isSafeInteger(limit), `line-limit must be a whole number, not ${stated}`);
 
-const git = (args) => {
-  const answer = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: Infinity });
-  assert.ok(answer.status === spawnSync('true').status,
-    `git ${args.join(' ')} failed (${answer.status}${answer.error ? `, ${answer.error.message}` : ''}): ${answer.stderr}`);
-  return answer.stdout;
-};
-
-const files = git(['ls-tree', '-r', '--name-only', revision, '--', ...paths]).split('\n').filter(Boolean);
-for (const file of files) {
-  const text = git(['show', `${revision}:${file}`]);
-  if (text.includes('\0')) continue;
-  const lines = [...text].filter((character) => character === '\n').length;
-  if (lines > limit) process.stdout.write(`${revision}:${file}:${lines}\n`);
+// An empty pattern matches every line, so -c answers each file's line count.
+const counted = spawnSync('git', ['-C', root, 'grep', '-c', '-I', '-e', '', revision, '--', ...paths], {
+  encoding: 'utf8',
+  maxBuffer: Infinity,
+});
+// git grep answers 1 when nothing matched and above 1 when it failed
+// (https://git-scm.com/docs/git-grep#_exit_status).
+const matched = spawnSync('true').status;
+const nothing = spawnSync('false').status;
+assert.ok(counted.status === matched || counted.status === nothing,
+  `git grep at ${revision} failed (${counted.status}${counted.error ? `, ${counted.error.message}` : ''}): ${counted.stderr}`);
+// Each row is `revision:path:count`; the count is the digits after the last colon.
+for (const row of counted.stdout.split('\n').filter(Boolean)) {
+  const { count } = row.match(/:(?<count>\d+)$/).groups;
+  if (Number(count) > limit) process.stdout.write(`${row}\n`);
 }
