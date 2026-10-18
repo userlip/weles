@@ -1,16 +1,21 @@
 /**
- * Cloudflare challenge detection and bypass — 1:1 port of weles/cloudflare/challenge.py
- *
- * Uses Claude vision to detect the challenge and locate the verification
- * checkbox. The click is dispatched through CDPMouse with Bezier curves.
+ * Cloudflare challenge handling for a loaded page. A page whose DOM carries
+ * no Cloudflare challenge marker is not challenged and costs no model call.
+ * A page that does is judged by the vision model (a boolean answer through
+ * checkPage); a challenge page has its verification control located by the
+ * model and clicked with page.mouse, and the wait then follows the page's
+ * loads until one is no longer a challenge. A DOM probe or a model question
+ * that fails throws with its cause instead of reading as "not challenged".
  */
 
 import {
-  askPage,
   checkPage,
   findClickTarget,
   type ScreenshottablePage,
 } from '../vision/analyze.js';
+
+const CHALLENGE_QUESTION =
+  'Is this a Cloudflare security verification or challenge page?';
 
 // Resolves on the page's next document load. Cloudflare clears a challenge by
 // loading the protected page in place, so each load is the moment to look again.
@@ -24,13 +29,12 @@ function nextLoad(page: any): Promise<void> {
   return promise;
 }
 
-// Check the DOM before asking the vision route to inspect a challenge.
-// Pages without a recognized challenge marker do not need that model call.
+// A challenge page carries Cloudflare's challenge options object and its
+// challenge-platform script or frame, whatever its wording. A page the probe
+// cannot run in is that failure, thrown with its cause.
 async function looksLikeCloudflareDom(page: any): Promise<boolean> {
-  try {
-    // A challenge page carries Cloudflare's challenge options object and its
-    // challenge-platform script or frame, whatever its wording.
-    const r = await page.evaluate(
+  return Boolean(
+    await page.evaluate(
       () =>
         '_cf_chl_opt' in window ||
         Boolean(
@@ -38,73 +42,62 @@ async function looksLikeCloudflareDom(page: any): Promise<boolean> {
             'script[src*="/cdn-cgi/challenge-platform/"], iframe[src*="challenges.cloudflare.com"], iframe[src*="cdn-cgi/challenge-platform"]',
           ),
         ),
-    );
-    return !!r;
-  } catch {
-    return false;
-  }
+    ),
+  );
 }
 
 export async function waitCloudflare(page: any): Promise<boolean> {
   await page.waitForLoadState('load');
-
-  // Cheap DOM probe before the expensive vision call. If the page has zero
-  // Cloudflare-shaped markers, return true immediately (treated as "not
-  // challenged"). Saves a round-trip per goto on every non-CF platform.
   if (!(await looksLikeCloudflareDom(page))) return true;
+  if (!(await checkPage(page as ScreenshottablePage, CHALLENGE_QUESTION))) {
+    console.log(
+      '  [cloudflare] challenge markers present, page judged not a challenge',
+    );
+    return true;
+  }
+  console.log('  [cloudflare] challenge detected');
 
-  const rawAnswer = await askPage(
-    page as ScreenshottablePage,
-    'Is this a Cloudflare security verification or challenge page? Answer only YES or NO.',
-  );
-  const isCf = rawAnswer.trim().toUpperCase().startsWith('YES');
-  console.log(`  [cloudflare] raw vision answer: ${JSON.stringify(rawAnswer)}`);
-  console.log(`  [cloudflare] challenge detected: ${isCf}`);
-
-  if (!isCf) return true;
-
-  const cleared = nextLoad(page);
+  // The next load is listened for before anything is clicked or checked, so
+  // a load that lands during the click or a model call is not missed.
+  let pending = nextLoad(page);
   const target = await findClickTarget(
     page as ScreenshottablePage,
     'the checkbox or button to verify you are human',
   );
-  console.log(`  [cloudflare] click target: ${JSON.stringify(target)}`);
-  if (!target) {
+  if (target) {
+    await page.mouse.click(target.x, target.y);
     console.log(
-      '  [cloudflare] no click target found - challenge in auto-pass mode',
+      `  [cloudflare] clicked the verification control at (${target.x}, ${target.y})`,
     );
   } else {
-    await page.mouse.click(target.x, target.y);
-    console.log(`  [cloudflare] clicked at (${target.x}, ${target.y})`);
+    console.log(
+      '  [cloudflare] the model located no verification control; waiting for the challenge to pass by itself',
+    );
   }
 
-  // The challenge clearing is the event this waits for: Cloudflare loads the
-  // protected page in place when it lets the browser through. Each load is
-  // checked once; a load that is still the challenge waits for the next one,
-  // and an operator cancelling the run still ends it.
-  // The next load is listened for before this one is checked, so a load that
-  // lands during the vision call is not missed.
-  let pending = cleared;
-  for (let check = 1; ; check += 1) {
+  // Cloudflare loads the protected page in place when it lets the browser
+  // through. Each load is checked once; a load that is still the challenge
+  // waits for the next one, and an operator cancelling the run still ends it.
+  for (;;) {
     await pending;
     pending = nextLoad(page);
     if (!(await looksLikeCloudflareDom(page))) return true;
-    const stillCf = await checkPage(
+    const stillChallenged = await checkPage(
       page as ScreenshottablePage,
-      'Is this a Cloudflare security verification or challenge page?',
+      CHALLENGE_QUESTION,
     );
-    console.log(`  [cloudflare] load ${check}: still challenged = ${stillCf}`);
-    if (!stillCf) return true;
+    console.log(
+      `  [cloudflare] page loaded; still challenged = ${stillChallenged}`,
+    );
+    if (!stillChallenged) return true;
   }
 }
 
 export async function isChallenged(page: any): Promise<boolean> {
-  return checkPage(
-    page as ScreenshottablePage,
-    'Is this a Cloudflare security verification or challenge page?',
-  );
+  return checkPage(page as ScreenshottablePage, CHALLENGE_QUESTION);
 }
 
+/** The same wait as waitCloudflare, under the name the public API exports. */
 export async function bypassCloudflare(page: any): Promise<boolean> {
   return waitCloudflare(page);
 }
