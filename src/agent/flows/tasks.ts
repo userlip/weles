@@ -1,105 +1,72 @@
 /**
- * Declarative Task runner — 1:1 port of weles/agent/tasks.py
+ * Declarative Task runner: FetchAccountValue says which account, where to
+ * start and what to read; the runner owns the browser, the saved session,
+ * the login and the discovery of the value.
  *
- * FetchAccountValue: which account, where to start, what to extract.
- * Runner handles browser lifecycle, cookies, Cloudflare, login, discovery.
+ * Every input that decides the run (the browser's operating system, the
+ * proxy, where learned routes are kept) is stated by the caller. A failure to
+ * read or write the saved session or a learned route is thrown with its path
+ * and cause: an unreadable store answered as "nothing saved" made the next run
+ * log in afresh or rediscover the route with nothing saying why.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import type { Page } from 'playwright';
 import * as discover from './discover.js';
 import * as login from './login.js';
 import * as vision from './vision.js';
+import { Trajectory } from './trajectory-cache.js';
 import { waitCloudflare } from '../../cloudflare/challenge.js';
 import { SessionStore } from '../../session/store.js';
+import type { AsyncNewBrowserOptions } from '../../async_api.js';
 import {
   readOptionalWelesServiceSecret,
   type WelesServiceSecret,
 } from '../../secrets/scoped-service.js';
-
-// ---------------------------------------------------------------------------
-// Trajectory cache
-// ---------------------------------------------------------------------------
-
-function cacheDir(): string {
-  const base = process.env.WELES_CACHE_DIR ?? join(homedir(), '.weles');
-  const dir = join(base, 'trajectories');
-  mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-export class Trajectory {
-  service: string;
-  finalUrl: string;
-  selector: string | null;
-  regex: string | null;
-  lastSuccess: string | null;
-  lastValue: number | null;
-
-  constructor(
-    data: Partial<Trajectory> & { service: string; finalUrl: string },
-  ) {
-    this.service = data.service;
-    this.finalUrl = data.finalUrl;
-    this.selector = data.selector ?? null;
-    this.regex = data.regex ?? null;
-    this.lastSuccess = data.lastSuccess ?? null;
-    this.lastValue = data.lastValue ?? null;
-  }
-
-  // The cache only saves a rediscovery: a missing entry is normal, but an
-  // entry that cannot be read, written or removed is said, since the next
-  // run silently rediscovering or reusing a stale route has a cause.
-  static load(service: string): Trajectory | null {
-    const path = join(cacheDir(), `${service}.json`);
-    try {
-      return new Trajectory(JSON.parse(readFileSync(path, 'utf-8')));
-    } catch (e: unknown) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.log(
-          `[task] ${service}: trajectory cache ${path} cannot be read: ${String(e)}`,
-        );
-      }
-      return null;
-    }
-  }
-
-  save(): void {
-    const path = join(cacheDir(), `${this.service}.json`);
-    try {
-      writeFileSync(path, JSON.stringify(this, null, 2));
-    } catch (e: unknown) {
-      console.log(
-        `[task] ${this.service}: trajectory cache ${path} cannot be written: ${String(e)}`,
-      );
-    }
-  }
-
-  static invalidate(service: string): void {
-    const path = join(cacheDir(), `${service}.json`);
-    try {
-      unlinkSync(path);
-    } catch (e: unknown) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.log(
-          `[task] ${service}: stale trajectory cache ${path} cannot be removed: ${String(e)}`,
-        );
-      }
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// FetchAccountValue
-// ---------------------------------------------------------------------------
 
 export interface FetchAccountValueConfig {
   service: string;
   url: string;
   what: string;
   secretService: WelesServiceSecret;
-  osTarget?: string;
+  /** The operating system the browser presents. */
+  osTarget: string;
+  /** The directory learned routes are kept in. */
+  trajectoryCacheDir: string;
+  /** The proxy the browser goes out through; absent means a direct connection. */
+  proxy?: AsyncNewBrowserOptions['proxy'];
+}
+
+type StatedField =
+  | 'service'
+  | 'url'
+  | 'what'
+  | 'osTarget'
+  | 'trajectoryCacheDir';
+
+function stated(config: FetchAccountValueConfig, name: StatedField): string {
+  const value = config[name];
+  if (typeof value !== 'string' || !value.trim())
+    throw new Error(
+      `FetchAccountValue needs ${name}: it is stated by the caller, never assumed`,
+    );
+  return value;
+}
+
+/** A number shown on the page, read from the element's own text. */
+function shownNumber(text: string): number | null {
+  const digits = text.replace(/[^\d.-]/g, '');
+  if (!digits) return null;
+  const value = Number.parseFloat(digits);
+  if (!Number.isFinite(value)) return null;
+  return value;
+}
+
+/** A selector the model named, without the quotes it may wrap it in. */
+function namedSelector(answer: string | null): string | null {
+  if (answer === null) return null;
+  const selector = answer.trim().replace(/^[`'"]+|[`'"]+$/g, '');
+  if (!selector) return null;
+  return selector;
 }
 
 export class FetchAccountValue {
@@ -108,17 +75,21 @@ export class FetchAccountValue {
   what: string;
   secretService: WelesServiceSecret;
   osTarget: string;
+  trajectoryCacheDir: string;
+  proxy: AsyncNewBrowserOptions['proxy'];
 
   constructor(config: FetchAccountValueConfig) {
-    this.service = config.service;
-    this.url = config.url;
-    this.what = config.what;
+    this.service = stated(config, 'service');
+    this.url = stated(config, 'url');
+    this.what = stated(config, 'what');
+    this.osTarget = stated(config, 'osTarget');
+    this.trajectoryCacheDir = stated(config, 'trajectoryCacheDir');
     this.secretService = config.secretService;
-    this.osTarget = config.osTarget ?? 'macos';
+    this.proxy = config.proxy;
   }
 
   async run(): Promise<number | null> {
-    const traj = Trajectory.load(this.service);
+    const traj = Trajectory.load(this.trajectoryCacheDir, this.service);
     if (traj) {
       const replayValue = await this._replayTrajectory(traj);
       if (replayValue !== null) {
@@ -127,82 +98,76 @@ export class FetchAccountValue {
         );
         traj.lastValue = replayValue;
         traj.lastSuccess = new Date().toISOString();
-        traj.save();
+        traj.save(this.trajectoryCacheDir);
         return replayValue;
       }
       console.log(`[task] ${this.service}: cache replay missed, invalidating`);
-      Trajectory.invalidate(this.service);
+      Trajectory.invalidate(this.trajectoryCacheDir, this.service);
     }
 
-    const bal = await this._attemptWithExistingSession();
-    if (bal !== null) return bal;
+    const value = await this._attemptWithExistingSession();
+    if (value !== null) return value;
     console.log(
-      `[task] ${this.service}: first attempt returned null, clearing cookies`,
+      `[task] ${this.service}: first attempt found no value, clearing the saved session`,
     );
-    this._clearCookies();
+    new SessionStore().saveCookies(this.service, []);
     return this._attemptWithExistingSession();
   }
 
+  private async _openPage(): Promise<Page> {
+    const { AsyncNewBrowser } = await import('../../async_api.js');
+    const context = await AsyncNewBrowser({
+      os: this.osTarget,
+      browser: 'chromium',
+      headless: false,
+      proxy: this.proxy,
+    });
+    await new SessionStore().injectPlaywright(context, this.service);
+    const [opened] = context.pages();
+    if (opened) return opened;
+    return context.newPage();
+  }
+
+  private async _closePage(page: Page): Promise<void> {
+    await page
+      .context()
+      .close()
+      .catch((cause: unknown) => {
+        console.log(
+          `[task] ${this.service}: browser session close failed: ${String(cause)}`,
+        );
+      });
+  }
+
   private async _replayTrajectory(traj: Trajectory): Promise<number | null> {
-    const cookies = this._loadCookies();
-    const page = await openSession(this.osTarget);
+    const page = await this._openPage();
     try {
-      if (cookies) await page.context().addCookies(cookies);
       await page.goto(traj.finalUrl, { waitUntil: 'domcontentloaded' });
       await waitCloudflare(page);
-      if (
-        page.url().toLowerCase().includes('login') ||
-        page.url().toLowerCase().includes('signin')
-      )
-        return null;
-      if (!traj.selector) return null;
-      const el = await page.querySelector(traj.selector);
-      if (!el) return null;
-      let text = ((await el.innerText()) ?? '').trim();
-      if (traj.regex) {
-        const m = text.match(new RegExp(traj.regex));
-        if (m) text = m[1] ?? m[0];
-      }
-      const cleaned = text.replace(/[^\d.\-]/g, '');
-      if (!cleaned) return null;
-      return parseFloat(cleaned);
-    } catch (e: any) {
-      console.log(`[task] ${this.service}: replay error: ${e.message}`);
-      return null;
+      if (await this._isLoginPage(page)) return null;
+      const element = await page.$(traj.selector);
+      if (!element) return null;
+      return shownNumber((await element.innerText()).trim());
     } finally {
-      await closeSession(page);
+      await this._closePage(page);
     }
   }
 
   private async _attemptWithExistingSession(): Promise<number | null> {
-    const cookies = this._loadCookies();
-    const page = await openSession(this.osTarget);
+    const page = await this._openPage();
     try {
-      if (cookies) await page.context().addCookies(cookies);
       await page.goto(this.url, { waitUntil: 'domcontentloaded' });
       await waitCloudflare(page);
-      if (await this._isLoginPage(page)) {
-        if (!(await this._loginInline(page))) return null;
-      }
-      const value = await this._extractValue(page);
+      if (await this._isLoginPage(page)) await this._loginInline(page);
+      const value = await discover.findNumber(page, this.what);
       if (value !== null) await this._learnTrajectory(page, value);
       return value;
-    } catch (e: any) {
-      console.log(`[task] ${this.service}: attempt error: ${e.message}`);
-      return null;
     } finally {
-      await closeSession(page);
+      await this._closePage(page);
     }
   }
 
-  private async _isLoginPage(page: any): Promise<boolean> {
-    const url = page.url().toLowerCase();
-    if (
-      url.includes('login') ||
-      url.includes('signin') ||
-      url.includes('sign-in')
-    )
-      return true;
+  private async _isLoginPage(page: Page): Promise<boolean> {
     return vision.boolean(
       page,
       'Is this page showing a login form with username and ' +
@@ -211,140 +176,61 @@ export class FetchAccountValue {
     );
   }
 
-  private async _loginInline(page: any): Promise<boolean> {
-    const username =
-      readOptionalWelesServiceSecret(this.secretService, 'username') ?? '';
-    const password =
-      readOptionalWelesServiceSecret(this.secretService, 'password') ?? '';
+  private async _loginInline(page: Page): Promise<void> {
+    const username = readOptionalWelesServiceSecret(
+      this.secretService,
+      'username',
+    );
+    const password = readOptionalWelesServiceSecret(
+      this.secretService,
+      'password',
+    );
     if (!username || !password) {
-      console.log(
-        `[task] ${this.service}: exact scoped login grant unavailable`,
+      const missing = [
+        username ? [] : ['username'],
+        password ? [] : ['password'],
+      ].flat();
+      throw new Error(
+        `${this.service} shows a login page and ${this.secretService} grants no ${missing.join(' or ')}`,
       );
-      return false;
     }
-    const ok = await login.run(page, username, password);
-    if (!ok) return false;
-    this._saveCookies(await page.context().cookies());
-    return true;
+    if (!(await login.run(page, username, password)))
+      throw new Error(
+        `${this.service}: login with ${this.secretService} did not reach the account at ${page.url()}`,
+      );
+    await new SessionStore().capturePlaywright(page.context(), this.service);
   }
 
-  private async _learnTrajectory(page: any, value: number): Promise<void> {
+  // The value is already read; a route that cannot be learned only costs the
+  // next run a rediscovery, so it is said and the value is still returned.
+  private async _learnTrajectory(page: Page, value: number): Promise<void> {
     try {
-      const selAnswer = await vision.text(
-        page,
-        `a CSS selector that uniquely identifies the element containing ${this.what}`,
+      const selector = namedSelector(
+        await vision.text(
+          page,
+          `a CSS selector that uniquely identifies the element containing ${this.what}`,
+        ),
       );
-      const selector = (selAnswer ?? '').trim().replace(/^[`'"]+|[`'"]+$/g, '');
-      if (selector && selector.length < 200) {
-        new Trajectory({
-          service: this.service,
-          finalUrl: page.url(),
-          selector,
-          regex: '\\$?\\s*([0-9]+(?:\\.[0-9]+)?)',
-          lastSuccess: new Date().toISOString(),
-          lastValue: value,
-        }).save();
+      if (selector === null) {
         console.log(
-          `[task] ${this.service}: trajectory cached (url=${page.url()}, selector=${JSON.stringify(selector)})`,
+          `[task] ${this.service}: no selector named for ${this.what} at ${page.url()}; route not learned`,
         );
+        return;
       }
-    } catch (e: any) {
+      new Trajectory({
+        service: this.service,
+        finalUrl: page.url(),
+        selector,
+        lastSuccess: new Date().toISOString(),
+        lastValue: value,
+      }).save(this.trajectoryCacheDir);
       console.log(
-        `[task] ${this.service}: could not learn trajectory: ${e.message}`,
+        `[task] ${this.service}: trajectory cached (url=${page.url()}, selector=${JSON.stringify(selector)})`,
+      );
+    } catch (cause) {
+      console.log(
+        `[task] ${this.service}: could not learn trajectory: ${String(cause)}`,
       );
     }
-  }
-
-  private async _extractValue(page: any): Promise<number | null> {
-    return discover.findNumber(page, this.what);
-  }
-
-  private _loadCookies(): any[] | null {
-    try {
-      return new SessionStore().loadCookies(this.service);
-    } catch (e: unknown) {
-      console.log(
-        `[task] ${this.service}: saved session cannot be loaded, logging in afresh: ${String(e)}`,
-      );
-      return null;
-    }
-  }
-
-  private _saveCookies(cookies: any[]): void {
-    try {
-      new SessionStore().saveCookies(this.service, cookies);
-    } catch (e: unknown) {
-      console.log(
-        `[task] ${this.service}: session cannot be saved, the next run logs in again: ${String(e)}`,
-      );
-    }
-  }
-
-  private _clearCookies(): void {
-    try {
-      new SessionStore().saveCookies(this.service, []);
-    } catch (e: unknown) {
-      console.log(
-        `[task] ${this.service}: rejected session cannot be cleared: ${String(e)}`,
-      );
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Session management — uses AsyncNewBrowser (same as Python _open_session)
-// ---------------------------------------------------------------------------
-
-function _getProxy():
-  | { server: string; username: string; password: string }
-  | undefined {
-  const providers: Array<
-    [WelesServiceSecret, string, (u: string, p: string) => [string, string]]
-  > = [
-    [
-      'oxylabsResidential',
-      'http://pr.oxylabs.io:7777',
-      (u, p) => [`customer-${u}-cc-US`, p],
-    ],
-    [
-      'pingproxiesProxy',
-      'http://residential.pingproxies.com:8000',
-      (u, p) => [`${u}_c_us`, p],
-    ],
-    [
-      'packetstreamProxy',
-      'http://proxy.packetstream.io:31112',
-      (u, p) => [u, `${p}_country-US`],
-    ],
-  ];
-  for (const [service, server, build] of providers) {
-    const username = readOptionalWelesServiceSecret(service, 'username');
-    const password = readOptionalWelesServiceSecret(service, 'password');
-    if (username && password) {
-      const [user, pass] = build(username, password);
-      return { server, username: user, password: pass };
-    }
-  }
-  return undefined;
-}
-
-async function openSession(osTarget: string): Promise<any> {
-  const { AsyncNewBrowser } = await import('../../async_api.js');
-  const proxy = _getProxy();
-  const context = await AsyncNewBrowser({
-    os: osTarget,
-    browser: 'chromium',
-    headless: false,
-    proxy,
-  });
-  const page = context.pages()[0] ?? (await context.newPage());
-  return page;
-}
-
-async function closeSession(page: any): Promise<void> {
-  try {
-    await page.context().close();
-  } catch {
-    /* skip */
   }
 }

@@ -8,7 +8,8 @@ export type { ToolCall, LoopResult } from './loop.js';
 export { dispatch } from './tools.js';
 
 // Declarative task API
-export { FetchAccountValue, Trajectory } from './flows/tasks.js';
+export { FetchAccountValue } from './flows/tasks.js';
+export { Trajectory } from './flows/trajectory-cache.js';
 
 // Vision extractors
 export * as vision from './flows/vision.js';
