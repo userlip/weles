@@ -39,7 +39,10 @@ export function accountItemFor(platform, username) {
 /** Merge the patches into item `id`'s context and fields; either may be absent. */
 export function updateWelesRecord(id, contextPatch, fieldPatch) {
   const document = readWelesRecord(id);
-  document.context = { ...objectMember(id, document, 'context'), ...contextPatch };
+  document.context = {
+    ...objectMember(id, document, 'context'),
+    ...contextPatch,
+  };
   document.fields = { ...objectMember(id, document, 'fields'), ...fieldPatch };
   run(['set-json', requireItem(id)], JSON.stringify(document));
   return true;
@@ -62,16 +65,24 @@ function recordPayload(id, document, fieldName) {
   return { ...objectMember(id, document, 'context') };
 }
 
+/** The character stored as item `characterId`, carrying its id. */
+export function characterRecord(characterId) {
+  return {
+    id: characterId,
+    ...recordPayload(
+      characterId,
+      readWelesRecord(characterId),
+      'character_json',
+    ),
+  };
+}
+
 export function accountCharacter(account) {
   const embedded = account?.metadata?.character;
   if (embedded && typeof embedded === 'object') return embedded;
   const characterId = account?.metadata?.character_id;
   if (typeof characterId !== 'string' || !characterId) return null;
-  const document = readWelesRecord(characterId);
-  return {
-    id: characterId,
-    ...recordPayload(characterId, document, 'character_json'),
-  };
+  return characterRecord(characterId);
 }
 
 export function findProduct(productId) {
