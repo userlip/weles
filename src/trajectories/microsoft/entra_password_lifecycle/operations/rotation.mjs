@@ -13,7 +13,11 @@
 // entry points.
 
 import { commitPassword, outcome } from '../answer_and_custody.mjs';
-import { commitAfterFreshLogin, signIn, skarbiecCommit } from '../authorized_session.mjs';
+import {
+  commitAfterFreshLogin,
+  signIn,
+  skarbiecCommit,
+} from '../authorized_session.mjs';
 import {
   changeEntraPassword,
   providerEffectAfterRollback,
@@ -71,34 +75,31 @@ export async function rotateDirectoryPassword(
     currentPassword,
     nextPassword,
   );
-  evidence.push(`password_change:${changed}`);
-  // The change answers that sent nothing to the directory, each with what it
-  // means for the run.
-  const notSubmitted = {
-    challenged: {
+  evidence.push(`password_change:${changed.status}`);
+  if (changed.status === 'challenged') {
+    return outcome(contract, {
+      status: 'needs_human_approval',
       code: 'ENTRA_PASSWORD_CHANGE_REQUIRES_HUMAN_VERIFICATION',
       phase: 'identity_verification',
       retryable: false,
+      providerEffect: 'none',
+      rollbackStatus: 'none',
       reason:
         'the Entra password change surface asked for interactive identity verification',
-    },
-    unavailable: {
+    });
+  }
+  if (changed.status === 'unavailable') {
+    return outcome(contract, {
+      status: 'needs_human_approval',
       code: 'ENTRA_PASSWORD_CHANGE_SURFACE_UNAVAILABLE',
       phase: 'password_change',
       retryable: true,
-      reason:
-        'the Entra password change surface did not present the current and new password fields',
-    },
-  };
-  if (Object.hasOwn(notSubmitted, changed)) {
-    return outcome(contract, {
-      status: 'needs_human_approval',
-      ...notSubmitted[changed],
       providerEffect: 'none',
       rollbackStatus: 'none',
+      reason: `the Entra password change surface could not be used: ${changed.reason}`,
     });
   }
-  if (changed === 'rejected') {
+  if (changed.status === 'rejected') {
     return outcome(contract, {
       status: 'operation_failed',
       code: 'ENTRA_PASSWORD_CHANGE_REJECTED',
@@ -109,7 +110,7 @@ export async function rotateDirectoryPassword(
       reason: 'the Entra directory rejected the password change',
     });
   }
-  if (changed === 'ambiguous') {
+  if (changed.status === 'ambiguous') {
     const rollbackStatus = await rollbackEntraPassword(
       session,
       contract,
@@ -125,7 +126,7 @@ export async function rotateDirectoryPassword(
       retryable: rollbackStatus === 'completed',
       providerEffect: providerEffectAfterRollback(rollbackStatus),
       rollbackStatus,
-      reason: 'the Entra password change outcome could not be confirmed',
+      reason: `the Entra password change outcome could not be confirmed: ${changed.reason}`,
     });
   }
   const changedAt = new Date().toISOString();
@@ -197,7 +198,12 @@ export async function rotateDirectoryPassword(
     // The directory refused the rollback and still holds the value this run
     // proved by a fresh login, so the only consistent recovery is to land that
     // value in Skarbiec.
-    const secondFailure = await skarbiecCommit(account, contract, nextPassword, 'rotate');
+    const secondFailure = await skarbiecCommit(
+      account,
+      contract,
+      nextPassword,
+      'rotate',
+    );
     if (secondFailure) {
       return outcome(contract, {
         status: 'operation_failed',

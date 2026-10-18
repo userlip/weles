@@ -50,7 +50,7 @@ export async function resetDirectoryPassword(session, account, contract, plan) {
   }
   evidence.push('identity_verification:upn_domain_tenant_confirmed');
   const surface = await openSelfServiceReset(session, contract);
-  if (surface === 'identity_verification_required') {
+  if (surface.status === 'identity_verification_required') {
     return outcome(contract, {
       status: 'needs_human_approval',
       code: 'ENTRA_RESET_REQUIRES_HUMAN_VERIFICATION',
@@ -62,7 +62,7 @@ export async function resetDirectoryPassword(session, account, contract, plan) {
         'the Entra self-service reset requires interactive identity verification',
     });
   }
-  if (surface === 'not_eligible') {
+  if (surface.status === 'not_eligible') {
     return outcome(contract, {
       status: 'operation_failed',
       code: 'ENTRA_RESET_NOT_ELIGIBLE',
@@ -74,7 +74,7 @@ export async function resetDirectoryPassword(session, account, contract, plan) {
         'the Entra directory refused a self-service reset for this account',
     });
   }
-  if (surface !== 'password_form') {
+  if (surface.status !== 'password_form') {
     return outcome(contract, {
       status: 'operation_failed',
       code: 'ENTRA_RESET_SURFACE_UNAVAILABLE',
@@ -82,29 +82,45 @@ export async function resetDirectoryPassword(session, account, contract, plan) {
       retryable: true,
       providerEffect: 'none',
       rollbackStatus: 'none',
-      reason:
-        'the Entra self-service reset did not present a new-password form',
+      reason: `the Entra self-service reset did not present a new-password form: ${surface.reason}`,
     });
   }
   const submitted = await submitResetPasswordForm(session, nextPassword);
-  evidence.push(`password_change:${submitted}`);
-  if (submitted !== 'changed') {
-    // A rejected reset never reached the directory; anything else leaves the
-    // reset password unproven, and reset has no known value to roll back to.
+  evidence.push(`password_change:${submitted.status}`);
+  if (submitted.status === 'unavailable') {
+    // Nothing was submitted, so the directory still holds its password.
     return outcome(contract, {
       status: 'operation_failed',
-      code:
-        submitted === 'rejected'
-          ? 'ENTRA_RESET_REJECTED'
-          : 'ENTRA_RESET_AMBIGUOUS',
+      code: 'ENTRA_RESET_SURFACE_UNAVAILABLE',
       phase: 'password_change',
-      retryable: submitted === 'rejected',
-      providerEffect: submitted === 'rejected' ? 'none' : 'unknown',
+      retryable: true,
+      providerEffect: 'none',
       rollbackStatus: 'none',
-      reason:
-        submitted === 'rejected'
-          ? 'the Entra directory rejected the reset password'
-          : 'the Entra reset outcome is ambiguous and the previous password is unknown',
+      reason: `the Entra reset form could not be submitted: ${submitted.reason}`,
+    });
+  }
+  if (submitted.status === 'rejected') {
+    return outcome(contract, {
+      status: 'operation_failed',
+      code: 'ENTRA_RESET_REJECTED',
+      phase: 'password_change',
+      retryable: true,
+      providerEffect: 'none',
+      rollbackStatus: 'none',
+      reason: 'the Entra directory rejected the reset password',
+    });
+  }
+  if (submitted.status !== 'changed') {
+    // An ambiguous reset leaves the reset password unproven, and reset has no
+    // known value to roll back to.
+    return outcome(contract, {
+      status: 'operation_failed',
+      code: 'ENTRA_RESET_AMBIGUOUS',
+      phase: 'password_change',
+      retryable: false,
+      providerEffect: 'unknown',
+      rollbackStatus: 'none',
+      reason: `the Entra reset outcome is ambiguous and the previous password is unknown: ${submitted.reason}`,
     });
   }
   const resetAt = new Date().toISOString();
