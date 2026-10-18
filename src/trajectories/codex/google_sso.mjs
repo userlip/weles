@@ -1,9 +1,9 @@
 // Google-SSO sub-flow for the OpenAI/Codex device-auth login trajectory.
 //
-// ROOT CAUSE: auth.openai.com's "Continue with Google" is a Google Identity
-// Services (GIS) button. Clicking it with no Google session logs "Provider's
-// accounts list is empty." and does nothing. So we establish a Google session
-// at accounts.google.com FIRST, then reload the OpenAI device-auth URL — GIS
+// auth.openai.com's "Continue with Google" is a Google Identity Services (GIS)
+// button. Clicked with no Google session, it logs "Provider's accounts list is
+// empty." and does nothing. So a Google session is established at
+// accounts.google.com first, then the OpenAI device-auth URL is loaded — GIS
 // then has an account and the handoff completes.
 //
 // This file holds that handoff. The controls it clicks, the Google credential
@@ -58,9 +58,9 @@ export async function doGoogleSso({
   await gotoAuthorize(page, authorizeUrl, mark);
 
   mark('gis_continue');
-  // GIS handoff is non-deterministic (popup | in-page consent |
-  // Loading | blank). Bounded state machine: poll for a terminal
-  // marker; if none, reload authorizeUrl and retry.
+  // The GIS handoff ends in a popup, an in-page consent, a loading page or a
+  // blank one. Each way in below reads the page until it reaches a terminal
+  // state or stops changing, then the authorize URL is loaded for the next.
   const popupPages = new Set();
   let inviteTried = false;
   const onPopup = (p) => {
@@ -69,19 +69,24 @@ export async function doGoogleSso({
     p.on('popup', onPopup);
   };
   page.on('popup', onPopup);
-  // Where the handoff actually went. The failure below used to carry only the
-  // page it ended on, and an operator reading "no consent/code after 4
-  // attempts" at auth.openai.com/log-in could not tell a Google button that
-  // was never found from one that was clicked and did nothing, nor see the
-  // pages walked in between. Hosts and paths only — no query strings, which
-  // is where OAuth puts codes and tokens.
+  // Where the handoff went: each host and path walked, so a failure tells a
+  // Google button that was never found from one that was clicked and did
+  // nothing. Hosts and paths only — no query strings, which is where OAuth
+  // puts codes and tokens.
   const trail = [];
   let lastStep;
   const step = (label) => {
     if (label !== lastStep) trail.push(label);
     lastStep = label;
   };
-  const chooser = googleChooser({ login, mark, humanFill, humanClickLocator, humanType, step });
+  const chooser = googleChooser({
+    login,
+    mark,
+    humanFill,
+    humanClickLocator,
+    humanType,
+    step,
+  });
   const clickTagged = chooser.clickTagged;
   const advanceGoogleChooser = chooser.advance;
   try {
@@ -101,7 +106,7 @@ export async function doGoogleSso({
           )
           .filter({ visible: true })
           .first();
-        if ((await emailField.count()) > 0 && (await emailField.isVisible())) {
+        if (await emailField.isVisible()) {
           mark('openai_email_first');
           await fillAndVerify(
             page,
@@ -143,7 +148,8 @@ export async function doGoogleSso({
           }
           if (await advanceGoogleChooser(popupPage)) popupActed = true;
         }
-        // Google asks for consent on its own OAuth consent routes.
+        // Google asks for consent on its own OAuth consent routes. A read the
+        // redirect chain replaced is read again once the page settles.
         const st = await navEval(
           page,
           (googleHost) => ({
@@ -156,9 +162,14 @@ export async function doGoogleSso({
                 location.pathname.includes(route),
               ),
           }),
-          { host: '', pathname: '', href: '', consent: false },
+          null,
           GOOGLE_ACCOUNTS_HOST,
         );
+        if (st === null) {
+          step('document-replaced');
+          await pageSettled(page);
+          continue;
+        }
         step(`${st.host}${st.pathname}`);
         if (
           login.code &&
@@ -220,11 +231,12 @@ export async function doGoogleSso({
           );
           // Consent granted: Google redirects to auth.openai.com, which then
           // redirects to platform.openai.com/chatgpt.com. Wait for any OpenAI
-          // terminal host; do NOT reload authorizeUrl (it would re-trigger the
-          // consent flow). Single bounded wait.
-          const landed = await urlMatching(page, (u) =>
-            isTerminalHost(new URL(u).host, ''),
-          );
+          // terminal URL; do NOT reload authorizeUrl (it would re-trigger the
+          // consent flow).
+          const landed = await urlMatching(page, (u) => {
+            const url = new URL(u);
+            return isTerminalHost(url.host, url.href);
+          });
           mark('openai_callback');
           console.log(`[google_sso] consent landed on ${landed}`);
           return page;
@@ -238,9 +250,9 @@ export async function doGoogleSso({
         lastHref = st.href;
         await pageSettled(page); // allow-raw-playwright: terminal-state poll
       }
-      const where = await navEval(page, () => location.href, '?');
+      const where = await navEval(page, () => location.href, null);
       console.log(
-        `[google_sso] no terminal state after ${strategy} at ${where}; reloading authorizeUrl`,
+        `[google_sso] no terminal state after ${strategy} at ${where === null ? 'a page a navigation replaced while it was read' : where}; reloading authorizeUrl`,
       );
       await gotoAuthorize(page, authorizeUrl, mark);
     }
@@ -250,11 +262,14 @@ export async function doGoogleSso({
         url: location.href,
         body: document.body.innerText.replace(/\s+/g, ' '),
       }),
-      { url: '?', body: 'context destroyed' },
+      null,
     );
-    d.trail = trail;
+    const pageState =
+      d === null
+        ? 'a navigation replaced the page while it was read'
+        : JSON.stringify(d);
     throw new Error(
-      `gis_continue: no consent/code after the GIS button and email-first ways in diag=${JSON.stringify(d)}`,
+      `gis_continue: no consent/code after the GIS button and email-first ways in; page ${pageState}; trail ${JSON.stringify(trail)}`,
     );
   } finally {
     page.off('popup', onPopup);
