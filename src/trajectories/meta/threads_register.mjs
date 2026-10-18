@@ -1,4 +1,5 @@
 import { WSession } from '../../../dist/session/wsession.js';
+import { exitStatusFor } from '../../../dist/cli/usage.js';
 import { injectProviderCookies } from '../../../dist/platforms/_shared/cross_platform_oauth.js';
 import { listAccounts } from '../_shared/skarbiec/accounts.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
@@ -9,32 +10,33 @@ import { statedProxy } from '../_shared/inputs/stated.mjs';
 // The control that takes an onboarding step forward without changing it.
 const NEXT_STEP = 'the button that skips or continues this onboarding step';
 
-// An active Instagram account whose record carries a session (its cookies).
+// An active Instagram account whose record carries Instagram's session
+// cookie, the one cookie that signs the browser in.
 function findUsableInstagramAccount() {
-  return (
-    listAccounts('instagram').find(
-      (account) =>
-        Array.isArray(account.metadata?.cookies) &&
-        account.metadata.cookies.length >= 2,
-    ) ?? null
+  return listAccounts('instagram').find(
+    (account) =>
+      Array.isArray(account.metadata?.cookies) &&
+      account.metadata.cookies.some((cookie) => cookie.name === 'sessionid'),
   );
 }
 
-const URL = 'https://www.threads.net/login';
+const LOGIN_URL = 'https://www.threads.net/login';
 const proxy = statedProxy('the Threads signup');
 
 function pathOf(page) {
-  return new globalThis.URL(page.url()).pathname;
+  return new URL(page.url()).pathname;
 }
 
 function onInstagram(page) {
-  return new globalThis.URL(page.url()).hostname.endsWith('instagram.com');
+  return new URL(page.url()).hostname.endsWith('instagram.com');
 }
 
-function onThreadsFeed(page) {
-  const url = new globalThis.URL(page.url());
+// The Threads feed is a page on the host Threads served its login from
+// (threadsHost, read after the login page settled), outside the login route.
+function onThreadsFeed(page, threadsHost) {
+  const url = new URL(page.url());
   return (
-    /(^|\.)threads\.(net|com)$/.test(url.hostname) &&
+    url.hostname === threadsHost &&
     !url.pathname.startsWith('/login') &&
     (url.pathname === '/' || url.pathname.startsWith('/@'))
   );
@@ -77,8 +79,9 @@ async function signup(s) {
   });
   console.log(`[threads] injected ${injected} instagram+threads cookies`);
 
-  await s.goto(URL);
+  await s.goto(LOGIN_URL);
   await pageSettled(page);
+  const threadsHost = new URL(page.url()).hostname;
 
   // Cookie consent: one click on the consent control the page offers.
   if (await clickOffered(page, 'the button that accepts cookies')) {
@@ -125,7 +128,7 @@ async function signup(s) {
       throw new Error(
         `instagram_account_suspended_or_challenged: ${igUsername}`,
       );
-    if (onThreadsFeed(page)) {
+    if (onThreadsFeed(page, threadsHost)) {
       console.log('[threads] reached main feed');
       break;
     }
@@ -169,14 +172,12 @@ async function signup(s) {
     );
   }
 
-  // Success is the Threads session cookie, not what the page says; the
-  // device and CSRF cookies are set for signed-out visitors too.
+  // Success is the Threads session cookie the browser would send to the host
+  // Threads served, not what the page says; the device and CSRF cookies are
+  // set for signed-out visitors too.
   const cookies = await s.ctx.cookies();
-  const threadsAuth = cookies.filter(
-    (c) =>
-      (c.domain?.includes('threads.net') ||
-        c.domain?.includes('threads.com')) &&
-      c.name === 'sessionid',
+  const threadsAuth = (await s.ctx.cookies(`https://${threadsHost}/`)).filter(
+    (c) => c.name === 'sessionid',
   );
   if (!threadsAuth.length) {
     console.log(
@@ -203,7 +204,7 @@ try {
   console.log(`PASS: ${username}`);
 } catch (e) {
   console.log(`FAIL: ${e.message}`);
-  process.exitCode = 1;
+  process.exitCode = exitStatusFor(e);
 } finally {
   await s.close();
 }
