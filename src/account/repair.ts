@@ -33,7 +33,9 @@ function writeAccount(
     );
   }
   if (!written) {
-    throw new Error(`${subject} was not written: Skarbiec holds no account record ${acct.id}`);
+    throw new Error(
+      `${subject} was not written: Skarbiec holds no account record ${acct.id}`,
+    );
   }
 }
 
