@@ -43,6 +43,21 @@ published, so it is repeated on stderr and the read continues.
 as the declaration's `candidate`, and refuses a `package.json` that still names
 the served release.
 
+Whether a commit's three documents agree is read without a build:
+
+```
+node scripts/release/version/disagreements.mjs --revision <commit>
+```
+
+It reads `released-surface.json`, `release/version-change.json` and
+`package.json` as Git holds them at that commit and prints one line per
+disagreement, nothing when they agree: `released-surface.json names <version>,
+release/version-change.json's current is <version>` and `package.json names
+<version>, release/version-change.json's candidate is <version>`. A missing
+`--revision`, a document Git cannot show (`git show <commit>:<path> failed:
+<git's words>`) and a document that names no version (`<path> at <commit>
+names no <field>`) are refused, exit 1.
+
 `tests/release/published-baseline.mjs` runs both scripts against the real
 Stado in a scratch copy of the checkout under `build/real-tests/`, and checks
 that the written baseline names the served version and carries the surface of
