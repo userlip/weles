@@ -12,19 +12,23 @@
  *    identity, the exit-IP probe, the realized provenance write and the
  *    network instrumentation.
  *
- * Extracted from WSession.start to keep the class file under its 300-line cap.
  * The private constructor stays in the class, so start() is the only caller:
  * open, construct, adopt — the same sequence, the same order of effects.
  */
 
-import { type BrowserContext, type Page, chromium } from 'playwright';
+import type { BrowserContext, Page } from 'playwright';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import {
   AsyncNewBrowser,
   type AsyncNewBrowserOptions,
 } from '../../async_api.js';
-import { type Persona, generatePersona } from '../../browser/persona.js';
-import { Capture } from '../../capture/capture.js';
+import { type Persona, dressPersona } from '../../browser/persona.js';
+import {
+  type PersonaDevice,
+  sampleDevice,
+} from '../../browser/persona/device.js';
+import type { Capture } from '../../capture/capture.js';
 import { installBrowserEvidencePolicy } from '../../agent/browser-evidence-policy.js';
 import { resolveProxy } from '../../proxy/config.js';
 import { requestsNoProxy } from '../../proxy/resolve/url_form.js';
@@ -32,17 +36,12 @@ import { seedHumanTiming } from '../../utils/motion/timing.js';
 import type { WSession } from '../wsession.js';
 import { SessionStore } from '../store.js';
 import { customBrowserSearchHint, findCustomBrowser } from '../find_browser.js';
-import {
-  loadOperatorCdpConfig,
-  type OperatorCdpConfig,
-} from '../placement/operator-cdp.js';
+import { loadOperatorCdpConfig } from '../placement/operator-cdp.js';
 import { enforceWelesServicePlacement } from '../placement/service-placement.js';
-import { runRecordingsDir, runRecordingsRoot } from '../run-recordings.js';
 import { isSkarbiecCredentialTask } from '../wsession-helpers/credential/task.js';
 import { startInstrumentation } from '../wsession-helpers/net_record.js';
 import {
   accountProfileDirectory,
-  countryHintFromProxyRequest,
   redactProxyForLog,
   type SessionProxy,
   type WSessionOptions,
@@ -52,10 +51,20 @@ import {
   writePrelaunchSessionMeta,
   writeRealizedSessionMeta,
 } from './run-provenance.js';
+import {
+  adoptOperatorBrowser,
+  captureFor,
+  type OperatorSession,
+} from './browser-launch/attach.js';
+import { probeExitIp } from './browser-launch/exit-probe.js';
+import { recordingsDir } from '../run-recordings.js';
 
-function recordingsDir(label?: string): string {
-  return label ? runRecordingsDir(label) : runRecordingsRoot();
-}
+/**
+ * The label of a session its caller did not label. Every reader of a
+ * session's label takes it as no label: the run's shared recordings root, no
+ * saved cookies, no SSLKEYLOGFILE of its own.
+ */
+const UNLABELLED = '';
 
 // async_api decorates the context it returns with the browser release it used
 // and the fingerprint the page actually presents.
@@ -71,15 +80,6 @@ interface AdoptingSession {
   _secureCredentialTask: boolean;
 }
 
-/** A context adopted from the operator's own browser over the devtools port. */
-export interface OperatorSession {
-  kind: 'operator-cdp';
-  ctx: BrowserContext;
-  page: Page;
-  capture: Capture;
-  label: string;
-}
-
 /** A browser this run launched, with everything the session records about it. */
 export interface LaunchedSession {
   kind: 'launched';
@@ -89,7 +89,7 @@ export interface LaunchedSession {
   label: string;
   persona: Persona;
   proxy: SessionProxy | undefined;
-  proxyRequest: string | null;
+  proxyRequest: string | undefined;
   platform: string | undefined;
   timingSeed: number;
 }
@@ -100,7 +100,7 @@ export async function openSessionBrowser(
   opts: WSessionOptions,
 ): Promise<SessionLaunch> {
   enforceWelesServicePlacement('WSession.start');
-  const label = opts.label ?? '';
+  const label = opts.label ?? UNLABELLED;
   const secureCredentialTask = isSkarbiecCredentialTask();
   // G9: one per-run human-timing seed, generated at session start and routed
   // into the shared seeded PRNG so every human mouse/typing jitter draw this
@@ -108,7 +108,7 @@ export async function openSessionBrowser(
   // seed keep drawing from Math.random, so this only makes behavior
   // reproducible — it does not change the statistical distribution. Recorded
   // into session_meta as a required non-null number (result.run.timing_seed).
-  const timingSeed = Math.floor(Math.random() * 0xffffffff) >>> 0;
+  const timingSeed = randomBytes(Uint32Array.BYTES_PER_ELEMENT).readUInt32BE();
   seedHumanTiming(timingSeed);
   const operatorCdp = opts.operatorCdp ? loadOperatorCdpConfig() : null;
   console.log(
@@ -119,36 +119,43 @@ export async function openSessionBrowser(
   const proxyRequested = !!opts.proxy && !requestsNoProxy(String(opts.proxy));
   // WELES_FORCE_BROWSER pins the persona's browser engine globally (e.g. on a
   // host that only has the patched Chromium installed, not Firefox). Explicit
-  // opts.browser still wins; unset rolls naturally (60/40 chromium/firefox).
-  const persona: Persona =
+  // opts.browser still wins; unset follows the fingerprint dataset's shares.
+  // The device is sampled before the proxy resolves, because the exit
+  // preflight presents it; its locale follows the exit the proxy reports.
+  const device: PersonaDevice =
     opts.persona ??
-    generatePersona({
-      country: countryHintFromProxyRequest(opts.proxy),
+    sampleDevice({
       os: opts.os as Persona['os'] | undefined,
       browser: (opts.browser ?? process.env.WELES_FORCE_BROWSER) as
         | Persona['browser']
         | undefined,
     });
   const proxy = proxyRequested
-    ? await resolveProxy(opts.proxy!, opts.targetHost, persona)
+    ? await resolveProxy(opts.proxy!, opts.targetHost, device)
     : undefined;
   // Pre-launch envelope; overwritten with the realized data after launch.
   writePrelaunchSessionMeta({
     label,
-    persona,
+    persona: device,
     proxy,
-    proxyRequested: opts.proxy ?? null,
+    proxyRequested: opts.proxy,
     timingSeed,
   });
   if (proxyRequested && !proxy) {
     throw new Error(
-      `proxy_unavailable: requested ${opts.proxy} for ${opts.targetHost ?? 'unknown target'}`,
+      `proxy_unavailable: requested ${opts.proxy} ${opts.targetHost ? `for ${opts.targetHost}` : 'with no target host'}`,
     );
   }
+  // The exit's observed country and timezone, else the country the proxy was
+  // resolved for; a run without a proxy states its country.
+  const persona: Persona =
+    opts.persona ??
+    dressPersona(device, {
+      country: proxy?.exit_reputation?.countryCode ?? proxy?.country,
+      timezone: proxy?.exit_reputation?.timezone,
+    });
   // WELES_PAGE_DIAGNOSTICS=0 force-disables in-page instrumentation (property-trap,
-  // input-recorder) as a clean-room control for signup A/B tests. (Tested on
-  // reddit: toggling it changed nothing — the verify-init gate is exit-IP
-  // reputation, not in-page instrumentation. Kept as a knob regardless.)
+  // input-recorder) as a clean-room control for signup A/B tests.
   const instrumentationDisabled =
     process.env.WELES_NO_INSTRUMENT === '1' ||
     process.env.WELES_BROWSER_EVIDENCE_POLICY === 'spis-browser-evidence.1';
@@ -181,10 +188,10 @@ export async function openSessionBrowser(
       'Explicit browser path overrides are retired; configure the exact Stado browser release version and SHA-256',
     );
   }
-  const cp = findCustomBrowser(bOpts.browser);
+  const cp = findCustomBrowser(persona.browser);
   if (!cp) {
     throw new Error(
-      `Verified ${bOpts.browser} release not found: ${customBrowserSearchHint(bOpts.browser)}`,
+      `Verified ${persona.browser} release not found: ${customBrowserSearchHint(persona.browser)}`,
     );
   }
   if (secureCredentialTask) {
@@ -198,7 +205,8 @@ export async function openSessionBrowser(
   }
   const ctx = await AsyncNewBrowser(bOpts);
   await installBrowserEvidencePolicy(ctx, label);
-  const page = ctx.pages()[0] || (await ctx.newPage());
+  const [opened] = ctx.pages();
+  const page = opened || (await ctx.newPage());
   const capture = captureFor(page, label);
   if (label && !instrumentationDisabled) {
     const s = new SessionStore();
@@ -211,8 +219,8 @@ export async function openSessionBrowser(
     capture,
     label,
     persona,
-    proxy: bOpts.proxy,
-    proxyRequest: opts.proxy ?? null,
+    proxy,
+    proxyRequest: opts.proxy,
     platform: opts.platform,
     timingSeed,
   };
@@ -227,15 +235,17 @@ export async function adoptLaunchedBrowser(
   const session = ws as unknown as AdoptingSession;
   ws.proxyConfig = launch.proxy;
   ws.personaConfig = launch.persona;
-  session._browserProvenance = realized._welesBrowserProvenance ?? null;
+  session._browserProvenance = realized._welesBrowserProvenance;
   // G17g: on a worker SIGTERM (graceful timeout), close the context so
   // Playwright seals the HAR + video before the process is hard-killed.
   process.once('SIGTERM', () => {
-    try {
-      void launch.ctx.close?.();
-    } catch {
-      /* noop */
-    }
+    launch.ctx
+      .close()
+      .catch((error: unknown) =>
+        console.error(
+          `[wsession] ${launch.label}: closing the browser on SIGTERM failed, so its HAR and video may be unsealed: ${error}`,
+        ),
+      );
   });
   if (launch.platform) {
     ws.identity = await ws.generateIdentity(launch.platform);
@@ -256,7 +266,7 @@ export async function adoptLaunchedBrowser(
     proxyRequested: launch.proxyRequest,
     timingSeed: launch.timingSeed,
     realizedFingerprint,
-    browserProvenance: realized._welesBrowserProvenance ?? null,
+    browserProvenance: realized._welesBrowserProvenance,
     identity: ws.identity,
   });
   // Complete-record network capture: NO domain filter, NO body truncation.
@@ -265,73 +275,4 @@ export async function adoptLaunchedBrowser(
   // keepers and trajectories — without exception. See net_record.ts.
   if (!session._secureCredentialTask && process.env.WELES_NO_INSTRUMENT !== '1')
     startInstrumentation(ws, launch.ctx, launch.label);
-}
-
-// Capture takes the devtools-shaped context it screenshots through; a session
-// hands it the one page it owns. The library's own context type is not
-// structurally compatible with a Playwright page host, so the single-page
-// host is asserted into it here, once.
-function captureFor(page: Page, label: string): Capture {
-  const pageHost = {
-    newPage: async () => page,
-  } as unknown as ConstructorParameters<typeof Capture>[0];
-  return new Capture(pageHost, label ? recordingsDir(label) : undefined);
-}
-
-// The operator's browser is already running and already logged in: attach to
-// its devtools endpoint, take the context and page it offers, and put the
-// browser-evidence policy on before anything navigates.
-async function adoptOperatorBrowser(
-  operatorCdp: OperatorCdpConfig,
-  label: string,
-): Promise<OperatorSession> {
-  const browser = await chromium.connectOverCDP(operatorCdp.endpoint, {
-    headers: { Authorization: `Bearer ${operatorCdp.token}` },
-  });
-  const ctx =
-    browser.contexts().at(0) ||
-    (await browser.newContext({
-      locale: 'en-US',
-      ...(process.env.WELES_BROWSER_EVIDENCE_POLICY ===
-      'spis-browser-evidence.1'
-        ? { acceptDownloads: false, serviceWorkers: 'block' as const }
-        : {}),
-    }));
-  await installBrowserEvidencePolicy(ctx, label);
-  const page = ctx.pages().at(0) || (await ctx.newPage());
-  return {
-    kind: 'operator-cdp',
-    ctx,
-    page,
-    capture: captureFor(page, label),
-    label,
-  };
-}
-
-// Which exit the proxy actually gave us. Recorded on the proxy object itself,
-// so provenance and cost accounting read the same value.
-async function probeExitIp(launch: LaunchedSession): Promise<void> {
-  const proxy = launch.proxy;
-  if (!proxy?.server) return;
-  // Provenance and cost accounting read exit_ip, so a probe that did not
-  // learn it says why rather than leaving the exit silently unknown.
-  try {
-    const r = await launch.ctx.request.get('https://api.ipify.org');
-    if (!r.ok()) {
-      console.error(
-        `[launch] ${launch.label}: exit IP probe answered HTTP ${r.status()}; the proxy exit stays unknown`,
-      );
-      return;
-    }
-    const t = (await r.text()).trim();
-    if (/^[0-9a-fA-F.:]+$/.test(t)) proxy.exit_ip = t;
-    else
-      console.error(
-        `[launch] ${launch.label}: exit IP probe answered no address (${JSON.stringify(t)}); the proxy exit stays unknown`,
-      );
-  } catch (error) {
-    console.error(
-      `[launch] ${launch.label}: exit IP probe failed; the proxy exit stays unknown: ${error}`,
-    );
-  }
 }

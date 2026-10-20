@@ -61,10 +61,6 @@ export function redactProxyForLog(proxy: unknown): string {
   return String(proxy);
 }
 
-// The country a pool-style proxy request names, read by the proxy module's
-// one pool-request parser; the session asks for it when it dresses a persona.
-export { countryHintFromProxyRequest } from '../../proxy/sources/pool_request.js';
-
 /** The platform an account's browser profiles are filed under: the request's, else the action's first word, else the target host. */
 function profilePlatform(opts: WSessionOptions): string {
   const action = process.env.ACTION?.trim();

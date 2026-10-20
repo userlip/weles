@@ -72,3 +72,11 @@ export function runRecordingsDir(...segments: string[]): string {
   mkdirSync(d, { recursive: true });
   return d;
 }
+
+/**
+ * The recordings directory of a session labelled `label`
+ * (recordings/<run_uuid>/<label>/); an unlabelled session's is the run root.
+ */
+export function recordingsDir(label?: string): string {
+  return label ? runRecordingsDir(label) : runRecordingsRoot();
+}

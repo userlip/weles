@@ -30,9 +30,3 @@ export function poolRequest(request: string): PoolRequest {
     provider: ALL_PROVIDERS.find((name) => words.includes(name)),
   };
 }
-
-/** The country a proxy request names: a pool request's country word; a proxy URL names none. */
-export function countryHintFromProxyRequest(proxy: unknown): string | undefined {
-  if (typeof proxy !== 'string' || URL.canParse(proxy)) return undefined;
-  return poolRequest(proxy).country;
-}

@@ -1,36 +1,22 @@
 /**
- * What this run recorded about itself. Two kinds of evidence live here:
- *
- *  - session_meta.json — the per-run provenance envelope, written once before
- *    the browser exists (so a pre-launch failure still leaves a queryable row)
- *    and once more with the realized values after launch.
- *  - per-step artifacts — the screenshot and DOM dump WSession.runStep takes
- *    around every step, plus a named record of any artifact that could not be
- *    written. A missing screenshot never aborts the step it belongs to, but it
- *    never disappears either: the reason lands in the run log, on the session
- *    as stepArtifactFailures, and in step_artifact_failures.json next to the
- *    artifacts it was supposed to join.
- *
- * Extracted from wsession.ts (env snapshots, the two session_meta writers and
- * WSession._saveDom) to keep the class file under its 300-line cap.
+ * session_meta.json — the per-run provenance envelope, written once before
+ * the browser exists (so a pre-launch failure still leaves a queryable row)
+ * and once more with the realized values after launch. The per-step
+ * screenshots and DOM dumps are recorded by run-provenance/step-artifacts.ts.
  */
 
 import { writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import type { Persona } from '../../browser/persona.js';
+import type { Persona, PersonaDevice } from '../../browser/persona.js';
 import type { Identity } from '../../utils/identity/identity.js';
 import type { ExitReputation } from '../../proxy/policy.js';
 import { snapshotSanitizedEnvironment } from '../../utils/sanitize-env.js';
-import type { WSession } from '../wsession.js';
-import { runRecordingsDir, runRecordingsRoot } from '../run-recordings.js';
+import { recordingsDir } from '../run-recordings.js';
 import type { SessionProxy } from './session-request.js';
 
-// G17: artifacts live under recordings/<run_uuid>/<label-or-action>/ — keyed by
-// the account_action_logs row id (ACTION_LOG_ID) so they map to the run 1:1.
-function recordingsDir(label?: string): string {
-  return label ? runRecordingsDir(label) : runRecordingsRoot();
-}
+/** The indentation of the JSON records a person reads beside the recordings. */
+export const JSON_INDENT = '  ';
 
 // resolveProxy attaches pool bookkeeping (provider, sticky ids, exit
 // reputation) beyond the launch-option shape async_api declares, and the
@@ -82,6 +68,7 @@ const ENV_FLAG_KEYS = [
   'WELES_BROWSER_PROFILE_ROOT',
   'WELES_CACHE_DIR',
   'WELES_CHROMIUM_PROFILE_DIRECTORY',
+  'WELES_PERSONA_COUNTRY',
   'WELES_USE_NATIVE_KEYCHAIN',
 ] as const;
 export function snapshotEnvFlags(): Record<string, string | undefined> {
@@ -90,23 +77,42 @@ export function snapshotEnvFlags(): Record<string, string | undefined> {
   return out;
 }
 
+/** The SHA-256 digest of a diagnostic value, so logs correlate it without carrying it; null for no value. */
 export function hashDiagnosticValue(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length === 0) return null;
-  return createHash('sha256').update(value).digest('hex').slice(0, 16);
+  if (typeof value !== 'string' || !value) return null;
+  return createHash('sha256').update(value).digest('hex');
 }
 
+/** What a session records before its browser is up: the sampled device, or the stated persona. */
 export interface SessionMetaRequest {
   label: string;
-  persona: Persona;
+  persona: PersonaDevice;
   proxy: SessionProxy | undefined;
   proxyRequested: unknown;
   timingSeed: number;
 }
 
 export interface RealizedSessionMeta extends SessionMetaRequest {
+  persona: Persona;
   realizedFingerprint: Record<string, unknown>;
   browserProvenance: unknown;
   identity: Identity | undefined;
+}
+
+export type StepPhase = 'before' | 'after' | 'error';
+
+/** An artifact a step was supposed to leave behind, and why it is missing. */
+export interface StepArtifactFailure {
+  step: string;
+  phase: StepPhase;
+  artifact: 'screenshot' | 'dom';
+  reason: string;
+  at: string;
+}
+
+/** Where session_meta.json goes: the worker's ACTION directory, else the session label's. */
+function metaPath(label: string): string {
+  return join(recordingsDir(process.env.ACTION || label), 'session_meta.json');
 }
 
 // G19: shared per-run provenance writer — called EARLY (pre-launch) and again
@@ -135,7 +141,7 @@ export function writePrelaunchSessionMeta(request: SessionMetaRequest): void {
       browser_provenance: null,
       persona: request.persona,
       realized_fingerprint: null,
-      proxy_requested: request.proxyRequested ?? null,
+      proxy_requested: request.proxyRequested,
       env_flags: snapshotEnvFlags(),
       env_all: snapshotSanitizedEnvironment(),
       sticky_session_id: proxyObj?.sticky_session_id,
@@ -146,11 +152,8 @@ export function writePrelaunchSessionMeta(request: SessionMetaRequest): void {
       started_at: new Date().toISOString(),
     };
     writeFileSync(
-      join(
-        recordingsDir(process.env.ACTION || request.label),
-        'session_meta.json',
-      ),
-      JSON.stringify(meta, null, 2),
+      metaPath(request.label),
+      JSON.stringify(meta, null, JSON_INDENT),
     );
   } catch (error) {
     // The run goes on without it, but a missing session_meta.json makes the
@@ -161,9 +164,8 @@ export function writePrelaunchSessionMeta(request: SessionMetaRequest): void {
   }
 }
 
-// G14: write provenance for EVERY labelled run, proxied or not. The whole
-// block used to be gated on the proxy server being set, so direct (no-proxy)
-// browser runs recorded none of it. Proxy-derived fields are now optional.
+// G14: write provenance for EVERY labelled run, proxied or not; proxy-derived
+// fields are optional.
 export function writeRealizedSessionMeta(realized: RealizedSessionMeta): void {
   if (!realized.label) return;
   try {
@@ -175,7 +177,7 @@ export function writeRealizedSessionMeta(realized: RealizedSessionMeta): void {
     // account_action_logs.result.session by the worker importer.
     // persona + realized_fingerprint are typed REQUIRED + non-null so a
     // future edit cannot silently drop them to null: persona is always
-    // generated, and async_api always attaches a realized fingerprint.
+    // dressed, and async_api always attaches a realized fingerprint.
     const meta: {
       proxy_host?: string;
       proxy_port?: string;
@@ -207,7 +209,7 @@ export function writeRealizedSessionMeta(realized: RealizedSessionMeta): void {
       browser_provenance: realized.browserProvenance,
       persona: realized.persona,
       realized_fingerprint: realized.realizedFingerprint,
-      proxy_requested: realized.proxyRequested ?? null,
+      proxy_requested: realized.proxyRequested,
       // G2: snapshot the effective behavior-changing env vars at session
       // start so a run's exact mode (input path, browser registration,
       // diagnostics, LinkedIn egress policy, proxy pool wiring) is queryable.
@@ -236,106 +238,17 @@ export function writeRealizedSessionMeta(realized: RealizedSessionMeta): void {
       timing_seed: realized.timingSeed,
       started_at: new Date().toISOString(),
     };
-    // G12: write provenance into the worker's ACTION dir (set by poll.ts on
+    // G12: provenance goes into the worker's ACTION dir (set by poll.ts on
     // every spawned trajectory) so it lands where poll.ts imports + uploads
     // from — even when this WSession's label differs from the dispatch action
     // (health _in/_out, register _<attempt>, reddit submit, ticker scrapers).
-    // Uses label for standalone (non-worker) runs.
     writeFileSync(
-      join(
-        recordingsDir(process.env.ACTION || realized.label),
-        'session_meta.json',
-      ),
-      JSON.stringify(meta, null, 2),
+      metaPath(realized.label),
+      JSON.stringify(meta, null, JSON_INDENT),
     );
   } catch (error) {
     console.error(
       `[run-provenance] realized session_meta.json for ${process.env.ACTION || realized.label} was not written: ${error instanceof Error ? error.message : String(error)}`,
     );
-  }
-}
-
-export type StepPhase = 'before' | 'after' | 'error';
-
-/** An artifact the step was supposed to leave behind, and why it is missing. */
-export interface StepArtifactFailure {
-  step: string;
-  phase: StepPhase;
-  artifact: 'screenshot' | 'dom';
-  reason: string;
-  at: string;
-}
-
-/**
- * Take the screenshot + DOM dump for one step phase. Neither artifact aborts
- * the step: an artifact that could not be written is recorded by name instead.
- * `cause` carries the step's own failure in the 'error' phase, so a recorder
- * that cannot even write its ledger reports both failures rather than
- * replacing the one the caller is about to throw.
- */
-export async function captureStepArtifacts(
-  ws: WSession,
-  phase: StepPhase,
-  step: string,
-  cause?: unknown,
-): Promise<void> {
-  const at = new Date().toISOString();
-  const failures: StepArtifactFailure[] = [];
-  // The capture surface is private to WSession; this is the same session
-  // object, viewed through the one member this recorder needs.
-  const capture = ws as unknown as {
-    _cap: { screenshot(page: unknown, label: string): Promise<string> };
-  };
-  try {
-    await capture._cap.screenshot(ws.page, `${phase}_${step}`);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    failures.push({
-      step,
-      phase,
-      artifact: 'screenshot',
-      reason: `the ${phase} screenshot could not be taken: ${reason}`,
-      at,
-    });
-  }
-  try {
-    const html = await ws.page.content?.();
-    if (html)
-      writeFileSync(
-        join(recordingsDir(ws.label || undefined), `${phase}_${step}_dom.html`),
-        html,
-      );
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    failures.push({
-      step,
-      phase,
-      artifact: 'dom',
-      reason: `the ${phase} DOM dump could not be written: ${reason}`,
-      at,
-    });
-  }
-  if (failures.length === 0) return;
-  for (const failure of failures)
-    console.log(
-      `[wsession] ${step} ARTIFACT MISSING ${failure.artifact} — ${failure.reason}`,
-    );
-  ws.stepArtifactFailures.push(...failures);
-  try {
-    writeFileSync(
-      join(recordingsDir(ws.label || undefined), 'step_artifact_failures.json'),
-      JSON.stringify(ws.stepArtifactFailures, null, 2),
-    );
-  } catch (ledgerError) {
-    const ledgerReason =
-      ledgerError instanceof Error ? ledgerError.message : String(ledgerError);
-    if (cause !== undefined) {
-      const stepReason = cause instanceof Error ? cause.message : String(cause);
-      throw new Error(
-        `step ${step} failed and its missing-artifact record could not be written: ${stepReason}; and the record write failed: ${ledgerReason}`,
-        { cause },
-      );
-    }
-    throw ledgerError;
   }
 }

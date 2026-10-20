@@ -3,7 +3,7 @@
 // the run is a credential task or asks for no instrumentation), and a
 // credential the step revealed stored at once during a credential task.
 import type { WSession } from '../wsession.js';
-import { captureStepArtifacts } from '../wsession/run-provenance.js';
+import { captureStepArtifacts } from '../wsession/run-provenance/step-artifacts.js';
 import { wsAutoStoreCredential } from '../wsession-helpers/credential/store.js';
 
 /** The members of WSession a step reads and writes. */
