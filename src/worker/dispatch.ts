@@ -13,7 +13,7 @@ import { PAID_ROUTES } from './dispatch/paid-routes.js';
 export { paramsToEnv } from './params/params-to-env.js';
 
 /** `<platform>_<verb>`: the platform before the first underscore, the verb after it. */
-const ACTION_NAME = /^(?<plat>[^_]+)_(?<verb>.+)$/;
+export const ACTION_NAME = /^(?<plat>[^_]+)_(?<verb>.+)$/;
 
 export function resolveTrajectory(action: string): string | null {
   const named = ACTION_NAME.exec(action);
