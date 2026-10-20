@@ -101,8 +101,8 @@ Options:
   the worker's API role (stado credentials get --role echo-weles-api --field token);
   WELES_WORKER_API_BASE and WELES_WORKER_TOKEN override both.
   --headless              Launch without a visible browser window.
-  --browser <name>        Browser engine passed to AsyncNewBrowser (default: chromium).
-  --os <name>             Persona OS passed to AsyncNewBrowser (default: macos).
+  --browser <name>        Browser engine passed to AsyncNewBrowser: chromium or firefox (required by open).
+  --os <name>             Persona OS passed to AsyncNewBrowser: macos, windows or linux (required by open).
   --locale <locale>       Locale passed to AsyncNewBrowser.
   --user-data-dir <dir>   Browser profile directory.
   --proxy <url>           Proxy server URL.

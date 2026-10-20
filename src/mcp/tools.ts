@@ -23,14 +23,18 @@ const browserTools: ToolDefinition[] = [
         enum: ['chromium', 'firefox'],
         description: 'Browser engine.',
       },
-      os: { type: 'string', description: 'Persona OS, for example macos.' },
+      os: {
+        type: 'string',
+        enum: ['macos', 'windows', 'linux'],
+        description: 'Persona OS.',
+      },
       locale: { type: 'string', description: 'Locale, for example en-US.' },
       userDataDir: {
         type: 'string',
         description: 'Persistent browser profile directory.',
       },
       proxy: { type: 'string', description: 'Proxy server URL.' },
-    }),
+    }, ['browser', 'os']),
   },
   {
     name: 'weles_browser_close',

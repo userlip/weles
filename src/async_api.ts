@@ -1,27 +1,34 @@
 /**
- * Async Playwright API — 1:1 port of weles/async_api.py
+ * AsyncNewBrowser: launches the checksum-verified Weles Chromium or Firefox
+ * release with a coherent fingerprint.
  *
- * Launches Playwright with custom Chromium binary + fingerprint spoofing.
+ * The operating system and engine are the persona's, else the caller's
+ * options; a launch that names neither is refused by name. The fingerprint
+ * (browser/launch/context/surface.ts), the window (window.ts), the video
+ * (recording.ts) and the browser-evidence flags (evidence-policy.ts) each
+ * come from what was stated or measured.
  */
 
 import { existsSync } from 'node:fs';
 import type { BrowserContext, LaunchOptions } from 'playwright';
-import { generate, toConfig } from './fingerprint.js';
-import { hostHardware, honestHostEnabled } from './runtime/host_hardware.js';
-import { pruneRecordings } from './runtime/prune.js';
-import { recordingsBase, runRecordingsDir } from './session/run-recordings.js';
 import {
   customBrowserSearchHint,
   findCustomBrowser,
 } from './session/find_browser.js';
 import type { Persona } from './browser/persona.js';
-import { CHROMIUM_ARGS } from './browser/launch/support.js';
+import {
+  CHROMIUM_ARGS,
+  type PreparedContextOptions,
+} from './browser/launch/support.js';
 import { launchChromiumContext } from './browser/launch/chromium.js';
 import { launchFirefoxContext } from './browser/launch/firefox.js';
-import type {
-  PreparedContextOptions,
-  RuntimeFingerprintConfig,
-} from './browser/launch/support.js';
+import { launchFingerprint } from './browser/launch/context/surface.js';
+import { launchWindow } from './browser/launch/context/window.js';
+import { recordVideoOption } from './browser/launch/context/recording.js';
+import {
+  BROWSER_EVIDENCE_POLICY,
+  evidencePolicyArgs,
+} from './browser/launch/context/evidence-policy.js';
 
 export interface AsyncNewBrowserOptions {
   os?: string;
@@ -48,10 +55,19 @@ export async function AsyncNewBrowser(
   options: AsyncNewBrowserOptions = {},
 ): Promise<BrowserContext> {
   const persona = options.persona;
-  const targetOs = persona?.os ?? options.os ?? 'macos';
-  const browserType = persona?.browser ?? options.browser ?? 'chromium';
+  const targetOs = persona?.os ?? options.os;
+  if (!targetOs)
+    throw new Error(
+      'AsyncNewBrowser needs an operating system: give the launch a persona or name os (macos, windows or linux)',
+    );
+  const browserType = persona?.browser ?? options.browser;
+  if (!browserType)
+    throw new Error(
+      'AsyncNewBrowser needs a browser engine: give the launch a persona or name browser (chromium or firefox)',
+    );
   const isChromium = browserType === 'chromium';
-  const headless = options.headless ?? false;
+  // A browser is headed unless the caller asks for a headless one.
+  const headless = options.headless === true;
   const pageDiagnostics = options.pageDiagnostics !== false;
   // Network/HAR capture is CDP-level (Network domain, already enabled for routing)
   // and NOT visible to page JS — so it is decoupled from pageDiagnostics. A clean
@@ -59,215 +75,29 @@ export async function AsyncNewBrowser(
   // records the HAR that challenge_outcome decoding needs. WELES_NO_RESPONSE_BODIES=1
   // opts out of the heavy body capture entirely.
   const captureHar = process.env.WELES_NO_RESPONSE_BODIES !== '1';
+  const evidencePolicy =
+    process.env.WELES_BROWSER_EVIDENCE_POLICY === BROWSER_EVIDENCE_POLICY;
 
-  const fp = generate({ os: targetOs, browser: browserType });
-  const fpConfig: RuntimeFingerprintConfig = toConfig(
-    fp,
+  const fpConfig = launchFingerprint({
     targetOs,
     browserType,
-  );
-  // Allow callers to pin the HTTP + JS userAgent (e.g. to match a captcha
-  // solver's UA so a returned clearance cookie stays valid).
-  if (options.userAgent) {
-    (fpConfig.navigator ?? (fpConfig.navigator = {})).userAgent =
-      options.userAgent;
-  }
-
-  // Persona overrides: apply coherent per-session fingerprint values.
-  if (persona) {
-    const n = fpConfig.navigator ?? {};
-    n.platform = persona.platform;
-    n.hardwareConcurrency = persona.hardwareConcurrency;
-    if (persona.deviceMemory) n.deviceMemory = persona.deviceMemory;
-    n.language = persona.language;
-    // navigator.languages must be [primary, secondary] when primary has a region tag — real Firefox/Chrome always emit the bare-lang as the second entry (Mozilla intl.accept_languages, Chrome --lang both expand it). Bare single-entry array is engine-impossible and an obvious bot tell.
-    n.languages = persona.language.includes('-')
-      ? [persona.language, persona.language.split('-')[0]]
-      : [persona.language];
-    fpConfig.screen = {
-      ...(fpConfig.screen ?? {}),
-      width: persona.screen.width,
-      height: persona.screen.height,
-      availWidth: persona.screen.width,
-      availHeight: persona.screen.height - 40,
-      colorDepth: 24,
-      pixelDepth: 24,
-    };
-    fpConfig.window = {
-      ...(fpConfig.window ?? {}),
-      devicePixelRatio: persona.screen.dpr,
-      outerWidth: persona.screen.width + 2,
-      outerHeight: persona.screen.height + 80,
-      screenX: 10,
-      screenY: 10,
-    };
-    fpConfig.webgl = {
-      ...(fpConfig.webgl ?? {}),
-      vendor: isChromium ? 'Google Inc.' : 'Mozilla',
-      renderer: isChromium
-        ? persona.gpu.renderer
-        : persona.gpu.renderer
-            .replace(/^ANGLE \([^,]+, ANGLE Metal Renderer: ([^,]+).*\)$/, '$1')
-            .replace(/^ANGLE \([^,]+, ([^,]+).*\)$/, '$1'),
-      unmaskedVendor: isChromium
-        ? persona.gpu.vendor
-        : persona.gpu.vendor.replace(/^Google Inc\. \((.+)\)$/, '$1'),
-      unmaskedRenderer: isChromium
-        ? persona.gpu.renderer
-        : persona.gpu.renderer
-            .replace(/^ANGLE \([^,]+, ANGLE Metal Renderer: ([^,]+).*\)$/, '$1')
-            .replace(/^ANGLE \([^,]+, ([^,]+).*\)$/, '$1'),
-    };
-    // Canvas noise NOT applied — LSB-flip makes canvas data URL 4x stock-Chrome size, TikTok mssdk flags.
-  }
-
-  // Phase 1 honest-host override (project-weles-anti-detect-goal): when the
-  // target OS is the real host's OS, report the machine's ACTUAL physics
-  // (GPU/cores/RAM/OS-version) rather than a synthetic or stale persona value.
-  // The real silicon leaks through the WebGL pixel-hash + backend regardless of
-  // what we claim, so a spoofed value is a detectable contradiction, not a
-  // disguise. OS version is reported truthfully too (Phase 1 does not lie about
-  // it). WELES_HONEST_HOST=0 opts out (e.g. cross-OS personas for TikTok).
-  if (honestHostEnabled()) {
-    const hw = hostHardware();
-    if (hw.osFamily === targetOs) {
-      const n = fpConfig.navigator ?? (fpConfig.navigator = {});
-      n.hardwareConcurrency = hw.cores;
-      n.deviceMemory = hw.deviceMemory;
-      if (hw.glRenderer) {
-        fpConfig.webgl = {
-          ...(fpConfig.webgl ?? {}),
-          renderer: hw.glRenderer,
-          unmaskedRenderer: hw.glRenderer,
-          ...(hw.glUnmaskedVendor
-            ? { unmaskedVendor: hw.glUnmaskedVendor }
-            : {}),
-        };
-      }
-      // Real display geometry: the synthetic persona's screen size + the forced
-      // colorDepth:24 are macOS tells in headed production. Headless parity
-      // audits need the opposite: real hardware, but viewport-sized screen.
-      const honestScreenValue = String(
-        process.env.WELES_HONEST_SCREEN ?? (headless ? '0' : '1'),
-      )
-        .trim()
-        .toLowerCase();
-      const honestScreenEnabled = !['0', 'false', 'off', 'no'].includes(
-        honestScreenValue,
-      );
-      if (hw.screen && honestScreenEnabled) {
-        const sc = hw.screen;
-        fpConfig.screen = {
-          ...(fpConfig.screen ?? {}),
-          width: sc.width,
-          height: sc.height,
-          availWidth: sc.availWidth,
-          availHeight: sc.availHeight,
-          availLeft: 0,
-          availTop: sc.availTop,
-          colorDepth: sc.colorDepth,
-          pixelDepth: sc.colorDepth,
-        };
-        fpConfig.window = {
-          ...(fpConfig.window ?? {}),
-          devicePixelRatio: sc.dpr,
-        };
-      } else if (
-        hw.osFamily === 'macos' &&
-        fpConfig.screen &&
-        honestScreenEnabled
-      ) {
-        // Fallback: at least correct colorDepth to Retina 30 (matches fingerprint.ts:170).
-        fpConfig.screen = {
-          ...fpConfig.screen,
-          colorDepth: 30,
-          pixelDepth: 30,
-        };
-      }
-      // Carried to the cppConfig build below for the platformVersion override.
-      fpConfig._honestHost = hw;
-      console.log(
-        `[async_api] honest-host: ${hw.chip ?? '?'} / ${hw.cores}c / ${hw.deviceMemory}GB / macOS ${hw.osVersion ?? '?'}`,
-      );
-    }
-  }
-
-  const nav = fpConfig.navigator ?? {};
-  const honestScreenValueForViewport = String(
-    process.env.WELES_HONEST_SCREEN ?? (headless ? '0' : '1'),
-  )
-    .trim()
-    .toLowerCase();
-  const honestScreenForViewport = !['0', 'false', 'off', 'no'].includes(
-    honestScreenValueForViewport,
-  );
-  const _hhScreen = honestScreenForViewport
-    ? fpConfig._honestHost?.screen
-    : null;
-  // Window (viewport) must not exceed the real panel — a persona screen taller/
-  // wider than the honest screen (e.g. 2560x1600 persona on a 2560x1440 panel)
-  // is a window-larger-than-screen tell. Cap to the real avail area.
-  // The size itself comes from what was stated or measured, never a default:
-  // WELES_VIEWPORT=<width>x<height>, else the persona's screen, else the
-  // honest host's available area.
-  const viewportOverride = process.env.WELES_VIEWPORT?.match(/^(\d+)x(\d+)$/);
-  const stated = viewportOverride
-    ? {
-        width: Number(viewportOverride[1]),
-        height: Number(viewportOverride[2]),
-      }
-    : (persona?.screen ??
-      (_hhScreen
-        ? { width: _hhScreen.availWidth, height: _hhScreen.availHeight }
-        : null));
-  if (!stated) {
-    throw new Error(
-      'the browser window has no size: set WELES_VIEWPORT=<width>x<height>, give the session a persona, or let Weles read the host screen (WELES_HONEST_SCREEN on, honest host enabled)',
-    );
-  }
-  const viewW = _hhScreen
-    ? Math.min(stated.width, _hhScreen.availWidth)
-    : stated.width;
-  const viewH = _hhScreen
-    ? Math.min(stated.height, _hhScreen.availHeight)
-    : stated.height;
-  // DPR must match the real panel (honest-host) so deviceScaleFactor renders at
-  // the true scale — a window claiming DPR 1 while screen reports DPR 2 (or the
-  // canvas/pixel-hash renders at the wrong scale) is a tell.
-  const dpr = _hhScreen?.dpr ?? persona?.screen.dpr ?? 1;
-  if (headless && isChromium) {
-    fpConfig.screen = {
-      ...(fpConfig.screen ?? {}),
-      width: viewW,
-      height: viewH,
-      availWidth: viewW,
-      availHeight: viewH,
-      availLeft: 0,
-      availTop: 0,
-      colorDepth: 24,
-      pixelDepth: 24,
-    };
-    fpConfig.window = {
-      ...(fpConfig.window ?? {}),
-      devicePixelRatio: dpr,
-      outerWidth: viewW,
-      outerHeight: viewH,
-      innerWidth: viewW,
-      innerHeight: viewH,
-    };
-  }
+    persona,
+    userAgent: options.userAgent,
+    headless,
+  });
+  const window = launchWindow({ fpConfig, persona, headless, isChromium });
 
   // tz/locale NOT in ctxOpts (CDP Emulation -> TikTok mssdk detects). --lang + TZ env. Accept-Language IS set via extraHTTPHeaders (header only) so weles Firefox emits 'en-US,en;q=0.5', Chromium 'en-US,en;q=0.9' (computed in persona.ts).
   const ctxOpts: PreparedContextOptions = {
-    userAgent: options.userAgent ?? nav.userAgent,
-    viewport: { width: viewW, height: viewH },
-    screen: { width: viewW, height: viewH },
-    deviceScaleFactor: dpr,
+    userAgent: fpConfig.navigator.userAgent,
+    viewport: { width: window.width, height: window.height },
+    screen: { width: window.width, height: window.height },
+    deviceScaleFactor: window.dpr,
     ...(persona?.acceptLanguage
       ? { extraHTTPHeaders: { 'accept-language': persona.acceptLanguage } }
       : {}),
   };
-  if (process.env.WELES_BROWSER_EVIDENCE_POLICY === 'spis-browser-evidence.1') {
+  if (evidencePolicy) {
     ctxOpts.acceptDownloads = false;
     ctxOpts.serviceWorkers = 'block';
   }
@@ -275,146 +105,63 @@ export async function AsyncNewBrowser(
     ctxOpts.proxy = options.proxy;
     if (isChromium) ctxOpts.ignoreHTTPSErrors = true;
   }
-
   const recordVideo =
     options.recordVideo ?? process.env.WELES_DISABLE_RECORDING !== '1';
-  if (recordVideo) {
-    const recDir = runRecordingsDir(); // G17: recordings/<run_uuid>/<action>/
-    // Frame size 1280x720 by default — at 1920x1080 each Arkose canvas repaint sends ~2MB RGBA over Playwright→webm pipe and saturates the CDP channel.
-    const [vw, vh] = (process.env.WELES_VIDEO_SIZE ?? '1280x720')
-      .split('x')
-      .map((n) => parseInt(n, 10));
-    ctxOpts.recordVideo = {
-      dir: recDir,
-      size: { width: vw || 1280, height: vh || 720 },
-    };
-    // The budget belongs to the store, not to this run. Pruning used to be
-    // pointed at `recDir`, which was created empty a line earlier, so it
-    // never removed anything and the worker's host filled until Stado
-    // refused every placement on it. Oldest-first deletion leaves the run
-    // that is starting alone.
-    const budget = parseInt(
-      process.env.WELES_RECORDINGS_MAX_BYTES ?? String(2 * 1024 * 1024 * 1024),
-      10,
-    );
-    // The run still starts; what pruning could not examine or remove is said,
-    // so a host that keeps filling has its cause on stderr.
-    for (const failure of pruneRecordings(recordingsBase(), budget))
-      console.error(`[recordings-prune] ${failure}`);
-  }
+  if (recordVideo) ctxOpts.recordVideo = recordVideoOption();
 
-  // Launch only the checksum-verified, deployment-selected browser release.
-  const selectedChromiumPath = isChromium
-    ? findCustomBrowser('chromium')
-    : undefined;
-  if (isChromium && !selectedChromiumPath) {
-    throw new Error(
-      `WELES_CHROMIUM_BINARY_NOT_FOUND: ${customBrowserSearchHint('chromium')}`,
-    );
-  }
-  const chromiumPath = selectedChromiumPath ?? '';
   const launchOpts: LaunchOptions = { headless };
-  const args = [...CHROMIUM_ARGS];
-  if (process.env.WELES_CHROMIUM_PROFILE_DIRECTORY) {
-    args.push(
-      `--profile-directory=${process.env.WELES_CHROMIUM_PROFILE_DIRECTORY}`,
-    );
-  }
-  if (process.env.WELES_BROWSER_EVIDENCE_POLICY === 'spis-browser-evidence.1') {
-    const targetHost = String(
-      process.env.WELES_BROWSER_EVIDENCE_TARGET_HOST ?? '',
-    );
-    let targetAddresses: unknown;
-    let addressesParseFailure: string | null = null;
-    try {
-      targetAddresses = JSON.parse(
-        process.env.WELES_BROWSER_EVIDENCE_TARGET_ADDRESSES_JSON ?? 'null',
-      );
-    } catch (error) {
-      addressesParseFailure = `WELES_BROWSER_EVIDENCE_TARGET_ADDRESSES_JSON is not JSON: ${error instanceof Error ? error.message : String(error)}`;
-    }
-    if (addressesParseFailure !== null)
-      throw new Error(
-        `browser-evidence target resolver binding is invalid: ${addressesParseFailure}`,
-      );
-    if (
-      !/^[A-Za-z0-9.-]+$/.test(targetHost) ||
-      !Array.isArray(targetAddresses) ||
-      targetAddresses.length === 0 ||
-      typeof targetAddresses[0] !== 'string' ||
-      !/^[0-9A-Fa-f:.]+$/.test(targetAddresses[0])
-    ) {
-      // The refusal names what it received, so the caller sees which part of
-      // the binding to correct.
-      throw new Error(
-        `browser-evidence target resolver binding is invalid: host ${JSON.stringify(targetHost)}, addresses ${JSON.stringify(targetAddresses)}`,
-      );
-    }
-    const pinnedAddress = targetAddresses[0].includes(':')
-      ? `[${targetAddresses[0]}]`
-      : targetAddresses[0];
-    args.push(
-      `--host-resolver-rules=MAP ${targetHost} ${pinnedAddress},MAP * ~NOTFOUND`,
-    );
-    args.push(
-      '--disable-background-networking',
-      '--disable-client-side-phishing-detection',
-      '--disable-component-update',
-      '--disable-default-apps',
-      '--disable-domain-reliability',
-      '--disable-extensions',
-      '--disable-notifications',
-      '--disable-sync',
-      '--no-pings',
-      '--safebrowsing-disable-auto-update',
-      '--block-new-web-contents',
-      '--disable-external-intent-requests',
-      '--disable-features=AutoLaunchProtocolsFromOrigins,EncryptedClientHello,PreconnectOnNavigation,Prerender2,SpeculationRulesPrefetch,ServiceWorkerStaticRouter,BackgroundFetch,PushMessaging,NotificationTriggers,DownloadBubble',
-    );
-  }
-
   // Language + timezone as binary-level signals (real Chrome behavior), not CDP emulation.
-  if (persona?.language) args.push(`--lang=${persona.language}`);
   if (persona?.timezone)
     launchOpts.env = { ...process.env, TZ: persona.timezone };
 
-  const nopechaDir =
-    process.env.WELES_NOPECHA_EXT === '1'
-      ? (process.env.WELES_NOPECHA_EXT_DIR ?? '')
-      : '';
-  const useNopecha = Boolean(
-    nopechaDir && existsSync(nopechaDir) && headless === false,
-  );
-  if (useNopecha) {
+  const nopechaDir = process.env.WELES_NOPECHA_EXT_DIR;
+  if (
+    process.env.WELES_NOPECHA_EXT === '1' &&
+    nopechaDir &&
+    existsSync(nopechaDir) &&
+    !headless
+  ) {
     throw new Error(
       'NopeCha stock-browser launch is retired; Weles requires the verified Chromium release',
     );
   }
 
-  const isCustomBinary = isChromium;
-
-  if (isCustomBinary) {
-    return launchChromiumContext({
+  if (!isChromium)
+    return launchFirefoxContext({
       options,
       fpConfig,
       ctxOpts,
       launchOpts,
       pageDiagnostics,
       browserType,
-      args,
-      chromiumPath,
-      targetOs,
-      captureHar,
     });
-  }
 
-  return launchFirefoxContext({
+  // Launch only the checksum-verified, deployment-selected browser release.
+  const chromiumPath = findCustomBrowser('chromium');
+  if (!chromiumPath) {
+    throw new Error(
+      `WELES_CHROMIUM_BINARY_NOT_FOUND: ${customBrowserSearchHint('chromium')}`,
+    );
+  }
+  const args = [...CHROMIUM_ARGS];
+  if (process.env.WELES_CHROMIUM_PROFILE_DIRECTORY) {
+    args.push(
+      `--profile-directory=${process.env.WELES_CHROMIUM_PROFILE_DIRECTORY}`,
+    );
+  }
+  if (evidencePolicy) args.push(...evidencePolicyArgs());
+  if (persona?.language) args.push(`--lang=${persona.language}`);
+  return launchChromiumContext({
     options,
     fpConfig,
     ctxOpts,
     launchOpts,
     pageDiagnostics,
     browserType,
+    args,
+    chromiumPath,
+    targetOs,
+    captureHar,
   });
 }
 
@@ -422,7 +169,7 @@ export class AsyncWeles {
   private _options: AsyncNewBrowserOptions;
   private _context: BrowserContext | null = null;
 
-  constructor(options: AsyncNewBrowserOptions = {}) {
+  constructor(options: AsyncNewBrowserOptions) {
     this._options = options;
   }
 

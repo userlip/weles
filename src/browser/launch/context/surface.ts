@@ -1,0 +1,135 @@
+// The fingerprint a launched browser presents: one fingerprint-generator
+// sample for the target system and engine (of the persona's screen size when
+// a persona is given), the persona's own device and locale laid over it, and,
+// when the target system is the host's, the host's real hardware, since the
+// real silicon leaks through the WebGL pixel hash whatever is claimed.
+
+import { FingerprintGenerator } from 'fingerprint-generator';
+import type { BrowserName, OperatingSystem } from 'header-generator';
+import { toConfig } from '../../../fingerprint.js';
+import {
+  hostHardware,
+  honestHostEnabled,
+} from '../../../runtime/host_hardware.js';
+import type { Persona } from '../../persona.js';
+import type { RuntimeFingerprintConfig } from '../support.js';
+import { honestScreenEnabled } from './window.js';
+
+/** The persona's GPU strings as Gecko reports them: the renderer without Chromium's ANGLE wrapper, the vendor without Google's. */
+function geckoGpu(gpu: Persona['gpu']): { vendor: string; renderer: string } {
+  return {
+    vendor: gpu.vendor.replace(/^Google Inc\. \((.+)\)$/, '$1'),
+    renderer: gpu.renderer
+      .replace(/^ANGLE \([^,]+, ANGLE Metal Renderer: ([^,]+).*\)$/, '$1')
+      .replace(/^ANGLE \([^,]+, ([^,]+).*\)$/, '$1'),
+  };
+}
+
+export function launchFingerprint(input: {
+  targetOs: string;
+  browserType: string;
+  persona: Persona | undefined;
+  userAgent: string | undefined;
+  headless: boolean;
+}): RuntimeFingerprintConfig {
+  const { targetOs, browserType, persona, headless } = input;
+  const isChromium = browserType === 'chromium';
+  const size = persona?.screen;
+  const sample = new FingerprintGenerator({
+    // The dataset names Weles's Chromium family by its Chrome browser; the
+    // generator refuses a family or system its dataset does not hold.
+    browsers: [(isChromium ? 'chrome' : browserType) as BrowserName],
+    operatingSystems: [targetOs as OperatingSystem],
+    devices: ['desktop'],
+    ...(size
+      ? {
+          screen: {
+            minWidth: size.width,
+            maxWidth: size.width,
+            minHeight: size.height,
+            maxHeight: size.height,
+          },
+        }
+      : {}),
+  }).getFingerprint();
+  const fpConfig: RuntimeFingerprintConfig = toConfig(
+    sample,
+    targetOs,
+    browserType,
+  );
+  // Allow callers to pin the HTTP + JS userAgent (e.g. to match a captcha
+  // solver's UA so a returned clearance cookie stays valid).
+  if (input.userAgent) fpConfig.navigator.userAgent = input.userAgent;
+
+  if (persona) {
+    const n = fpConfig.navigator;
+    n.platform = persona.platform;
+    n.hardwareConcurrency = persona.hardwareConcurrency;
+    if (persona.deviceMemory) n.deviceMemory = persona.deviceMemory;
+    n.language = persona.language;
+    // navigator.languages is [primary, bare language] when the primary has a
+    // region tag, as real Firefox and Chrome expand it.
+    const [bare] = persona.language.split('-');
+    n.languages =
+      bare === persona.language ? [persona.language] : [persona.language, bare];
+    fpConfig.screen = {
+      ...fpConfig.screen,
+      width: persona.screen.width,
+      height: persona.screen.height,
+    };
+    fpConfig.window = {
+      ...fpConfig.window,
+      devicePixelRatio: persona.screen.dpr,
+    };
+    const gpu = isChromium ? persona.gpu : geckoGpu(persona.gpu);
+    fpConfig.webgl = {
+      ...fpConfig.webgl,
+      vendor: isChromium ? 'Google Inc.' : 'Mozilla',
+      renderer: gpu.renderer,
+      unmaskedVendor: gpu.vendor,
+      unmaskedRenderer: gpu.renderer,
+    };
+  }
+
+  // Honest host (WELES_HONEST_HOST=0 opts out, e.g. cross-OS personas): when
+  // the target OS is the host's, report the machine's real GPU, cores,
+  // memory, OS version and, with WELES_HONEST_SCREEN, its display.
+  if (honestHostEnabled()) {
+    const hw = hostHardware();
+    if (hw.osFamily === targetOs) {
+      const n = fpConfig.navigator;
+      n.hardwareConcurrency = hw.cores;
+      n.deviceMemory = hw.deviceMemory;
+      if (hw.glRenderer) {
+        fpConfig.webgl = {
+          ...fpConfig.webgl,
+          renderer: hw.glRenderer,
+          unmaskedRenderer: hw.glRenderer,
+          ...(hw.glUnmaskedVendor
+            ? { unmaskedVendor: hw.glUnmaskedVendor }
+            : {}),
+        };
+      }
+      if (hw.screen && honestScreenEnabled(headless)) {
+        const sc = hw.screen;
+        fpConfig.screen = {
+          ...fpConfig.screen,
+          width: sc.width,
+          height: sc.height,
+          availWidth: sc.availWidth,
+          availHeight: sc.availHeight,
+          availTop: sc.availTop,
+          colorDepth: sc.colorDepth,
+          pixelDepth: sc.colorDepth,
+        };
+        fpConfig.window = { ...fpConfig.window, devicePixelRatio: sc.dpr };
+      }
+      // Carried to the cppConfig build for the platformVersion override.
+      fpConfig._honestHost = hw;
+      console.log(
+        `[async_api] honest-host: chip=${JSON.stringify(hw.chip)} cores=${hw.cores} memory=${hw.deviceMemory}GB os=${JSON.stringify(hw.osVersion)}`,
+      );
+    }
+  }
+  return fpConfig;
+}
