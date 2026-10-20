@@ -60,9 +60,9 @@ export function registrationPassword(rules: PasswordRules = {}): string {
  * (WELES_CREDENTIALS_FILE set), WELES_GENERATED_PASSWORD_LENGTH. A fleet host
  * that lost Skarbiec still asks Skarbiec and fails with its refusal.
  */
-function statedLength(): number {
+export function statedLength(): number {
   if (localCredentialsFile()) {
-    const raw = process.env.WELES_GENERATED_PASSWORD_LENGTH?.trim() ?? '';
+    const raw = process.env.WELES_GENERATED_PASSWORD_LENGTH?.trim();
     const stated = Number(raw);
     if (!raw || !Number.isSafeInteger(stated) || !(stated > Number.MIN_VALUE)) {
       throw new Error(

@@ -1,13 +1,17 @@
+// The Semantic Scholar API-key follow-up: after a key request was submitted,
+// the identity's inbox is read (semantic-scholar/mailbox.ts) until the key
+// arrives and is stored, or the stated number of reads runs out, each later
+// read queued as its own run after the stated interval.
+
 import { readSetting, writeSetting } from '../state/skarbiec-records.js';
 import { readWelesRun, submitWelesRun } from '../worker/run-submit/index.js';
+import { acquiredSecretContract } from './scoped-service.js';
+import { ORGANIZATION_VARIABLE } from '../utils/email/skrzynka-inbox.js';
+import { isRequestId } from './request-id.js';
 import {
-  acquiredSecretContract,
-  writeWelesAcquiredSecret,
-} from './scoped-service.js';
-import {
-  ORGANIZATION_VARIABLE,
-  messagesTo,
-} from '../utils/email/skrzynka-inbox.js';
+  SEMANTIC_SECRET,
+  scanMailboxForValidKey,
+} from './semantic-scholar/mailbox.js';
 
 type ActionLogRow = {
   id: string;
@@ -54,11 +58,7 @@ type ScannerResult =
       next_scheduled_at?: null;
     };
 
-const SEMANTIC_SECRET = 'semantic_scholar.api_key';
 const FOLLOWUP_ACTION = 'semanticscholar_key_followup';
-const FOLLOWUP_PLATFORM = 'semanticscholar';
-const VALIDATION_URL =
-  'https://api.semanticscholar.org/graph/v1/paper/search?query=test&limit=1&fields=title';
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -66,40 +66,37 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function text(value: unknown): string {
-  return typeof value === 'string' ? value : '';
+/** A non-empty string, or undefined. */
+function stated(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
 }
 
 function sourceConstraints(row: ActionLogRow): Record<string, unknown> {
   return record(record(row.params).constraints);
 }
 
+/** The tenant a submission names, on its row or in its constraints; null for the operator's own. */
+function submissionTenant(row: ActionLogRow): string | null {
+  const tenant =
+    stated(row.tenant_id) ?? stated(sourceConstraints(row).tenant_id);
+  return tenant === undefined ? null : tenant;
+}
+
 function isSemanticSubmission(row: ActionLogRow): boolean {
   const constraints = sourceConstraints(row);
-  const rowTenant = text(row.tenant_id) || null;
-  const constraintTenant = text(constraints.tenant_id) || null;
   return (
     constraints.secret === SEMANTIC_SECRET &&
     constraints.provider === 'semantic_scholar' &&
     constraints.operation === 'acquire' &&
     constraints.vault_item_id === 'weles-semantic-scholar-api' &&
-    /^[a-f0-9]{64}$/i.test(text(constraints.request_id)) &&
-    rowTenant === constraintTenant
+    isRequestId(constraints.request_id) &&
+    stated(row.tenant_id) === stated(constraints.tenant_id)
   );
 }
 
-function identityEmail(row: ActionLogRow): string {
-  const result = record(row.result);
-  const identity = record(result.identity);
-  const direct = text(identity.email).trim();
-  if (direct) return direct;
-  const session = record(result.session);
-  const envAll = record(session.env_all);
-  return (
-    ['SEMANTIC_SCHOLAR_NEW_EMAIL', 'GENERIC_NEW_EMAIL', 'UW_EMAIL', 'VL_EMAIL']
-      .map((key) => text(envAll[key]).trim())
-      .find(Boolean) ?? ''
-  );
+/** The email of the identity the submission generated, as its result records it. */
+function identityEmail(row: ActionLogRow): string | undefined {
+  return stated(record(record(row.result).identity).email)?.trim();
 }
 
 async function loadSourceSubmission(
@@ -111,115 +108,30 @@ async function loadSourceSubmission(
   if (!row) return null;
   const normalized = { ...row, id: row.id || sourceActionLogId };
   return isSemanticSubmission(normalized) &&
-    (normalized.tenant_id ?? null) === tenantId
+    submissionTenant(normalized) === tenantId
     ? normalized
     : null;
 }
 
-export function extractSemanticScholarKeyCandidates(content: string): string[] {
-  const candidates = new Set<string>();
-  const normalized = content
-    .replace(/&amp;/g, '&')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/\s+/g, ' ');
-  const contextual = [
-    /(?:api\s*key|x-api-key|secret\s*key|access\s*key)\s*(?:is|:|=)?\s*([A-Za-z0-9][A-Za-z0-9._-]{19,127})/gi,
-    /(?:SEMANTIC_SCHOLAR_API_KEY|S2_API_KEY)\s*(?:=|:)\s*([A-Za-z0-9][A-Za-z0-9._-]{19,127})/g,
-  ];
-  for (const pattern of contextual) {
-    for (const match of normalized.matchAll(pattern)) candidates.add(match[1]);
-  }
-  return [...candidates].filter((candidate) => {
-    if (candidate.includes('@')) return false;
-    if (/^https?:/i.test(candidate)) return false;
-    if (
-      /^(semantic|scholar|received|request|information|patience)$/i.test(
-        candidate,
-      )
-    )
-      return false;
-    return /[0-9]/.test(candidate) && /[A-Za-z]/.test(candidate);
-  });
+/** When the submission ran, if its row says; mail older than that is not its key. */
+function sourceStartedAt(row: ActionLogRow): number | undefined {
+  const when = stated(row.started_at) ?? stated(row.completed_at);
+  const ms = when === undefined ? Number.NaN : Date.parse(when);
+  return Number.isFinite(ms) ? ms : undefined;
 }
 
-async function validateCandidate(
-  candidate: string,
-): Promise<{ ok: boolean; status: string }> {
-  try {
-    const response = await fetch(VALIDATION_URL, {
-      headers: { 'x-api-key': candidate },
-    });
-    return { ok: response.ok, status: `HTTP ${response.status}` };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, status: `validation error: ${message}` };
-  }
-}
-
-function sourceStartedAt(row: ActionLogRow): number {
-  const value = row.started_at ?? row.completed_at ?? '';
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-async function scanMailboxForValidKey(source: ActionLogRow): Promise<
-  | {
-      stored: true;
-      emailId: string;
-      validationStatus: string;
-      emailsScanned: number;
-      matchedEmails: number;
-    }
-  | { stored: false; emailsScanned: number; matchedEmails: number }
-> {
-  const target = identityEmail(source).toLowerCase();
-  const minCreatedAt = sourceStartedAt(source);
-  let emailsScanned = 0;
-  let matchedEmails = 0;
-  // Every message Skrzynka holds for the identity's address, newest first.
-  for (const message of await messagesTo(target, '')) {
-    emailsScanned += 1;
-    const receivedAt = Date.parse(message.received_at);
-    if (Number.isFinite(receivedAt) && receivedAt < minCreatedAt) continue;
-    matchedEmails += 1;
-    const content = `${message.subject}\n${message.body_text}`;
-    for (const candidate of extractSemanticScholarKeyCandidates(content)) {
-      const secret = Buffer.from(candidate, 'utf8');
-      try {
-        const validation = await validateCandidate(candidate);
-        if (!validation.ok) continue;
-        const constraints = sourceConstraints(source);
-        const tenantId =
-          text(source.tenant_id) || text(constraints.tenant_id) || null;
-        writeWelesAcquiredSecret(SEMANTIC_SECRET, 'api_key', secret, tenantId, {
-          requestId: text(constraints.request_id),
-          operation: text(constraints.operation) || 'acquire',
-        });
-        return {
-          stored: true,
-          emailId: message.id,
-          validationStatus: validation.status,
-          emailsScanned,
-          matchedEmails,
-        };
-      } finally {
-        secret.fill(0);
-      }
-    }
-  }
-  return { stored: false, emailsScanned, matchedEmails };
-}
 export async function queueSemanticScholarFollowup(
   sourceActionLogId: string,
-  delayMs = 0,
-  attempt = 0,
-  tenantId?: string | null,
-): Promise<{ queued: boolean; action_log_id: string; scheduled_at?: string }> {
+  delayMs: number,
+  attempt: number,
+  tenantId: string | null,
+): Promise<{ queued: boolean; action_log_id: string; scheduled_at: string | null }> {
   const key = `semantic_followup_${sourceActionLogId}_${attempt}`
-    .replace(/[^a-z0-9_]/gi, '_')
+    .replace(/[^a-z\d_]/gi, '_')
     .toLowerCase();
   const existing = readSetting<string | null>(key, null);
-  if (existing) return { queued: false, action_log_id: existing };
+  if (existing)
+    return { queued: false, action_log_id: existing, scheduled_at: null };
   const scheduledAt = new Date(Date.now() + delayMs).toISOString();
   const jobId = await submitWelesRun({
     action: FOLLOWUP_ACTION,
@@ -229,7 +141,7 @@ export async function queueSemanticScholarFollowup(
       delay_ms: delayMs,
       secret: SEMANTIC_SECRET,
       purpose: 'lem',
-      tenant_id: tenantId ?? null,
+      tenant_id: tenantId,
     },
   });
   writeSetting(key, jobId);
@@ -249,10 +161,14 @@ function statedFollowupCount(name: string, what: string): number {
   return value;
 }
 
+/**
+ * Read of the inbox number `attempt` (counted from the first read, which is
+ * attempt 0) for the key of submission `sourceActionLogId`.
+ */
 export async function runSemanticScholarKeyFollowup(
-  sourceActionLogId?: string,
-  attemptArg?: number,
-  tenantId: string | null = null,
+  sourceActionLogId: string | undefined,
+  attempt: number,
+  tenantId: string | null,
 ): Promise<ScannerResult> {
   if (!process.env[ORGANIZATION_VARIABLE]?.trim()) {
     return {
@@ -270,16 +186,23 @@ export async function runSemanticScholarKeyFollowup(
       reason: 'no completed Semantic Scholar submission found',
       next_scheduled_at: null,
     };
-  if (!identityEmail(source))
+  const target = identityEmail(source);
+  if (!target)
     return {
       status: 'target_email_missing',
       validated: false,
-      reason: 'submitted run has no generated email in result metadata',
+      reason: 'submitted run has no generated email in result.identity',
       source_action_log_id: source.id,
       next_scheduled_at: null,
     };
-
-  const scan = await scanMailboxForValidKey(source);
+  const constraints = sourceConstraints(source);
+  const scan = await scanMailboxForValidKey({
+    target: target.toLowerCase(),
+    since: sourceStartedAt(source),
+    tenantId: submissionTenant(source),
+    requestId: String(constraints.request_id),
+    operation: String(constraints.operation),
+  });
   if (scan.stored) {
     const contract = acquiredSecretContract(SEMANTIC_SECRET);
     if (!contract)
@@ -295,7 +218,6 @@ export async function runSemanticScholarKeyFollowup(
     };
   }
 
-  const attempt = Number.isFinite(attemptArg) ? Number(attemptArg) : 0;
   const maxAttempts = statedFollowupCount(
     'SEMANTIC_SCHOLAR_FOLLOWUP_MAX_ATTEMPTS',
     'how many times the inbox is read for the Semantic Scholar key email',
@@ -304,7 +226,9 @@ export async function runSemanticScholarKeyFollowup(
     'SEMANTIC_SCHOLAR_FOLLOWUP_INTERVAL_MS',
     'how long to wait between reads of the inbox for the Semantic Scholar key email',
   );
-  if (attempt + 1 >= maxAttempts) {
+  let next = attempt;
+  next++;
+  if (next >= maxAttempts) {
     return {
       status: 'expired',
       validated: false,
@@ -318,7 +242,7 @@ export async function runSemanticScholarKeyFollowup(
   const queued = await queueSemanticScholarFollowup(
     source.id,
     intervalMs,
-    attempt + 1,
+    next,
     tenantId,
   );
   return {
@@ -329,6 +253,6 @@ export async function runSemanticScholarKeyFollowup(
     next_action_log_id: queued.action_log_id,
     emails_scanned: scan.emailsScanned,
     matched_emails: scan.matchedEmails,
-    next_scheduled_at: queued.scheduled_at ?? null,
+    next_scheduled_at: queued.scheduled_at,
   };
 }

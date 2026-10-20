@@ -5,15 +5,19 @@
 // Moved out of entra_password_lifecycle.mjs, which keeps the three trajectory
 // entry points.
 
+import { randomUUID } from 'node:crypto';
 import {
   getSocialAccount,
   resolveAccountSession,
 } from '../../../../dist/utils/credentials.js';
 import { updateAccount } from '../../../../dist/state/skarbiec-records.js';
 import { WSession } from '../../../../dist/session/wsession.js';
+import { isRequestId } from '../../../../dist/secrets/request-id.js';
 
+// The Skarbiec item of one Entra account's password: a DNS-label-shaped name
+// between the Weles Microsoft prefix and the password suffix.
 const ENTRA_PASSWORD_ID =
-  /^weles-microsoft-[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?-password$/;
+  /^weles-microsoft-[a-z\d](?:[a-z\d-]*[a-z\d])?-password$/;
 const ENTRA_PROVIDER = 'microsoft_entra';
 export const PASSWORD_FIELD = 'password';
 export const SIGN_IN_ORIGIN = 'https://login.microsoftonline.com';
@@ -30,10 +34,10 @@ const SIGN_IN_HOSTS = Object.freeze([
   'login.microsoft.com',
 ]);
 export const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-export const LOWER_UUID =
-  /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/;
-const ACTION_LOG_ID =
-  /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+/** A UUID's shape (hexadecimal groups between hyphens), read from a UUID. */
+const UUID_SHAPE = randomUUID().replace(/[\da-f]/g, '[\\da-f]');
+export const LOWER_UUID = new RegExp(`^${UUID_SHAPE}$`);
+const ACTION_LOG_ID = new RegExp(`^${UUID_SHAPE}$`, 'i');
 
 // The queued row carries two unrelated tenants. The directory block is the
 // item's own write-once identity contract (the Entra directory the principal
@@ -42,14 +46,22 @@ const ACTION_LOG_ID =
 // writer. Never cross them, and never take the identity from anywhere but the
 // directory block: a missing or partial block is a refusal, not a default.
 export function constraints(allowedOperations) {
+  const text = process.env.WELES_CREDENTIAL_CONSTRAINTS;
+  if (!text)
+    throw new Error(
+      'WELES_CREDENTIAL_CONSTRAINTS is not set: an Entra password operation runs only under its exact Skarbiec contract',
+    );
   let parsed;
   try {
-    parsed = JSON.parse(process.env.WELES_CREDENTIAL_CONSTRAINTS ?? '{}');
-  } catch {
-    throw new Error('invalid Weles credential constraints');
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(
+      `invalid Weles credential constraints: not JSON: ${error.message}`,
+      { cause: error },
+    );
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('invalid Weles credential constraints');
+    throw new Error('invalid Weles credential constraints: not an object');
   }
   const directory = parsed.directory;
   if (!directory || typeof directory !== 'object' || Array.isArray(directory)) {
@@ -57,43 +69,31 @@ export function constraints(allowedOperations) {
       'Entra password operation carries no directory identity contract',
     );
   }
-  const credentialId = typeof parsed.secret === 'string' ? parsed.secret : '';
-  const requestId =
-    typeof parsed.request_id === 'string' ? parsed.request_id : '';
-  const operation =
-    typeof parsed.operation === 'string' ? parsed.operation : '';
-  const accountEmail =
-    typeof parsed.account_email === 'string'
-      ? parsed.account_email.trim().toLowerCase()
-      : '';
-  const accountUpn =
-    typeof directory.account_upn === 'string'
-      ? directory.account_upn.trim().toLowerCase()
-      : '';
-  const tenantId =
-    typeof directory.tenant_id === 'string'
-      ? directory.tenant_id.trim().toLowerCase()
-      : '';
-  const principalObjectId =
-    typeof directory.principal_object_id === 'string'
-      ? directory.principal_object_id.trim().toLowerCase()
-      : '';
-  const skarbiecTenantId =
-    typeof parsed.weles_tenant_id === 'string' ? parsed.weles_tenant_id : null;
-  const actionLogId = process.env.ACTION_LOG_ID ?? '';
+  const credentialId = stated(parsed.secret);
+  const operation = stated(parsed.operation);
+  const accountEmail = lowered(parsed.account_email);
+  const accountUpn = lowered(directory.account_upn);
+  const tenantId = lowered(directory.tenant_id);
+  const principalObjectId = lowered(directory.principal_object_id);
+  const actionLogId = stated(process.env.ACTION_LOG_ID);
   if (
+    !credentialId ||
     !ENTRA_PASSWORD_ID.test(credentialId) ||
     parsed.provider !== ENTRA_PROVIDER ||
     directory.provider !== ENTRA_PROVIDER ||
     parsed.vault_item_id !== credentialId ||
     parsed.vault_field !== PASSWORD_FIELD ||
-    !/^[\da-f]{64}$/i.test(requestId) ||
+    !isRequestId(parsed.request_id) ||
+    !actionLogId ||
     !ACTION_LOG_ID.test(actionLogId) ||
     !allowedOperations.includes(operation) ||
+    !accountUpn ||
     !EMAIL.test(accountUpn) ||
-    (accountEmail && !EMAIL.test(accountEmail)) ||
+    (accountEmail !== undefined && !EMAIL.test(accountEmail)) ||
+    !tenantId ||
     !LOWER_UUID.test(tenantId) ||
     parsed.secret_source_origin !== SIGN_IN_ORIGIN ||
+    !principalObjectId ||
     !LOWER_UUID.test(principalObjectId)
   ) {
     throw new Error(
@@ -107,42 +107,43 @@ export function constraints(allowedOperations) {
     accountEmail,
     tenantId,
     principalObjectId,
-    skarbiecTenantId,
-    requestId,
+    skarbiecTenantId: stated(parsed.weles_tenant_id),
+    requestId: parsed.request_id,
     actionLogId,
   };
 }
 
+/** A non-empty string, or undefined. */
+function stated(value) {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+/** A non-empty string trimmed and in lower case, or undefined. */
+function lowered(value) {
+  return stated(value)?.trim().toLowerCase();
+}
+
 function accountMatchesContract(account, contract) {
-  const metadata = account?.metadata ?? {};
-  const upn = String(metadata.entra_upn ?? '')
-    .trim()
-    .toLowerCase();
-  const email = String(metadata.email ?? account?.username ?? '')
-    .trim()
-    .toLowerCase();
+  const metadata = account?.metadata;
+  const email = lowered(metadata?.email) ?? lowered(account?.username);
   const emailMatches =
     email === contract.accountUpn ||
-    (Boolean(contract.accountEmail) && email === contract.accountEmail);
+    (contract.accountEmail !== undefined && email === contract.accountEmail);
   return (
-    upn === contract.accountUpn &&
+    lowered(metadata?.entra_upn) === contract.accountUpn &&
     emailMatches &&
-    String(metadata.entra_tenant_id ?? '')
-      .trim()
-      .toLowerCase() === contract.tenantId &&
-    String(metadata.entra_principal_object_id ?? '')
-      .trim()
-      .toLowerCase() === contract.principalObjectId &&
-    metadata.skarbiec_credential_id === contract.credentialId &&
-    (metadata.skarbiec_tenant_id ?? null) ===
-      (contract.skarbiecTenantId ?? null)
+    lowered(metadata?.entra_tenant_id) === contract.tenantId &&
+    lowered(metadata?.entra_principal_object_id) ===
+      contract.principalObjectId &&
+    metadata?.skarbiec_credential_id === contract.credentialId &&
+    stated(metadata?.skarbiec_tenant_id) === contract.skarbiecTenantId
   );
 }
 
 export function updateAccountReference(account, contract) {
   if (!account.id) throw new Error('Entra account has no stable Skarbiec id');
   const metadata = {
-    ...(account.metadata ?? {}),
+    ...account.metadata,
     skarbiec_credential_id: contract.credentialId,
     entra_upn: contract.accountUpn,
     entra_tenant_id: contract.tenantId,

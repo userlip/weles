@@ -1,25 +1,13 @@
-import { isUtf8 } from 'node:buffer';
-import { spawnSync } from 'node:child_process';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+// Weles's scoped Skarbiec credentials: the reads each service and managed
+// credential contract grants, and, from scoped-service/acquired/, the shape
+// check and the write of a credential a browser job acquired.
+
+import { SERVICE_CONTRACTS, resolvedAcquiredSecretContract } from './scoped-service/contracts.js';
 import {
-  SERVICE_CONTRACTS,
-  resolvedAcquiredSecretContract,
-  isWelesAcquiredSourceOrigin,
-} from './scoped-service/contracts.js';
-import type { WelesAcquiredSecret } from './scoped-service/contracts.js';
-import {
-  checkedTokenFile,
-  skarbiecEndpoint,
   readScopedField,
   readAcquiredField,
-  deployedFile,
   welesManagedCredentialReaderMismatch,
 } from './scoped-service/transport.js';
-import {
-  localCredentialsFile,
-  writeLocalFields,
-} from './scoped-service/local-file.js';
 import { SkarbiecAcquisitionError } from './scoped-service/acquisition-failure.js';
 import type { WelesServiceSecret } from './scoped-service/transport.js';
 export {
@@ -37,6 +25,8 @@ export {
   welesManagedCredentialReaderMismatch,
 } from './scoped-service/transport.js';
 export type { WelesServiceSecret } from './scoped-service/transport.js';
+export { isWelesAcquiredSecretValue } from './scoped-service/acquired/value.js';
+export { writeWelesAcquiredSecret } from './scoped-service/acquired/write.js';
 
 export function readOptionalWelesServiceSecret(
   serviceName: WelesServiceSecret,
@@ -92,12 +82,19 @@ export interface PinnedProxyCredential {
   password: string;
 }
 
+/**
+ * The account-pinned proxy login a pin's credential_ref names: the
+ * <ref>_username and <ref>_password fields of the account-proxy credentials
+ * item. A reference is lowercase hexadecimal; any other is refused.
+ */
 export function readOptionalPinnedProxyCredential(
   reference: string,
 ): PinnedProxyCredential | undefined {
   const normalized = reference.toLowerCase();
-  if (normalized.length !== 16 || /[^a-f\d]/.test(normalized)) {
-    throw new Error('invalid pinned proxy credential reference');
+  if (!/^[a-f\d]+$/.test(normalized)) {
+    throw new Error(
+      `invalid pinned proxy credential reference ${JSON.stringify(reference)}: a reference is hexadecimal`,
+    );
   }
   const username = readScopedField(
     'weles-account-proxy-client',
@@ -112,13 +109,6 @@ export function readOptionalPinnedProxyCredential(
     `${normalized}_password`,
   );
   return username && password ? { username, password } : undefined;
-}
-
-function isMissingOptionalAcquisitionField(error: unknown): boolean {
-  return (
-    error instanceof SkarbiecAcquisitionError &&
-    error.reason === 'field_not_present'
-  );
 }
 
 export function readOptionalWelesServiceLogin(
@@ -144,272 +134,12 @@ export function readOptionalWelesServiceLogin(
       // TOTP is optional login material. Only a definitive answer that this
       // item's field does not exist may omit it; grant, identity and authority
       // failures still stop before a browser opens.
-      if (!isMissingOptionalAcquisitionField(error)) throw error;
+      if (
+        !(error instanceof SkarbiecAcquisitionError) ||
+        error.reason !== 'field_not_present'
+      )
+        throw error;
     }
   }
   return { email, password, ...(totpSecret ? { totpSecret } : {}) };
-}
-
-// ASCII ranges: '0'-'9' 48-57, 'A'-'Z' 65-90, 'a'-'z' 97-122.
-const isDigit = (byte: number) => byte >= 48 && byte <= 57;
-const isUpper = (byte: number) => byte >= 65 && byte <= 90;
-const isLower = (byte: number) => byte >= 97 && byte <= 122;
-
-function isAllowedCredentialByte(byte: number): {
-  allowed: boolean;
-  letter: boolean;
-  digit: boolean;
-} {
-  const digit = isDigit(byte);
-  const letter = isUpper(byte) || isLower(byte);
-  const punctuation = byte === 0x2e || byte === 0x2d || byte === 0x5f; // . - _
-  return { allowed: digit || letter || punctuation, letter, digit };
-}
-
-function hasPrefix(secret: Buffer, prefix: string): boolean {
-  return secret
-    .subarray(0, Buffer.byteLength(prefix))
-    .equals(Buffer.from(prefix, 'ascii'));
-}
-
-// The lower bounds are minimum strengths; nothing caps how long a credential
-// may be.
-function matchesPasswordShape(secret: Buffer): boolean {
-  if (secret.length < 20) return false;
-  let upper = false;
-  let lower = false;
-  let digit = false;
-  let symbol = false;
-  for (const byte of secret) {
-    // Printable ASCII without space, '"' and '\'.
-    if (byte < 0x21 || byte > 0x7e || byte === 0x22 || byte === 0x5c) {
-      return false;
-    }
-    upper ||= isUpper(byte);
-    lower ||= isLower(byte);
-    digit ||= isDigit(byte);
-    symbol ||= !(isUpper(byte) || isLower(byte) || isDigit(byte));
-  }
-  return upper && lower && digit && symbol;
-}
-
-function matchesAcquiredSecretShape(shape: string, secret: Buffer): boolean {
-  if (shape === 'password') return matchesPasswordShape(secret);
-  if (secret.length < 16) return false;
-  let hasLetter = false;
-  let hasDigit = false;
-  for (const byte of secret) {
-    const kind = isAllowedCredentialByte(byte);
-    if (!kind.allowed) return false;
-    hasLetter ||= kind.letter;
-    hasDigit ||= kind.digit;
-  }
-  if (shape === 'semantic-scholar') {
-    return secret.length >= 20 && hasLetter && hasDigit;
-  }
-  if (shape === 'github') {
-    return (
-      secret.length >= 24 &&
-      (hasPrefix(secret, 'github_pat_') ||
-        hasPrefix(secret, 'ghp_') ||
-        hasPrefix(secret, 'gho_') ||
-        hasPrefix(secret, 'ghu_') ||
-        hasPrefix(secret, 'ghs_') ||
-        hasPrefix(secret, 'ghr_'))
-    );
-  }
-  if (shape === 'opaque-token') {
-    return secret.length >= 20 && hasLetter && hasDigit;
-  }
-  return shape === 'supabase' && hasPrefix(secret, 'sbp_');
-}
-
-export function isWelesAcquiredSecretValue(
-  secretName: WelesAcquiredSecret,
-  secret: Buffer,
-): boolean {
-  const contract = resolvedAcquiredSecretContract(secretName);
-  return Boolean(
-    contract && matchesAcquiredSecretShape(contract.shape, secret),
-  );
-}
-
-/**
- * The operations a credential write may commit for, each with whether it
- * only makes sense for a password contract: a reset commits a value whose
- * predecessor was never known to us, an adopt one the operator already knew,
- * and a rollback restores one.
- */
-const WRITE_OPERATIONS: Readonly<Record<string, { passwordOnly: boolean }>> = {
-  acquire: { passwordOnly: false },
-  rotate: { passwordOnly: false },
-  verify: { passwordOnly: false },
-  adopt: { passwordOnly: true },
-  reset: { passwordOnly: true },
-  rollback: { passwordOnly: true },
-};
-
-export function writeWelesAcquiredSecret(
-  secretName: WelesAcquiredSecret,
-  field: string,
-  secret: Buffer,
-  tenantId?: string | null,
-  context: {
-    accountEmail?: string;
-    requestId?: string;
-    operation?: string;
-    sourceOrigin?: string;
-    declaredOrigin?: string;
-  } = {},
-): void {
-  const contract = resolvedAcquiredSecretContract(secretName);
-  if (!contract || field !== contract.field) {
-    throw new Error(
-      `secret target is not in the exact Weles acquisition contract: ${secretName}/${field}`,
-    );
-  }
-  if (!isWelesAcquiredSecretValue(secretName, secret)) {
-    throw new Error(
-      `acquired value does not match the exact Weles acquisition contract: ${secretName}/${field}`,
-    );
-  }
-  const local = localCredentialsFile();
-  const tokenFile = local
-    ? ''
-    : checkedTokenFile(contract.writerTokenFile, tenantId);
-  if (tokenFile === null)
-    throw new Error(
-      `required scoped Skarbiec writer token is unavailable for ${secretName}`,
-    );
-  const requestId = context.requestId ?? '';
-  const operation = context.operation ?? '';
-  if (!/^[a-f0-9]{64}$/i.test(requestId)) {
-    throw new Error(
-      `credential write for ${secretName} needs the operation's request id (64 hex digits); it was given ${JSON.stringify(requestId)}`,
-    );
-  }
-  if (!Object.hasOwn(WRITE_OPERATIONS, operation)) {
-    throw new Error(
-      `credential write for ${secretName} names operation ${JSON.stringify(operation)}; a write is one of ${Object.keys(WRITE_OPERATIONS).join(', ')}`,
-    );
-  }
-  if (
-    WRITE_OPERATIONS[operation].passwordOnly &&
-    contract.shape !== 'password'
-  ) {
-    throw new Error(
-      `${operation} writes are only allowed for password contracts: ${secretName}`,
-    );
-  }
-  if (!isUtf8(secret)) {
-    throw new Error(`credential value must be valid UTF-8 text: ${secretName}`);
-  }
-  // The provenance this write claims is the origin the value was captured on. A
-  // table contract pins it; a derived contract has none to pin, so the caller
-  // must state the captured origin and it must be one absolute https origin —
-  // Skarbiec matches it against the signup origin recorded for the operation.
-  const capturedOrigin = contract.sourceOrigin ?? context.sourceOrigin ?? '';
-  if (!isWelesAcquiredSourceOrigin(capturedOrigin)) {
-    throw new Error(
-      `credential write requires one exact captured https origin for ${secretName}`,
-    );
-  }
-  // Skarbiec records the signup origin a generic acquire declared and refuses the
-  // managed write unless the body echoes exactly that string; it equally refuses a
-  // capture origin presented for an operation that declared none, so the key
-  // travels only when one was declared and only as the exact recorded value.
-  const declaredOrigin = context.declaredOrigin ?? '';
-  if (declaredOrigin && declaredOrigin !== capturedOrigin) {
-    throw new Error(
-      `captured origin does not match the declared signup origin for ${secretName}`,
-    );
-  }
-  const contextValue = {
-    provider: capturedOrigin,
-    account_ref: context.accountEmail?.trim().toLowerCase() || requestId,
-    request_id: requestId,
-    operation,
-  };
-  let kind: string;
-  let fields: Record<string, string>;
-  if (contract.shape === 'password') {
-    const accountEmail = context.accountEmail?.trim().toLowerCase() ?? '';
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(accountEmail)) {
-      throw new Error(
-        `Microsoft password write requires one valid account email for ${secretName}`,
-      );
-    }
-    kind = 'login';
-    fields = {
-      username: accountEmail,
-      password: secret.toString('utf8'),
-    };
-  } else {
-    kind = 'api-key';
-    fields = {
-      api_key: secret.toString('utf8'),
-    };
-  }
-  if (local) {
-    writeLocalFields(local, contract.item, fields, tenantId);
-    return;
-  }
-  const input = Buffer.from(
-    JSON.stringify({
-      schema: 'skarbiec.item.v2',
-      kind,
-      fields,
-      context: contextValue,
-      ...(declaredOrigin ? { capture_origin: declaredOrigin } : {}),
-    }),
-    'utf8',
-  );
-  try {
-    const helper =
-      process.env.SKARBIEC_WELES_WRITER_COMMAND?.trim() ||
-      deployedFile('skarbiec-write.mjs');
-    const result = spawnSync(
-      process.execPath,
-      [
-        helper,
-        contract.writerConsumer,
-        contract.item,
-        contract.field,
-        tokenFile,
-        operation,
-        requestId,
-      ],
-      {
-        input,
-        maxBuffer: Infinity,
-        stdio: ['pipe', 'ignore', 'pipe'],
-        env: {
-          HOME: homedir(),
-          PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
-          WC_SKARBIEC_URL: skarbiecEndpoint(tenantId),
-        },
-      },
-    );
-    if (result.error || result.status !== 0) {
-      // The helper's own words are the cause: they are passed on whole, with
-      // any long token-shaped run redacted, rather than one fragment picked
-      // by pattern (or 'no detail' when no pattern matched).
-      const exited = result.error
-        ? `could not run: ${result.error.message}`
-        : `exited with status ${result.status}`;
-      let said = ' and wrote nothing to stderr';
-      if (Buffer.isBuffer(result.stderr)) {
-        const stderr = result.stderr
-          .toString('utf8')
-          .replace(/[A-Za-z0-9_-]{32,}/g, '[redacted]')
-          .trim();
-        if (stderr) said = `: ${stderr}`;
-      }
-      throw new Error(
-        `scoped Skarbiec write failed for ${secretName}/${field} via ${skarbiecEndpoint(tenantId)}: the write helper ${exited}${said}`,
-      );
-    }
-  } finally {
-    input.fill(0);
-  }
 }

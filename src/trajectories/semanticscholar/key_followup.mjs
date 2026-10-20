@@ -3,9 +3,10 @@
 // it holds is validated and stored in Skarbiec (src/secrets/semantic-scholar-followup.ts).
 // The result is kept as the run's service action result.
 //
-// Env (all optional): SOURCE_ACTION_LOG_ID (the submission to follow; the
-// latest completed one when unset), ATTEMPT (which read of the inbox this is),
-// SEMANTIC_SCHOLAR_TENANT_ID (the tenant whose Skarbiec holds the key).
+// Env: ATTEMPT (required: which read of the inbox this is, the first being 0),
+// SOURCE_ACTION_LOG_ID (the submission to follow) and
+// SEMANTIC_SCHOLAR_TENANT_ID (the tenant whose Skarbiec holds the key; unset
+// for the operator's own).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
@@ -13,19 +14,28 @@ import { runSemanticScholarKeyFollowup } from '../../../dist/secrets/semantic-sc
 import { exitStatusFor } from '../../../dist/cli/usage.js';
 
 const INDENT = '  ';
-const attempt = process.env.ATTEMPT ? Number(process.env.ATTEMPT) : undefined;
-if (attempt !== undefined && !Number.isSafeInteger(attempt))
-  throw new Error(`ATTEMPT is "${process.env.ATTEMPT}", not a whole number: which read of the inbox this is`);
+const attempt = Number(process.env.ATTEMPT);
+if (!process.env.ATTEMPT || !Number.isSafeInteger(attempt))
+  throw new Error(
+    `ATTEMPT is ${process.env.ATTEMPT ? `"${process.env.ATTEMPT}", not a whole number` : 'not set'}: which read of the inbox this is, the first being 0`,
+  );
 
 const result = await runSemanticScholarKeyFollowup(
-  process.env.SOURCE_ACTION_LOG_ID ? process.env.SOURCE_ACTION_LOG_ID : undefined,
+  process.env.SOURCE_ACTION_LOG_ID
+    ? process.env.SOURCE_ACTION_LOG_ID
+    : undefined,
   attempt,
-  process.env.SEMANTIC_SCHOLAR_TENANT_ID ? process.env.SEMANTIC_SCHOLAR_TENANT_ID : null,
+  process.env.SEMANTIC_SCHOLAR_TENANT_ID
+    ? process.env.SEMANTIC_SCHOLAR_TENANT_ID
+    : null,
 );
 // The dispatched action's own recordings, where the API server reads results.
 const dir = runRecordingsDir();
 mkdirSync(dir, { recursive: true });
-writeFileSync(join(dir, 'service_action_result.json'), JSON.stringify({ semantic_scholar_key_followup: result }, null, INDENT));
+writeFileSync(
+  join(dir, 'service_action_result.json'),
+  JSON.stringify({ semantic_scholar_key_followup: result }, null, INDENT),
+);
 
 // The follow-up's own outcomes that are not a failure: the key request still
 // waits for Semantic Scholar, or the key it sent was validated.

@@ -13,13 +13,14 @@ export type StoreConstraints = {
   itemId: string;
   field: string;
   fieldClass: CredentialFieldClass;
-  // Non-empty exactly when Skarbiec recorded a signup origin for this operation:
+  // Present exactly when Skarbiec recorded a signup origin for this operation:
   // the managed write must then echo that string back, and must not send one when
   // the operation declared none.
-  declaredOrigin: string;
-  sourceOrigin: string;
-  tenantId: string | null;
-  accountEmail: string;
+  declaredOrigin: string | undefined;
+  // The origin the contract pins or the task states; absent, the live page's.
+  sourceOrigin: string | undefined;
+  tenantId: string | undefined;
+  accountEmail: string | undefined;
   requestId: string;
   operation: string;
 };
@@ -41,22 +42,29 @@ export function credentialConstraintsText(): string | null {
   return only === undefined ? null : only;
 }
 
+/**
+ * Whether the task asks for a credential to be stored in Skarbiec. Constraints
+ * that are not JSON are refused naming their cause, since they cannot say
+ * whether they ask for one.
+ */
 export function isSkarbiecCredentialTask(): boolean {
   if (stated(process.env.WELES_CREDENTIAL_CONSTRAINTS)) return true;
   const text = credentialConstraintsText();
   if (text === null) return false;
+  let constraints: unknown;
   try {
-    const constraints: unknown = JSON.parse(text);
-    return Boolean(
-      constraints &&
-        typeof constraints === 'object' &&
-        !Array.isArray(constraints) &&
-        'store_secret_target' in constraints &&
-        constraints.store_secret_target === 'skarbiec',
+    constraints = JSON.parse(text);
+  } catch (error) {
+    throw new Error(
+      `the task's credential constraints are not JSON: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
-  } catch {
-    // Constraints that do not parse still ask for a credential: the store
-    // refuses them by name instead of the task running as an ordinary one.
-    return true;
   }
+  return Boolean(
+    constraints &&
+      typeof constraints === 'object' &&
+      !Array.isArray(constraints) &&
+      'store_secret_target' in constraints &&
+      constraints.store_secret_target === 'skarbiec',
+  );
 }
