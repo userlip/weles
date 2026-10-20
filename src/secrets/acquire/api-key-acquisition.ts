@@ -16,12 +16,10 @@
 // a credential is written to.
 
 import { welesAcquiredSecretWriterProblem } from '../scoped-service/transport.js';
+import { isRequestId } from '../request-id.js';
 import type { AcquireSecretRequest, AcquireSecretResult } from './request.js';
 import type { SecretDefinition } from './catalog.js';
 import { paramsFor, queueAction } from './queued-job.js';
-
-/** A credential operation's request id: a SHA-256 digest in hexadecimal. */
-const REQUEST_ID = /^[a-f0-9]{64}$/i; // https://csrc.nist.gov/pubs/fips/180-4/upd1/final SHA-256 message digest is 256 bits, written as 64 hexadecimal digits
 
 /** The Skarbiec item the assembled constraints say the credential is written to. */
 function constrainedItem(params: Record<string, unknown>, secret: string): string {
@@ -61,7 +59,7 @@ export async function queueAcquisition(
   const writerProblem = welesAcquiredSecretWriterProblem(def.secret, request.tenantId);
   if (writerProblem !== null) missing.push(writerProblem);
   const buildId = request.requestId;
-  if (typeof buildId !== 'string' || !REQUEST_ID.test(buildId))
+  if (!isRequestId(buildId))
     missing.push('one exact credential operation request id');
   if (typeof buildId !== 'string' || missing.length) {
     return {
