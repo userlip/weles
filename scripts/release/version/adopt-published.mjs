@@ -2,14 +2,14 @@
 // Record what Stado publishes of this product as the version gate's baseline.
 //
 // `released-surface.json` and `release/version-change.json` are what the
-// version gate judges a revision against. The write-back that kept them true
-// ran only in the GitHub worker-tag workflow, which no Stado release runs, so
-// they stopped following the releases. This reads the release Stado serves
+// version gate judges a revision against. This reads the release Stado serves
 // (`stado release status <product> --json`), fetches its signed archive for
 // the exact source revision it was built from (`stado release fetch`), takes
 // the surface document the build carried out of the runtime payload, and
-// writes both documents through adoptBaseline. npm runs it before every
-// `npm version` (`preversion`), so each bump starts from what is published.
+// writes both documents through adoptBaseline. It is run by hand before
+// `npm version`, as docs/versions.md lists, so each bump starts from what is
+// published; no npm lifecycle script runs it, since only the caller knows the
+// platform whose archive to read.
 //
 // Usage: node scripts/release/version/adopt-published.mjs --platform <platform> [--root <directory>]
 //   --platform  the release platform whose archive is read, as the manifest names it
