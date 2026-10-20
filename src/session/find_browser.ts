@@ -45,6 +45,9 @@ const LAYOUTS: Record<string, BrowserLayout> = {
   },
 };
 
+/** The browser families Weles launches from a selected Stado release. */
+export const RELEASED_BROWSERS = Object.keys(LAYOUTS);
+
 const HEX_PAIR_PATTERN = '[a-f\\d][a-f\\d]';
 const HEX_QUAD_PATTERN = `${HEX_PAIR_PATTERN}${HEX_PAIR_PATTERN}`;
 const HEX_OCTET_PATTERN = `${HEX_QUAD_PATTERN}${HEX_QUAD_PATTERN}`;
@@ -95,6 +98,17 @@ function selection(layout: BrowserLayout, root: string): { version: string; dige
   if (!recorded.version || !recorded.digest)
     return { refusal: `${record} names no version and sha256 (it reads ${JSON.stringify(Object.fromEntries(fields))})` };
   return { version: recorded.version, digest: recorded.digest.toLowerCase() };
+}
+
+/** The version of the selected `browser` release; throws why none is selected. */
+export function selectedBrowserVersion(browser: string): string {
+  const layout = LAYOUTS[browser];
+  if (!layout) throw new Error(`unknown browser family "${browser}"`);
+  const root = installRoot(layout);
+  if (typeof root !== 'string') throw new Error(root.refusal);
+  const selected = selection(layout, root);
+  if ('refusal' in selected) throw new Error(selected.refusal);
+  return selected.version;
 }
 
 function locateBrowser(browser: string): Located {

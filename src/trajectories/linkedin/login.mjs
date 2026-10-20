@@ -16,7 +16,6 @@
 // marks the account's cookies stale); a failure is thrown.
 import { getSocialAccount, resolveAccountSession } from '../../../dist/utils/credentials.js';
 import { WSession } from '../../../dist/session/wsession.js';
-import { generatePersona } from '../../../dist/browser/persona.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
 import { keepVerdict } from '../_shared/action/verdict.mjs';
@@ -49,11 +48,12 @@ const USE_GOOGLE_SSO = process.env.LINKEDIN_LOGIN_GOOGLE_SSO === '1' || !passwor
 if (process.env.WELES_NOPECHA_EXT === undefined) process.env.WELES_NOPECHA_EXT = '0';
 
 let { proxyUrl, persona } = await resolveAccountSession(acct);
-// The account's own persona; a naturally rolled one only when it has none.
-if (!persona) persona = generatePersona();
+// The account's own persona; when it has none, the session dresses one in
+// the locale of the exit it launches through, and later restarts keep it.
 const startSession = (proxy, sessionPersona) =>
   WSession.start({ label: LABEL, proxy, persona: sessionPersona, headless: HEADLESS, pageDiagnostics: false });
 let s = await startSession(proxyUrl, persona);
+persona = s.personaConfig;
 
 /** Solve the checkpoint the page shows; answers what the solver reached. */
 async function solveCheckpoint(stage) {

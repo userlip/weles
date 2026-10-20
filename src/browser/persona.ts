@@ -1,302 +1,125 @@
 /**
  * Persona-based fingerprint rotation.
  *
- * A Persona is a coherent set of browser fingerprint values picked from
- * correlated pools. Each signup uses one Persona; its fields stay stable
- * across the session. The next signup picks a different Persona so
- * TikTok-style anti-abuse (which keys on device fingerprint) sees
- * different devices instead of "same device with rotating IPs".
+ * A Persona is one coherent device and locale a browser session presents.
+ * Each signup uses one Persona; its fields stay stable across the session.
+ * The next signup picks a different Persona so TikTok-style anti-abuse
+ * (which keys on device fingerprint) sees different devices instead of
+ * "same device with rotating IPs".
  *
- * All pool entries are realistic combinations that exist in real traffic.
- * Independent randomization per field would produce obvious-bot fingerprints
- * (macOS UA + Intel UHD GPU + Windows colorDepth + Berlin timezone);
- * pools are gated by OS to keep combinations consistent.
+ * The device comes from one fingerprint-generator sample (persona/device.ts),
+ * so its screen, GPU and cores are a combination real traffic carries; the
+ * timezone and language come from the country the browser exits through
+ * (persona/locale.ts), never from a default.
  */
 
-export interface Persona {
-  os: 'macos' | 'windows' | 'linux';
-  browser: 'chromium' | 'firefox' | 'webkit';
-  chromeVersion: string;
-  userAgentOs: string;
-  platform: string;
-  gpu: { vendor: string; renderer: string };
-  screen: { width: number; height: number; dpr: number };
-  hardwareConcurrency: number;
-  // Optional navigator.deviceMemory override. When absent, the browser build
-  // supplies its own value.
-  deviceMemory?: number;
-  audioSampleRate: 44100 | 48000;
+import { randomUUID } from 'node:crypto';
+import { FingerprintGenerator } from 'fingerprint-generator';
+import type { OperatingSystem } from 'header-generator';
+import { selectedBrowserVersion } from '../session/find_browser.js';
+import {
+  type PersonaBrowser,
+  type PersonaDevice,
+  type PersonaOs,
+  sampleDevice,
+} from './persona/device.js';
+import { type ExitGeography, personaLocale } from './persona/locale.js';
+
+export type { PersonaDevice } from './persona/device.js';
+
+export interface Persona extends PersonaDevice {
   timezone: string;
   language: string;
   // Browser-correct Accept-Language header. Real Chrome on an en-US install
   // sends 'en-US,en;q=0.9'; real Firefox sends 'en-US,en;q=0.5' (Mozilla
-  // intl.accept_languages). Weles previously shipped a bare 'en-US' for both,
-  // which on Firefox = non-standard fingerprint (the q-secondary is missing).
-  // Threaded into Playwright extraHTTPHeaders so the wire value matches what
-  // the corresponding real browser emits.
+  // intl.accept_languages). Threaded into Playwright extraHTTPHeaders so the
+  // wire value matches what the corresponding real browser emits.
   acceptLanguage: string;
-  canvasSeed: number;
+  // The persona's identity a cookie jar is bound to; personas written before
+  // it became a UUID carry a number.
+  canvasSeed: string | number;
 }
 
-type Gpu = { vendor: string; renderer: string };
+/**
+ * `device` dressed in the locale of the country it exits through: `exit`'s
+ * country (and its observed timezone), else the country the run states.
+ * Refused by name when neither names a country the locale table holds.
+ */
+export function dressPersona(
+  device: PersonaDevice,
+  exit: ExitGeography,
+): Persona {
+  const locale = personaLocale(exit);
+  const [base] = locale.language.split('-');
+  // Real Chrome auto-appends ';q=0.9' to its --lang flag; real Firefox emits
+  // ',en;q=0.5' from its intl.accept_languages pref.
+  const acceptLanguage =
+    device.browser === 'firefox'
+      ? `${locale.language},${base};q=0.5`
+      : `${locale.language},${base};q=0.9`;
+  console.log(
+    `[persona] os=${device.os} browser=${device.browser} gpu=${JSON.stringify(device.gpu.renderer)} screen=${device.screen.width}x${device.screen.height}@${device.screen.dpr} country=${locale.country} tz=${locale.timezone} lang=${locale.language}`,
+  );
+  return {
+    ...device,
+    timezone: locale.timezone,
+    language: locale.language,
+    acceptLanguage,
+    canvasSeed: randomUUID(),
+  };
+}
 
-const MACOS_GPUS: Gpu[] = [
-  {
-    vendor: 'Google Inc. (Apple)',
-    renderer:
-      'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)',
-  },
-  {
-    vendor: 'Google Inc. (Apple)',
-    renderer:
-      'ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Unspecified Version)',
-  },
-  {
-    vendor: 'Google Inc. (Apple)',
-    renderer:
-      'ANGLE (Apple, ANGLE Metal Renderer: Apple M3, Unspecified Version)',
-  },
-  {
-    vendor: 'Google Inc. (Apple)',
-    renderer:
-      'ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)',
-  },
-  {
-    vendor: 'Google Inc. (Intel Inc.)',
-    renderer: 'ANGLE (Intel Inc., Intel(R) UHD Graphics 630, OpenGL 4.1)',
-  },
-];
-
-const WINDOWS_GPUS: Gpu[] = [
-  {
-    vendor: 'Google Inc. (Intel)',
-    renderer:
-      'ANGLE (Intel, Intel(R) UHD Graphics 620 (0x00005917) Direct3D11 vs_5_0 ps_5_0, D3D11)',
-  },
-  {
-    vendor: 'Google Inc. (Intel)',
-    renderer:
-      'ANGLE (Intel, Intel(R) UHD Graphics 630 (0x00003E9B) Direct3D11 vs_5_0 ps_5_0, D3D11)',
-  },
-  {
-    vendor: 'Google Inc. (Intel)',
-    renderer:
-      'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics (0x00009A49) Direct3D11 vs_5_0 ps_5_0, D3D11)',
-  },
-  {
-    vendor: 'Google Inc. (NVIDIA)',
-    renderer:
-      'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 (0x00001F82) Direct3D11 vs_5_0 ps_5_0, D3D11)',
-  },
-  {
-    vendor: 'Google Inc. (NVIDIA)',
-    renderer:
-      'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 (0x00002503) Direct3D11 vs_5_0 ps_5_0, D3D11)',
-  },
-  {
-    vendor: 'Google Inc. (AMD)',
-    renderer:
-      'ANGLE (AMD, AMD Radeon RX 580 (0x000067DF) Direct3D11 vs_5_0 ps_5_0, D3D11)',
-  },
-];
-
-const LINUX_GPUS: Gpu[] = [
-  { vendor: 'Mesa', renderer: 'Mesa Intel(R) UHD Graphics 630 (CFL GT2)' },
-  { vendor: 'Mesa', renderer: 'Mesa Intel(R) Xe Graphics (TGL GT2)' },
-];
-
-type ScreenSize = { width: number; height: number; dpr: number };
-
-const MACOS_SCREENS: ScreenSize[] = [
-  { width: 1440, height: 900, dpr: 2 },
-  { width: 1680, height: 1050, dpr: 2 },
-  { width: 2560, height: 1600, dpr: 2 },
-  { width: 2048, height: 1280, dpr: 2 },
-];
-
-const WINDOWS_SCREENS: ScreenSize[] = [
-  { width: 1366, height: 768, dpr: 1 },
-  { width: 1920, height: 1080, dpr: 1 },
-  { width: 2560, height: 1440, dpr: 1 },
-  { width: 1536, height: 864, dpr: 1.25 },
-];
-
-const LINUX_SCREENS: ScreenSize[] = [
-  { width: 1920, height: 1080, dpr: 1 },
-  { width: 2560, height: 1440, dpr: 1 },
-];
-
-const CHROME_VERSIONS = [
-  '147.0.6112.40',
-  '147.0.6112.85',
-  '147.0.6112.122',
-  '146.0.6044.199',
-];
-
-// --- Firefox engine surface --------------------------------------------------
-// The weles-firefox binary (~/.local/share/weles-firefox/<ver>-weles.N) exposes
-// real Gecko-only navigator fields (oscpu, buildID, productSub=20100101, empty
-// vendor). fingerprint-generator's sample for browser:'firefox' carries its own
-// dataset's Firefox version, not the installed binary's, and a UA that
-// disagrees with the Gecko engine is the exact signal Google ("this browser or
-// app may not be secure") and Cloudflare flag.
-// firefoxNav() returns a UA + navigator fields internally consistent with the
-// Gecko engine. The rv:/Firefox major MUST track the installed binary's major
-// so a deep UA<->engine check stays consistent — bump FIREFOX_VERSION when
-// weles-firefox is upgraded. productSub (20100101) and buildID
-// (20181001000000) are Mozilla-frozen for every desktop Firefox since v64, so
-// they are correct values, not fingerprint tells.
-const FIREFOX_VERSION = '142.0';
-
-const FIREFOX_UA_TEMPLATES: Record<string, string> = {
-  macos:
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:VER) Gecko/20100101 Firefox/VER',
-  windows:
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:VER) Gecko/20100101 Firefox/VER',
-  linux: 'Mozilla/5.0 (X11; Linux x86_64; rv:VER) Gecko/20100101 Firefox/VER',
-};
-
-const FIREFOX_OSCPU: Record<string, string> = {
-  macos: 'Intel Mac OS X 10.15',
-  windows: 'Windows NT 10.0; Win64; x64',
-  linux: 'Linux x86_64',
-};
+/**
+ * A coherent Persona for a browser exiting in `country`: a device sampled for
+ * the forced `os` and `browser` (the dataset's shares otherwise), in that
+ * country's locale. A caller that knows no exit country passes none; the
+ * run's stated WELES_PERSONA_COUNTRY is then used, or the persona is refused.
+ */
+export function generatePersona(opts: {
+  country?: string;
+  os?: PersonaOs;
+  browser?: PersonaBrowser;
+}): Persona {
+  return dressPersona(sampleDevice(opts), { country: opts.country });
+}
 
 export interface FirefoxNav {
   userAgent: string;
   appVersion: string;
   oscpu: string;
   vendor: '';
-  product: 'Gecko';
-  productSub: '20100101';
-  buildID: '20181001000000';
-}
-
-/** Internally-consistent desktop-Firefox navigator surface for `targetOs`. */
-export function firefoxNav(targetOs: string): FirefoxNav {
-  const os = targetOs in FIREFOX_UA_TEMPLATES ? targetOs : 'macos';
-  const userAgent = FIREFOX_UA_TEMPLATES[os].replace(/VER/g, FIREFOX_VERSION);
-  return {
-    userAgent,
-    // Firefox appVersion is the user-agent string without the Mozilla/ prefix.
-    appVersion: userAgent.replace(/^Mozilla\//, ''),
-    oscpu: FIREFOX_OSCPU[os],
-    vendor: '',
-    product: 'Gecko',
-    productSub: '20100101',
-    buildID: '20181001000000',
-  };
-}
-
-const COUNTRY_LOCALE: Record<string, { tz: string; lang: string }> = {
-  US: { tz: 'America/New_York', lang: 'en-US' },
-  'US-W': { tz: 'America/Los_Angeles', lang: 'en-US' },
-  UK: { tz: 'Europe/London', lang: 'en-GB' },
-  GB: { tz: 'Europe/London', lang: 'en-GB' },
-  DE: { tz: 'Europe/Berlin', lang: 'de-DE' },
-  FR: { tz: 'Europe/Paris', lang: 'fr-FR' },
-  NL: { tz: 'Europe/Amsterdam', lang: 'nl-NL' },
-  CA: { tz: 'America/Toronto', lang: 'en-CA' },
-  AU: { tz: 'Australia/Sydney', lang: 'en-AU' },
-};
-
-function pick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
+  product: string;
+  productSub: string;
 }
 
 /**
- * Generate a coherent Persona.
- *
- * @param opts.country  ISO-2 country hint from the proxy (e.g. 'US', 'UK').
- *                      Controls timezone + language; defaults to US.
- * @param opts.os       Force a specific OS; by default sampled ~70% Windows,
- *                      25% macOS, 5% Linux to match real web traffic shape.
+ * Desktop-Firefox navigator surface for `targetOs`, sampled from the dataset
+ * and carrying the selected weles-firefox release's major version. The
+ * dataset's Firefox version is its own, not the installed binary's, and a UA
+ * that disagrees with the Gecko engine is the signal Google ("this browser or
+ * app may not be secure") and Cloudflare flag.
  */
-export function generatePersona(
-  opts: {
-    country?: string;
-    os?: Persona['os'];
-    browser?: Persona['browser'];
-  } = {},
-): Persona {
-  const r = Math.random();
-  const os: Persona['os'] =
-    opts.os ?? (r < 0.7 ? 'windows' : r < 0.95 ? 'macos' : 'linux');
-  // 60/40 chromium/firefox. Both browsers now carry engine-level weles patches:
-  // chromium via chromium-build (canvas noise, UA reduction, ALPS, HEVC/audio
-  // shims); firefox via firefox-build (navigator.webdriver, webgl vendor/renderer
-  // de-sanitize, nsScreen + window-outer overrides, juggler integration).
-  // Rotation = TLS/HTTP2 fingerprint rotation (BoringSSL vs NSS → different JA4).
-  const br = Math.random();
-  const browser: Persona['browser'] =
-    opts.browser ?? (br < 0.6 ? 'chromium' : 'firefox');
-
-  const gpu =
-    os === 'macos'
-      ? pick(MACOS_GPUS)
-      : os === 'windows'
-        ? pick(WINDOWS_GPUS)
-        : pick(LINUX_GPUS);
-  const screen =
-    os === 'macos'
-      ? pick(MACOS_SCREENS)
-      : os === 'windows'
-        ? pick(WINDOWS_SCREENS)
-        : pick(LINUX_SCREENS);
-
-  const userAgentOs =
-    os === 'macos'
-      ? 'Macintosh; Intel Mac OS X 10_15_7'
-      : os === 'windows'
-        ? 'Windows NT 10.0; Win64; x64'
-        : 'X11; Linux x86_64';
-  const platform =
-    os === 'macos' ? 'MacIntel' : os === 'windows' ? 'Win32' : 'Linux x86_64';
-
-  const coreOptions =
-    os === 'macos'
-      ? [4, 8, 10, 12]
-      : os === 'windows'
-        ? [4, 6, 8, 12, 16]
-        : [4, 8];
-  const hardwareConcurrency = pick(coreOptions);
-  const audioSampleRate: 44100 | 48000 = os === 'windows' ? 44100 : 48000;
-
-  const country = (opts.country ?? 'US').toUpperCase();
-  const locale = COUNTRY_LOCALE[country] ?? COUNTRY_LOCALE.US;
-
-  const canvasSeed = Math.floor(Math.random() * 0xffffffff);
-  const chromeVersion = pick(CHROME_VERSIONS);
-
-  const rendererShort =
-    gpu.renderer.match(
-      /Apple M\d[^,)]*|UHD Graphics \d+|GTX \d+|RTX \d+|Radeon [A-Z]+ ?\d+|Iris[^,)]*/,
-    )?.[0] ?? 'GPU';
-  console.log(
-    `[persona] os=${os} browser=${browser} gpu=${rendererShort} screen=${screen.width}x${screen.height}@${screen.dpr} tz=${locale.tz} lang=${locale.lang}`,
-  );
-
-  // Real Chrome auto-appends ';q=0.9' to its --lang flag; real Firefox emits
-  // ',en;q=0.5' from its intl.accept_languages pref. Encode per-browser so
-  // weles wire matches each engine's real-world Accept-Language string.
-  const acceptLanguage =
-    browser === 'firefox'
-      ? `${locale.lang},${locale.lang.split('-')[0]};q=0.5`
-      : `${locale.lang},${locale.lang.split('-')[0]};q=0.9`;
-
+export function firefoxNav(targetOs: string): FirefoxNav {
+  const release = selectedBrowserVersion('firefox');
+  const major = release.match(/^(?<major>\d+)\./)?.groups?.major;
+  if (!major)
+    throw new Error(
+      `persona_firefox_version_unreadable: the selected weles-firefox release ${JSON.stringify(release)} names no major version`,
+    );
+  const nav = new FingerprintGenerator({
+    browsers: ['firefox'],
+    // The generator refuses a system its dataset does not hold.
+    operatingSystems: [targetOs as OperatingSystem],
+    devices: ['desktop'],
+  }).getFingerprint().fingerprint.navigator;
   return {
-    os,
-    browser,
-    chromeVersion,
-    userAgentOs,
-    platform,
-    gpu,
-    screen,
-    hardwareConcurrency,
-    audioSampleRate,
-    timezone: locale.tz,
-    language: locale.lang,
-    acceptLanguage,
-    canvasSeed,
+    userAgent: nav.userAgent
+      .replace(/rv:\d+/, `rv:${major}`)
+      .replace(/Firefox\/\d+/, `Firefox/${major}`),
+    appVersion: nav.appVersion,
+    oscpu: nav.oscpu,
+    vendor: '',
+    product: nav.product,
+    productSub: nav.productSub,
   };
 }
