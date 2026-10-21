@@ -49,9 +49,13 @@ function executionHost() {
 }
 
 // An approval is a resource, not a hint: the id is stable for the exact run and
-// phase that asked for it, and the resume token (a random UUID, unguessable and
-// within the length the credential contract accepts) is the only way back into
-// this operation. It holds until a person answers it.
+// phase that asked for it, and the resume token is a random UUID, unguessable
+// and within the length the credential contract accepts. Its window is the one
+// this admission can honour: it accepts submit and status and refuses resume
+// (credentials/service.mjs), so nothing can continue the paused run and the
+// approval closes the moment it is issued. Skarbiec's resume then releases the
+// staged candidate and says to submit again, which is the way forward once the
+// person has done what the instruction asks.
 function approvalResource(contract, phase, providerEffect, instruction) {
   return {
     approval_id: createHash('sha256')
@@ -59,6 +63,7 @@ function approvalResource(contract, phase, providerEffect, instruction) {
       .digest('hex'),
     phase,
     provider_effect: providerEffect,
+    expires_at: new Date().toISOString(),
     resume_token: randomUUID(),
     instruction,
   };
