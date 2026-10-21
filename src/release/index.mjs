@@ -9,15 +9,17 @@
  * every disagreement between them. `validateCandidateManifest` judges a
  * candidate deployment manifest against the revision and tag the release is
  * for.
- *
- * All three used to be separate files under a `scripts/release` folder, which
- * is why the release contract could be run by hand and could not be reached
- * from the product at all.
  */
 import ts from 'typescript';
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { loadManifest } from './manifest.mjs';
+import {
+  cliCommands,
+  httpRoutes,
+  mcpTools,
+  serverModules,
+} from './surface/published.mjs';
 import {
   NONTERMINAL_STATUSES,
   TERMINAL_STATUSES,
@@ -30,60 +32,53 @@ const CHANGE_KINDS = {
   breaking: 'published surface was removed',
 };
 
+/** A candidate tag: this prefix, the deployment id, then the revision's abbreviation. */
+const CANDIDATE_TAG_PREFIX = 'candidate-deployment-';
+
 /** The repository root, from this module's own location. */
 export function repositoryRoot() {
   return resolve(import.meta.dirname, '..', '..');
 }
 
-/**
- * Every module the worker API server is written in: its entry file and the
- * modules beside it that carry parts of the same server.
- *
- * The published HTTP surface is read out of these files, so the list has to
- * follow the server's own shape rather than name one file. When the routes
- * lived in the entry file alone, naming that file was the same thing; once the
- * server was split into the families it serves, a single-file scan reported
- * that this build publishes no routes at all.
- */
-async function apiServerModules(root) {
-  const entry = join(root, 'src/worker/weles-api-server.mjs');
-  const directory = join(root, 'src/worker/weles-api-server');
-  const modules = [entry];
-  const entries = await readdir(directory, {
-    withFileTypes: true,
-    recursive: true,
-  }).catch((error) => {
-    if (error.code === 'ENOENT') return [];
-    throw error;
+/** The TypeScript program of the build, with the worker API server's modules. */
+function buildProgram(root, apiServerPaths) {
+  const configPath = ts.findConfigFile(
+    root,
+    ts.sys.fileExists,
+    'tsconfig.json',
+  );
+  if (!configPath) throw new Error('tsconfig.json not found');
+  const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+  if (configFile.error)
+    throw new Error(
+      ts.flattenDiagnosticMessageText(configFile.error.messageText, '\n'),
+    );
+  const parsed = ts.parseJsonConfigFileContent(
+    configFile.config,
+    ts.sys,
+    root,
+    { allowJs: true },
+  );
+  return ts.createProgram({
+    rootNames: [...parsed.fileNames, ...apiServerPaths],
+    options: { ...parsed.options, allowJs: true, checkJs: false, noEmit: true },
   });
-  for (const found of entries) {
-    if (!found.isFile() || !found.name.endsWith('.mjs')) continue;
-    modules.push(join(found.parentPath ?? found.path, found.name));
-  }
-  return modules.sort();
 }
 
-/**
- * The MCP entry file and the modules beside it that carry parts of the same
- * server, for the same reason `apiServerModules` exists: the tool list moved
- * from `src/mcp.ts` into `src/mcp/tools.ts`, and a scan that named the entry
- * file alone then reported that this build publishes no MCP tools at all —
- * which is a refusal, so no revision could be judged.
- */
-async function mcpModules(root) {
-  const modules = [join(root, 'src/mcp.ts')];
-  const entries = await readdir(join(root, 'src/mcp'), {
-    withFileTypes: true,
-    recursive: true,
-  }).catch((error) => {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  });
-  for (const found of entries) {
-    if (!found.isFile() || !found.name.endsWith('.ts')) continue;
-    modules.push(join(found.parentPath ?? found.path, found.name));
-  }
-  return modules.sort();
+/** Each name `src/index.ts` exports. */
+function libraryExports(program, root) {
+  const indexSource = program.getSourceFile(join(root, 'src/index.ts'));
+  if (!indexSource) throw new Error('src/index.ts was not parsed');
+  const checker = program.getTypeChecker();
+  const indexSymbol = checker.getSymbolAtLocation(indexSource);
+  if (!indexSymbol) throw new Error('src/index.ts has no module symbol');
+  return checker
+    .getExportsOfModule(indexSymbol)
+    .map((symbol) => `export:${symbol.getName()}`);
+}
+
+async function jsonAt(root, path) {
+  return JSON.parse(await readFile(join(root, path), 'utf8'));
 }
 
 /**
@@ -92,146 +87,33 @@ async function mcpModules(root) {
  * that changed without a version change cannot pass unnoticed.
  */
 export async function surface(root = repositoryRoot()) {
-  const configPath = ts.findConfigFile(
+  const apiServerPaths = await serverModules(
     root,
-    ts.sys.fileExists,
-    'tsconfig.json',
+    'src/worker/weles-api-server.mjs',
+    'src/worker/weles-api-server',
+    '.mjs',
   );
-  if (!configPath) throw new Error('tsconfig.json not found');
-  const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
-  if (configFile.error) {
-    throw new Error(
-      ts.flattenDiagnosticMessageText(configFile.error.messageText, '\n'),
-    );
-  }
-  const parsed = ts.parseJsonConfigFileContent(
-    configFile.config,
-    ts.sys,
-    root,
-    { allowJs: true },
-  );
-  const apiServerPaths = await apiServerModules(root);
-  const program = ts.createProgram({
-    rootNames: [...parsed.fileNames, ...apiServerPaths],
-    options: { ...parsed.options, allowJs: true, checkJs: false, noEmit: true },
-  });
-  const checker = program.getTypeChecker();
-  const published = new Set();
+  const program = buildProgram(root, apiServerPaths);
+  const published = new Set(libraryExports(program, root));
 
-  const indexSource = program.getSourceFile(join(root, 'src/index.ts'));
-  if (!indexSource) throw new Error('src/index.ts was not parsed');
-  const indexSymbol = checker.getSymbolAtLocation(indexSource);
-  if (!indexSymbol) throw new Error('src/index.ts has no module symbol');
-  for (const symbol of checker.getExportsOfModule(indexSymbol)) {
-    published.add(`export:${symbol.getName()}`);
-  }
-
-  const packageManifest = JSON.parse(
-    await readFile(join(root, 'package.json'), 'utf8'),
-  );
-  if (!packageManifest.bin || typeof packageManifest.bin !== 'object') {
+  const packageManifest = await jsonAt(root, 'package.json');
+  if (!packageManifest.bin || typeof packageManifest.bin !== 'object')
     throw new Error('package.json bin map is missing');
-  }
   for (const command of Object.keys(packageManifest.bin))
     published.add(`cmd:${command}`);
+  for (const command of cliCommands(program, root)) published.add(command);
 
-  const cliSource = program.getSourceFile(join(root, 'src/cli.ts'));
-  if (!cliSource) throw new Error('src/cli.ts was not parsed');
-  let cliCommands = 0;
-  for (const node of cliSource.statements) {
-    if (
-      !ts.isTypeAliasDeclaration(node) ||
-      node.name.text !== 'CliCommand' ||
-      !ts.isUnionTypeNode(node.type)
-    )
-      continue;
-    for (const member of node.type.types) {
-      if (
-        !ts.isLiteralTypeNode(member) ||
-        !ts.isStringLiteral(member.literal)
-      ) {
-        throw new Error('CliCommand contains a non-string member');
-      }
-      published.add(`cmd:weles ${member.literal.text}`);
-      cliCommands += 1;
-    }
-  }
-  if (!cliCommands) throw new Error('no Weles CLI commands resolved');
+  const mcpPaths = await serverModules(root, 'src/mcp.ts', 'src/mcp', '.ts');
+  for (const tool of mcpTools(program, mcpPaths)) published.add(tool);
+  for (const route of httpRoutes(program, apiServerPaths))
+    published.add(route);
 
-  const mcpPaths = await mcpModules(root);
-  let mcpTools = 0;
-  for (const path of mcpPaths) {
-    const mcpSource = program.getSourceFile(path);
-    if (!mcpSource) throw new Error(`MCP module was not parsed: ${path}`);
-    // Tool declarations are array literals typed ToolDefinition[]; the
-    // exported welesMcpTools joins them by spreading, so a spread member is a
-    // reference to a list this scan reads where it is declared.
-    const collectMcpTools = (node) => {
-      if (
-        ts.isVariableDeclaration(node) &&
-        ts.isIdentifier(node.name) &&
-        node.type?.getText(mcpSource) === 'ToolDefinition[]' &&
-        node.initializer &&
-        ts.isArrayLiteralExpression(node.initializer)
-      ) {
-        for (const element of node.initializer.elements) {
-          if (ts.isSpreadElement(element)) continue;
-          if (!ts.isObjectLiteralExpression(element)) {
-            throw new Error(`${node.name.text} contains a non-object member`);
-          }
-          const name = element.properties.find(
-            (property) =>
-              ts.isPropertyAssignment(property) &&
-              property.name?.getText(mcpSource) === 'name',
-          );
-          if (
-            !name ||
-            !ts.isPropertyAssignment(name) ||
-            !ts.isStringLiteral(name.initializer)
-          ) {
-            throw new Error('MCP tool has no static string name');
-          }
-          published.add(`mcp:${name.initializer.text}`);
-          mcpTools += 1;
-        }
-      }
-      ts.forEachChild(node, collectMcpTools);
-    };
-    collectMcpTools(mcpSource);
-  }
-  if (!mcpTools)
-    throw new Error(
-      `no Weles MCP tools resolved in ${mcpPaths.length} module(s)`,
-    );
-
-  let routes = 0;
-  const collectRoutes = (node) => {
-    if (
-      ts.isStringLiteral(node) &&
-      /^(GET|POST|PATCH|DELETE) \/[A-Za-z]/.test(node.text)
-    ) {
-      published.add(`http:${node.text}`);
-      routes += 1;
-    }
-    ts.forEachChild(node, collectRoutes);
-  };
-  for (const path of apiServerPaths) {
-    const apiSource = program.getSourceFile(path);
-    if (!apiSource)
-      throw new Error(`worker API server module was not parsed: ${path}`);
-    collectRoutes(apiSource);
-  }
-  if (!routes) throw new Error('no worker HTTP routes resolved');
-
-  const compatibility = JSON.parse(
-    await readFile(join(root, 'release/compatibility-policy.json'), 'utf8'),
-  );
+  const compatibility = await jsonAt(root, 'release/compatibility-policy.json');
   if (
     !Array.isArray(compatibility.api?.supportedSchemas) ||
     !compatibility.api.supportedSchemas.length
-  ) {
+  )
     throw new Error('release compatibility policy has no API schemas');
-  }
   for (const schema of compatibility.api.supportedSchemas)
     published.add(`schema:${schema}`);
   // The task statuses are the public task service's wire vocabulary, read
@@ -242,14 +124,11 @@ export async function surface(root = repositoryRoot()) {
   }))
     published.add(`task-status:${status}`);
 
-  const versionChange = JSON.parse(
-    await readFile(join(root, 'release/version-change.json'), 'utf8'),
-  );
-  if (typeof versionChange.current !== 'string' || !versionChange.current) {
+  const versionChange = await jsonAt(root, 'release/version-change.json');
+  if (typeof versionChange.current !== 'string' || !versionChange.current)
     throw new Error(
       'release version-change declaration has no current version',
     );
-  }
   return { surface: [...published].sort(), version: versionChange.current };
 }
 
@@ -259,47 +138,37 @@ export async function surface(root = repositoryRoot()) {
  * four of them say the same thing.
  */
 export function enforceVersion({ decision, baseline, declaration, manifest }) {
-  if (declaration.schema !== 'weles.version-change.v1') {
+  if (declaration.schema !== 'weles.version-change.v1')
     throw new Error('unsupported version declaration schema');
-  }
-  if (typeof declaration.breaking !== 'boolean') {
+  if (typeof declaration.breaking !== 'boolean')
     throw new Error('version declaration breaking must be boolean');
-  }
-  if (typeof declaration.reason !== 'string' || !declaration.reason.trim()) {
+  if (typeof declaration.reason !== 'string' || !declaration.reason.trim())
     throw new Error('version declaration reason is required');
-  }
-  if (baseline.version !== declaration.current) {
+  if (baseline.version !== declaration.current)
     throw new Error(
       `baseline version ${baseline.version} does not match declaration current ${declaration.current}`,
     );
-  }
-  if (decision.current !== declaration.current) {
+  if (decision.current !== declaration.current)
     throw new Error(
       `AutoVersion current ${decision.current} does not match declaration current ${declaration.current}`,
     );
-  }
-  if (manifest.version !== declaration.candidate) {
+  if (manifest.version !== declaration.candidate)
     throw new Error(
       `package version ${manifest.version} does not match declaration candidate ${declaration.candidate}`,
     );
-  }
-  if (!Object.hasOwn(CHANGE_KINDS, decision.change)) {
+  if (!Object.hasOwn(CHANGE_KINDS, decision.change))
     throw new Error(`unsupported AutoVersion change ${decision.change}`);
-  }
-  if (!Array.isArray(decision.added) || !Array.isArray(decision.removed)) {
+  if (!Array.isArray(decision.added) || !Array.isArray(decision.removed))
     throw new Error('AutoVersion decision has no surface difference');
-  }
-  if (declaration.breaking && decision.change !== 'breaking') {
+  if (declaration.breaking && decision.change !== 'breaking')
     throw new Error(
       'declared breaking change was not escalated by AutoVersion',
     );
-  }
   if (declaration.candidate === declaration.current) {
-    if (decision.change !== 'internal') {
+    if (decision.change !== 'internal')
       throw new Error(
         `surface changed but package remains ${declaration.current}; AutoVersion requires ${decision.next}`,
       );
-    }
   } else if (decision.next !== declaration.candidate) {
     throw new Error(
       `package declares ${declaration.candidate}, but AutoVersion requires ${decision.next}`,
@@ -319,7 +188,8 @@ export function enforceVersion({ decision, baseline, declaration, manifest }) {
 
 /**
  * A candidate deployment manifest, judged against the revision the release is
- * for and the tag that was cut for it.
+ * for and the tag that was cut for it: the tag names the manifest's deployment
+ * and an abbreviation of that revision.
  */
 export async function validateCandidateManifest({
   manifestPath,
@@ -327,17 +197,20 @@ export async function validateCandidateManifest({
   candidateTag,
 }) {
   const loaded = await loadManifest(resolve(manifestPath));
-  if (loaded.manifest.sourceRevision !== sourceRevision) {
+  if (loaded.manifest.sourceRevision !== sourceRevision)
     throw new Error(
       `manifest sourceRevision ${loaded.manifest.sourceRevision} does not match release target ${sourceRevision}`,
     );
-  }
-  const expected = `candidate-deployment-${loaded.manifest.deploymentId}-${sourceRevision.slice(0, 8)}`;
-  if (expected !== candidateTag) {
+  const prefix = `${CANDIDATE_TAG_PREFIX}${loaded.manifest.deploymentId}-`;
+  const abbreviation = candidateTag.slice(prefix.length);
+  if (
+    !candidateTag.startsWith(prefix) ||
+    !abbreviation ||
+    !sourceRevision.startsWith(abbreviation)
+  )
     throw new Error(
-      `candidate tag ${candidateTag} does not match manifest ${expected}`,
+      `candidate tag ${candidateTag} does not match manifest: expected ${prefix}<abbreviation of ${sourceRevision}>`,
     );
-  }
   return {
     schema: loaded.manifest.schema,
     deploymentId: loaded.manifest.deploymentId,
