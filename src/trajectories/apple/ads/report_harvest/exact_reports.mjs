@@ -1,6 +1,19 @@
 // The exact-range campaign reports fetched through the page's own session, and the keep-open tail.
 import { CLOSE_AFTER_HARVEST } from './settings.mjs';
-import { reviewUntilClosed } from '../../../_shared/page/settled.mjs';
+import { reviewUntilClosed } from '../../../_shared/page/navigation/review.mjs';
+
+/** The answer's JSON, or the reason it is not JSON. */
+function parsedAnswer(body) {
+  let json;
+  let parseError;
+  try {
+    json = JSON.parse(body);
+  } catch (error) {
+    parseError = error.message;
+  }
+  return parseError === undefined ? { json } : { parseError };
+}
+
 function rangeName(range) {
   return `${range.label} (${range.startTime}..${range.endTime})`;
 }
@@ -20,30 +33,19 @@ export async function fetchExactCampaignReports(page, templatePayload, ranges) {
     payload.variables.reportOptions.filter.returnRowTotals = true;
     let response;
     try {
+      // The page's own session sends the request; a fetch or body read that
+      // fails rejects here with its cause.
       response = await page.evaluate(async (body) => {
-        let status = null;
-        let ok = false;
-        try {
-          const res = await fetch('/reporting/graphql', {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-              accept: 'application/json',
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify(body),
-          });
-          status = res.status;
-          ok = res.ok;
-          const text = await res.text();
-          try {
-            return { status, ok, body: text, json: JSON.parse(text) };
-          } catch (error) {
-            return { status, ok, body: text, parseError: error.message };
-          }
-        } catch (error) {
-          return { status, ok, readError: error.message };
-        }
+        const res = await fetch('/reporting/graphql', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            accept: 'application/json',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        });
+        return { status: res.status, ok: res.ok, body: await res.text() };
       }, payload);
     } catch (cause) {
       throw new Error(
@@ -56,6 +58,7 @@ export async function fetchExactCampaignReports(page, templatePayload, ranges) {
       startTime: range.startTime,
       endTime: range.endTime,
       ...response,
+      ...parsedAnswer(response.body),
     });
   }
   return outputs;
@@ -116,21 +119,16 @@ export function summarizeExactReports(exactReports) {
     const data = report.json?.data?.reportingV5?.getReportsByCampaign;
     if (
       !report.ok ||
-      report.readError ||
       report.parseError ||
       hasGraphqlErrors ||
       !Array.isArray(data?.row)
     ) {
-      const response =
-        typeof report.status === 'number'
-          ? `HTTP ${report.status}`
-          : 'no HTTP response';
       const detail = [
         `GraphQL errors: ${errors === undefined ? 'not supplied' : JSON.stringify(errors)}`,
       ];
-      if (report.readError) detail.push(`read: ${report.readError}`);
       if (report.parseError) detail.push(`JSON parse: ${report.parseError}`);
       if (!Array.isArray(data?.row)) detail.push('campaign rows missing');
+      const response = `HTTP ${report.status}`;
       throw new Error(
         `apple_ads_exact_report_failed: range ${rangeName(report)} answered ${response}; ${detail.join('; ')}`,
       );
@@ -142,19 +140,19 @@ export function summarizeExactReports(exactReports) {
         endTime: report.endTime,
         ok: report.ok,
         status: report.status,
-        totalResults: data.pagination?.totalResults ?? null,
+        totalResults: data.pagination?.totalResults,
         totals: figures(data.grandTotals?.total),
         campaigns: data.row.map((row) => ({
           campaignId: row.metadata?.campaignId,
           campaignName: row.metadata?.campaignName,
           displayStatus: row.metadata?.displayStatus,
-          servingStateReasons: row.metadata?.servingStateReasons ?? null,
+          servingStateReasons: row.metadata?.servingStateReasons,
           startDate: row.metadata?.startDate,
           endDate: row.metadata?.endDate,
           dailyBudget: figure(row.metadata?.dailyBudget),
           dailyBudgetCurrency: currencyOf(row.metadata?.dailyBudget),
-          countriesOrRegions: row.metadata?.countriesOrRegions ?? null,
-          supplySources: row.metadata?.supplySources ?? null,
+          countriesOrRegions: row.metadata?.countriesOrRegions,
+          supplySources: row.metadata?.supplySources,
           ...figures(row.total),
         })),
       };

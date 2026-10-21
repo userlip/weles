@@ -1,24 +1,25 @@
 // Waiting for a page to finish what a navigation or a click started, measured
 // by the page itself instead of a clock.
 //
-// `pageSettled` resolves once the document has loaded and its DOM has gone
-// two consecutive animation frames without a mutation. A page that keeps
-// changing keeps the wait open; the run's cancellation ends it, and the step
-// that follows reports what it found. Nothing here sleeps or gives up on a
-// count.
+// `pageSettled` resolves once the document has loaded and a frame without a
+// DOM mutation has followed another one. A page that keeps changing keeps
+// the wait open; the run's cancellation ends it, and the step that follows
+// reports what it found. Nothing here sleeps or gives up on a count.
 //
 // `pageCondition` waits until a predicate evaluated in the page holds, checked
-// on every animation frame, and returns its value.
+// on every animation frame, and returns its value. Operator review lives in
+// navigation/review.mjs.
 
 import { DOCUMENT_REPLACED, readAcrossNavigation } from './navigation/read.mjs';
 
-// Runs inside the page: resolves once the document has loaded and its DOM has
-// gone two consecutive animation frames without a mutation.
+// Runs inside the page: resolves once the document has loaded and a frame
+// without a DOM mutation has followed another frame without one, so the
+// quiet is seen across a whole frame rather than at a single instant.
 function settleInPage() {
   const { promise, resolve } = Promise.withResolvers();
   const quiet = () => {
     let changed = true;
-    let quietFrames = 0;
+    let quietBefore = false;
     const observer = new MutationObserver(() => {
       changed = true;
     });
@@ -29,13 +30,14 @@ function settleInPage() {
       characterData: true,
     });
     const frame = () => {
-      quietFrames = changed ? 0 : quietFrames + 1;
+      const quietNow = !changed;
       changed = false;
-      if (quietFrames >= 2) {
+      if (quietNow && quietBefore) {
         observer.disconnect();
         resolve();
         return;
       }
+      quietBefore = quietNow;
       requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
@@ -207,8 +209,9 @@ export async function responseAfterAction(page, matches, action) {
   const failure = (code, message) =>
     Object.assign(new Error(message), {
       code,
-      requestMethod: request?.method() ?? null,
-      requestUrl: request?.url() ?? null,
+      ...(request
+        ? { requestMethod: request.method(), requestUrl: request.url() }
+        : {}),
       pageUrl: page.url(),
     });
   if (page.isClosed())
@@ -231,14 +234,15 @@ export async function responseAfterAction(page, matches, action) {
   };
   const onRequestFailed = (failed) => {
     if (failed !== request) return;
-    const errorText = failed.failure()?.errorText ?? null;
+    // A failed request carries the browser's reason; one without it is said so.
+    const reason = failed.failure();
+    const detail = reason
+      ? reason.errorText
+      : 'the browser supplied no failure detail';
     reject(
       Object.assign(
-        failure(
-          'REQUEST_FAILED',
-          `request failed: ${describe()}; ${errorText ?? 'the browser supplied no failure detail'}`,
-        ),
-        { errorText },
+        failure('REQUEST_FAILED', `request failed: ${describe()}; ${detail}`),
+        reason ? { errorText: reason.errorText } : {},
       ),
     );
   };
@@ -281,35 +285,5 @@ export async function responseAfterAction(page, matches, action) {
     page.off('requestfailed', onRequestFailed);
     page.off('close', onClose);
     page.off('crash', onCrash);
-  }
-}
-
-// Operator review has an observable end, not an unresolved promise.
-export async function reviewUntilClosed(session) {
-  const { page, ctx } = session;
-  if (page.isClosed()) return;
-  const { promise, resolve, reject } = Promise.withResolvers();
-  const onClose = () => resolve();
-  const onCrash = () =>
-    reject(
-      Object.assign(new Error('page crashed during operator review'), {
-        code: 'PAGE_CRASHED',
-        operation: 'operator_review',
-        pageUrl: page.url(),
-      }),
-    );
-  page.on('close', onClose);
-  page.on('crash', onCrash);
-  ctx.on('close', onClose);
-  process.on('SIGINT', onClose);
-  process.on('SIGTERM', onClose);
-  try {
-    await promise;
-  } finally {
-    page.off('close', onClose);
-    page.off('crash', onCrash);
-    ctx.off('close', onClose);
-    process.off('SIGINT', onClose);
-    process.off('SIGTERM', onClose);
   }
 }

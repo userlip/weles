@@ -3,7 +3,7 @@
 // profile reader (`_shared/profile/persona.mjs`).
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { reviewUntilClosed } from '../../../_shared/page/settled.mjs';
+import { reviewUntilClosed } from '../../../_shared/page/navigation/review.mjs';
 import { CLOSE_AFTER_PROBE, DIAG_DIR } from './settings.mjs';
 
 const INDENT = '  ';

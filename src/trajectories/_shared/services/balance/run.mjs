@@ -5,7 +5,8 @@
 // record writer. Every failure throws with the service's label in its code.
 import { WSession } from '../../../../../dist/session/wsession.js';
 import { humanClickLocator } from '../../../../../dist/human/mouse.js';
-import { pageSettled, popupOrNavigation, reviewUntilClosed, urlMatching } from '../../page/settled.mjs';
+import { pageSettled, popupOrNavigation, urlMatching } from '../../page/settled.mjs';
+import { reviewUntilClosed } from '../../page/navigation/review.mjs';
 import { googleSso } from '../google_sso.mjs';
 import { readShownBalance, keepUnreadBalancePage } from '../google_sso/service_account.mjs';
 import { submitLoginForm } from '../native_login/submit.mjs';
