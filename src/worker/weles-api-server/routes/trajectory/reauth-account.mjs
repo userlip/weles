@@ -34,7 +34,7 @@ function identityRefusal(error) {
 }
 
 /** Refused unless the request carries Brama's reauth token, and the worker holds one to compare. */
-function requireReauthToken(req) {
+export function requireReauthToken(req) {
   if (reauthAuthorized(req)) return;
   if (BRAMA_REAUTH_TOKEN)
     throw new RouteRefusal(http.HTTP_STATUS_UNAUTHORIZED, {

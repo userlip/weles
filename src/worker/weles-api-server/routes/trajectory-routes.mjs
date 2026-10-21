@@ -20,10 +20,11 @@
 
 import { constants as http } from 'node:http2';
 import { json, readBody, requireTokenAuthorization } from '../http-exchange.mjs';
-import { coalesceRun, runAdmissionKey } from '../run/run-outcome.mjs';
+import { runAdmissionKey } from '../run/run-outcome.mjs';
 import { runReauth } from '../run/process/reauth-process.mjs';
 import { admittedReauthAccount } from './trajectory/reauth-account.mjs';
 import { answerRefusal } from './trajectory/refusal.mjs';
+import { streamRun } from './trajectory/progress.mjs';
 
 /** The message of a failure, whatever was thrown. */
 function failure(error) {
@@ -59,9 +60,6 @@ export async function respondToDocumentImport(
   );
 }
 
-/** One JSON object per line; the last line is the `result` event. */
-export const REAUTH_PROGRESS_CONTENT_TYPE = 'application/x-ndjson';
-
 // Resolve a Skarbiec subscription first; /reauth/resolve never starts a browser.
 export async function respondToReauth(
   req,
@@ -85,52 +83,22 @@ export async function respondToReauth(
     json(res, http.HTTP_STATUS_OK, { ok: true, source: 'skarbiec', ...identity });
     return;
   }
-  // An admitted sign-in answers as it goes, one JSON object per line: what
-  // the run is doing now (`started`, every `stage`, an `operator_request` when
-  // it waits for a person) and, last, `result`. A browser sign-in has no clock
-  // that ends it, so a caller that only got the verdict could only wait in
-  // silence and could not say what it was waiting for. A caller that joins a
-  // run already under way is first sent everything that run has reported.
-  const hub = { events: [], listeners: new Set() };
-  const admission = coalesceRun(
-    runAdmissionKey('reauth', {
+  // An admitted sign-in answers as it goes (trajectory/progress.mjs); its
+  // result is the run's own outcome, refreshed when it succeeded.
+  await streamRun(res, {
+    key: runAdmissionKey('reauth', {
       provider,
       login_item: account.loginItem,
       subscription_id: account.subscriptionId,
       account_revision: account.accountRevision,
     }),
-    () =>
-      runReauth(provider, account, (event) => {
-        hub.events.push(event);
-        for (const listener of hub.listeners) listener(event);
-      }),
-    hub,
-  );
-  const progress = admission.entry.metadata;
-  res.writeHead(http.HTTP_STATUS_OK, {
-    'Content-Type': REAUTH_PROGRESS_CONTENT_TYPE,
-    'Cache-Control': 'no-store',
+    identity,
+    start: (publish) => runReauth(provider, account, publish),
+    failed: (error) => ({
+      ok: false,
+      error: 'reauth_run_failed',
+      message: failure(error),
+    }),
+    result: (out) => ({ ...out, refreshed: out.ok }),
   });
-  const send = (event) => {
-    if (!res.writableEnded) res.write(`${JSON.stringify(event)}\n`);
-  };
-  send({ event: 'admitted', coalesced: admission.joined, ...identity });
-  for (const event of progress.events) send(event);
-  progress.listeners.add(send);
-  let out;
-  try {
-    out = await admission.entry.promise;
-  } catch (error) {
-    out = { ok: false, error: 'reauth_run_failed', message: failure(error) };
-  } finally {
-    progress.listeners.delete(send);
-  }
-  send({
-    event: 'result',
-    ...out,
-    ...identity,
-    refreshed: out.ok,
-    coalesced: admission.joined,
-  });
-  res.end();
 }

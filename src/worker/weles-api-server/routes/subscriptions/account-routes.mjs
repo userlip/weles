@@ -10,18 +10,19 @@
 //
 // Both are admitted by Brama's own token, never the general API token, for the
 // reason /reauth is: each spends a real browser run on exactly one account and
-// the broker decides which. Both answer one JSON object per line, exactly as
-// /reauth does, ending with `result`.
+// the broker decides which. Both answer as /reauth does
+// (../trajectory/progress.mjs), ending with `result`.
 
 import { constants as http } from 'node:http2';
 
-import { BRAMA_REAUTH_TOKEN } from '../../configuration.mjs';
-import { json, readBody, reauthAuthorized } from '../../http-exchange.mjs';
-import { coalesceRun, runAdmissionKey } from '../../run/run-outcome.mjs';
+import { json, readBody } from '../../http-exchange.mjs';
+import { runAdmissionKey } from '../../run/run-outcome.mjs';
 import { providersWith, trajectoryPath } from '../../run/process/placement.mjs';
 import { runReauth } from '../../run/process/reauth-process.mjs';
 import { RUN_RELEASE_IDENTITY } from '../../release-identity.mjs';
-import { REAUTH_PROGRESS_CONTENT_TYPE } from '../trajectory-routes.mjs';
+import { requireReauthToken } from '../trajectory/reauth-account.mjs';
+import { RouteRefusal, answerRefusal } from '../trajectory/refusal.mjs';
+import { streamRun } from '../trajectory/progress.mjs';
 import { AUTHORIZE_PAGES } from '../../../../trajectories/_shared/subscription-auth/oauth.mjs';
 
 /** The trajectory under src/trajectories/<provider>/ that buys an account:
@@ -35,129 +36,105 @@ function text(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function admit(req, res) {
-  if (reauthAuthorized(req)) return true;
-  json(
-    res,
-    BRAMA_REAUTH_TOKEN
-      ? http.HTTP_STATUS_UNAUTHORIZED
-      : http.HTTP_STATUS_INTERNAL_SERVER_ERROR,
-    {
-      ok: false,
-      error: BRAMA_REAUTH_TOKEN
-        ? 'unauthorized'
-        : 'missing_BRAMA_WELES_REAUTH_TOKEN',
-    },
-  );
-  return false;
+/** The message of a failure, whatever was thrown. */
+function failure(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
-function refuse(res, error, message) {
-  json(res, http.HTTP_STATUS_BAD_REQUEST, { ok: false, error, message });
+function invalid(error, message) {
+  return new RouteRefusal(http.HTTP_STATUS_BAD_REQUEST, {
+    ok: false,
+    error,
+    message,
+  });
 }
 
-// What the run's last JSON line said, or the failure that it printed none.
+/** The body of a request Brama's token admits; a RouteRefusal otherwise. */
+async function admittedBody(req) {
+  requireReauthToken(req);
+  try {
+    return await readBody(req);
+  } catch (error) {
+    throw invalid('body_unreadable', failure(error));
+  }
+}
+
+/**
+ * What the run said in its last JSON line, or the failure that it said
+ * nothing. A process that failed reports its own failure; otherwise the
+ * failure is the one the run stated.
+ */
 function verdict(out, answer) {
   const said = out.answer;
-  if (said)
+  if (!said) {
+    if (out.failure) return { ok: false, failure: out.failure };
     return {
-      ok: out.ok === true && said.ok === true,
-      failure: out.failure ?? said.failure,
-      ...answer(said),
-    };
-  if (out.failure) return { ok: false, failure: out.failure };
-  return {
-    ok: false,
-    failure: {
-      code: 'run_result_missing',
-      message: 'the run ended without printing its result line',
-    },
-  };
-}
-
-// One admitted run, streamed: `admitted`, everything the run reports, then
-// `result`. A caller that joins a run already under way is sent what it has
-// reported so far.
-async function stream(res, key, identity, start, answer) {
-  const hub = { events: [], listeners: new Set() };
-  const admission = coalesceRun(
-    key,
-    () =>
-      start((event) => {
-        hub.events.push(event);
-        for (const listener of hub.listeners) listener(event);
-      }),
-    hub,
-  );
-  const progress = admission.entry.metadata;
-  res.writeHead(http.HTTP_STATUS_OK, {
-    'Content-Type': REAUTH_PROGRESS_CONTENT_TYPE,
-    'Cache-Control': 'no-store',
-  });
-  const send = (event) => {
-    if (!res.writableEnded) res.write(`${JSON.stringify(event)}\n`);
-  };
-  send({ event: 'admitted', coalesced: admission.joined, ...identity });
-  for (const event of progress.events) send(event);
-  progress.listeners.add(send);
-  let out;
-  try {
-    out = await admission.entry.promise;
-  } catch (error) {
-    out = {
       ok: false,
-      failure: { code: 'run_failed', message: String(error?.message || error) },
+      failure: {
+        code: 'run_result_missing',
+        message: 'the run ended without printing its result line',
+      },
     };
-  } finally {
-    progress.listeners.delete(send);
   }
-  send({
-    event: 'result',
-    run_id: out.run_id,
-    stages: out.stages,
-    ...verdict(out, answer),
-    ...identity,
-    coalesced: admission.joined,
-  });
-  res.end();
+  const stated = out.failure ? out.failure : said.failure;
+  return {
+    ok: out.ok === true && said.ok === true,
+    ...(stated ? { failure: stated } : {}),
+    ...answer(said),
+  };
 }
 
-export async function respondToAcquire(req, res) {
-  if (!admit(req, res)) return;
-  let body;
-  try {
-    body = await readBody(req);
-  } catch (e) {
-    refuse(res, 'body_unreadable', e.message);
-    return;
-  }
+/** Stream one admitted run whose result is its verdict through `answer`. */
+function streamVerdict(res, key, identity, start, answer) {
+  return streamRun(res, {
+    key,
+    identity,
+    start,
+    failed: (error) => ({
+      ok: false,
+      failure: { code: 'run_failed', message: failure(error) },
+    }),
+    result: (out) => ({
+      run_id: out.run_id,
+      stages: out.stages,
+      ...verdict(out, answer),
+    }),
+  });
+}
+
+/** The acquisition the request names, refused naming what it lacks. */
+function requestedAcquisition(body) {
   const provider = text(body.provider).toLowerCase();
-  if (!trajectoryPath(provider, ACQUIRE_TRAJECTORY)) {
-    refuse(
-      res,
+  if (!trajectoryPath(provider, ACQUIRE_TRAJECTORY))
+    throw invalid(
       'provider_unsupported',
       `Weles has no src/trajectories/${provider}/${ACQUIRE_TRAJECTORY}.mjs, so it cannot buy a "${provider}" account; it buys accounts of ${providersWith(ACQUIRE_TRAJECTORY).join(', ')}`,
     );
-    return;
-  }
-  const subscriptionId = text(body.subscription_id);
-  const planTier = text(body.plan_tier);
-  const reason = text(body.reason);
-  const missing = [
-    ['subscription_id', subscriptionId],
-    ['plan_tier', planTier],
-    ['reason', reason],
-  ]
+  const stated = {
+    subscription_id: text(body.subscription_id),
+    plan_tier: text(body.plan_tier),
+    reason: text(body.reason),
+  };
+  const missing = Object.entries(stated)
     .filter(([, value]) => !value)
     .map(([name]) => name);
-  if (missing.length) {
-    refuse(
-      res,
+  if (missing.length)
+    throw invalid(
       'acquisition_incomplete',
       `an acquisition names ${missing.join(', ')}; the request did not`,
     );
+  return { provider, ...stated };
+}
+
+export async function respondToAcquire(req, res) {
+  let acquisition;
+  try {
+    acquisition = requestedAcquisition(await admittedBody(req));
+  } catch (error) {
+    answerRefusal(res, error);
     return;
   }
+  const { provider, subscription_id: subscriptionId } = acquisition;
   // The request names Brama's correlation id, not a member: the member is
   // `<provider>-<account>`, known only once the run has created the account,
   // and travels in the run's own answer as `subscription_id`. The correlation
@@ -165,18 +142,18 @@ export async function respondToAcquire(req, res) {
   const identity = {
     provider,
     request_id: subscriptionId,
-    plan_tier: planTier,
+    plan_tier: acquisition.plan_tier,
     source_revision: RUN_RELEASE_IDENTITY.source_revision,
   };
-  await stream(
+  await streamVerdict(
     res,
     runAdmissionKey('acquire', { provider, subscription_id: subscriptionId }),
     identity,
-    (onProgress) =>
-      runReauth(provider, null, onProgress, ACQUIRE_TRAJECTORY, {
+    (publish) =>
+      runReauth(provider, null, publish, ACQUIRE_TRAJECTORY, {
         BRAMA_SUBSCRIPTION_ID: subscriptionId,
-        WELES_PLAN_TIER: planTier,
-        WELES_ACQUISITION_REASON: reason,
+        WELES_PLAN_TIER: acquisition.plan_tier,
+        WELES_ACQUISITION_REASON: acquisition.reason,
       }),
     (said) => ({
       account: said.account,
@@ -193,37 +170,23 @@ export async function respondToAcquire(req, res) {
 // is answered, so this route cannot be pointed at another site or used to
 // send a code anywhere but to the caller that started the authorization.
 function authorizeUrlRefusal(provider, value) {
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    return 'authorize_url is not a URL';
-  }
+  if (!URL.canParse(value)) return 'authorize_url is not a URL';
+  const url = new URL(value);
   const page = AUTHORIZE_PAGES[provider];
   if (`${url.origin}${url.pathname}` !== page)
     return `authorize_url must be ${page}; it is ${url.origin}${url.pathname}`;
   const declared = url.searchParams.get('redirect_uri');
   if (!declared) return 'authorize_url names no redirect_uri';
-  let redirect;
-  try {
-    redirect = new URL(declared);
-  } catch {
+  if (!URL.canParse(declared))
     return `authorize_url's redirect_uri ${declared} is not a URL`;
-  }
+  const redirect = new URL(declared);
   if (redirect.hostname !== HARNESS_CALLBACK_HOST)
     return `the authorization must redirect to the harness's own ${HARNESS_CALLBACK_HOST} listener; it redirects to ${redirect.host}`;
   return null;
 }
 
-export async function respondToAuthorize(req, res, selectLoginAccount) {
-  if (!admit(req, res)) return;
-  let body;
-  try {
-    body = await readBody(req);
-  } catch (e) {
-    refuse(res, 'body_unreadable', e.message);
-    return;
-  }
+/** The authorization the request names, refused naming what it lacks. */
+function requestedAuthorization(body) {
   const provider = text(body.provider).toLowerCase();
   const subscriptionId = text(body.subscription_id);
   const authorizeUrl = text(body.authorize_url);
@@ -231,32 +194,50 @@ export async function respondToAuthorize(req, res, selectLoginAccount) {
     !Object.hasOwn(AUTHORIZE_PAGES, provider) ||
     !subscriptionId ||
     !authorizeUrl
-  ) {
-    refuse(
-      res,
+  )
+    throw invalid(
       'authorization_incomplete',
       `an authorization names a provider (${Object.keys(AUTHORIZE_PAGES).join(', ')}), a subscription_id and an authorize_url`,
     );
-    return;
-  }
   const refusal = authorizeUrlRefusal(provider, authorizeUrl);
-  if (refusal) {
-    refuse(res, 'authorize_url_refused', refusal);
-    return;
+  if (refusal) throw invalid('authorize_url_refused', refusal);
+  return { provider, subscriptionId, authorizeUrl };
+}
+
+/** The pool account of the subscription, refused with Skarbiec's own refusal. */
+function subscriptionAccount(selectLoginAccount, provider, subscriptionId) {
+  try {
+    return selectLoginAccount(provider, undefined, subscriptionId);
+  } catch (error) {
+    throw new RouteRefusal(
+      http.HTTP_STATUS_CONFLICT,
+      {
+        ok: false,
+        error: error.code,
+        stage: 'identity',
+        message: error.message,
+        ...error.detail,
+      },
+      { cause: error },
+    );
   }
+}
+
+export async function respondToAuthorize(req, res, selectLoginAccount) {
+  let authorization;
   let account;
   try {
-    account = selectLoginAccount(provider, undefined, subscriptionId);
-  } catch (e) {
-    json(res, http.HTTP_STATUS_CONFLICT, {
-      ok: false,
-      error: e.code,
-      stage: 'identity',
-      message: e.message,
-      ...e.detail,
-    });
+    authorization = requestedAuthorization(await admittedBody(req));
+    account = subscriptionAccount(
+      selectLoginAccount,
+      authorization.provider,
+      authorization.subscriptionId,
+    );
+  } catch (error) {
+    answerRefusal(res, error);
     return;
   }
+  const { provider, authorizeUrl } = authorization;
   const identity = {
     provider,
     subscription_id: account.subscriptionId,
@@ -264,12 +245,12 @@ export async function respondToAuthorize(req, res, selectLoginAccount) {
     account_ref: account.accountRef,
     source_revision: RUN_RELEASE_IDENTITY.source_revision,
   };
-  await stream(
+  await streamVerdict(
     res,
     runAdmissionKey('authorize', { provider, authorize_url: authorizeUrl }),
     identity,
-    (onProgress) =>
-      runReauth(provider, account, onProgress, 'account/authorize', {
+    (publish) =>
+      runReauth(provider, account, publish, 'account/authorize', {
         WELES_AUTHORIZE_URL: authorizeUrl,
       }),
     (said) => ({ redirect_url: said.redirect_url }),
@@ -283,21 +264,16 @@ export async function respondToAuthorize(req, res, selectLoginAccount) {
 // resolves them from the same vault it completes their authorization from.
 // Subscriptions that do not resolve are in `errors` with their own refusal.
 export async function respondToAccounts(req, res, listLoginAccounts) {
-  if (!admit(req, res)) return;
-  let body;
+  let provider;
   try {
-    body = await readBody(req);
-  } catch (e) {
-    refuse(res, 'body_unreadable', e.message);
-    return;
-  }
-  const provider = text(body.provider).toLowerCase();
-  if (!Object.hasOwn(AUTHORIZE_PAGES, provider)) {
-    refuse(
-      res,
-      'provider_unsupported',
-      `Weles lists accounts of ${Object.keys(AUTHORIZE_PAGES).join(', ')}; "${provider}" is not one of them`,
-    );
+    provider = text((await admittedBody(req)).provider).toLowerCase();
+    if (!Object.hasOwn(AUTHORIZE_PAGES, provider))
+      throw invalid(
+        'provider_unsupported',
+        `Weles lists accounts of ${Object.keys(AUTHORIZE_PAGES).join(', ')}; "${provider}" is not one of them`,
+      );
+  } catch (error) {
+    answerRefusal(res, error);
     return;
   }
   // `errors` holds every subscription of every provider that did not
