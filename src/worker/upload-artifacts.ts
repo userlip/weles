@@ -154,7 +154,8 @@ export async function readPrivateStadoObjectIdentity(
   }
   // An object that streamed no chunk holds no bytes: its size is then the
   // number of chunks it streamed.
-  if (!sizes.length) return { bytes: sizes.length, sha256: hash.digest('hex') };
+  if (!sizes.length)
+    return { bytes: sizes.length, sha256: hash.digest('hex') };
   return { bytes: total(sizes), sha256: hash.digest('hex') };
 }
 
