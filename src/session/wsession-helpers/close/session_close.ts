@@ -64,11 +64,10 @@ function describeProxyBytes(
   return `proxy_bytes=${proxyBytes}`;
 }
 
-/** The video file of the run: its label, when it has one, and the time. */
+/** The video file of the session: its time, in the session's recordings directory. */
 function videoPath(s: WSession): string {
   const time = new Date().toISOString().replace(/[:.]/g, '-');
-  const name = s.label ? `${s.label}_${time}.webm` : `session_${time}.webm`;
-  return join(recordingsDir(s.label || undefined), name);
+  return join(recordingsDir(s.label), `${time}.webm`);
 }
 
 export async function wsClose(s: WSession): Promise<void> {
@@ -93,7 +92,7 @@ export async function wsClose(s: WSession): Promise<void> {
     );
   try {
     writeFileSync(
-      join(recordingsDir(s.label || undefined), 'network.ndjson'),
+      join(recordingsDir(s.label), 'network.ndjson'),
       s.capturedResponses.map((r) => JSON.stringify(r)).join('\n'),
     );
   } catch (error) {
@@ -105,7 +104,7 @@ export async function wsClose(s: WSession): Promise<void> {
   // property-trap log + writes the same {accesses, requests, console,
   // pageerrors, persona, proxy, versions} shape the interval writer uses,
   // overwriting the in-flight file with the freshest state. Output lives at
-  // recordings/<label>/<label>_<iso>.inst.json so uploadArtifacts picks it up.
+  // <session recordings>/<iso>.inst.json so uploadArtifacts picks it up.
   try {
     await finalDump(s);
   } catch (error) {
