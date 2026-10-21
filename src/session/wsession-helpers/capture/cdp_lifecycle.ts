@@ -1,17 +1,134 @@
 // CDP target lifecycle, frame attach/detach/navigate, performance setup
 // and raw wire-level Network.* extra info, wired from
-// startInstrumentation() through the WSession's existing CDP session. Split
-// out of capture_extras.ts, whose other surfaces are Playwright-side.
+// startInstrumentation() through the WSession's existing CDP session (created
+// in its constructor for Network.dataReceived). Network.*ExtraInfo events
+// surface the actual on-the-wire headers (including HTTP/2 pseudo-headers and
+// the cookie pair line as sent), connection-reuse info and final loaded byte
+// counts that Playwright's ctx.on('response') hides.
+//
+// Each recorded protocol event is kept whole: its own parameters, with the
+// time it arrived and the phase it is filed under. A domain that cannot be
+// enabled records nothing, and its failure is kept where its events would
+// have been, so a missing record reads as a refusal, not as silence.
 
 import type { BrowserContext } from 'playwright';
 
-// CDP target lifecycle + frame attach/detach/navigate +
-// performance setup + raw wire-level Network.* extra info. Uses the
-// WSession's existing CDP session (created in the constructor for
-// Network.dataReceived). Network.*ExtraInfo events surface the actual
-// on-the-wire headers (including HTTP/2 :method/:path/:authority/:scheme
-// pseudo-headers and the cookie pair line as sent), connection-reuse info,
-// and final loaded byte counts that Playwright's ctx.on('response') hides.
+type Sink = unknown[];
+type Cdp = {
+  send(method: string, params?: object): Promise<any>;
+  on(method: string, listener: (params: any) => void): void;
+};
+
+/** Where one protocol event is filed: the record it joins, its phase there. */
+type Filed = { sink: Sink; phase: string };
+
+/** Record every event `table` names into its record, whole. */
+function recordEvents(cdp: Cdp, table: Record<string, Filed>): void {
+  for (const [method, { sink, phase }] of Object.entries(table))
+    cdp.on(method, (params: object) =>
+      sink.push({ t: Date.now(), phase, ...params }),
+    );
+}
+
+/** The message of a failure, whatever was thrown. */
+function failure(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Whether default-on diagnostic `name` runs: WELES_CDP_<name>=0 stops it. */
+function cdpFeatureEnabled(name: string): boolean {
+  return process.env[`WELES_CDP_${name}`] !== '0';
+}
+
+/**
+ * The firehose records every event, so it runs only when WELES_CDP_FIREHOSE
+ * is 1, or, when that is unset, under WELES_FULL_DIAGNOSTICS=1.
+ */
+function cdpFirehoseMode(): 'off' | 'passive' {
+  const stated = process.env.WELES_CDP_FIREHOSE;
+  if (stated !== undefined) return stated === '1' ? 'passive' : 'off';
+  return process.env.WELES_FULL_DIAGNOSTICS === '1' ? 'passive' : 'off';
+}
+
+/** Where each protocol event of the session's records is filed. */
+function eventTable(
+  ws: any,
+  targetEvents: Sink,
+  frameEvents: Sink,
+): Record<string, Filed> {
+  const network: Sink = ws._instCdpNetwork;
+  const audio: Sink = ws._instWebAudio;
+  const animations: Sink = ws._instAnimations;
+  const indexedDb: Sink = ws._instIndexedDb;
+  const page: Sink = ws._instPageEvents;
+  const runtime: Sink = ws._instRuntime;
+  const security: Sink = ws._instSecurity;
+  const storage: Sink = ws._instStorageEvents;
+  return {
+    'Target.targetCreated': { sink: targetEvents, phase: 'created' },
+    'Target.targetDestroyed': { sink: targetEvents, phase: 'destroyed' },
+    'Target.targetInfoChanged': { sink: targetEvents, phase: 'changed' },
+    'Page.frameAttached': { sink: frameEvents, phase: 'attached' },
+    'Page.frameDetached': { sink: frameEvents, phase: 'detached' },
+    'Page.frameNavigated': { sink: frameEvents, phase: 'navigated' },
+    // The constructor's Network.enable delivers these to the same session.
+    'Network.requestWillBeSentExtraInfo': { sink: network, phase: 'reqExtra' },
+    'Network.responseReceivedExtraInfo': { sink: network, phase: 'resExtra' },
+    'Network.loadingFinished': { sink: network, phase: 'loadingFinished' },
+    'Network.loadingFailed': { sink: network, phase: 'loadingFailed' },
+    'Network.signedExchangeReceived': {
+      sink: network,
+      phase: 'signedExchange',
+    },
+    'Network.requestServedFromCache': {
+      sink: network,
+      phase: 'servedFromCache',
+    },
+    'Network.webSocketHandshakeResponseReceived': {
+      sink: network,
+      phase: 'wsHandshakeRes',
+    },
+    'Network.webSocketWillSendHandshakeRequest': {
+      sink: network,
+      phase: 'wsHandshakeReq',
+    },
+    'WebAudio.contextCreated': { sink: audio, phase: 'contextCreated' },
+    'WebAudio.contextDestroyed': { sink: audio, phase: 'contextDestroyed' },
+    'WebAudio.contextChanged': { sink: audio, phase: 'contextChanged' },
+    'Animation.animationCreated': { sink: animations, phase: 'created' },
+    'Animation.animationStarted': { sink: animations, phase: 'started' },
+    'Animation.animationCanceled': { sink: animations, phase: 'canceled' },
+    'Animation.animationUpdated': { sink: animations, phase: 'updated' },
+    // Many bot detectors keep fingerprint state in IndexedDB to survive
+    // cookie wipes.
+    'IndexedDB.databaseCreated': { sink: indexedDb, phase: 'created' },
+    'IndexedDB.versionChange': { sink: indexedDb, phase: 'versionChange' },
+    'Page.lifecycleEvent': { sink: page, phase: 'lifecycle' },
+    'Page.javascriptDialogOpening': { sink: page, phase: 'dialog' },
+    'Page.fileChooserOpened': { sink: page, phase: 'fileChooser' },
+    'Page.windowOpen': { sink: page, phase: 'windowOpen' },
+    'Page.navigatedWithinDocument': { sink: page, phase: 'navWithinDoc' },
+    'Browser.downloadWillBegin': { sink: page, phase: 'downloadBegin' },
+    'Browser.downloadProgress': { sink: page, phase: 'downloadProgress' },
+    // Runtime keeps each console argument's RemoteObject and the stack,
+    // which Playwright's page.on('console') does not.
+    'Runtime.consoleAPICalled': { sink: runtime, phase: 'console' },
+    'Runtime.exceptionThrown': { sink: runtime, phase: 'exception' },
+    // Browser-level log entries: network, deprecation, intervention, security.
+    'Log.entryAdded': { sink: ws._instLog, phase: 'entry' },
+    // TLS state changes, mixed content, certificate warnings.
+    'Security.securityStateChanged': { sink: security, phase: 'stateChanged' },
+    'Security.visibleSecurityStateChanged': {
+      sink: security,
+      phase: 'visibleStateChanged',
+    },
+    'Storage.indexedDBListUpdated': { sink: storage, phase: 'idbList' },
+    'Storage.cacheStorageListUpdated': { sink: storage, phase: 'cacheList' },
+    'Storage.interestGroupAccessed': { sink: storage, phase: 'interestGroup' },
+    'Storage.sharedStorageAccessed': { sink: storage, phase: 'sharedStorage' },
+  };
+}
+
 export function attachCdpLifecycle(
   ws: any,
   _ctx: BrowserContext,
@@ -20,615 +137,128 @@ export function attachCdpLifecycle(
 ): Promise<void> {
   return (async () => {
     try {
-      const cdpFeatureEnabled = (name: string): boolean => {
-        const value = process.env[`WELES_CDP_${name}`];
-        if (name === 'FIREHOSE') return value === '1';
-        return value !== '0';
-      };
-      // The firehose records every protocol event of the domains this
-      // diagnostics module enabled: WELES_CDP_FIREHOSE turns it on or off,
-      // and when it is unset it follows WELES_FULL_DIAGNOSTICS.
-      const cdpFirehoseMode = (): 'off' | 'passive' => {
-        if (process.env.WELES_CDP_FIREHOSE !== undefined)
-          return cdpFeatureEnabled('FIREHOSE') ? 'passive' : 'off';
-        if (process.env.WELES_FULL_DIAGNOSTICS === '1') return 'passive';
-        return 'off';
-      };
       // Observe the constructor's actual protocol setup, including its failure.
       await ws._cdpReady;
-      const cdp = ws._cdp;
-      if (ws._cdpAttachError) {
+      const cdp: Cdp = ws._cdp;
+      if (ws._cdpAttachError)
         targetEvents.push({
           t: Date.now(),
           phase: 'attach_error',
           err: ws._cdpAttachError,
         });
-      }
       if (!cdp) {
         if (!ws._cdpAttachError)
           throw new Error('CDP initialization completed without a session');
         return;
       }
-      // A domain that failed to enable records nothing; the failure is logged
-      // where the missing events would have been, as the other enables do.
-      for (const [method, params] of [
-        ['Target.setDiscoverTargets', { discover: true }],
-        ['Page.enable', undefined],
-        ['Performance.enable', undefined],
-      ] as const) {
+      /** Enable `method`; a refusal joins the target events and `errorKey`. */
+      const enable = async (
+        method: string,
+        params?: object,
+        errorKey?: string,
+      ): Promise<void> => {
         try {
           await cdp.send(method, params);
-        } catch (e: any) {
+        } catch (error) {
+          const err = failure(error);
           targetEvents.push({
             t: Date.now(),
             phase: 'enable_error',
             method,
-            err: String(e?.message ?? e),
+            err,
           });
+          if (errorKey) ws[errorKey] = err;
+        }
+      };
+      await enable('Target.setDiscoverTargets', { discover: true });
+      await enable('Page.enable');
+      await enable('Performance.enable');
+      ws._instCdpNetwork = [];
+      ws._instWebAudio = [];
+      ws._instAnimations = [];
+      ws._instIndexedDb = [];
+      ws._instPageEvents = [];
+      ws._instRuntime = [];
+      ws._instLog = [];
+      ws._instSecurity = [];
+      ws._instStorageEvents = [];
+      recordEvents(cdp, eventTable(ws, targetEvents, frameEvents));
+      // One-shot system facts, read once at session start: the GPU adapters
+      // with vendor, device, driver and decoders, and the flags Chrome was
+      // launched with; a read Chrome refuses keeps its refusal in its place.
+      for (const [key, method, params] of [
+        ['_instSystemInfo', 'SystemInfo.getInfo', undefined],
+        ['_instBrowserVersion', 'Browser.getVersion', undefined],
+        ['_instHistograms', 'Browser.getHistograms', { delta: false }],
+        ['_instNavigationHistory', 'Page.getNavigationHistory', undefined],
+      ] as const) {
+        try {
+          ws[key] = await cdp.send(method, params);
+        } catch (error) {
+          ws[key] = { error: failure(error) };
         }
       }
-      cdp.on('Target.targetCreated', (e: any) => {
-        try {
-          targetEvents.push({
-            t: Date.now(),
-            phase: 'created',
-            info: e?.targetInfo,
-          });
-        } catch {}
-      });
-      cdp.on('Target.targetDestroyed', (e: any) => {
-        try {
-          targetEvents.push({
-            t: Date.now(),
-            phase: 'destroyed',
-            targetId: e?.targetId,
-          });
-        } catch {}
-      });
-      cdp.on('Target.targetInfoChanged', (e: any) => {
-        try {
-          targetEvents.push({
-            t: Date.now(),
-            phase: 'changed',
-            info: e?.targetInfo,
-          });
-        } catch {}
-      });
-      cdp.on('Page.frameAttached', (e: any) => {
-        try {
-          frameEvents.push({
-            t: Date.now(),
-            phase: 'attached',
-            frameId: e?.frameId,
-            parentFrameId: e?.parentFrameId,
-          });
-        } catch {}
-      });
-      cdp.on('Page.frameDetached', (e: any) => {
-        try {
-          frameEvents.push({
-            t: Date.now(),
-            phase: 'detached',
-            frameId: e?.frameId,
-            reason: e?.reason,
-          });
-        } catch {}
-      });
-      cdp.on('Page.frameNavigated', (e: any) => {
-        try {
-          frameEvents.push({
-            t: Date.now(),
-            phase: 'navigated',
-            frameId: e?.frame?.id,
-            url: e?.frame?.url,
-            securityOrigin: e?.frame?.securityOrigin,
-          });
-        } catch {}
-      });
-      // Raw wire-level CDP Network.* events. The WSession constructor already
-      // calls Network.enable for dataReceived; these handlers latch on the
-      // same session. cdp_network array lives on ws so buildDumpPayload reads
-      // it without an extra plumbing layer.
-      if (!ws._instCdpNetwork) ws._instCdpNetwork = [];
-      const nw = ws._instCdpNetwork;
-      cdp.on('Network.requestWillBeSentExtraInfo', (e: any) => {
-        try {
-          nw.push({
-            t: Date.now(),
-            phase: 'reqExtra',
-            requestId: e?.requestId,
-            associatedCookies: e?.associatedCookies,
-            headers: e?.headers,
-            connectTiming: e?.connectTiming,
-            clientSecurityState: e?.clientSecurityState,
-            siteHasCookieInOtherPartition: e?.siteHasCookieInOtherPartition,
-          });
-        } catch {}
-      });
-      cdp.on('Network.responseReceivedExtraInfo', (e: any) => {
-        try {
-          nw.push({
-            t: Date.now(),
-            phase: 'resExtra',
-            requestId: e?.requestId,
-            blockedCookies: e?.blockedCookies,
-            headers: e?.headers,
-            resourceIPAddressSpace: e?.resourceIPAddressSpace,
-            statusCode: e?.statusCode,
-            headersText: e?.headersText,
-            cookiePartitionKey: e?.cookiePartitionKey,
-            cookiePartitionKeyOpaque: e?.cookiePartitionKeyOpaque,
-          });
-        } catch {}
-      });
-      cdp.on('Network.loadingFinished', (e: any) => {
-        try {
-          nw.push({
-            t: Date.now(),
-            phase: 'loadingFinished',
-            requestId: e?.requestId,
-            encodedDataLength: e?.encodedDataLength,
-            shouldReportCorbBlocking: e?.shouldReportCorbBlocking,
-          });
-        } catch {}
-      });
-      cdp.on('Network.loadingFailed', (e: any) => {
-        try {
-          nw.push({
-            t: Date.now(),
-            phase: 'loadingFailed',
-            requestId: e?.requestId,
-            type: e?.type,
-            errorText: e?.errorText,
-            canceled: e?.canceled,
-            blockedReason: e?.blockedReason,
-            corsErrorStatus: e?.corsErrorStatus,
-          });
-        } catch {}
-      });
-      cdp.on('Network.signedExchangeReceived', (e: any) => {
-        try {
-          nw.push({
-            t: Date.now(),
-            phase: 'signedExchange',
-            requestId: e?.requestId,
-            info: e?.info,
-          });
-        } catch {}
-      });
-      cdp.on('Network.requestServedFromCache', (e: any) => {
-        try {
-          nw.push({
-            t: Date.now(),
-            phase: 'servedFromCache',
-            requestId: e?.requestId,
-          });
-        } catch {}
-      });
-      cdp.on('Network.webSocketHandshakeResponseReceived', (e: any) => {
-        try {
-          nw.push({
-            t: Date.now(),
-            phase: 'wsHandshakeRes',
-            requestId: e?.requestId,
-            response: e?.response,
-          });
-        } catch {}
-      });
-      cdp.on('Network.webSocketWillSendHandshakeRequest', (e: any) => {
-        try {
-          nw.push({
-            t: Date.now(),
-            phase: 'wsHandshakeReq',
-            requestId: e?.requestId,
-            request: e?.request,
-          });
-        } catch {}
-      });
-      // One-shot system info — full GPU adapter list with vendor, device,
-      // driver version, GL renderer, supported video decoders, command-line
-      // flags Chrome actually launched with. Captured once at session start.
-      try {
-        ws._instSystemInfo = await cdp.send('SystemInfo.getInfo');
-      } catch (e: any) {
-        ws._instSystemInfo = { error: String(e?.message ?? e) };
-      }
-      try {
-        ws._instBrowserVersion = await cdp.send('Browser.getVersion');
-      } catch (e: any) {
-        ws._instBrowserVersion = { error: String(e?.message ?? e) };
-      }
-      try {
-        ws._instHistograms = await cdp.send('Browser.getHistograms', {
-          delta: false,
-        });
-      } catch (e: any) {
-        ws._instHistograms = { error: String(e?.message ?? e) };
-      }
-      try {
-        ws._instNavigationHistory = await cdp.send('Page.getNavigationHistory');
-      } catch (e: any) {
-        ws._instNavigationHistory = { error: String(e?.message ?? e) };
-      }
-      // CDP Tracing — every browser internal event (V8 GC + JIT, layout,
-      // paint, GPU, blink, devtools timeline) at microsecond resolution.
-      // dataCollected events stream individually; we accumulate then write at
-      // tracingComplete time. The category set covers the most useful slices
-      // without enabling Tracing's verbose log-class which produces hundreds
-      // of MB. Fail-quiet if the binary doesn't support Tracing.
+      // CDP Tracing: every browser-internal event (V8 GC and JIT, layout,
+      // paint, GPU, blink, devtools timeline). dataCollected chunks are
+      // accumulated and written at tracingComplete. The categories leave out
+      // Tracing's verbose log class; Chrome samples at its own default rate.
       ws._instTracing = [];
       if (cdpFeatureEnabled('TRACING')) {
-        cdp.on('Tracing.dataCollected', (e: any) => {
-          try {
-            for (const ev of e?.value ?? []) ws._instTracing.push(ev);
-          } catch {}
+        cdp.on('Tracing.dataCollected', (params: { value: unknown[] }) => {
+          for (const event of params.value) ws._instTracing.push(event);
         });
-        try {
-          await cdp.send('Tracing.start', {
+        await enable(
+          'Tracing.start',
+          {
             categories:
               'v8,blink,devtools.timeline,disabled-by-default-devtools.timeline,latencyInfo,toplevel',
-            options: 'sampling-frequency=10000',
-          });
-        } catch (e: any) {
-          ws._instTracingError = String(e?.message ?? e);
-        }
-      }
-      // JS coverage — which functions actually ran.
-      try {
-        await cdp.send('Profiler.enable');
-        await cdp.send('Profiler.startPreciseCoverage', {
-          callCount: false,
-          detailed: false,
-        });
-      } catch (e: any) {
-        ws._instJsCoverageError = String(e?.message ?? e);
-      }
-      // CSS coverage — which rules matched.
-      try {
-        await cdp.send('DOM.enable');
-        await cdp.send('CSS.enable');
-        await cdp.send('CSS.startRuleUsageTracking');
-      } catch (e: any) {
-        ws._instCssCoverageError = String(e?.message ?? e);
-      }
-      // WebAudio lifecycle — context created/destroyed/changed at CDP level.
-      ws._instWebAudio = [];
-      try {
-        await cdp.send('WebAudio.enable');
-      } catch (e: any) {
-        ws._instWebAudioError = String(e?.message ?? e);
-      }
-      cdp.on('WebAudio.contextCreated', (e: any) => {
-        try {
-          ws._instWebAudio.push({
-            t: Date.now(),
-            phase: 'contextCreated',
-            context: e?.context,
-          });
-        } catch {}
-      });
-      cdp.on('WebAudio.contextDestroyed', (e: any) => {
-        try {
-          ws._instWebAudio.push({
-            t: Date.now(),
-            phase: 'contextDestroyed',
-            contextId: e?.contextId,
-          });
-        } catch {}
-      });
-      cdp.on('WebAudio.contextChanged', (e: any) => {
-        try {
-          ws._instWebAudio.push({
-            t: Date.now(),
-            phase: 'contextChanged',
-            context: e?.context,
-          });
-        } catch {}
-      });
-      // Animation.* — every CSS / Web Animations API animation start / cancel / update.
-      ws._instAnimations = [];
-      try {
-        await cdp.send('Animation.enable');
-      } catch (e: any) {
-        ws._instAnimationsError = String(e?.message ?? e);
-      }
-      cdp.on('Animation.animationCreated', (e: any) => {
-        try {
-          ws._instAnimations.push({
-            t: Date.now(),
-            phase: 'created',
-            id: e?.id,
-          });
-        } catch {}
-      });
-      cdp.on('Animation.animationStarted', (e: any) => {
-        try {
-          ws._instAnimations.push({
-            t: Date.now(),
-            phase: 'started',
-            animation: e?.animation,
-          });
-        } catch {}
-      });
-      cdp.on('Animation.animationCanceled', (e: any) => {
-        try {
-          ws._instAnimations.push({
-            t: Date.now(),
-            phase: 'canceled',
-            id: e?.id,
-          });
-        } catch {}
-      });
-      cdp.on('Animation.animationUpdated', (e: any) => {
-        try {
-          ws._instAnimations.push({
-            t: Date.now(),
-            phase: 'updated',
-            animation: e?.animation,
-          });
-        } catch {}
-      });
-      // IndexedDB.* — DB created/updated/version-changed events. Many bot
-      // detectors store fingerprint state in IndexedDB to survive cookie wipes.
-      ws._instIndexedDb = [];
-      try {
-        await cdp.send('IndexedDB.enable');
-      } catch (e: any) {
-        ws._instIndexedDbError = String(e?.message ?? e);
-      }
-      cdp.on('IndexedDB.databaseCreated', (e: any) => {
-        try {
-          ws._instIndexedDb.push({
-            t: Date.now(),
-            phase: 'created',
-            name: e?.databaseName,
-            origin: e?.origin,
-          });
-        } catch {}
-      });
-      cdp.on('IndexedDB.versionChange', (e: any) => {
-        try {
-          ws._instIndexedDb.push({
-            t: Date.now(),
-            phase: 'versionChange',
-            name: e?.databaseName,
-          });
-        } catch {}
-      });
-      // Page lifecycle markers + dialog/file-chooser/window-open + within-doc nav.
-      ws._instPageEvents = [];
-      try {
-        await cdp.send('Page.setLifecycleEventsEnabled', { enabled: true });
-      } catch {}
-      cdp.on('Page.lifecycleEvent', (e: any) => {
-        try {
-          ws._instPageEvents.push({
-            t: Date.now(),
-            phase: 'lifecycle',
-            name: e?.name,
-            frameId: e?.frameId,
-            loaderId: e?.loaderId,
-            timestamp: e?.timestamp,
-          });
-        } catch {}
-      });
-      cdp.on('Page.javascriptDialogOpening', (e: any) => {
-        try {
-          ws._instPageEvents.push({
-            t: Date.now(),
-            phase: 'dialog',
-            type: e?.type,
-            message: e?.message,
-            url: e?.url,
-            defaultPrompt: e?.defaultPrompt,
-          });
-        } catch {}
-      });
-      cdp.on('Page.fileChooserOpened', (e: any) => {
-        try {
-          ws._instPageEvents.push({
-            t: Date.now(),
-            phase: 'fileChooser',
-            frameId: e?.frameId,
-            mode: e?.mode,
-            backendNodeId: e?.backendNodeId,
-          });
-        } catch {}
-      });
-      cdp.on('Page.windowOpen', (e: any) => {
-        try {
-          ws._instPageEvents.push({
-            t: Date.now(),
-            phase: 'windowOpen',
-            url: e?.url,
-            windowName: e?.windowName,
-            windowFeatures: e?.windowFeatures,
-            userGesture: e?.userGesture,
-          });
-        } catch {}
-      });
-      cdp.on('Page.navigatedWithinDocument', (e: any) => {
-        try {
-          ws._instPageEvents.push({
-            t: Date.now(),
-            phase: 'navWithinDoc',
-            frameId: e?.frameId,
-            url: e?.url,
-          });
-        } catch {}
-      });
-      // Runtime — full console + uncaught exceptions at CDP level (richer than
-      // Playwright's page.on('console') wrap; preserves Runtime.RemoteObject
-      // for each arg + stack trace).
-      ws._instRuntime = [];
-      try {
-        await cdp.send('Runtime.enable');
-      } catch {}
-      cdp.on('Runtime.consoleAPICalled', (e: any) => {
-        try {
-          ws._instRuntime.push({
-            t: Date.now(),
-            phase: 'console',
-            type: e?.type,
-            args: e?.args,
-            executionContextId: e?.executionContextId,
-            stackTrace: e?.stackTrace,
-          });
-        } catch {}
-      });
-      cdp.on('Runtime.exceptionThrown', (e: any) => {
-        try {
-          ws._instRuntime.push({
-            t: Date.now(),
-            phase: 'exception',
-            timestamp: e?.timestamp,
-            exceptionDetails: e?.exceptionDetails,
-          });
-        } catch {}
-      });
-      // Browser-level log entries (network, deprecation, intervention, security).
-      ws._instLog = [];
-      try {
-        await cdp.send('Log.enable');
-      } catch {}
-      cdp.on('Log.entryAdded', (e: any) => {
-        try {
-          ws._instLog.push({ t: Date.now(), entry: e?.entry });
-        } catch {}
-      });
-      // Security state — TLS state changes, mixed content, cert warnings.
-      ws._instSecurity = [];
-      try {
-        await cdp.send('Security.enable');
-      } catch {}
-      cdp.on('Security.securityStateChanged', (e: any) => {
-        try {
-          ws._instSecurity.push({
-            t: Date.now(),
-            phase: 'stateChanged',
-            securityState: e?.securityState,
-            summary: e?.summary,
-            explanations: e?.explanations,
-            insecureContentStatus: e?.insecureContentStatus,
-          });
-        } catch {}
-      });
-      cdp.on('Security.visibleSecurityStateChanged', (e: any) => {
-        try {
-          ws._instSecurity.push({
-            t: Date.now(),
-            phase: 'visibleStateChanged',
-            visibleSecurityState: e?.visibleSecurityState,
-          });
-        } catch {}
-      });
-      // Storage privacy-sandbox events.
-      ws._instStorageEvents = [];
-      cdp.on('Storage.indexedDBListUpdated', (e: any) => {
-        try {
-          ws._instStorageEvents.push({
-            t: Date.now(),
-            phase: 'idbList',
-            origin: e?.origin,
-            storageKey: e?.storageKey,
-          });
-        } catch {}
-      });
-      cdp.on('Storage.cacheStorageListUpdated', (e: any) => {
-        try {
-          ws._instStorageEvents.push({
-            t: Date.now(),
-            phase: 'cacheList',
-            origin: e?.origin,
-          });
-        } catch {}
-      });
-      cdp.on('Storage.interestGroupAccessed', (e: any) => {
-        try {
-          ws._instStorageEvents.push({
-            t: Date.now(),
-            phase: 'interestGroup',
-            accessTime: e?.accessTime,
-            type: e?.type,
-            ownerOrigin: e?.ownerOrigin,
-            name: e?.name,
-          });
-        } catch {}
-      });
-      cdp.on('Storage.sharedStorageAccessed', (e: any) => {
-        try {
-          ws._instStorageEvents.push({
-            t: Date.now(),
-            phase: 'sharedStorage',
-            accessTime: e?.accessTime,
-            type: e?.type,
-            ownerOrigin: e?.ownerOrigin,
-            params: e?.params,
-          });
-        } catch {}
-      });
-      // Browser downloads.
-      cdp.on('Browser.downloadWillBegin', (e: any) => {
-        try {
-          ws._instPageEvents.push({
-            t: Date.now(),
-            phase: 'downloadBegin',
-            frameId: e?.frameId,
-            guid: e?.guid,
-            url: e?.url,
-            suggestedFilename: e?.suggestedFilename,
-          });
-        } catch {}
-      });
-      cdp.on('Browser.downloadProgress', (e: any) => {
-        try {
-          ws._instPageEvents.push({
-            t: Date.now(),
-            phase: 'downloadProgress',
-            guid: e?.guid,
-            totalBytes: e?.totalBytes,
-            receivedBytes: e?.receivedBytes,
-            state: e?.state,
-          });
-        } catch {}
-      });
-      // CDP firehose — Playwright's CDP session announces every protocol
-      // event it delivers as 'event' {method, params}; each is recorded under
-      // its domain and name, so no copy of the protocol's event list is kept
-      // here. Only the domains this diagnostics module enabled deliver
-      // events; the firehose enables none of its own.
-      ws._instCdpFirehose = [];
-      ws._instCdpFirehoseMode = cdpFirehoseMode();
-      if (ws._instCdpFirehoseMode !== 'off') {
-        (cdp as any).on(
-          'event',
-          ({ method, params }: { method: string; params: unknown }) => {
-            try {
-              const [domain, ...name] = method.split('.');
-              let stored: unknown = params;
-              try {
-                JSON.stringify(params);
-              } catch (err: any) {
-                stored = { _stringify_error: String(err?.message ?? err) };
-              }
-              ws._instCdpFirehose.push({
-                t: Date.now(),
-                domain,
-                event: name.join('.'),
-                payload: stored,
-              });
-            } catch {}
           },
+          '_instTracingError',
         );
       }
-    } catch (e: any) {
-      try {
-        targetEvents.push({
-          t: Date.now(),
-          phase: 'attach_error',
-          err: String(e?.message ?? e),
+      // JS coverage: which functions actually ran.
+      const js = '_instJsCoverageError';
+      await enable('Profiler.enable', undefined, js);
+      await enable(
+        'Profiler.startPreciseCoverage',
+        { callCount: false, detailed: false },
+        js,
+      );
+      // CSS coverage: which rules matched.
+      const css = '_instCssCoverageError';
+      await enable('DOM.enable', undefined, css);
+      await enable('CSS.enable', undefined, css);
+      await enable('CSS.startRuleUsageTracking', undefined, css);
+      await enable('WebAudio.enable', undefined, '_instWebAudioError');
+      await enable('Animation.enable', undefined, '_instAnimationsError');
+      await enable('IndexedDB.enable', undefined, '_instIndexedDbError');
+      await enable('Page.setLifecycleEventsEnabled', { enabled: true });
+      await enable('Runtime.enable');
+      await enable('Log.enable');
+      await enable('Security.enable');
+      // The firehose: Playwright's CDP session announces every protocol event
+      // it delivers as 'event' {method, params}; each is recorded under its
+      // domain and name, so no copy of the protocol's event list is kept.
+      // Only the domains enabled above deliver events; the firehose enables
+      // none of its own.
+      ws._instCdpFirehose = [];
+      ws._instCdpFirehoseMode = cdpFirehoseMode();
+      if (ws._instCdpFirehoseMode !== 'off')
+        cdp.on('event', (event: { method: string; params: unknown }) => {
+          const [domain, ...name] = event.method.split('.');
+          ws._instCdpFirehose.push({
+            t: Date.now(),
+            domain,
+            event: name.join('.'),
+            payload: event.params,
+          });
         });
-      } catch {}
+    } catch (error) {
+      targetEvents.push({
+        t: Date.now(),
+        phase: 'attach_error',
+        err: failure(error),
+      });
     }
   })();
 }
