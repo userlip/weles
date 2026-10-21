@@ -13,24 +13,9 @@ import {
 } from './authority.mjs';
 import { createCredentialStore, requestIdentity } from './store.mjs';
 import { finishedCredentialReply } from './outcome.mjs';
+import { admittedAcquisition, refusalResponse } from './admission.mjs';
 
 const PATH = '/api/v1/credential-operations';
-
-function acquisitionRequest(request) {
-  return {
-    operation: request.operation,
-    credentialId: request.credential_id,
-    provider: request.provider,
-    requestId: request.request_id,
-    purpose: request.purpose,
-    accountEmail: request.account_email ?? undefined,
-    signupOrigin: request.signup_origin ?? undefined,
-    tenantId: request.directory?.tenant_id,
-    principalObjectId: request.directory?.principal_object_id,
-    accountUpn: request.directory?.account_upn,
-    dryRun: request.dry_run,
-  };
-}
 
 export function createCredentialOperationService({
   acquireSecret,
@@ -130,59 +115,6 @@ export function createCredentialOperationService({
     }
   }
 
-  function contractFor(request) {
-    const acquisition = acquisitionRequest(request);
-    const definition = definitionFor(acquisition);
-    const contract =
-      definition && resolvedAcquiredSecretContract(definition.secret);
-    if (
-      !contract &&
-      ['microsoft', 'microsoft_entra'].includes(request.provider)
-    ) {
-      throw new CredentialAdmissionError(
-        http.HTTP_STATUS_CONFLICT,
-        'WELES_CREDENTIAL_CONTRACT_MISMATCH',
-        `No managed password declaration for ${request.credential_id}; WELES_MANAGED_PASSWORD_CONTRACTS_FILE is ${process.env.WELES_MANAGED_PASSWORD_CONTRACTS_FILE?.trim() || 'unset'}`,
-      );
-    }
-    if (
-      !contract ||
-      definition.provider !== request.provider ||
-      contract.item !== request.credential_id ||
-      contract.field !== request.field ||
-      contract.writerConsumer !== request.consumer
-    ) {
-      throw new CredentialAdmissionError(
-        http.HTTP_STATUS_CONFLICT,
-        'WELES_CREDENTIAL_CONTRACT_MISMATCH',
-        'credential item, field, and writer must match the exact Weles acquisition contract',
-      );
-    }
-    if (
-      (request.provider !== 'microsoft_entra' && request.directory !== null) ||
-      (request.provider === 'microsoft_entra' &&
-        request.directory?.provider !== request.provider)
-    ) {
-      throw new CredentialAdmissionError(
-        http.HTTP_STATUS_CONFLICT,
-        'ENTRA_IDENTITY_CONTRACT_MISMATCH',
-        'directory identity must match the requested provider',
-      );
-    }
-    if (
-      request.signup_origin &&
-      contract.sourceOrigin &&
-      request.signup_origin !== contract.sourceOrigin
-    ) {
-      throw new CredentialAdmissionError(
-        http.HTTP_STATUS_CONFLICT,
-        'WELES_CREDENTIAL_ORIGIN_MISMATCH',
-        'signup origin differs from the registered credential capture origin',
-      );
-    }
-    return acquisition;
-  }
-
   async function submit(request, consumer) {
     const previous = store.load(request.request_id);
     if (previous) {
@@ -196,7 +128,10 @@ export function createCredentialOperationService({
         'WELES_CREDENTIAL_STOPPING',
         'Weles is draining credential operations',
       );
-    const acquisition = contractFor(request);
+    const acquisition = admittedAcquisition(request, {
+      definitionFor,
+      resolvedAcquiredSecretContract,
+    });
     const actionLogId = `credential-${request.request_id}`;
     const record = {
       schema: 'weles.credential-admission.v1',
@@ -315,28 +250,7 @@ export function createCredentialOperationService({
           payload: await submit(request, consumer),
         };
       } catch (error) {
-        const known = error instanceof CredentialAdmissionError;
-        const status = known ? error.status : http.HTTP_STATUS_BAD_REQUEST;
-        const code = known ? error.code : 'WELES_CREDENTIAL_REQUEST_INVALID';
-        const message =
-          known || parsed
-            ? error.message
-            : 'credential request must be one bounded JSON object';
-        return {
-          status,
-          payload: validated
-            ? credentialFailure(
-                request,
-                code,
-                message,
-                known &&
-                  status < http.HTTP_STATUS_INTERNAL_SERVER_ERROR &&
-                  request.mode === 'submit'
-                  ? 'none'
-                  : 'unknown',
-              )
-            : { code, phase: 'admission', message, providerEffect: 'none' },
-        };
+        return refusalResponse(error, request, { parsed, validated });
       }
     },
     async shutdown() {
