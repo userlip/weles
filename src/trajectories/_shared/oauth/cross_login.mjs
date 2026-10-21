@@ -18,7 +18,7 @@ import {
 import { WSession } from '../../../../dist/session/wsession.js';
 import {
   injectProviderCookies,
-  handleOAuthConsent,
+  onHost,
   waitForNavBackTo,
 } from '../../../../dist/platforms/_shared/cross_platform_oauth.js';
 import { clickOffered } from '../page/judged/seen.mjs';
@@ -26,21 +26,7 @@ import { assertAuthed, AuthProbeError } from '../auth/auth-probe.mjs';
 import { persistFreshCookieJar } from '../auth/cookie-freshness.mjs';
 import { pageSettled } from '../page/settled.mjs';
 import { keepVerdict } from '../action/verdict.mjs';
-
-// The providers' own sign-in hosts: a page still on one has not come back.
-const PROVIDER_HOSTS = [
-  'accounts.google.com',
-  'appleid.apple.com',
-  'login.microsoftonline.com',
-  'login.microsoft.com',
-  'live.com',
-  'facebook.com/dialog',
-  'api.twitter.com/oauth',
-  'twitter.com/i/oauth2',
-  'x.com/i/oauth2',
-  'github.com/login/oauth',
-  'instagram.com/oauth',
-];
+import { answerOAuthConsent } from './consent.mjs';
 
 /** A refusal before any session, kept as the run's verdict, then thrown. */
 async function refuse(label, signal, message) {
@@ -69,8 +55,8 @@ export async function runCrossLogin(opts) {
   const providerAcct = await providerAccount(provider);
   if (!providerAcct)
     await refuse(label, 'provider_account_missing', `no active ${provider} account in Skarbiec`);
-  const providerCookies = Array.isArray(providerAcct.metadata?.cookies) ? providerAcct.metadata.cookies : [];
-  if (!providerCookies.length)
+  const providerCookies = providerAcct.metadata?.cookies;
+  if (!Array.isArray(providerCookies) || !providerCookies.length)
     await refuse(
       label,
       'provider_cookies_missing',
@@ -85,7 +71,7 @@ export async function runCrossLogin(opts) {
   let banSignal;
   let failure;
   try {
-    const injected = await injectProviderCookies(s.ctx, provider, providerCookies);
+    const injected = await injectProviderCookies(s.ctx, provider, providerCookies, []);
     console.log(`[cross-login] injected ${injected} ${provider} cookies`);
     await s.goto(targetUrl);
     await pageSettled(s.page);
@@ -102,9 +88,11 @@ export async function runCrossLogin(opts) {
       throw new Error(`provider_button_not_found: ${s.page.url()} offers no sign-in with ${provider}`);
     }
     await pageSettled(s.page);
-    await handleOAuthConsent(s);
+    await answerOAuthConsent(s.page);
+    // The provider has handed the page back once it is on the target's own
+    // host again; a provider host never is, whatever its address names.
     const targetHost = new URL(targetUrl).hostname.replace(/^www\./, '');
-    await waitForNavBackTo(s.page, targetHost, PROVIDER_HOSTS);
+    await waitForNavBackTo(s.page, onHost(targetHost));
     let unauthed;
     try {
       await assertAuthed(targetPlatform, s, { label });

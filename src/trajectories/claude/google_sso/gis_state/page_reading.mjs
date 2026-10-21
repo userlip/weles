@@ -42,10 +42,21 @@ export const readGisState = (arg) => {
   // read one poll earlier. Tags from the previous poll are cleared first.
   for (const stale of Array.from(document.querySelectorAll('[data-weles-gis]')))
     stale.removeAttribute('data-weles-gis');
+  for (const stale of Array.from(
+    document.querySelectorAll('[data-weles-gis-pending]'),
+  ))
+    stale.removeAttribute('data-weles-gis-pending');
   const point = (el, kind) => {
     el.setAttribute('data-weles-gis', kind);
     const r = rect(el);
     return { x: mean(r.left, r.right), y: mean(r.top, r.bottom) };
+  };
+  // A control shown but still disabled is tagged, so a wait can watch that
+  // control enable instead of reading the page's words again.
+  const pending = (els, kind) => {
+    const [waiting] = els.filter((el) => !live(el));
+    if (waiting) waiting.setAttribute('data-weles-gis-pending', kind);
+    return Boolean(waiting) && !els.some(live);
   };
   const pick = (selector, kind, re) => {
     for (const el of Array.from(document.querySelectorAll(selector))) {
@@ -134,7 +145,7 @@ export const readGisState = (arg) => {
     // The grant screen renders Authorize and Decline disabled while it loads
     // its authorize data: a run read the screen moments after
     // /v1/oauth/<org>/authorize was requested, both buttons disabled="".
-    consentPending: Boolean(grantButtons.length) && !grantButtons.some(live),
+    consentPending: pending(grantButtons, 'consent'),
     gisButton: (() => {
       const ready = googleButtons.find(live);
       return ready ? point(ready, 'gis_button') : null;
@@ -142,7 +153,7 @@ export const readGisState = (arg) => {
     // claude.ai renders its "Continue with Google" button disabled until its
     // Google library is ready: a run failed on that page as 'unknown'
     // moments after the authorize URL loaded.
-    gisButtonPending: googleButtons.some((el) => !live(el)),
+    gisButtonPending: pending(googleButtons, 'gis_button'),
     // claude.ai serves its authorize page as an app shell that renders later:
     // one run recorded claude.ai/oauth/authorize titled "Claude" with an
     // empty #root under [data-page-loading] and no control at all, and another

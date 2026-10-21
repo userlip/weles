@@ -1,29 +1,37 @@
 // Google-SSO sub-flow for the claude login trajectory.
 //
-// ROOT CAUSE (live SSH evidence): claude.ai's "Continue with Google" is a
-// Google Identity Services (GIS) button, not a classic OAuth redirect.
-// Clicking it with no Google session logs "Provider's accounts list is
-// empty." and does nothing (no popup, no nav). So we must establish a
-// Google session at accounts.google.com FIRST, then load claude.ai's
-// authorize URL — GIS then has an account and the click completes.
+// claude.ai's "Continue with Google" is a Google Identity Services (GIS)
+// button, not a classic OAuth redirect. Clicking it with no Google session
+// logs "Provider's accounts list is empty." and does nothing (no popup, no
+// nav). So the run establishes a Google session on Google's own sign-in page
+// FIRST, then loads claude.ai's authorize URL: GIS then has an account and the
+// click completes.
 //
-// This file holds that handoff and the bounds that govern it. Reading a page and
-// clicking what that read tagged, naming the state a page is in, entering the
-// Google credentials, computing the 2FA code, and writing the DOM of a failed
+// This file holds that handoff's state machine. Reading a page and clicking
+// what that read tagged, naming the state a page is in, the waits on pending
+// states, entering the Google credentials, and writing the DOM of a failed
 // run are modules beside it.
-import { enterGoogleCredentials } from './google_sso/google_credentials.mjs';
 import {
-  clickGisTarget,
-  observeGisPage,
-} from './google_sso/gis_state/page_reading.mjs';
+  enterGoogleCredentials,
+  establishGoogleSession,
+} from './google_sso/google_credentials.mjs';
+import { observeGisPage } from './google_sso/gis_state/page_reading.mjs';
 import {
   classifyGisState,
   gisVariantRank,
 } from './google_sso/gis_state/variants.mjs';
-import { dumpGisFailureDom } from './google_sso/failure_dom.mjs';
-import { answerClaudeCaptcha } from './google_sso/captcha_answer.mjs';
-import { pageCondition, pageSettled } from '../_shared/page/settled.mjs';
+import {
+  dumpGisFailureDom,
+  unhandledVariantError,
+} from './google_sso/failure_dom.mjs';
+import {
+  awaitPendingVariant,
+  clickOfferedControl,
+  stateChange,
+} from './google_sso/handoff_waits.mjs';
+import { pageSettled } from '../_shared/page/settled.mjs';
 import { clickDescribed } from '../_shared/page/judged/seen.mjs';
+import { onGoogleSignIn } from '../_shared/profile/google_session.mjs';
 
 export { readGisState } from './google_sso/gis_state/page_reading.mjs';
 export {
@@ -32,12 +40,12 @@ export {
 } from './google_sso/gis_state/variants.mjs';
 
 // The GIS handoff is governed by what the pages report, never by a clock or a
-// count of attempts: the old fixed 4-attempt loop clicked the button again
-// while Google's chooser was still sitting in a popup nobody was driving. A
-// state is acted on once; until it changes the loop waits for the event that
-// can change it (a navigation of the acting page, a new page, the page
-// closing). A state this step does not drive, still shown once its page has
-// settled, is reported by name with its DOM.
+// count of attempts: a fixed loop of attempts clicked the button again while
+// Google's chooser was still sitting in a popup nobody was driving. A state
+// is acted on once; until it changes the loop waits for the event that can
+// change it (a navigation of the acting page, a new page, the page closing).
+// A state this step does not drive, still shown once its page has settled, is
+// reported by name with its DOM.
 //
 // When claude.ai answers the authorize URL with the app instead of the consent
 // screen, the URL is re-driven once: once the Google half succeeds the session
@@ -63,75 +71,28 @@ const DRIVEN_VARIANTS = new Set([
   'claude_captcha',
 ]);
 
-// Resolves once something that can change the handoff's state happens: the
-// acting page navigates, closes, or the context opens another page.
-async function stateChange(page, active, url) {
-  if (active.isClosed() || active.url() !== url) return;
-  const { promise, resolve, reject } = Promise.withResolvers();
-  const context = page.context();
-  const onNavigated = (frame) => {
-    if (frame === active.mainFrame() && frame.url() !== url) resolve();
-  };
-  const onCrash = () =>
-    reject(new Error(`gis_continue: acting page crashed at ${active.url()}`));
-  active.on('framenavigated', onNavigated);
-  active.on('close', resolve);
-  active.on('crash', onCrash);
-  context.on('page', resolve);
-  try {
-    await promise;
-  } finally {
-    active.off('framenavigated', onNavigated);
-    active.off('close', resolve);
-    active.off('crash', onCrash);
-    context.off('page', resolve);
+// Every live page of the context, read and named, the page most advanced in
+// the handoff first. Google closes its popup once the account is confirmed,
+// and a read that started a moment before ends with 'Target page, context or
+// browser has been closed': a page closed after its read failed is simply
+// gone; any other failure stands. The caller's login is matched to Google's
+// data-identifier, never a row position or label.
+async function readViews(page, email) {
+  const views = [];
+  for (const p of page.context().pages()) {
+    if (p.isClosed()) continue;
+    let st;
+    try {
+      st = await observeGisPage(p, email);
+    } catch (error) {
+      if (p.isClosed()) continue;
+      throw error;
+    }
+    views.push({ p, st, variant: classifyGisState(st) });
   }
-}
-
-// Resolves once any page of the handoff moves on: one of the pages this round
-// read navigates away from what it showed or closes, the context opens another
-// page, or `also` (the page condition the caller waits for) settles. A wait on
-// the acting page alone missed a run's popup: claude.ai's gate went
-// disabled while Google's popup loaded, and the popup's navigation reached
-// no listener. Every listener is removed when the wait ends.
-async function anyPageChange(page, views, also) {
-  const context = page.context();
-  const { promise, resolve, reject } = Promise.withResolvers();
-  const detach = [];
-  const listen = (target, event, handler) => {
-    target.on(event, handler);
-    detach.push(() => target.off(event, handler));
-  };
-  for (const { p, st } of views) {
-    const url = st?.url ?? p.url();
-    if (p.isClosed() || p.url() !== url) resolve();
-    listen(p, 'framenavigated', (frame) => {
-      if (frame === p.mainFrame() && frame.url() !== url) resolve();
-    });
-    listen(p, 'close', resolve);
-    listen(p, 'crash', () =>
-      reject(new Error(`gis_continue: a handoff page crashed at ${p.url()}`)),
-    );
-  }
-  listen(context, 'page', resolve);
-  also.then(resolve, resolve);
-  try {
-    await promise;
-  } finally {
-    for (const off of detach) off();
-  }
-}
-
-async function clickOfferedControl(active, kind) {
-  const hit = await clickGisTarget(active, kind);
-  if (!hit.clicked) {
-    const current = new URL(active.url());
-    const error = new Error(
-      `gis_continue: ${kind} was not clicked at ${current.host}${current.pathname}: ${hit.reason}`,
-    );
-    error.code = 'gis_control_unavailable';
-    throw error;
-  }
+  return views.sort(
+    (a, b) => gisVariantRank(a.variant) - gisVariantRank(b.variant),
+  );
 }
 
 export async function doGoogleSso({
@@ -143,29 +104,19 @@ export async function doGoogleSso({
   humanClickLocator,
   humanType,
 }) {
-  mark('google_prelogin_goto');
-  await page.goto('https://accounts.google.com/ServiceLogin?hl=en', {
-    waitUntil: 'commit',
-  });
+  const entry = { login, mark, humanFill, humanClickLocator, humanType };
+  await establishGoogleSession({ page, ...entry });
 
-  await enterGoogleCredentials({
-    page,
-    login,
-    mark,
-    humanFill,
-    humanClickLocator,
-    humanType,
-  });
-
-  // Session established. Now load claude.ai's OAuth — GIS sees the account.
+  // Session established. Now load claude.ai's OAuth: GIS sees the account.
   mark('goto_authorize');
   await page.goto(authorizeUrl, { waitUntil: 'commit' });
   await pageSettled(page);
 
   mark('gis_continue');
   // GIS can place account selection in a popup while the parent still shows
-  // its sign-in gate. Inspect every live page and select the intended account
-  // by data-identifier, not localized text; keep the popup available to finish.
+  // its sign-in gate. Every live page is inspected and the intended account
+  // selected by data-identifier, not localized text; the popup stays
+  // available to finish.
   const seen = new WeakSet();
   const onPopup = (p) => {
     if (!seen.has(p)) {
@@ -181,29 +132,8 @@ export async function doGoogleSso({
   let stuck = null;
   try {
     for (;;) {
-      views = [];
-      for (const p of page.context().pages()) {
-        if (p.isClosed()) continue;
-        // The caller supplies the selected account's login. Match Google's
-        // data-identifier to that identity, never a row position or label.
-        // Google closes its popup once the account is confirmed, and a read
-        // that started a moment before ends with 'Target page, context or
-        // browser has been closed' (a run failed on exactly that right
-        // after gis_confirm_continue). A page that is closed after its read
-        // failed is simply gone; any other failure stands.
-        let st;
-        try {
-          st = await observeGisPage(p, login.email);
-        } catch (error) {
-          if (p.isClosed()) continue;
-          throw error;
-        }
-        views.push({ p, st, variant: classifyGisState(st) });
-      }
-      views.sort(
-        (a, b) => gisVariantRank(a.variant) - gisVariantRank(b.variant),
-      );
-      const view = views[0];
+      views = await readViews(page, login.email);
+      const [view] = views;
       if (!view) {
         stuck = null;
         break;
@@ -217,10 +147,9 @@ export async function doGoogleSso({
 
       // A state this step does not drive: give its page the chance to settle
       // into a driven one, then report it by name. Google's popup is such a
-      // page for the moment between the confirmed account and its closing,
-      // and a run failed in that moment ('Target page, context or
-      // browser has been closed' from pageSettled): a page that closed while
-      // it settled is gone, and the next round reads the pages that remain.
+      // page for the moment between the confirmed account and its closing: a
+      // page that closed while it settled is gone, and the next round reads
+      // the pages that remain.
       if (!DRIVEN_VARIANTS.has(variant)) {
         let again;
         try {
@@ -237,10 +166,13 @@ export async function doGoogleSso({
         continue;
       }
 
+      if (await awaitPendingVariant({ page, views, active, variant, mark }))
+        continue;
+
       // Acting twice on a state that has not changed yet is what produced the
-      // popup pile-up, so an identical (variant, url) is acted on once; until it
-      // changes, the loop waits for the event that can change it.
-      const actionKey = `${variant}|${st?.url ?? ''}`;
+      // popup pile-up, so an identical (variant, url) is acted on once; until
+      // it changes, the loop waits for the event that can change it.
+      const actionKey = `${variant}|${st.url}`;
       if (actionKey === lastActions.get(active)) {
         await stateChange(page, active, st.url);
         continue;
@@ -251,13 +183,13 @@ export async function doGoogleSso({
 
       if (variant === 'claude_gis_gate') {
         // The gate is only meaningful while no Google page is holding the
-        // decision; otherwise clicking it opens yet another popup. A click that
-        // just opened a popup shows up once the gate page has settled.
+        // decision; otherwise clicking it opens yet another popup. A click
+        // that just opened a popup shows up once the gate page has settled.
         await pageSettled(active);
         const google = page
           .context()
           .pages()
-          .find((p) => !p.isClosed() && /accounts\.google\.com/.test(p.url()));
+          .find((p) => !p.isClosed() && onGoogleSignIn(p.url()));
         if (google) {
           await stateChange(page, google, google.url());
           continue;
@@ -268,87 +200,10 @@ export async function doGoogleSso({
         continue;
       }
 
-      if (variant === 'claude_gis_gate_pending') {
-        // Nothing to click yet: the page enables its Google button itself, or
-        // moves on. Either ends this wait; the operator sees the stage in
-        // `weles runs show` and can end a gate that never opens.
-        mark('gis_gate_pending');
-        const enabled = pageCondition(active, () =>
-          Array.from(document.querySelectorAll('button,[role="button"]')).some(
-            (el) =>
-              /continue with google|^google$/i.test(
-                (el.innerText || el.textContent || '').trim(),
-              ) &&
-              !el.disabled &&
-              el.getAttribute('aria-disabled') !== 'true',
-          ),
-        );
-        // A navigation ends the page read with a destroyed context; any page
-        // of the handoff moving on (Google's popup loading) also ends it.
-        await anyPageChange(page, views, enabled);
-        continue;
-      }
-
-      if (variant === 'claude_app_loading') {
-        // The app is still loading: wait for its last loading marker to go
-        // or for the page to move on. The stage is visible in `weles runs
-        // show`, and the operator ends a page that never loads with
-        // `weles runs cancel`.
-        mark('claude_app_loading');
-        const rendered = pageCondition(
-          active,
-          () => document.querySelector('[data-page-loading]') === null,
-        );
-        await anyPageChange(page, views, rendered);
-        continue;
-      }
-
-      if (variant === 'oauth_consent_pending') {
-        // The grant screen enables Authorize once its authorize data has
-        // loaded; until then nothing can be clicked. The wait ends when the
-        // control enables or any page of the handoff moves on; the operator
-        // sees the stage in `weles runs show` and ends a screen that never
-        // enables with `weles runs cancel`.
-        mark('oauth_consent_pending');
-        const enabled = pageCondition(active, () =>
-          Array.from(document.querySelectorAll('button,[role="button"]')).some(
-            (el) =>
-              el.checkVisibility() &&
-              !el.matches(':disabled, [aria-disabled="true"]'),
-          ),
-        );
-        await anyPageChange(page, views, enabled);
-        continue;
-      }
-
-      if (variant === 'claude_captcha') {
-        // claude.ai put a captcha challenge between Google's answer and its
-        // consent screen. Weles answers it with its own solver; the loop then
-        // waits for the challenge frame to go or the page to move on, and
-        // reads whatever it shows next. It is not claimed: a challenge shown
-        // again at the same address after the answer is a new one.
-        mark('claude_captcha_answer');
-        await answerClaudeCaptcha(active, views, variant);
-        await anyPageChange(
-          page,
-          views,
-          pageCondition(
-            active,
-            () =>
-              !Array.from(
-                document.querySelectorAll(
-                  'iframe[src*="hcaptcha.com"][src*="frame=challenge"], iframe[src*="recaptcha"][src*="bframe"], iframe[src*="arkoselabs"], iframe[src*="challenges.cloudflare.com"]',
-                ),
-              ).some((frame) => frame.checkVisibility()),
-          ),
-        );
-        continue;
-      }
-
       if (variant === 'google_rejected') {
         const dump = await dumpGisFailureDom(views, variant);
         throw new Error(
-          `gis_continue: Google refused this sign-in (variant 'google_rejected') at ${st.host}${st.pathname}; body="${st.bodyText}"; DOM snapshot: ${dump.written[0]?.path ?? dump.indexPath}`,
+          `gis_continue: Google refused this sign-in (variant 'google_rejected') at ${st.host}${st.pathname}; body="${st.bodyText}"; DOM snapshot: ${dump.where}`,
         );
       }
 
@@ -364,9 +219,9 @@ export async function doGoogleSso({
       }
 
       if (variant === 'google_chooser_without_account') {
-        // The signed-in session is not the account we need: take the chooser's
-        // other row ("use another account"), which lands on the identifier page
-        // handled below.
+        // The signed-in session is not the account we need: take the
+        // chooser's other row ("use another account"), which lands on the
+        // identifier page handled below.
         if (!st.otherAccountRow) {
           await pageSettled(active);
           if (!(await observeGisPage(active, login.email)).otherAccountRow) {
@@ -388,14 +243,7 @@ export async function doGoogleSso({
         }
         claim();
         freshEntryTried = true;
-        await enterGoogleCredentials({
-          page: active,
-          login,
-          mark,
-          humanFill,
-          humanClickLocator,
-          humanType,
-        });
+        await enterGoogleCredentials({ page: active, ...entry });
         continue;
       }
 
@@ -410,30 +258,29 @@ export async function doGoogleSso({
         claim();
         mark('oauth_consent_click');
         // The grant screen offers Authorize and Decline; the vision model
-        // finds the grant in whatever language the screen speaks.
+        // finds the grant in whatever language the screen speaks. The SPA
+        // then POSTs its authorize request and redirects to the platform
+        // host: just another state this same loop observes.
         await clickDescribed(
           active,
           'the button that authorizes the requested access (not the one that declines it)',
         );
-        // The SPA POSTs /v1/oauth/.../authorize (slow in headless, renders a
-        // spinner) and then redirects to platform.claude.com. That redirect is
-        // just another state this same loop observes.
         continue;
       }
 
       if (variant === 'claude_app_authenticated') {
         // The Google half is done and the session is live; claude.ai simply
-        // consumed the CLI's authorize request and showed the app. Re-issue that
-        // exact URL in this session: with the session present it renders the grant
-        // screen, which the loop then handles as oauth_consent, and the callback
-        // page the CLI expects arrives as code_page.
+        // consumed the CLI's authorize request and showed the app. Re-issue
+        // that exact URL in this session: with the session present it renders
+        // the grant screen, handled as oauth_consent, and the callback page
+        // the CLI expects arrives as code_page.
         if (authorizeRedriven) {
           const dump = await dumpGisFailureDom(
             views,
             'claude_authorize_consumed',
           );
           throw new Error(
-            `gis_continue: claude_authorize_consumed — claude.ai answered the re-driven authorize URL with its app as well (now ${st.url} title="${st.title}"); the CLI's authorize request is spent, a new one is needed; DOM snapshot: ${dump.written[0]?.path ?? dump.indexPath}`,
+            `gis_continue: claude_authorize_consumed — claude.ai answered the re-driven authorize URL with its app as well (now ${st.url} title="${st.title}"); the CLI's authorize request is spent, a new one is needed; DOM snapshot: ${dump.where}`,
           );
         }
         claim();
@@ -444,20 +291,7 @@ export async function doGoogleSso({
         continue;
       }
     }
-
-    const variant = stuck?.variant ?? 'no_live_page';
-    const dump = await dumpGisFailureDom(views, variant);
-    const where = stuck?.st
-      ? `${stuck.st.host}${stuck.st.pathname} title="${stuck.st.title}"`
-      : 'no live page';
-    const evidence =
-      dump.written.map((w) => w.path).join(', ') || dump.indexPath;
-    const rows = stuck?.st?.rowIdentifiers?.length
-      ? ` rows=[${stuck.st.rowIdentifiers.join(', ')}]`
-      : '';
-    throw new Error(
-      `gis_continue: unhandled variant '${variant}' at ${where}${rows} after its page settled; live pages=${views.map((v) => v.variant).join('+') || 'none'}; DOM snapshot: ${evidence}`,
-    );
+    throw await unhandledVariantError(stuck, views);
   } finally {
     page.context().off('page', onPopup);
   }

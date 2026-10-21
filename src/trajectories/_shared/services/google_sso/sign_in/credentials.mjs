@@ -12,7 +12,10 @@ import { navEval, readAcrossNavigation } from '../../../page/navigation/read.mjs
 import { pageCondition, pageSettled } from '../../../page/settled.mjs';
 import { clickDescribed, pageShows } from '../../../page/judged/seen.mjs';
 import { logGooglePageDiag } from '../page_diagnostics.mjs';
-import { GOOGLE_ACCOUNTS_HOST } from '../../../profile/google_session.mjs';
+import {
+  GOOGLE_ACCOUNTS_HOST,
+  googleSignInUrl,
+} from '../../../profile/google_session.mjs';
 import { resolveOtp } from './challenge/seed.mjs';
 import { completeGooglePhoneApproval } from './challenge/phone.mjs';
 import {
@@ -205,4 +208,15 @@ export async function enterGoogleCredentials({
   await humanFill(page, otpField(), otp);
   await otpField().press('Enter');
   await waitForGoogleChallengeExit(page);
+}
+
+/**
+ * A Google session in the browser before a provider's GIS handoff: GIS offers
+ * only accounts Google already holds, so the run opens Google's own sign-in
+ * page and enters the credentials there first, with the flow's approval label.
+ */
+export async function establishGoogleSession({ approvalLabel, ...entry }) {
+  entry.mark('google_prelogin_goto');
+  await entry.page.goto(googleSignInUrl(), { waitUntil: 'commit' });
+  await enterGoogleCredentials({ ...entry, approvalLabel });
 }

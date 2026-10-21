@@ -2,11 +2,13 @@
 //
 // Pattern: use stored cookies from an account on platform A to OAuth-sign-in
 // to platform B (e.g. Twitter account -> ProductHunt, Instagram account ->
-// Threads). Before this module, each trajectory re-implemented cookie domain
-// normalization, OAuth-consent click loops, and the reCAPTCHA-gate submit
-// trick inline. Those live here now.
+// Threads): cookie domain normalization, the wait for the provider to hand
+// the page back, and the reCAPTCHA-gate submit. The consent screen between
+// them is answered by the trajectories' judged page reading
+// (src/trajectories/_shared/oauth/consent.mjs).
 
 import { pageSettled } from '../../browser/settled.js';
+import { solvePageCaptcha } from '../../captcha/detect.js';
 
 type BrowserCtx = any;
 type PageLike = any;
@@ -14,12 +16,12 @@ type SessionLike = any;
 
 interface ProviderConfig {
   primaryDomain: string;
-  mirrorDomains?: string[];
+  mirrorDomains: string[];
 }
 
 const PROVIDER_DOMAINS: Record<string, ProviderConfig> = {
   twitter: { primaryDomain: '.x.com', mirrorDomains: ['.twitter.com'] },
-  instagram: { primaryDomain: '.instagram.com' },
+  instagram: { primaryDomain: '.instagram.com', mirrorDomains: [] },
   google: {
     primaryDomain: '.google.com',
     mirrorDomains: ['.youtube.com', '.accounts.google.com'],
@@ -28,7 +30,7 @@ const PROVIDER_DOMAINS: Record<string, ProviderConfig> = {
     primaryDomain: '.facebook.com',
     mirrorDomains: ['.messenger.com'],
   },
-  github: { primaryDomain: '.github.com' },
+  github: { primaryDomain: '.github.com', mirrorDomains: [] },
   apple: { primaryDomain: '.apple.com', mirrorDomains: ['.icloud.com'] },
   microsoft: {
     primaryDomain: '.microsoftonline.com',
@@ -36,173 +38,129 @@ const PROVIDER_DOMAINS: Record<string, ProviderConfig> = {
   },
 };
 
+/** A cookie as the browser context reported it when the account was saved. */
 export interface RawCookie {
-  name?: string;
-  value?: string;
-  domain?: string;
-  path?: string;
-  secure?: boolean;
-  httpOnly?: boolean;
-  sameSite?: string;
-  expires?: number;
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  secure: boolean;
+  httpOnly: boolean;
+  sameSite: string;
+  expires: number;
+}
+
+/** The fields a saved cookie must carry to be set again in a browser. */
+const COOKIE_FIELDS: Record<keyof RawCookie, string> = {
+  name: 'string',
+  value: 'string',
+  domain: 'string',
+  path: 'string',
+  secure: 'boolean',
+  httpOnly: 'boolean',
+  sameSite: 'string',
+  expires: 'number',
+};
+
+/** The cookie row, refused by name when it lacks a field the browser needs. */
+function savedCookie(provider: string, row: unknown, index: number): RawCookie {
+  const record = row as Record<string, unknown>;
+  for (const [field, type] of Object.entries(COOKIE_FIELDS)) {
+    if (typeof record[field] !== type)
+      throw new Error(
+        `oauth_cookie_unusable: ${provider} cookie row ${index} holds no ${type} ${field}; an account's cookies are saved from the browser context, so this row was written by something else and the account must be signed in again`,
+      );
+  }
+  return record as unknown as RawCookie;
 }
 
 /**
- * Normalize raw cookie rows to the provider's primary and mirror domains and
- * add them to the browser context. Returns count added.
- *
- * `extraMirrorDomains` covers cross-property cases like Meta's instagram ->
- * threads.net where the sibling site accepts the same session cookies. Pass
- * mirrors with a leading dot (e.g. '.threads.net').
+ * Add the provider account's saved cookies to the browser context, on the
+ * provider's own domains and on `extraMirrorDomains` (a sibling site that
+ * accepts the same session, e.g. '.threads.net' for an Instagram account).
+ * Returns the count added.
  */
 export async function injectProviderCookies(
   ctx: BrowserCtx,
   provider: string,
-  cookies: RawCookie[],
-  opts: { extraMirrorDomains?: string[] } = {},
+  cookies: unknown[],
+  extraMirrorDomains: string[],
 ): Promise<number> {
-  const cfg = PROVIDER_DOMAINS[provider];
-  if (!cfg) throw new Error(`unknown_oauth_provider:${provider}`);
-  const primary = cfg.primaryDomain;
-  const normalized = cookies
-    .filter((c) => c.name && c.value)
-    .map((c) => ({
-      name: c.name!,
-      value: c.value!,
-      domain: c.domain?.startsWith('.') ? c.domain : c.domain || primary,
-      path: c.path || '/',
-      secure: c.secure ?? true,
-      httpOnly: c.httpOnly ?? false,
-      sameSite: (c.sameSite || 'Lax') as any,
-      ...(c.expires && c.expires > 0 ? { expires: c.expires } : {}),
-    }));
-  const all = [...normalized];
-  const mirrors = [
-    ...(cfg.mirrorDomains ?? []),
-    ...(opts.extraMirrorDomains ?? []),
-  ];
-  for (const mirror of mirrors) {
-    const primaryBare = primary.startsWith('.') ? primary.slice(1) : primary;
-    const mirrorBare = mirror.startsWith('.') ? mirror.slice(1) : mirror;
+  if (!Object.hasOwn(PROVIDER_DOMAINS, provider))
+    throw new Error(
+      `unknown_oauth_provider: ${provider} has no declared cookie domains; declare them in PROVIDER_DOMAINS`,
+    );
+  const { primaryDomain, mirrorDomains } = PROVIDER_DOMAINS[provider];
+  const saved = cookies.map((row, index) => savedCookie(provider, row, index));
+  const bare = (domain: string) => domain.replace(/^\./, '');
+  const all = [...saved];
+  for (const mirror of [...mirrorDomains, ...extraMirrorDomains])
     all.push(
-      ...normalized.map((c) => ({
+      ...saved.map((c) => ({
         ...c,
-        domain: c.domain.replace(primaryBare, mirrorBare),
+        domain: c.domain.replace(bare(primaryDomain), bare(mirror)),
       })),
     );
-  }
   await ctx.addCookies(all);
   return all.length;
 }
 
+/** Whether `url` is on `host` itself or one of its subdomains. */
+export function onHost(host: string): (url: URL) => boolean {
+  return (url) => `.${url.hostname}`.endsWith(`.${host}`);
+}
+
 /**
- * Click a deterministic OAuth-provider button by its accessible name — avoids
- * the vision-based match in WSession.click, which at larger viewports has been
- * misreading adjacent provider buttons (e.g. 2560x1600 PH signin modal hits
- * "Sign in with Google" when asked for "Sign in with X"). Returns true on
- * a confirmed click, false if no matching button/link was visible.
+ * Wait until the provider hands the page back: `arrived` reads the page's
+ * address and answers whether it is the caller's own site again. A page on a
+ * provider's host never is, whatever its query names, so no provider has to
+ * be listed.
  */
-export async function clickOAuthProviderButton(
-  s: SessionLike,
-  accessibleName: RegExp,
-): Promise<boolean> {
-  const page = s.page;
-  for (const role of ['button', 'link']) {
-    const el = page.getByRole(role, { name: accessibleName }).first();
-    const visible = await el.isVisible();
-    if (visible) {
-      await el.click();
-      return true;
-    }
-  }
-  return false;
-}
-
-/** Click the consent button while still on an OAuth consent URL. Each consent screen is answered once: the walk ends as soon as the URL leaves the /auth//oauth//authorize subtree, when the page shows no button to consent with, or when a click leaves the page on the same consent URL. The button's accessible name is read through the page's accessibility tree, not from the page's text. */
-export async function handleOAuthConsent(s: SessionLike): Promise<void> {
-  for (;;) {
-    const u: string = s.page.url?.() ?? '';
-    if (u && !/\/auth\/|\/oauth\/|\/authorize/i.test(u)) return;
-    const clicked = await clickOAuthProviderButton(
-      s,
-      /^(authorize app|authorize|allow)$/i,
-    );
-    if (!clicked) return;
-    await pageSettled(s.page);
-    if ((s.page.url?.() ?? '') === u) {
-      console.log(
-        `[oauth] oauth_consent_not_accepted: the consent click left the page on ${u}`,
-      );
-      return;
-    }
-  }
-}
-
-/** Wait until the page URL includes mustInclude and excludes every mustExcludeAny substring. */
 export async function waitForNavBackTo(
   page: PageLike,
-  mustInclude: string,
-  mustExcludeAny: string[],
+  arrived: (url: URL) => boolean,
 ): Promise<void> {
-  await page.waitForURL((url: URL) => {
-    const u = String(url);
-    return (
-      u.includes(mustInclude) && !mustExcludeAny.some((x) => u.includes(x))
-    );
-  });
+  await page.waitForURL(arrived);
 }
 
 /**
  * Clear a reCAPTCHA v2 gate page. Detects captcha via src/captcha/detect.ts,
- * solves the token, then triggers the page's React form.onSubmit by calling
- * form.requestSubmit() — which is what producthunt's captcha_verification
- * page (and similar SPA captcha gates) needs to run its Apollo mutation.
+ * solves the token, then submits the form that holds the token the way its
+ * own submit control would (form.requestSubmit runs the page's onSubmit,
+ * which an SPA gate needs to run its mutation). A page that stays on the gate
+ * is navigated to `homeUrl` once: the gate's answer is a server cookie, and
+ * the next request carries it.
  */
 export async function clearReCaptchaGate(
   s: SessionLike,
   solver: any,
   gateUrlSubstring: string,
+  homeUrl: string,
 ): Promise<boolean> {
-  const { solvePageCaptcha } = await import('../../captcha/detect.js');
+  const onGate = () => s.page.url().includes(gateUrlSubstring);
   // One solve: a second token on the same gate is the same answer to a page
   // that already refused it.
-  if (!(s.page.url?.() ?? '').includes(gateUrlSubstring)) return true;
+  if (!onGate()) return true;
   await s.page.waitForSelector('iframe[src*="recaptcha/api2/anchor"]');
   await pageSettled(s.page);
-  const solved = await solvePageCaptcha(s.page, solver, s);
-  if (!solved) return false;
-  // Try button click first (more reliable than requestSubmit on PH's React
-  // form), then form.requestSubmit, then a synthetic submit event.
-  await s.page.evaluate(() => {
-    const ta = document.getElementById(
+  if (!(await solvePageCaptcha(s.page, solver, s))) return false;
+  const unsent = await s.page.evaluate(() => {
+    const token = document.getElementById(
       'g-recaptcha-response',
     ) as HTMLTextAreaElement | null;
-    if (!ta || !ta.value) return;
-    const btn = document.querySelector(
-      'button[type="submit"], input[type="submit"]',
-    ) as HTMLElement | null;
-    if (btn) {
-      btn.click();
-      return;
-    }
-    const form = document.querySelector('form') as HTMLFormElement | null;
-    if (!form) return;
-    if (typeof form.requestSubmit === 'function') form.requestSubmit();
-    else
-      form.dispatchEvent(
-        new Event('submit', { cancelable: true, bubbles: true }),
-      );
+    if (!token) return 'the page holds no g-recaptcha-response field';
+    if (!token.value) return 'the solved token was not written to the page';
+    if (!token.form) return 'the token field belongs to no form';
+    token.form.requestSubmit();
+    return null;
   });
+  if (unsent)
+    throw new Error(`recaptcha_gate_unsubmitted: ${unsent} at ${s.page.url()}`);
   await pageSettled(s.page);
-  if (!(s.page.url?.() ?? '').includes(gateUrlSubstring)) return true;
-  // Token's been written but the page didn't navigate. PH's verification
-  // sets a server cookie on solve — re-issuing a navigation to the homepage
-  // carries that cookie and lets the next request pass the gate.
-  await s.page.goto('https://www.producthunt.com/');
+  if (!onGate()) return true;
+  await s.page.goto(homeUrl);
   await pageSettled(s.page);
-  if (!(s.page.url?.() ?? '').includes(gateUrlSubstring)) return true;
-  console.log(
-    `[oauth] recaptcha_gate_not_cleared: still on ${s.page.url?.() ?? ''}`,
-  );
+  if (!onGate()) return true;
+  console.log(`[oauth] recaptcha_gate_not_cleared: still on ${s.page.url()}`);
   return false;
 }

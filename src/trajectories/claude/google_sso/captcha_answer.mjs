@@ -21,7 +21,7 @@ export async function answerClaudeCaptcha(active, views, variant) {
   if (!challenge) {
     const dump = await dumpGisFailureDom(views, variant);
     const error = new Error(
-      `gis_continue: claude.ai showed a challenge frame at ${where} that Weles' captcha detection does not read (no reCAPTCHA, Turnstile, hCaptcha or Arkose widget with a site key in any frame); add its kind to src/captcha/detect.ts; DOM snapshot: ${dump.written[0]?.path ?? dump.indexPath}`,
+      `gis_continue: claude.ai showed a challenge frame at ${where} that Weles' captcha detection does not read (no reCAPTCHA, Turnstile, hCaptcha or Arkose widget with a site key in any frame); add its kind to src/captcha/detect.ts; DOM snapshot: ${dump.where}`,
     );
     error.code = 'provider_captcha_unreadable';
     throw error;
@@ -40,7 +40,7 @@ export async function answerClaudeCaptcha(active, views, variant) {
   if (solved) return challenge.type;
   const dump = await dumpGisFailureDom(views, variant);
   const error = new Error(
-    `gis_continue: claude.ai asked for a ${challenge.type} challenge (site key ${challenge.sitekey}) at ${where}; ${solved === null ? 'it was gone before it could be answered' : `none of ${services.join(', ')} returned a token the page accepted`}; the run log names each service's answer; DOM snapshot: ${dump.written[0]?.path ?? dump.indexPath}`,
+    `gis_continue: claude.ai asked for a ${challenge.type} challenge (site key ${challenge.sitekey}) at ${where}; ${solved === null ? 'it was gone before it could be answered' : `none of ${services.join(', ')} returned a token the page accepted`}; the run log names each service's answer; DOM snapshot: ${dump.where}`,
   );
   error.code = 'provider_captcha_unsolved';
   throw error;

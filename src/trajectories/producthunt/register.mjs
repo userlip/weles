@@ -32,7 +32,7 @@ async function signup(s) {
     throw new Error(
       `PRODUCTHUNT_X_ACCOUNT_INCOMPLETE: X account ${twUsername} carries no ${twEmail ? 'password' : 'email'} in Skarbiec to record the Product Hunt account with; nothing was created`,
     );
-  console.log(`[ph] injected ${await injectProviderCookies(s.ctx, 'twitter', twAccount.metadata.cookies)} X cookies`);
+  console.log(`[ph] injected ${await injectProviderCookies(s.ctx, 'twitter', twAccount.metadata.cookies, [])} X cookies`);
   await completeProductHuntOnboarding(s, HOME, twAccount, twUsername, twPassword, twEmail);
 
   await s.goto(HOME);

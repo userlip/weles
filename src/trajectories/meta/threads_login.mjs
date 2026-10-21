@@ -9,17 +9,19 @@ import { WSession } from '../../../dist/session/wsession.js';
 import { humanIdlePause } from '../../../dist/human/mouse.js';
 import {
   injectProviderCookies,
-  handleOAuthConsent,
   waitForNavBackTo,
 } from '../../../dist/platforms/_shared/cross_platform_oauth.js';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
 import { clickOffered } from '../_shared/page/judged/seen.mjs';
+import { answerOAuthConsent } from '../_shared/oauth/consent.mjs';
 
 const LOGIN_URL = 'https://www.threads.net/login';
+/** Whether `url` is on a Threads domain (threads.net or threads.com). */
+const onThreads = (url) => url.hostname.split('.').includes('threads');
 /** Whether `url` is Threads' own login route, on whichever Threads domain. */
-const onLogin = (url) => {
-  const { hostname, pathname } = new URL(url);
-  return hostname.split('.').includes('threads') && /^\/(?:accounts\/)?login/.test(pathname);
+const onLogin = (address) => {
+  const url = new URL(address);
+  return onThreads(url) && /^\/(?:accounts\/)?login/.test(url.pathname);
 };
 
 const acct = await getSocialAccount('threads');
@@ -34,7 +36,7 @@ console.log(`[threads-login] target=${acct.username} via instagram=${igAcct.user
 const { proxyUrl, persona } = await resolveAccountSession(acct);
 const s = await WSession.start({ label: 'threads_login', proxy: proxyUrl, persona });
 try {
-  const injected = await injectProviderCookies(s.ctx, 'instagram', igCookies, { extraMirrorDomains: ['.threads.net'] });
+  const injected = await injectProviderCookies(s.ctx, 'instagram', igCookies, ['.threads.net']);
   console.log(`[threads-login] injected ${injected} instagram+threads cookies`);
   await s.goto(LOGIN_URL);
   await humanIdlePause('deliberate');
@@ -42,8 +44,8 @@ try {
   // Instagram sign-in and its consent are walked.
   if (onLogin(s.page.url()) && (await clickOffered(s.page, 'the Continue with Instagram button'))) {
     await humanIdlePause('deliberate');
-    await handleOAuthConsent(s);
-    await waitForNavBackTo(s.page, 'threads', ['accounts.google.com', 'instagram.com/oauth']);
+    await answerOAuthConsent(s.page);
+    await waitForNavBackTo(s.page, onThreads);
   }
   if (onLogin(s.page.url()))
     throw new Error(`threads_login_did_not_advance: the page stays on ${s.page.url()} (the Instagram cookies may be stale)`);

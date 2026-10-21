@@ -3,16 +3,19 @@
 // fields it holds, the reCAPTCHA frame) or by the vision model reading what
 // it shows; a control the step needs and does not offer fails the sign-up by
 // name.
-import { handleOAuthConsent } from '../../../../dist/platforms/_shared/cross_platform_oauth.js';
+import { onHost } from '../../../../dist/platforms/_shared/cross_platform_oauth.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { autocompleteField } from '../../_shared/page/offers.mjs';
 import { clickOffered, fillOffered } from '../../_shared/page/judged/seen.mjs';
+import { answerOAuthConsent } from '../../_shared/oauth/consent.mjs';
 
-const onX = (url) => {
-  const host = new URL(url).hostname;
-  return host.endsWith('x.com') || host.endsWith('twitter.com');
+/** X's own hosts, under its current and its former name. */
+const X_HOSTS = ['x.com', 'twitter.com'].map(onHost);
+const onX = (address) => {
+  const url = new URL(address);
+  return X_HOSTS.some((on) => on(url));
 };
 
 /** Sign in to X when the OAuth hand-off lands on its login flow. */
@@ -73,7 +76,7 @@ export async function completeProductHuntOnboarding(
   await pageSettled(page);
 
   if (onX(page.url())) await signInToX(page, twUsername, twPassword, twEmail);
-  await handleOAuthConsent(s);
+  await answerOAuthConsent(page);
 
   // The onboarding (name, email, interests, notifications): however many
   // steps it shows are walked until the main feed. A step that offers no

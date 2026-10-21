@@ -9,10 +9,11 @@
 import { CaptchaSolver } from '../../../dist/captcha/solver.js';
 import {
   injectProviderCookies,
-  handleOAuthConsent,
+  onHost,
   waitForNavBackTo,
   clearReCaptchaGate,
 } from '../../../dist/platforms/_shared/cross_platform_oauth.js';
+import { answerOAuthConsent } from '../_shared/oauth/consent.mjs';
 import { clickDescribed, clickOffered } from '../_shared/page/judged/seen.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { findAccount, listAccounts, updateAccountMetadata } from '../_shared/skarbiec/accounts.mjs';
@@ -55,15 +56,17 @@ export async function stampLinkedTwitter(phUsername, twUsername) {
 /** Signs `s` in to Product Hunt through the X account `twitter`. */
 export async function signInThroughX(s, twitter) {
   console.log(`[ph-session] OAuth via X account ${twitter.username}`);
-  await injectProviderCookies(s.ctx, 'twitter', twitter.metadata.cookies);
+  await injectProviderCookies(s.ctx, 'twitter', twitter.metadata.cookies, []);
   await s.goto(HOME);
   await pageSettled(s.page);
   await clickOffered(s.page, "the button that opens Product Hunt's sign-in");
   await clickDescribed(s.page, 'the button that signs in with X (Twitter), not Google or Apple');
   await pageSettled(s.page);
-  await handleOAuthConsent(s);
-  await waitForNavBackTo(s.page, 'producthunt.com', ['/auth/', 'twitter.com', 'x.com']);
-  if (!(await clearReCaptchaGate(s, new CaptchaSolver(), '/captcha_verification')))
+  await answerOAuthConsent(s.page);
+  // Back on Product Hunt once past its own OAuth callback route.
+  const onProductHunt = onHost(new URL(HOME).hostname.replace(/^www\./, ''));
+  await waitForNavBackTo(s.page, (url) => onProductHunt(url) && !url.pathname.startsWith('/auth/'));
+  if (!(await clearReCaptchaGate(s, new CaptchaSolver(), '/captcha_verification', HOME)))
     throw new Error(`PRODUCTHUNT_CAPTCHA_GATE: the captcha after signing in through X ${twitter.username} was not cleared`);
 }
 

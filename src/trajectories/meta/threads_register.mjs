@@ -74,9 +74,9 @@ async function signup(s) {
       `instagram_account_incomplete: Instagram account ${igUsername} carries no ${igEmail ? 'password' : 'email'} in Skarbiec to record the Threads account with; nothing was created`,
     );
 
-  const injected = await injectProviderCookies(s.ctx, 'instagram', igCookies, {
-    extraMirrorDomains: ['.threads.net'],
-  });
+  const injected = await injectProviderCookies(s.ctx, 'instagram', igCookies, [
+    '.threads.net',
+  ]);
   console.log(`[threads] injected ${injected} instagram+threads cookies`);
 
   await s.goto(LOGIN_URL);
