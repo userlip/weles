@@ -27,10 +27,10 @@ export interface AcquisitionTarget {
 }
 
 /**
- * The one machine record of a refused acquisition, shared by the TypeScript
- * reader and src/_shared/scoped-secrets.mjs, and the only thing
- * credential-outcome.mjs reads from a trajectory's stderr about it:
- * `[skarbiec_acquisition item=<i> field=<f> consumer=<c>[ reason=<r>]]`.
+ * The one machine record of a refused acquisition, written by the
+ * TypeScript reader (which src/_shared/scoped-secrets.mjs reads through), and
+ * the only thing credential-outcome.mjs reads from a trajectory's stderr about
+ * it: `[skarbiec_acquisition item=<i> field=<f> consumer=<c>[ reason=<r>]]`.
  */
 export function acquisitionRecord(
   target: AcquisitionTarget,

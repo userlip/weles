@@ -30,11 +30,12 @@ export function isCredentialTrajectory(action) {
 
 const AUTH_FAILURE = 'AUTH_FAILURE ';
 const STAGE = /^STEP (?<stage>[a-z][a-z\d_-]*)$/gm;
-// The one machine record both acquisition readers write
-// (src/secrets/scoped-service/acquisition-failure.ts acquisitionRecord and
-// src/_shared/scoped-secrets.mjs): nothing is read from the sentence around it.
+// The one machine record of a refused acquisition
+// (src/secrets/scoped-service/acquisition-failure.ts acquisitionRecord, which
+// every reader's acquisition writes): nothing is read from the sentence around
+// it. The item is a vault item or the role:<role> coordinate it was asked by.
 const ACQUISITION_RECORD =
-  /\[skarbiec_acquisition item=(?<item>[A-Za-z\d._-]+) field=(?<field>[A-Za-z\d._-]+) consumer=(?<consumer>[A-Za-z\d._-]+)(?: reason=(?<reason>[a-z_]+))?\]/;
+  /\[skarbiec_acquisition item=(?<item>(?:role:)?[A-Za-z\d._-]+) field=(?<field>[A-Za-z\d._-]+) consumer=(?<consumer>[A-Za-z\d._-]+)(?: reason=(?<reason>[a-z_]+))?\]/;
 
 /** The last AUTH_FAILURE marker of `stderr` as the failure it states, or why it states none. */
 function markedFailure(marker) {

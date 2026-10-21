@@ -1,400 +1,133 @@
+// A trajectory's own service credentials (src/_shared/scoped-secrets/
+// services.mjs): each field is read through the workload-bound Skarbiec
+// acquisition the TypeScript transport performs
+// (src/secrets/scoped-service/transport.ts readAcquiredField), asking for the
+// role the credential plays, and a writable service's fields are written to
+// the item playing that role with its own writer identity. Without Skarbiec,
+// the owner-only WELES_CREDENTIALS_FILE holds the fields under the role name.
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { lstatSync } from 'node:fs';
+import {
+  checkedTokenFile,
+  readAcquiredField,
+  skarbiecEndpoint,
+} from '../../dist/secrets/scoped-service/transport.js';
 import { stadoBinary } from './skarbiec-runtime.mjs';
 import {
   localCredentialsFile,
   readLocalField,
   writeLocalFields,
 } from './local-credentials.mjs';
+import { SERVICES } from './scoped-secrets/services.mjs';
 
-const LOGIN_FIELDS = Object.freeze({ username: true, password: true });
-const LOGIN_WITH_TOTP_FIELDS = Object.freeze({
-  username: true,
-  password: true,
-  totp_secret: true,
-});
-const BASIC_PROXY_FIELDS = Object.freeze({ username: true, password: true });
-const ENDPOINT_PROXY_FIELDS = Object.freeze({
-  username: true,
-  password: true,
-  host: true,
-  ports: true,
-});
-const API_KEY_FIELDS = Object.freeze({ api_key: true });
-
-// Each service's `item` is the vault role its credential plays: reads ask the
-// acquisition catalog and Skarbiec for `role:<item>`, writes go to the item
-// playing that role (`credentials put --role`), and the local credentials file
-// keys the fields by that name. No vault item id is written here.
-const SERVICES = Object.freeze({
-  googleSso: Object.freeze({
-    consumer: 'weles-google-sso-client',
-    item: 'weles-google-sso-login',
-    tokenFile: 'weles-google-sso-client-skarbiec-token',
-    fields: LOGIN_FIELDS,
-  }),
-  googleAds: Object.freeze({
-    consumer: 'weles-google-ads-client',
-    item: 'weles-google-ads-login',
-    tokenFile: 'weles-google-ads-client-skarbiec-token',
-    writerConsumer: 'weles-google-ads-writer',
-    writerTokenFile: 'weles-google-ads-writer-skarbiec-token',
-    fields: LOGIN_WITH_TOTP_FIELDS,
-  }),
-  gmail: Object.freeze({
-    consumer: 'weles-gmail-client',
-    item: 'weles-gmail-login',
-    tokenFile: 'weles-gmail-client-skarbiec-token',
-    fields: LOGIN_FIELDS,
-  }),
-  googleDrive: Object.freeze({
-    consumer: 'weles-google-drive-client',
-    item: 'weles-google-drive-login',
-    tokenFile: 'weles-google-drive-client-skarbiec-token',
-    fields: LOGIN_WITH_TOTP_FIELDS,
-  }),
-  googleWorkspaceAdmin: Object.freeze({
-    consumer: 'weles-google-workspace-admin-client',
-    item: 'weles-google-workspace-admin-login',
-    tokenFile: 'weles-google-workspace-admin-client-skarbiec-token',
-    fields: LOGIN_WITH_TOTP_FIELDS,
-  }),
-  oxylabsDashboard: Object.freeze({
-    consumer: 'weles-oxylabs-dashboard-client',
-    item: 'weles-oxylabs-dashboard-login',
-    tokenFile: 'weles-oxylabs-dashboard-client-skarbiec-token',
-    fields: LOGIN_WITH_TOTP_FIELDS,
-  }),
-  brightdataDashboard: Object.freeze({
-    consumer: 'weles-brightdata-dashboard-client',
-    item: 'weles-brightdata-dashboard-login',
-    tokenFile: 'weles-brightdata-dashboard-client-skarbiec-token',
-    fields: LOGIN_WITH_TOTP_FIELDS,
-  }),
-  brightdataBrowser: Object.freeze({
-    consumer: 'weles-brightdata-browser-client',
-    item: 'weles-brightdata-browser',
-    tokenFile: 'weles-brightdata-browser-client-skarbiec-token',
-    fields: Object.freeze({ websocket_url: true }),
-  }),
-  umamiDashboard: Object.freeze({
-    consumer: 'weles-umami-dashboard-client',
-    item: 'weles-umami-dashboard-login',
-    tokenFile: 'weles-umami-dashboard-client-skarbiec-token',
-    fields: LOGIN_WITH_TOTP_FIELDS,
-  }),
-  linearDashboard: Object.freeze({
-    consumer: 'weles-linear-dashboard-client',
-    item: 'weles-linear-dashboard-login',
-    tokenFile: 'weles-linear-dashboard-client-skarbiec-token',
-    fields: LOGIN_WITH_TOTP_FIELDS,
-  }),
-  vastDashboard: Object.freeze({
-    consumer: 'weles-vast-dashboard-client',
-    item: 'weles-vast-dashboard-login',
-    tokenFile: 'weles-vast-dashboard-client-skarbiec-token',
-    fields: LOGIN_FIELDS,
-  }),
-  supabaseDashboard: Object.freeze({
-    consumer: 'weles-supabase-dashboard-client',
-    item: 'weles-supabase-dashboard-login',
-    tokenFile: 'weles-supabase-dashboard-client-skarbiec-token',
-    fields: LOGIN_FIELDS,
-  }),
-  appleAppStoreConnectApi: Object.freeze({
-    consumer: 'weles-apple-app-store-connect-api-client',
-    item: 'api-appstoreconnect-weles',
-    tokenFile: 'weles-apple-app-store-connect-api-client-skarbiec-token',
-    fields: Object.freeze({ key_id: true, issuer_id: true, private_key: true }),
-  }),
-  oxylabsResidential: Object.freeze({
-    consumer: 'weles-oxylabs-residential-proxy-client',
-    item: 'weles-oxylabs-residential-proxy',
-    tokenFile: 'weles-oxylabs-residential-proxy-client-skarbiec-token',
-    fields: BASIC_PROXY_FIELDS,
-  }),
-  oxylabsMobile: Object.freeze({
-    consumer: 'weles-oxylabs-mobile-proxy-client',
-    item: 'weles-oxylabs-mobile-proxy',
-    tokenFile: 'weles-oxylabs-mobile-proxy-client-skarbiec-token',
-    writerConsumer: 'weles-oxylabs-mobile-proxy-writer',
-    writerTokenFile: 'weles-oxylabs-mobile-proxy-writer-skarbiec-token',
-    fields: BASIC_PROXY_FIELDS,
-  }),
-  oxylabsIsp: Object.freeze({
-    consumer: 'weles-oxylabs-isp-proxy-client',
-    item: 'weles-oxylabs-isp-proxy',
-    tokenFile: 'weles-oxylabs-isp-proxy-client-skarbiec-token',
-    writerConsumer: 'weles-oxylabs-isp-proxy-writer',
-    writerTokenFile: 'weles-oxylabs-isp-proxy-writer-skarbiec-token',
-    fields: ENDPOINT_PROXY_FIELDS,
-  }),
-  oxylabsDedicatedIsp: Object.freeze({
-    consumer: 'weles-oxylabs-dedicated-isp-proxy-client',
-    item: 'weles-oxylabs-dedicated-isp-proxy',
-    tokenFile: 'weles-oxylabs-dedicated-isp-proxy-client-skarbiec-token',
-    writerConsumer: 'weles-oxylabs-dedicated-isp-proxy-writer',
-    writerTokenFile: 'weles-oxylabs-dedicated-isp-proxy-writer-skarbiec-token',
-    fields: ENDPOINT_PROXY_FIELDS,
-  }),
-  brightdataProxy: Object.freeze({
-    consumer: 'weles-brightdata-proxy-client',
-    item: 'weles-brightdata-proxy',
-    tokenFile: 'weles-brightdata-proxy-client-skarbiec-token',
-    fields: Object.freeze({ username: true, password: true, zone: true }),
-  }),
-  antiCaptcha: Object.freeze({
-    consumer: 'weles-anti-captcha-client',
-    item: 'weles-anti-captcha-api',
-    tokenFile: 'weles-anti-captcha-client-skarbiec-token',
-    fields: API_KEY_FIELDS,
-  }),
-  twoCaptcha: Object.freeze({
-    consumer: 'weles-two-captcha-client',
-    item: 'weles-two-captcha-api',
-    tokenFile: 'weles-two-captcha-client-skarbiec-token',
-    fields: API_KEY_FIELDS,
-  }),
-  capsolver: Object.freeze({
-    consumer: 'weles-capsolver-client',
-    item: 'weles-capsolver-api',
-    tokenFile: 'weles-capsolver-client-skarbiec-token',
-    fields: API_KEY_FIELDS,
-  }),
-  capmonster: Object.freeze({
-    consumer: 'weles-capmonster-client',
-    item: 'weles-capmonster-api',
-    tokenFile: 'weles-capmonster-client-skarbiec-token',
-    fields: API_KEY_FIELDS,
-  }),
-  noCaptcha: Object.freeze({
-    consumer: 'weles-nocaptcha-client',
-    item: 'weles-nocaptcha-api',
-    tokenFile: 'weles-nocaptcha-client-skarbiec-token',
-    fields: API_KEY_FIELDS,
-  }),
-  nopecha: Object.freeze({
-    consumer: 'weles-nopecha-client',
-    item: 'weles-nopecha-api',
-    tokenFile: 'weles-nopecha-client-skarbiec-token',
-    fields: API_KEY_FIELDS,
-  }),
-  juicySms: Object.freeze({
-    consumer: 'weles-juicysms-client',
-    item: 'weles-juicysms-api',
-    tokenFile: 'weles-juicysms-client-skarbiec-token',
-    fields: API_KEY_FIELDS,
-  }),
-  smsActivate: Object.freeze({
-    consumer: 'weles-sms-activate-client',
-    item: 'weles-sms-activate-api',
-    tokenFile: 'weles-sms-activate-client-skarbiec-token',
-    fields: API_KEY_FIELDS,
-  }),
-  discordBot: Object.freeze({
-    consumer: 'weles-discord-bot-client',
-    item: 'weles-discord-bot',
-    tokenFile: 'weles-discord-bot-client-skarbiec-token',
-    fields: API_KEY_FIELDS,
-  }),
-});
-
-function checkedEndpoint() {
-  const raw = String(process.env.WC_SKARBIEC_URL || '').trim();
-  if (!raw)
+/** The service `serviceName` names, refused by name when none is declared. */
+function declaredService(serviceName) {
+  if (!Object.hasOwn(SERVICES, serviceName))
     throw new Error(
-      'WC_SKARBIEC_URL is required from the Stado service directory; without Skarbiec set WELES_CREDENTIALS_FILE to an owner-only credentials file',
+      `unknown Weles scoped secret service: ${serviceName}; declare it in src/_shared/scoped-secrets/services.mjs`,
     );
-  let endpoint;
-  try {
-    endpoint = new URL(raw);
-  } catch {
-    throw new Error('WC_SKARBIEC_URL is invalid');
-  }
-  const loopback = new Set(['localhost', '127.0.0.1', '::1', '[::1]']).has(
-    endpoint.hostname,
-  );
-  if (
-    endpoint.protocol !== 'https:' &&
-    !(loopback && endpoint.protocol === 'http:')
-  ) {
-    throw new Error(
-      'WC_SKARBIEC_URL must use HTTPS or authenticated loopback HTTP',
-    );
-  }
-  if (
-    endpoint.username ||
-    endpoint.password ||
-    endpoint.search ||
-    endpoint.hash ||
-    (endpoint.pathname !== '/' && endpoint.pathname !== '')
-  ) {
-    throw new Error(
-      'WC_SKARBIEC_URL must be an origin without credentials, query, or fragment',
-    );
-  }
-  return endpoint.toString().replace(/\/$/, '');
+  return SERVICES[serviceName];
 }
 
-function checkedTokenFile(fileName) {
-  const path = join(homedir(), '.stado', fileName);
-  let metadata;
-  try {
-    metadata = lstatSync(path);
-  } catch {
-    throw new Error(
-      `required scoped Skarbiec token file is unavailable for ${fileName}`,
-    );
-  }
+/** The service, refused unless its credential holds a username and password. */
+function loginService(serviceName) {
+  const service = declaredService(serviceName);
   if (
-    !metadata.isFile() ||
-    metadata.isSymbolicLink() ||
-    metadata.uid !== process.getuid() ||
-    (metadata.mode & 0o077) !== 0
-  ) {
+    !Object.hasOwn(service.fields, 'username') ||
+    !Object.hasOwn(service.fields, 'password')
+  )
     throw new Error(
-      `refusing unsafe scoped Skarbiec token file for ${fileName}`,
+      `service is not an exact Weles scoped login contract: ${serviceName}`,
     );
-  }
-  return path;
-}
-
-const SCRIPT_ROOT = dirname(fileURLToPath(import.meta.url));
-
-function acquisitionPaths() {
-  const deploy = join(SCRIPT_ROOT, '..', 'worker', 'deploy', 'acquire');
-  return {
-    helper: join(deploy, 'skarbiec-acquire.mjs'),
-    scopes:
-      process.env.SKARBIEC_WELES_ACQUISITION_SCOPES_FILE?.trim() ||
-      join(deploy, 'skarbiec-acquisition-scopes.conf'),
-  };
-}
-
-function workloadEnvironment() {
-  const workloadId = String(process.env.SKARBIEC_WORKLOAD_ID || '').trim();
-  const signingKeyFile = String(
-    process.env.SKARBIEC_WORKLOAD_SIGNING_KEY_FILE || '',
-  ).trim();
-  if (!workloadId || !signingKeyFile) {
-    throw new Error(
-      'Skarbiec workload identity is required for scoped secret acquisition',
-    );
-  }
-  return { workloadId, signingKeyFile };
+  return service;
 }
 
 export function readScopedSecret(serviceName, field) {
-  const service = SERVICES[serviceName];
-  if (!service)
-    throw new Error(`unknown Weles scoped secret service: ${serviceName}`);
-  if (!Object.prototype.hasOwnProperty.call(service.fields, field))
+  const service = declaredService(serviceName);
+  if (!Object.hasOwn(service.fields, field))
     throw new Error(
       `field is not in the exact Weles scoped secret contract: ${serviceName}/${field}`,
     );
+  // The local file names a field it does not hold, by item and field.
   const local = localCredentialsFile();
   if (local) return readLocalField(local, service.item, field);
-  const consumer = `${service.consumer}-${field}`;
-  const { helper, scopes } = acquisitionPaths();
-  const { workloadId, signingKeyFile } = workloadEnvironment();
-  // Pass the exact directory-owned endpoint to the acquisition subprocess.
-  const endpoint = checkedEndpoint();
-  const result = spawnSync(
-    process.execPath,
-    [helper, scopes, consumer, `role:${service.item}`, field],
-    {
-      encoding: 'buffer',
-      maxBuffer: Infinity,
-      stdio: 'pipe',
-      env: {
-        HOME: homedir(),
-        PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
-        SKARBIEC_WORKLOAD_ID: workloadId,
-        SKARBIEC_WORKLOAD_SIGNING_KEY_FILE: signingKeyFile,
-        WC_SKARBIEC_URL: endpoint,
-      },
-    },
+  const value = readAcquiredField(
+    service.consumer,
+    service.item,
+    field,
+    undefined,
+    `role:${service.item}`,
   );
-  const output = Buffer.isBuffer(result.stdout)
-    ? result.stdout
-    : Buffer.alloc(0);
-  try {
-    if (result.error || result.status !== 0) {
-      // The same machine record the TypeScript reader writes
-      // (src/secrets/scoped-service/acquisition-failure.ts acquisitionRecord),
-      // with the cause the helper declared on its SKARBIEC_ACQUIRE_REASON line.
-      const stderr = Buffer.isBuffer(result.stderr)
-        ? result.stderr.toString('utf8')
-        : '';
-      const declared = stderr.match(/^SKARBIEC_ACQUIRE_REASON ([a-z_]+)$/m);
-      const reason = declared ? ` reason=${declared[1]}` : '';
-      throw new Error(
-        `scoped Skarbiec read failed for ${serviceName}/${field}` +
-          ` (helper exited ${result.status ?? 'without status'})` +
-          ` [skarbiec_acquisition item=role:${service.item} field=${field} consumer=${consumer}${reason}]`,
-      );
-    }
-    const value = output.toString('utf8').replace(/[\r\n]+$/, '');
-    if (
-      !value ||
-      /[\r\n]/.test(value) ||
-      value.includes(String.fromCharCode(0))
-    ) {
-      throw new Error(
-        `scoped Skarbiec returned an invalid value for ${serviceName}/${field}`,
-      );
-    }
-    return value;
-  } finally {
-    output.fill(0);
-  }
+  // The transport reads nothing only when this process carries no workload
+  // identity to acquire with.
+  if (value === undefined)
+    throw new Error(
+      `Skarbiec workload identity is required to read ${serviceName}/${field}: set SKARBIEC_WORKLOAD_ID and SKARBIEC_WORKLOAD_SIGNING_KEY_FILE, or WELES_CREDENTIALS_FILE on a machine without Skarbiec`,
+    );
+  return value;
 }
 
-export function assertScopedSecretWriter(serviceName) {
-  const service = SERVICES[serviceName];
-  if (!service?.writerConsumer || !service?.writerTokenFile) {
+/** The service, refused by name unless it declares a writer identity. */
+function writableService(serviceName) {
+  const service = declaredService(serviceName);
+  if (!service.writerConsumer || !service.writerTokenFile)
     throw new Error(
       `no exact Weles scoped secret writer contract exists for ${serviceName}`,
     );
-  }
+  return service;
+}
+
+/** The writer token file of `serviceName`, refused by name when not issued. */
+function writerTokenFile(serviceName, service) {
+  const tokenFile = checkedTokenFile(service.writerTokenFile);
+  if (tokenFile === null)
+    throw new Error(
+      `the scoped Skarbiec writer token file ${service.writerTokenFile} for ${serviceName} has not been issued`,
+    );
+  return tokenFile;
+}
+
+export function assertScopedSecretWriter(serviceName) {
+  const service = writableService(serviceName);
   if (localCredentialsFile()) return;
-  checkedEndpoint();
-  checkedTokenFile(service.writerTokenFile);
+  skarbiecEndpoint();
+  writerTokenFile(serviceName, service);
+}
+
+/** One line of text: what a scoped field may hold. */
+function fieldValue(serviceName, field, value) {
+  if (
+    typeof value !== 'string' ||
+    !value.trim() ||
+    /[\r\n]/.test(value) ||
+    value.includes('\0')
+  )
+    throw new Error(
+      `refusing invalid scoped secret write for ${serviceName}/${field}: the value must be one line of text`,
+    );
+  return value.trim();
 }
 
 export function writeScopedSecretItem(serviceName, fields) {
-  const service = SERVICES[serviceName];
-  if (!service)
-    throw new Error(`unknown Weles scoped secret service: ${serviceName}`);
-  assertScopedSecretWriter(serviceName);
-  const entries = Object.entries(fields || {});
+  const service = writableService(serviceName);
+  if (!fields || typeof fields !== 'object')
+    throw new Error(
+      `write for ${serviceName} needs an object of its fields ${Object.keys(service.fields).join(', ')}`,
+    );
+  const entries = Object.entries(fields);
   if (
     entries.length !== Object.keys(service.fields).length ||
-    entries.some(
-      ([field]) => !Object.prototype.hasOwnProperty.call(service.fields, field),
-    )
-  ) {
+    entries.some(([field]) => !Object.hasOwn(service.fields, field))
+  )
     throw new Error(
-      `write does not match the exact Weles scoped secret contract for ${serviceName}`,
+      `write does not match the exact Weles scoped secret contract for ${serviceName}: it must carry exactly ${Object.keys(service.fields).join(', ')}`,
     );
-  }
-  const normalized = {};
-  for (const [field, rawValue] of entries) {
-    const value = String(rawValue ?? '').trim();
-    if (
-      !value ||
-      /[\r\n]/.test(value) ||
-      value.includes(String.fromCharCode(0))
-    ) {
-      throw new Error(
-        `refusing invalid scoped secret write for ${serviceName}/${field}`,
-      );
-    }
-    normalized[field] = value;
-  }
+  const normalized = Object.fromEntries(
+    entries.map(([field, value]) => [
+      field,
+      fieldValue(serviceName, field, value),
+    ]),
+  );
   const local = localCredentialsFile();
   if (local) {
     writeLocalFields(local, service.item, normalized);
@@ -407,65 +140,56 @@ export function writeScopedSecretItem(serviceName, fields) {
       ['secrets', 'put', '--role', service.item],
       {
         input,
+        encoding: 'buffer',
         maxBuffer: Infinity,
-        stdio: ['pipe', 'ignore', 'ignore'],
+        stdio: ['pipe', 'ignore', 'pipe'],
         env: {
           HOME: homedir(),
-          PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
-          WC_SKARBIEC_URL: checkedEndpoint(),
+          ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+          WC_SKARBIEC_URL: skarbiecEndpoint(),
           WC_SKARBIEC_CONSUMER: service.writerConsumer,
-          WC_SKARBIEC_TOKEN_FILE: checkedTokenFile(service.writerTokenFile),
+          WC_SKARBIEC_TOKEN_FILE: writerTokenFile(serviceName, service),
         },
       },
     );
-    if (result.error || result.status !== 0) {
-      throw new Error(`scoped Skarbiec write failed for ${serviceName}`);
+    if (result.error || result.status || result.signal) {
+      const exited = result.error
+        ? `could not run: ${result.error.message}`
+        : result.signal
+          ? `was ended by signal ${result.signal}`
+          : `exited with status ${result.status}`;
+      const said = result.stderr.toString('utf8').trim();
+      throw new Error(
+        `scoped Skarbiec write failed for ${serviceName}: stado secrets put ${exited}${said ? `: ${said}` : ' and wrote nothing to stderr'}`,
+      );
     }
   } finally {
-    input.fill(0);
+    // An empty string zero-fills a Buffer.
+    input.fill('');
   }
 }
 
 export function writeScopedLogin(serviceName, login) {
-  const service = SERVICES[serviceName];
-  if (
-    !service ||
-    !Object.prototype.hasOwnProperty.call(service.fields, 'username') ||
-    !Object.prototype.hasOwnProperty.call(service.fields, 'password')
-  ) {
-    throw new Error(
-      `service is not an exact Weles scoped login contract: ${serviceName}`,
-    );
-  }
+  const service = loginService(serviceName);
   writeScopedSecretItem(serviceName, {
-    username: login?.email,
-    password: login?.password,
-    ...(Object.prototype.hasOwnProperty.call(service.fields, 'totp_secret')
-      ? { totp_secret: login?.totpSecret }
+    username: login.email,
+    password: login.password,
+    ...(Object.hasOwn(service.fields, 'totp_secret')
+      ? { totp_secret: login.totpSecret }
       : {}),
   });
 }
 
 export function readScopedLogin(serviceName) {
-  const service = SERVICES[serviceName];
-  if (
-    !service ||
-    !Object.prototype.hasOwnProperty.call(service.fields, 'username') ||
-    !Object.prototype.hasOwnProperty.call(service.fields, 'password')
-  ) {
-    throw new Error(
-      `service is not an exact Weles scoped login contract: ${serviceName}`,
-    );
-  }
+  const service = loginService(serviceName);
   const email = readScopedSecret(serviceName, 'username');
   const password = readScopedSecret(serviceName, 'password');
-  const totpSecret = Object.prototype.hasOwnProperty.call(
-    service.fields,
-    'totp_secret',
-  )
-    ? readScopedSecret(serviceName, 'totp_secret')
-    : undefined;
-  return { email, password, ...(totpSecret ? { totpSecret } : {}) };
+  if (!Object.hasOwn(service.fields, 'totp_secret')) return { email, password };
+  return {
+    email,
+    password,
+    totpSecret: readScopedSecret(serviceName, 'totp_secret'),
+  };
 }
 
 export function readScopedProxy(serviceName) {
