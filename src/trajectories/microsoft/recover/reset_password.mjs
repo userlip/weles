@@ -1,4 +1,6 @@
 import { rotateMicrosoftPassword } from '../password_lifecycle.mjs';
 
 const result = await rotateMicrosoftPassword();
-console.log(`PASS: Microsoft password operation ${result.status}`);
+if (result.status === 'operation_failed')
+  throw new Error(`microsoft_reset_password failed: ${JSON.stringify(result)}`);
+console.log(`PASS: Microsoft password ${result.status}`);

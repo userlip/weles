@@ -25,12 +25,34 @@ import {
   commitRotatedPassword,
   writePasswordSecret,
 } from './password_lifecycle/commit.mjs';
+import { writeCredentialOperation } from '../../../dist/secrets/operation/answer.js';
 
-function pendingReview(reason, page) {
+/**
+ * A step Microsoft holds behind a person's identity approval. This flow
+ * carries no approval resource to resume from, so the operation ends here,
+ * stated as failed with the reason, and the page is kept for review.
+ */
+function needsApproval(reason, page) {
   writeFileSync(
     join(runRecordingsDir(), 'pending_review.json'),
     JSON.stringify({ status: 'needs_human_approval', reason, url: page.url() }, null, ' '),
   );
+  return writeCredentialOperation({
+    status: 'operation_failed',
+    code: 'MICROSOFT_IDENTITY_APPROVAL_REQUIRED',
+    providerEffect: 'none',
+    retryable: false,
+    message: reason,
+  });
+}
+
+/** The operation finished; `providerEffect` says whether Microsoft's password changed. */
+function completed(providerEffect, message) {
+  return writeCredentialOperation({
+    status: 'operation_completed',
+    providerEffect,
+    message,
+  });
 }
 
 /** The queued Microsoft account, which has to be the one the contract names. */
@@ -78,17 +100,19 @@ export async function verifyMicrosoftPassword() {
   try {
     if (!(await verifyPassword(session, contract.accountEmail, password))) {
       if (await hasIdentityChallenge(session.page)) {
-        pendingReview(
+        return needsApproval(
           'Microsoft requires interactive identity approval to verify the managed password',
           session.page,
         );
-        return { status: 'needs_human_approval' };
       }
       throw new Error('fresh Microsoft password authentication failed');
     }
     writePasswordSecret(contract, password, contract.operation);
     await persistCookies(session, account, proxyUrl);
-    return { status: 'verified' };
+    return completed(
+      'none',
+      'the managed Microsoft password signed in fresh and was kept',
+    );
   } finally {
     await session.close();
   }
@@ -115,18 +139,20 @@ export async function adoptMicrosoftPassword() {
   try {
     if (!(await verifyPassword(session, contract.accountEmail, candidate))) {
       if (await hasIdentityChallenge(session.page)) {
-        pendingReview(
+        return needsApproval(
           'Microsoft requires interactive identity approval before the staged password candidate can be adopted',
           session.page,
         );
-        return { status: 'needs_human_approval' };
       }
       throw new Error(
         'staged Microsoft password candidate failed a fresh Microsoft login',
       );
     }
     await persistCookies(session, account, proxyUrl);
-    return { status: 'adopted' };
+    return completed(
+      'none',
+      'the staged Microsoft password signed in fresh and can be adopted',
+    );
   } finally {
     await session.close();
   }
@@ -145,11 +171,10 @@ export async function rotateMicrosoftPassword() {
     const allowUnknownCurrentPasswordRecovery =
       process.env.MICROSOFT_ALLOW_UNKNOWN_CURRENT_PASSWORD_RECOVERY === '1';
     if (!currentPassword && !allowUnknownCurrentPasswordRecovery) {
-      pendingReview(
+      return needsApproval(
         'Microsoft password rotation requires one known current password for rollback safety',
         session.page,
       );
-      return { status: 'needs_human_approval' };
     }
     if (
       currentPassword &&
@@ -161,11 +186,10 @@ export async function rotateMicrosoftPassword() {
       !allowUnknownCurrentPasswordRecovery
     ) {
       if (await hasIdentityChallenge(session.page)) {
-        pendingReview(
+        return needsApproval(
           'Microsoft requires interactive identity approval before password rotation',
           session.page,
         );
-        return { status: 'needs_human_approval' };
       }
       throw new Error('current Microsoft password failed before rotation');
     }
@@ -176,11 +200,10 @@ export async function rotateMicrosoftPassword() {
       nextPassword,
     );
     if (changeResult === 'unavailable') {
-      pendingReview(
+      return needsApproval(
         'Microsoft requires interactive identity verification before password rotation',
         session.page,
       );
-      return { status: 'needs_human_approval' };
     }
     if (changeResult !== 'changed') {
       if (
@@ -230,7 +253,10 @@ export async function rotateMicrosoftPassword() {
       session,
     });
     await persistCookies(session, account, proxyUrl);
-    return { status: 'rotated' };
+    return completed(
+      'changed',
+      'the Microsoft password was rotated, signed in fresh and committed to Skarbiec',
+    );
   } finally {
     await session.close();
   }

@@ -1,11 +1,11 @@
 // What an Entra password run hands back to the operator, and how the password
 // material itself is held: one shape for every terminal answer, the approval and
-// receipt resources it carries, and the read, write and zeroing of the secret.
+// receipt resources it carries, and the read, write and clearing of the secret.
 //
 // Moved out of entra_password_lifecycle.mjs, which keeps the three trajectory
 // entry points.
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomFillSync, randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
@@ -15,12 +15,14 @@ import {
   writeWelesAcquiredSecret,
 } from '../../../../dist/secrets/scoped-service.js';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { writeCredentialOperation } from '../../../../dist/secrets/operation/answer.js';
 
 import { PASSWORD_FIELD } from './queued_job.mjs';
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]+/g;
 const PROVIDER_EFFECTS = Object.freeze(['none', 'changed', 'unknown']);
-const RESUME_TOKEN_BYTES = 48;
+/** The indentation of the review file a person reads beside the run. */
+const JSON_INDENT = '  ';
 
 function sanitizedMessage(reason) {
   return String(reason).replace(CONTROL_CHARACTERS, ' ').trim();
@@ -47,8 +49,9 @@ function executionHost() {
 }
 
 // An approval is a resource, not a hint: the id is stable for the exact run and
-// phase that asked for it, and the resume token is the only way back into this
-// operation. It holds until a person answers it.
+// phase that asked for it, and the resume token (a random UUID, unguessable and
+// within the length the credential contract accepts) is the only way back into
+// this operation. It holds until a person answers it.
 function approvalResource(contract, phase, providerEffect, instruction) {
   return {
     approval_id: createHash('sha256')
@@ -56,20 +59,26 @@ function approvalResource(contract, phase, providerEffect, instruction) {
       .digest('hex'),
     phase,
     provider_effect: providerEffect,
-    resume_token: randomBytes(RESUME_TOKEN_BYTES).toString('base64url'),
+    resume_token: randomUUID(),
     instruction,
   };
 }
 
 // The receipt answers 'was exactly this principal rotated' without reading a
 // mailbox or a log, so it names the directory coordinates and digests the
-// evidence instead of carrying anything derived from the password.
+// evidence instead of carrying anything derived from the password. A
+// completed answer states changedAt: the time the provider changed, or null
+// when the run changed nothing.
 function receiptResource(contract, fields) {
   if (!Array.isArray(fields.evidence) || !fields.evidence.length) {
     throw new Error(
       'a credential receipt requires the session evidence of this run',
     );
   }
+  if (fields.changedAt === undefined)
+    throw new Error(
+      'a credential receipt requires changedAt: when the provider changed, or null when it did not',
+    );
   return {
     tenant_id: contract.tenantId,
     principal_object_id: contract.principalObjectId,
@@ -78,16 +87,17 @@ function receiptResource(contract, fields) {
     request_id: contract.requestId,
     evidence_digest: evidenceDigest(contract, fields.evidence),
     execution_host: executionHost(),
-    changed_at: fields.changedAt ?? null,
+    changed_at: fields.changedAt,
     verified_at: new Date().toISOString(),
     action_log_id: contract.actionLogId,
   };
 }
 
-// One shape for every terminal answer. The worker lifts service_action_result.json
-// into result.service_action and pending_review.json into result.pending_review,
-// which is where weles-skarbiec-local.mjs reads the typed diagnostics from. The
-// envelope stays camelCase; the nested approval and receipt blocks are canonical
+// One shape for every terminal answer, stated where every credential
+// operation states its answer (src/secrets/operation/answer.ts), which the
+// worker answers the caller from. An approval is also written to the run's
+// pending_review.json, where the run's review surfaces show it. The envelope
+// stays camelCase; the nested approval and receipt blocks are canonical
 // snake_case.
 export function outcome(contract, fields) {
   const message = sanitizedMessage(fields.reason);
@@ -96,7 +106,7 @@ export function outcome(contract, fields) {
       'an Entra credential outcome requires one exact provider effect',
     );
   }
-  const phase = fields.phase ?? '';
+  const { phase } = fields;
   if (fields.status === 'needs_human_approval' && (!phase || !message)) {
     throw new Error(
       'an approval resource requires the exact phase and instruction that asked for it',
@@ -130,15 +140,11 @@ export function outcome(contract, fields) {
       : {}),
     message,
   };
-  const directory = runRecordingsDir();
-  writeFileSync(
-    join(directory, 'service_action_result.json'),
-    JSON.stringify({ credential_operation: answer }, null, 2),
-  );
+  writeCredentialOperation(answer);
   if (answer.status === 'needs_human_approval') {
     writeFileSync(
-      join(directory, 'pending_review.json'),
-      JSON.stringify({ ...answer, reason: message }, null, 2),
+      join(runRecordingsDir(), 'pending_review.json'),
+      JSON.stringify({ ...answer, reason: message }, null, JSON_INDENT),
     );
   }
   return answer;
@@ -146,7 +152,8 @@ export function outcome(contract, fields) {
 
 // Skarbiec write provenance keeps the exact operation: 'rotate' for a rotation,
 // 'reset' for a directory reset, 'verify' for a rewrite of the same value, and
-// 'rollback' only for compensating restores.
+// 'rollback' only for compensating restores. The password's bytes are
+// overwritten with random ones once written, so no copy outlives the write.
 export function commitPassword(contract, password, writeOperation) {
   const secret = Buffer.from(password, 'utf8');
   try {
@@ -162,18 +169,19 @@ export function commitPassword(contract, password, writeOperation) {
       },
     );
   } finally {
-    for (let index = 0; index < secret.length; index += 1) secret[index] = 0;
+    randomFillSync(secret);
   }
 }
 
+/**
+ * The managed password Skarbiec holds for the contract, undefined when it
+ * holds none; a read Skarbiec refuses raises with its cause, so a refusal is
+ * never mistaken for an absent password.
+ */
 export function managedPassword(contract) {
-  try {
-    return readWelesManagedCredential(
-      contract.credentialId,
-      PASSWORD_FIELD,
-      contract.skarbiecTenantId,
-    );
-  } catch {
-    return undefined;
-  }
+  return readWelesManagedCredential(
+    contract.credentialId,
+    PASSWORD_FIELD,
+    contract.skarbiecTenantId,
+  );
 }
