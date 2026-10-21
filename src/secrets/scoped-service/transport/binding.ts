@@ -4,8 +4,9 @@
 
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants, lstatSync, type Stats } from 'node:fs';
-import { homedir, networkInterfaces } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { loopbackHost } from '../../../utils/runtime/service-origin.js';
 
 /** Permission bits no one but the owner may hold on a binding file or directory. */
 const NOT_OWNER_ONLY = fsConstants.S_IRWXG | fsConstants.S_IRWXO;
@@ -55,15 +56,6 @@ export function checkedTenantFile(path: string, label: string): string {
       `refusing unsafe tenant Skarbiec ${label}: ${path} must be a regular file only its owner can use`,
     );
   return path;
-}
-
-/** Whether `hostname` is this machine's own loopback: localhost or an address of an internal interface. */
-function loopbackHost(hostname: string): boolean {
-  if (hostname === 'localhost') return true;
-  const address = hostname.replace(/^\[(?<inner>.*)\]$/, '$<inner>');
-  return Object.values(networkInterfaces()).some((entries) =>
-    entries?.some((entry) => entry.internal && entry.address === address),
-  );
 }
 
 /**
