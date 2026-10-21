@@ -3,66 +3,51 @@
 // The chain is ordered, not a table, and the order is load-bearing: liveness is
 // answered before anything can refuse it, the public task API is offered the
 // request next and its own error shape is preserved untouched, and only then do
-// the token-authenticated routes get a look. Anything left over is a 404 from
-// one place, and any exception from any route becomes one truncated 500 from
-// one place, so no route can invent a second way to fail.
-//
-// Three small route families stay written out here rather than in files of
-// their own, because each is the router repeating what it already knows: what
-// this build is (liveness), what its resident task dispatcher is doing, and which
-// artifact of a finished run may be downloaded. The routes that order a
-// trajectory are the ones that carry real subjects of their own, and they live
-// beside this file.
+// the token-authenticated routes get a look. Anything left over is a Not Found
+// from one place, and any exception from any route becomes one Internal Server
+// Error naming its cause, from one place, so no route can invent a second way
+// to fail.
 //
 // The collaborators arrive as arguments because the entry point is the only
 // place allowed to resolve modules out of the deployed runtime tree; this file
 // never names a path inside it.
 
-import { createReadStream } from 'node:fs';
+import { constants as http } from 'node:http2';
 
 import {
   isKeywordPlannerRoute,
   respondToKeywordPlanner,
 } from '../../../trajectories/google/ads/keyword_planner/api_server.mjs';
 
-import {
-  ALLOW_RAW_CREDS,
-  ALLOW_UNAUTH,
-  HOST,
-  PORT,
-  TOKEN,
-} from '../configuration.mjs';
-import {
-  json,
-  readBody,
-  requireTokenAuthorization,
-} from '../http-exchange.mjs';
-import { RUN_RELEASE_IDENTITY } from '../release-identity.mjs';
-import {
-  decodeRunId,
-  diagnosticFile,
-  diagnosticsContentType,
-  diagnosticsManifest,
-} from '../run/run-evidence.mjs';
-import { terminalRunResultFile } from '../run/run-outcome.mjs';
-import { createWorkerControl, workerActions } from '../worker-control.mjs';
+import { HOST, PORT } from '../configuration.mjs';
+import { json, readBody } from '../http-exchange.mjs';
 import { isPageRoute, respondToPage } from './pages/index.mjs';
 import { isRecordRoute, respondToRecord } from './records/index.mjs';
 import { isKeeperRoute, respondToKeeper } from './keepers/index.mjs';
 import { respondToRun } from './run-route.mjs';
 import { isRunsRoute, respondToRuns } from './runs.mjs';
-import { listRunningRuns } from '../run/running-runs.mjs';
 import {
-  respondToAuthenticatorEnrolment,
-  respondToBuilder,
   respondToDocumentImport,
   respondToReauth,
 } from './trajectory-routes.mjs';
+import { respondToAuthenticatorEnrolment } from './trajectory/authenticator-enrolment.mjs';
+import { respondToBuilder } from './trajectory/builder.mjs';
 import {
   respondToAccounts,
   respondToAcquire,
   respondToAuthorize,
 } from './subscriptions/account-routes.mjs';
+import { isHealthRoute, respondToHealth } from './service/health.mjs';
+import {
+  isDiagnosticsRoute,
+  respondToDiagnostics,
+} from './service/diagnostics.mjs';
+import { createWorkerRoutes } from './service/worker.mjs';
+
+/** The message of a failure, whatever was thrown. */
+function failure(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export function createApiRequestHandler({
   buildDeploymentVersionValue,
@@ -78,84 +63,65 @@ export function createApiRequestHandler({
   validateAccountSecurityParams,
   validateAppPasswordParams,
 }) {
-  const { controlWorker, workerStatus } =
-    createWorkerControl(publicTaskService);
-  // Recovery changes one durable queue. Concurrent control requests are refused.
-  let workerControlBusy = false;
+  const { isWorkerRoute, respondToWorker } = createWorkerRoutes(
+    publicTaskService,
+    buildDeploymentVersionValue,
+  );
+  // Only the address's path and query are read; the origin is this worker's.
+  const origin = `http://${HOST}:${PORT}`;
+
+  /** Whether a token-authenticated route answered the request. */
+  async function answeredByRoute(req, res, url) {
+    const post = req.method === 'POST';
+    if (isWorkerRoute(req, url)) await respondToWorker(req, res, url);
+    else if (isKeeperRoute(url.pathname)) await respondToKeeper(req, res, url);
+    else if (isDiagnosticsRoute(req, url))
+      await respondToDiagnostics(req, res, url);
+    else if (isRunsRoute(req, url)) await respondToRuns(req, res, url);
+    else if (post && url.pathname === '/imports')
+      await respondToDocumentImport(req, res, importWelesTrajectoryDocument);
+    else if (post && url.pathname === '/reauth')
+      await respondToReauth(req, res, selectLoginAccount, false);
+    else if (post && url.pathname === '/reauth/resolve')
+      await respondToReauth(req, res, selectLoginAccount, true);
+    else if (post && url.pathname === '/reauth/enrol-authenticator')
+      await respondToAuthenticatorEnrolment(
+        req,
+        res,
+        selectLoginAccount,
+        runTrajectory,
+      );
+    else if (post && url.pathname === '/subscriptions/acquire')
+      await respondToAcquire(req, res);
+    else if (post && url.pathname === '/reauth/authorize')
+      await respondToAuthorize(req, res, selectLoginAccount);
+    else if (post && url.pathname === '/reauth/accounts')
+      await respondToAccounts(req, res, listLoginAccounts);
+    else if (isPageRoute(req, url))
+      await respondToPage(req, res, url, pageBrowser);
+    else if (isRecordRoute(req, url))
+      await respondToRecord(req, res, url, accountRecords);
+    else if (isKeywordPlannerRoute(req, url))
+      await respondToKeywordPlanner(req, res, url);
+    else if (post && url.pathname === '/weles-builder')
+      await respondToBuilder(req, res, runTrajectory);
+    else if (post && url.pathname === '/run')
+      await respondToRun(
+        req,
+        res,
+        runTrajectory,
+        validateAccountSecurityParams,
+        validateAppPasswordParams,
+      );
+    else return false;
+    return true;
+  }
+
   return async (req, res) => {
     try {
-      const url = new URL(
-        req.url || '/',
-        `http://${req.headers.host || `${HOST}:${PORT}`}`,
-      );
-      if (req.method === 'GET' && url.pathname === '/healthz') {
-        json(res, 200, {
-          ok: true,
-          source: 'weles_api',
-          authConfigured: Boolean(TOKEN || ALLOW_UNAUTH),
-          rawCredsAllowed: ALLOW_RAW_CREDS,
-          releaseVersion: process.env.WELES_WORKER_RELEASE_VERSION || null,
-          releaseSha256: process.env.WELES_WORKER_RELEASE_SHA256 || null,
-          // Which sources answer here. A deployer that moved this host to a
-          // revision has no other way to prove the process serving the port
-          // is the one it built, and `stado workload run weles-api-runtime`
-          // used to report a revision from a launchctl restart alone.
-          sourceRevision: RUN_RELEASE_IDENTITY.source_revision,
-          // The runs a restart of this process would end, read by Stado's
-          // replace delivery before it restarts the worker. A release used to
-          // land while a sign-in waited on the operator's phone and killed it
-          // mid-wait. Only what names a run is said here, because this route
-          // takes no token: the run, its action and when it started.
-          in_flight: listRunningRuns().map(
-            ({ run_id, action, kind, started_at }) => ({
-              run_id,
-              action,
-              kind,
-              started_at,
-            }),
-          ),
-          routes: [
-            'GET /healthz',
-            'GET /api/v1/version',
-            'POST /api/v1/credential-operations',
-            'POST /api/v1/tasks',
-            'GET /api/v1/tasks/:task_id',
-            'GET /api/v1/tasks/:task_id?wait=terminal',
-            'POST /api/v1/tasks/:task_id/cancel',
-            'GET /worker/version',
-            'GET /worker/status',
-            'POST /worker/start',
-            'POST /worker/stop',
-            'POST /worker/restart',
-            'POST /run',
-            'GET /runs',
-            'GET /runs/:run_id',
-            'POST /runs/:run_id/answer',
-            'POST /runs/:run_id/cancel',
-            'GET /diagnostics/:run_id',
-            'GET /diagnostics/:run_id/file?path=',
-            'POST /weles-builder',
-            'POST /reauth/resolve',
-            'POST /reauth',
-            'POST /reauth/enrol-authenticator',
-            'POST /reauth/authorize',
-            'POST /subscriptions/acquire',
-            'POST /reauth/accounts',
-            'POST /google-ads/keyword-volume',
-            'POST /google-ads/keyword-report',
-            'POST /pages/snapshot',
-            'POST /pages/form-export',
-            'POST /records/accounts/list',
-            'POST /records/accounts/get',
-            'POST /records/accounts/upsert',
-            'POST /records/accounts/update',
-            'POST /records/settings/get',
-            'POST /records/settings/set',
-          ],
-          publicTask: publicTaskService.health,
-          features: ['subscription_identity', 'fresh_profile'],
-          account_source: 'skarbiec',
-        });
+      const url = new URL(req.url, origin);
+      if (isHealthRoute(req, url)) {
+        respondToHealth(res, publicTaskService.health);
         return;
       }
       const credentialResponse = await credentialOperationService.handle(
@@ -168,226 +134,29 @@ export function createApiRequestHandler({
         });
         return;
       }
+      let publicResponse;
       try {
-        const publicResponse = await publicTaskService.handle(
-          req,
-          url,
-          readBody,
-        );
-        if (publicResponse) {
-          json(res, publicResponse.status, publicResponse.payload, {
-            redact: false,
-          });
-          return;
-        }
+        publicResponse = await publicTaskService.handle(req, url, readBody);
       } catch (error) {
+        // The public task API's own refusals keep its error shape; any other
+        // failure is this worker's and answered below with its cause.
         const publicError = publicTaskErrorResponse(error);
-        json(
-          res,
-          publicError?.status ?? 500,
-          publicError?.payload ?? {
-            error: 'internal-error',
-            message: 'public task operation failed',
-          },
-          { redact: false },
-        );
+        if (!publicError) throw error;
+        json(res, publicError.status, publicError.payload, { redact: false });
         return;
       }
-      if (req.method === 'GET' && url.pathname === '/worker/version') {
-        if (!requireTokenAuthorization(req, res)) return;
-        json(res, 200, { ok: true, identity: buildDeploymentVersionValue() });
-        return;
-      }
-      if (isKeeperRoute(url.pathname)) {
-        await respondToKeeper(req, res, url);
-        return;
-      }
-      if (req.method === 'GET' && url.pathname === '/worker/status') {
-        if (!requireTokenAuthorization(req, res)) return;
-        const status = await workerStatus();
-        json(res, 200, { ok: true, worker: status });
-        return;
-      }
-      const workerAction = url.pathname.startsWith('/worker/')
-        ? url.pathname.slice('/worker/'.length)
-        : '';
-      if (workerActions[workerAction] === true && req.method === 'POST') {
-        if (!requireTokenAuthorization(req, res)) return;
-        if (workerControlBusy) {
-          json(res, 409, { ok: false, error: 'worker_control_in_progress' });
-          return;
-        }
-        workerControlBusy = true;
-        try {
-          const action = workerAction;
-          const out = await controlWorker(action);
-          console.log(
-            JSON.stringify({
-              event: 'worker_control',
-              action,
-              ok: out.ok,
-              changed: out.changed ?? false,
-              remote: req.socket.remoteAddress || null,
-              before: out.before,
-              after: out.after,
-            }),
-          );
-          const statusCode = out.ok
-            ? 200
-            : out.error === 'worker_busy'
-              ? 409
-              : 502;
-          json(res, statusCode, out);
-        } finally {
-          workerControlBusy = false;
-        }
-        return;
-      }
-      const diagnosticFileMatch = /^\/diagnostics\/([^/]+)\/file$/.exec(
-        url.pathname,
-      );
-      if (req.method === 'GET' && diagnosticFileMatch) {
-        if (!requireTokenAuthorization(req, res)) return;
-        const runId = decodeRunId(diagnosticFileMatch[1]);
-        if (!runId) {
-          json(res, 400, { ok: false, error: 'invalid_run_id' });
-          return;
-        }
-        const requestedPath = url.searchParams.get('path');
-        const wait = url.searchParams.get('wait');
-        if (
-          wait !== null &&
-          (wait !== 'terminal' || requestedPath !== 'run-result.json')
-        ) {
-          json(res, 400, {
-            ok: false,
-            error: 'wait=terminal requires path=run-result.json',
-          });
-          return;
-        }
-        let file;
-        if (wait === 'terminal') {
-          const controller = new AbortController();
-          const disconnect = () => controller.abort();
-          res.once('close', disconnect);
-          try {
-            if (res.destroyed) return;
-            file = await terminalRunResultFile(runId, controller.signal);
-          } catch (error) {
-            if (controller.signal.aborted) return;
-            throw error;
-          } finally {
-            res.off('close', disconnect);
-          }
-        } else {
-          file = diagnosticFile(runId, requestedPath);
-        }
-        if (!file) {
-          json(res, 404, { ok: false, error: 'diagnostic_file_not_found' });
-          return;
-        }
-        res.writeHead(200, {
-          'Content-Type': diagnosticsContentType(file.path),
-          'Content-Length': String(file.stat.size),
-          'Cache-Control': 'private, no-store',
-          'X-Content-Type-Options': 'nosniff',
+      if (publicResponse) {
+        json(res, publicResponse.status, publicResponse.payload, {
+          redact: false,
         });
-        createReadStream(file.path)
-          .on('error', () => res.destroy())
-          .pipe(res);
         return;
       }
-      const diagnosticsMatch = /^\/diagnostics\/([^/]+)$/.exec(url.pathname);
-      if (req.method === 'GET' && diagnosticsMatch) {
-        if (!requireTokenAuthorization(req, res)) return;
-        const runId = decodeRunId(diagnosticsMatch[1]);
-        if (!runId) {
-          json(res, 400, { ok: false, error: 'invalid_run_id' });
-          return;
-        }
-        const manifest = diagnosticsManifest(runId);
-        if (!manifest) {
-          json(res, 404, { ok: false, error: 'diagnostics_not_found' });
-          return;
-        }
-        json(res, 200, manifest);
-        return;
-      }
-      if (isRunsRoute(req, url)) {
-        await respondToRuns(req, res, url);
-        return;
-      }
-      if (req.method === 'POST' && url.pathname === '/imports') {
-        await respondToDocumentImport(req, res, importWelesTrajectoryDocument);
-        return;
-      }
-      if (
-        req.method === 'POST' &&
-        (url.pathname === '/reauth' || url.pathname === '/reauth/resolve')
-      ) {
-        await respondToReauth(
-          req,
-          res,
-          selectLoginAccount,
-          url.pathname === '/reauth/resolve',
-        );
-        return;
-      }
-      if (
-        req.method === 'POST' &&
-        url.pathname === '/reauth/enrol-authenticator'
-      ) {
-        await respondToAuthenticatorEnrolment(
-          req,
-          res,
-          selectLoginAccount,
-          runTrajectory,
-        );
-        return;
-      }
-      if (req.method === 'POST' && url.pathname === '/subscriptions/acquire') {
-        await respondToAcquire(req, res);
-        return;
-      }
-      if (req.method === 'POST' && url.pathname === '/reauth/authorize') {
-        await respondToAuthorize(req, res, selectLoginAccount);
-        return;
-      }
-      if (req.method === 'POST' && url.pathname === '/reauth/accounts') {
-        await respondToAccounts(req, res, listLoginAccounts);
-        return;
-      }
-      if (isPageRoute(req, url)) {
-        await respondToPage(req, res, url, pageBrowser);
-        return;
-      }
-      if (isRecordRoute(req, url)) {
-        await respondToRecord(req, res, url, accountRecords);
-        return;
-      }
-      if (isKeywordPlannerRoute(req, url)) {
-        await respondToKeywordPlanner(req, res, url);
-        return;
-      }
-      if (req.method === 'POST' && url.pathname === '/weles-builder') {
-        await respondToBuilder(req, res, runTrajectory);
-        return;
-      }
-      if (!(req.method === 'POST' && url.pathname === '/run')) {
-        json(res, 404, { ok: false, error: 'not_found' });
-        return;
-      }
-      await respondToRun(
-        req,
-        res,
-        runTrajectory,
-        validateAccountSecurityParams,
-        validateAppPasswordParams,
-      );
+      if (await answeredByRoute(req, res, url)) return;
+      json(res, http.HTTP_STATUS_NOT_FOUND, { ok: false, error: 'not_found' });
     } catch (error) {
-      json(res, 500, {
+      json(res, http.HTTP_STATUS_INTERNAL_SERVER_ERROR, {
         ok: false,
-        error: String(error && error.message ? error.message : error),
+        error: failure(error),
       });
     }
   };

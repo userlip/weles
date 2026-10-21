@@ -8,55 +8,27 @@
 // can later name. /reauth is admitted by Brama's own token and never by the
 // general API token, because it spends a real browser sign-in on exactly one
 // vault row and the broker -- not the operator -- decides which.
-// /reauth/enrol-authenticator is admitted the same way and for the same
-// reason: it is the repair for the refusal /reauth returns when a login
-// carries no authenticator seed, and asking Brama to hold the general worker
-// token for it would widen a credential that exists to be narrow.
-// /weles-builder takes prose instead of parameters and its answer is a new
-// reusable trajectory, so its body is text and not a JSON envelope.
+// /reauth/enrol-authenticator (trajectory/authenticator-enrolment.mjs) is
+// admitted the same way, through the same account admission
+// (trajectory/reauth-account.mjs). /weles-builder (trajectory/builder.mjs)
+// takes prose instead of parameters and its answer is a new reusable
+// trajectory.
 //
-// They sit together because they share one refusal: a request that names an
-// account it is not entitled to, or a provider Weles does not run on the host,
-// is answered before any child is spawned.
+// They share one refusal: a request that names an account it is not entitled
+// to, or a provider Weles does not run on the host, is answered before any
+// child is spawned.
 
 import { constants as http } from 'node:http2';
-
-import {
-  ALLOW_RAW_CREDS,
-  ALLOW_UNAUTH,
-  BRAMA_REAUTH_TOKEN,
-  TOKEN,
-} from '../configuration.mjs';
-import {
-  authorized,
-  json,
-  readBody,
-  readText,
-  reauthAuthorized,
-  requireTokenAuthorization,
-} from '../http-exchange.mjs';
+import { json, readBody, requireTokenAuthorization } from '../http-exchange.mjs';
 import { coalesceRun, runAdmissionKey } from '../run/run-outcome.mjs';
-import { REAUTH_PROVIDERS, runReauth } from '../run/process/reauth-process.mjs';
-import { RUN_RELEASE_IDENTITY } from '../release-identity.mjs';
+import { runReauth } from '../run/process/reauth-process.mjs';
+import { admittedReauthAccount } from './trajectory/reauth-account.mjs';
+import { answerRefusal } from './trajectory/refusal.mjs';
 
-/// The dispatch name of the trajectory that enrols a Google Authenticator for
-/// one Skarbiec login and writes the seed back to it.
-const AUTHENTICATOR_ENROL_ACTION = 'google_authenticator_enrol';
-const authenticatorEnrolments = new Map();
-
-const BUILDER_BOOTSTRAP_URL =
-  process.env.WELES_BUILDER_BOOTSTRAP_URL || 'https://duckduckgo.com/';
-// Prepended to the caller's instructions so the agent self-navigates: the
-// caller supplies NO url, only the goal. The agent lands on a neutral
-// bootstrap page and drives itself to whatever site the task implies.
-const BUILDER_PREAMBLE = [
-  'You are given a task in natural language. You start on a neutral bootstrap page.',
-  'FIRST decide which website accomplishes the task and go there yourself with the navigate tool; if you do not know the exact URL, search from the current page.',
-  'If the task needs an account, call generate_identity(platform) and use the $PLATFORM_NEW_* placeholders in fill/type_text; do not type literal placeholder text.',
-  'If the site emails a confirmation code, call check_email. Solve CAPTCHAs with solve_captcha.',
-  'Do not make purchases, submit payments, delete data, or perform irreversible/destructive actions.',
-  'When finished, call done(value) with a concise JSON-serializable summary plus any data or credentials the task asked for.',
-].join(' ');
+/** The message of a failure, whatever was thrown. */
+function failure(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export async function respondToDocumentImport(
   req,
@@ -67,112 +39,50 @@ export async function respondToDocumentImport(
   let body;
   try {
     body = await readBody(req);
-  } catch (e) {
-    json(res, 400, { ok: false, error: e.message });
+  } catch (error) {
+    json(res, http.HTTP_STATUS_BAD_REQUEST, { ok: false, error: failure(error) });
     return;
   }
+  let report;
   try {
-    const report = await importWelesTrajectoryDocument(
-      body.source,
-      body.target_host,
-    );
-    json(res, report.imported > 0 ? 201 : 200, report);
-  } catch (e) {
-    json(res, 400, {
-      ok: false,
-      error: String(e && e.message ? e.message : e),
-    });
+    report = await importWelesTrajectoryDocument(body.source, body.target_host);
+  } catch (error) {
+    json(res, http.HTTP_STATUS_BAD_REQUEST, { ok: false, error: failure(error) });
+    return;
   }
+  // A report that imported any document created it; one that imported
+  // none answers what it found unchanged or refused.
+  json(
+    res,
+    report.imported ? http.HTTP_STATUS_CREATED : http.HTTP_STATUS_OK,
+    report,
+  );
 }
+
+/** One JSON object per line; the last line is the `result` event. */
+export const REAUTH_PROGRESS_CONTENT_TYPE = 'application/x-ndjson';
 
 // Resolve a Skarbiec subscription first; /reauth/resolve never starts a browser.
 export async function respondToReauth(
   req,
   res,
   selectLoginAccount,
-  resolveOnly = false,
+  resolveOnly,
 ) {
-  if (!reauthAuthorized(req)) {
-    json(res, BRAMA_REAUTH_TOKEN ? 401 : 500, {
-      ok: false,
-      error: BRAMA_REAUTH_TOKEN
-        ? 'unauthorized'
-        : 'missing_BRAMA_WELES_REAUTH_TOKEN',
-    });
-    return;
-  }
-  let body;
+  let admitted;
   try {
-    body = await readBody(req);
-  } catch (e) {
-    json(res, 400, { ok: false, error: e.message });
-    return;
-  }
-  const provider =
-    typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
-  if (!REAUTH_PROVIDERS.has(provider)) {
-    json(res, http.HTTP_STATUS_BAD_REQUEST, {
-      ok: false,
-      error: `provider must be one of ${[...REAUTH_PROVIDERS].join('|')}`,
-    });
-    return;
-  }
-  const subscriptionId =
-    typeof body.subscription_id === 'string' ? body.subscription_id.trim() : '';
-  if (!subscriptionId) {
-    json(res, 400, {
-      ok: false,
-      error: 'subscription_id_required',
-      stage: 'identity',
-      message: 'An exact Skarbiec subscription id is required',
-    });
-    return;
-  }
-  const loginItem =
-    typeof body.login_item === 'string' ? body.login_item.trim() : '';
-  let account;
-  try {
-    account = selectLoginAccount(
-      provider,
-      loginItem || undefined,
-      subscriptionId,
+    admitted = await admittedReauthAccount(
+      req,
+      selectLoginAccount,
+      'authentication',
     );
-  } catch (e) {
-    json(res, 409, {
-      ok: false,
-      error: e.code || 'skarbiec_identity_unavailable',
-      stage: 'identity',
-      message: e.message,
-      ...(e.detail || {}),
-    });
+  } catch (error) {
+    answerRefusal(res, error);
     return;
   }
-  const identity = {
-    subscription_id: account.subscriptionId,
-    subscription_item: account.subscriptionItem,
-    login_item: account.loginItem,
-    provider: account.provider,
-    account_ref: account.accountRef,
-    login_method: account.loginMethod,
-    account_revision: account.accountRevision,
-    source_revision: RUN_RELEASE_IDENTITY.source_revision,
-  };
+  const { account, identity, provider } = admitted;
   if (resolveOnly) {
-    json(res, 200, { ok: true, source: 'skarbiec', ...identity });
-    return;
-  }
-  if (
-    body.account_revision &&
-    body.account_revision !== account.accountRevision
-  ) {
-    json(res, 409, {
-      ok: false,
-      error: 'skarbiec_identity_changed',
-      stage: 'identity',
-      message:
-        'Skarbiec account data changed after authentication was resolved',
-      ...identity,
-    });
+    json(res, http.HTTP_STATUS_OK, { ok: true, source: 'skarbiec', ...identity });
     return;
   }
   // An admitted sign-in answers as it goes, one JSON object per line: what
@@ -197,7 +107,7 @@ export async function respondToReauth(
     hub,
   );
   const progress = admission.entry.metadata;
-  res.writeHead(200, {
+  res.writeHead(http.HTTP_STATUS_OK, {
     'Content-Type': REAUTH_PROGRESS_CONTENT_TYPE,
     'Cache-Control': 'no-store',
   });
@@ -211,11 +121,7 @@ export async function respondToReauth(
   try {
     out = await admission.entry.promise;
   } catch (error) {
-    out = {
-      ok: false,
-      error: 'reauth_run_failed',
-      message: String(error?.message || error),
-    };
+    out = { ok: false, error: 'reauth_run_failed', message: failure(error) };
   } finally {
     progress.listeners.delete(send);
   }
@@ -227,213 +133,4 @@ export async function respondToReauth(
     coalesced: admission.joined,
   });
   res.end();
-}
-
-/** One JSON object per line; the last line is the `result` event. */
-export const REAUTH_PROGRESS_CONTENT_TYPE = 'application/x-ndjson';
-
-// The repair for the one refusal a sign-in cannot repair itself.
-//
-// `google_2fa_material_missing` means the login Weles holds carries no
-// authenticator seed, and no sign-in can invent one: Google shows a setup key
-// only inside a signed-in session. The enrolment trajectory does exactly that
-// once -- one approval on the operator's phone, then it reads the key, proves
-// the first code, and writes it to the login item -- and every later sign-in
-// for that account answers Google by itself. Until this route existed the
-// trajectory could be reached only through the general worker token, so the
-// product that reports the refusal could not order its own repair, and a
-// person pasted a one-time code instead.
-export async function respondToAuthenticatorEnrolment(
-  req,
-  res,
-  selectLoginAccount,
-  runTrajectory,
-) {
-  if (!reauthAuthorized(req)) {
-    json(res, BRAMA_REAUTH_TOKEN ? 401 : 500, {
-      ok: false,
-      error: BRAMA_REAUTH_TOKEN
-        ? 'unauthorized'
-        : 'missing_BRAMA_WELES_REAUTH_TOKEN',
-    });
-    return;
-  }
-  let body;
-  try {
-    body = await readBody(req);
-  } catch (e) {
-    json(res, 400, { ok: false, error: e.message });
-    return;
-  }
-  const provider =
-    typeof body.provider === 'string' ? body.provider.trim().toLowerCase() : '';
-  if (!REAUTH_PROVIDERS.has(provider)) {
-    json(res, 400, {
-      ok: false,
-      error: `provider must be one of ${[...REAUTH_PROVIDERS].join(', ')}`,
-    });
-    return;
-  }
-  const subscriptionId =
-    typeof body.subscription_id === 'string' ? body.subscription_id.trim() : '';
-  if (!subscriptionId) {
-    json(res, 400, {
-      ok: false,
-      error: 'subscription_id_required',
-      stage: 'identity',
-      message: 'An exact Skarbiec subscription id is required',
-    });
-    return;
-  }
-  const loginItem =
-    typeof body.login_item === 'string' ? body.login_item.trim() : '';
-  let account;
-  try {
-    account = selectLoginAccount(
-      provider,
-      loginItem || undefined,
-      subscriptionId,
-    );
-  } catch (e) {
-    json(res, 409, {
-      ok: false,
-      error: e.code || 'skarbiec_identity_unavailable',
-      stage: 'identity',
-      message: e.message,
-      ...(e.detail || {}),
-    });
-    return;
-  }
-  const identity = {
-    subscription_id: account.subscriptionId,
-    subscription_item: account.subscriptionItem,
-    login_item: account.loginItem,
-    provider: account.provider,
-    account_ref: account.accountRef,
-    login_method: account.loginMethod,
-    account_revision: account.accountRevision,
-    source_revision: RUN_RELEASE_IDENTITY.source_revision,
-  };
-  if (
-    body.account_revision &&
-    body.account_revision !== account.accountRevision
-  ) {
-    json(res, 409, {
-      ok: false,
-      error: 'skarbiec_identity_changed',
-      stage: 'identity',
-      message:
-        'Skarbiec account data changed after authenticator enrolment was resolved',
-      ...identity,
-    });
-    return;
-  }
-  // The login method and the one live enrolment per Google account are the
-  // action's own refusals, the same for every caller. Here only a live
-  // enrolment of the same login is joined, so this route's concurrent callers
-  // share one run; a completed refusal is not cached and cannot hide a repair.
-  const key = account.accountRef.toLowerCase();
-  const live = authenticatorEnrolments.get(key);
-  const joined = live?.loginItem === account.loginItem;
-  const run = () =>
-    runTrajectory(
-      AUTHENTICATOR_ENROL_ACTION,
-      { login_item: account.loginItem, expected_account: account.accountRef },
-      null,
-      false,
-    );
-  let promise;
-  if (joined) {
-    promise = live.promise;
-  } else if (live) {
-    // Another login of this account is enrolling: the action answers that
-    // with its own `authenticator_enrolment_in_progress`.
-    promise = Promise.resolve().then(run);
-  } else {
-    promise = Promise.resolve()
-      .then(run)
-      .finally(() => {
-        authenticatorEnrolments.delete(key);
-      });
-    authenticatorEnrolments.set(key, { loginItem: account.loginItem, promise });
-  }
-  const out = await promise;
-  const confirmed =
-    out.ok === true &&
-    out.result?.ok === true &&
-    out.result?.login_item === account.loginItem &&
-    typeof out.result?.email === 'string' &&
-    out.result.email.trim().toLowerCase() ===
-      account.accountRef.trim().toLowerCase() &&
-    out.result?.seed_written === true;
-  json(res, confirmed ? 200 : 502, {
-    ...out,
-    ...identity,
-    ok: confirmed,
-    coalesced: joined,
-    blocked:
-      out.result?.blocked ??
-      (confirmed ? null : 'authenticator_enrolment_unconfirmed'),
-    message: out.result?.detail ?? out.result?.error ?? null,
-  });
-}
-
-// weles-builder: instructions-only. Body = the goal string (text/plain;
-// {"instructions": "..."} JSON also accepted). No url, no params. The agent
-// self-navigates and, on success, its executed steps are saved as a new
-// reusable trajectory (generic browser_task draft-first behavior).
-export async function respondToBuilder(req, res, runTrajectory) {
-  if (!authorized(req)) {
-    json(res, TOKEN || ALLOW_UNAUTH ? 401 : 500, {
-      ok: false,
-      error: TOKEN || ALLOW_UNAUTH ? 'unauthorized' : 'missing_WELES_API_TOKEN',
-    });
-    return;
-  }
-  let raw;
-  try {
-    raw = await readText(req);
-  } catch (e) {
-    json(res, 400, { ok: false, error: e.message });
-    return;
-  }
-  let instructions = (raw || '').trim();
-  if (instructions.startsWith('{')) {
-    try {
-      const j = JSON.parse(instructions);
-      if (typeof j.instructions === 'string')
-        instructions = j.instructions.trim();
-    } catch {
-      /* treat as raw text */
-    }
-  }
-  if (!instructions) {
-    json(res, 400, { ok: false, error: 'missing_instructions' });
-    return;
-  }
-  const objective = `${BUILDER_PREAMBLE}\n\nTASK:\n${instructions}`;
-  const out = await runTrajectory(
-    'generic_browser_task',
-    { url: BUILDER_BOOTSTRAP_URL, objective },
-    null,
-    false,
-  );
-  if (out.error === 'no_trajectory') {
-    json(res, 500, { ok: false, error: 'builder_trajectory_missing' });
-    return;
-  }
-  const doc = out.result && typeof out.result === 'object' ? out.result : {};
-  const payload = {
-    ok: out.ok,
-    run_id: out.run_id,
-    exitCode: out.exitCode,
-    final_url: doc.final_url ?? null,
-    value: doc.value ?? null,
-    trajectory_draft: doc.trajectory_draft ?? null,
-    stdout_tail: out.stdout_tail,
-    stderr_tail: out.stderr_tail,
-  };
-  // Return unredacted by default (the whole point is to get the result/creds
-  // the task asked for); redact only when raw creds are globally forbidden.
-  json(res, out.ok ? 200 : 502, payload, { redact: !ALLOW_RAW_CREDS });
 }
