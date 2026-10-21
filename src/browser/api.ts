@@ -116,21 +116,20 @@ export class CDPWeles {
       'Target.createBrowserContext',
       {},
     );
-    const context = new CDPBrowserContext(connection, browserContextId, {
-      recordVideo: options.recordVideo,
-      proxyAuth,
-    });
-
     // A custom binary sets the user agent and platform itself. The viewport
     // is the fingerprint's window width and screen height, the size the
     // fingerprint's outer window was derived from.
-    context.setEmulation({
-      userAgent: isCustomBinary ? '' : config.navigator.userAgent,
-      viewportWidth: config.window.outerWidth,
-      viewportHeight: config.screen.height,
-      deviceScaleFactor: config.window.devicePixelRatio,
-      acceptLanguage: locale,
-      platform: isCustomBinary ? '' : config.navigator.platform,
+    const context = new CDPBrowserContext(connection, browserContextId, {
+      emulation: {
+        userAgent: isCustomBinary ? '' : config.navigator.userAgent,
+        viewportWidth: config.window.outerWidth,
+        viewportHeight: config.screen.height,
+        deviceScaleFactor: config.window.devicePixelRatio,
+        acceptLanguage: locale,
+        platform: isCustomBinary ? '' : config.navigator.platform,
+      },
+      recordVideo: options.recordVideo,
+      proxyAuth,
     });
     if (initScript) context.addInitScript(initScript);
 

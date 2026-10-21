@@ -37,19 +37,20 @@ export async function adoptOperatorBrowser(
   const browser = await chromium.connectOverCDP(operatorCdp.endpoint, {
     headers: { Authorization: `Bearer ${operatorCdp.token}` },
   });
+  // A context the operator's browser does not already offer is created with
+  // the browser's own locale: the identity there is the operator's, not one
+  // Weles picks.
   const [kept] = browser.contexts();
-  const ctx =
-    kept ||
-    (await browser.newContext({
-      locale: 'en-US',
-      ...(process.env.WELES_BROWSER_EVIDENCE_POLICY ===
-      'spis-browser-evidence.1'
-        ? { acceptDownloads: false, serviceWorkers: 'block' as const }
-        : {}),
-    }));
+  const ctx = kept
+    ? kept
+    : await browser.newContext(
+        process.env.WELES_BROWSER_EVIDENCE_POLICY === 'spis-browser-evidence.1'
+          ? { acceptDownloads: false, serviceWorkers: 'block' as const }
+          : {},
+      );
   await installBrowserEvidencePolicy(ctx, label);
   const [shown] = ctx.pages();
-  const page = shown || (await ctx.newPage());
+  const page = shown ? shown : await ctx.newPage();
   return {
     kind: 'operator-cdp',
     ctx,

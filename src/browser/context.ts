@@ -1,6 +1,11 @@
 import { CDPConnection } from '../cdp/connection.js';
 import { CDPPage } from '../cdp/page/page.js';
 
+/**
+ * What every page of a context presents: the user agent, viewport, device
+ * scale, Accept-Language and platform. The caller states each from the
+ * persona it launched; a context has no identity of its own to fall back to.
+ */
 export interface EmulationSettings {
   userAgent: string;
   viewportWidth: number;
@@ -11,6 +16,7 @@ export interface EmulationSettings {
 }
 
 export interface BrowserContextOptions {
+  emulation: EmulationSettings;
   recordVideo?: boolean;
   proxyAuth?: { username: string; password: string };
 }
@@ -22,39 +28,18 @@ export class CDPBrowserContext {
   private _proxyAuth?: { username: string; password: string };
   private _pages: CDPPage[] = [];
   private _initScripts: string[] = [];
-  _emulation: EmulationSettings = {
-    userAgent: '',
-    viewportWidth: 1280,
-    viewportHeight: 720,
-    deviceScaleFactor: 1,
-    acceptLanguage: 'en-US',
-    platform: 'MacIntel',
-  };
+  readonly _emulation: EmulationSettings;
 
   constructor(
     connection: CDPConnection,
     browserContextId: string,
-    options?: BrowserContextOptions,
+    options: BrowserContextOptions,
   ) {
     this._connection = connection;
     this._browserContextId = browserContextId;
-    this._recordVideo = options?.recordVideo ?? false;
-    this._proxyAuth = options?.proxyAuth;
-  }
-
-  setEmulation(options: Partial<EmulationSettings>): void {
-    if (options.userAgent !== undefined)
-      this._emulation.userAgent = options.userAgent;
-    if (options.viewportWidth !== undefined)
-      this._emulation.viewportWidth = options.viewportWidth;
-    if (options.viewportHeight !== undefined)
-      this._emulation.viewportHeight = options.viewportHeight;
-    if (options.deviceScaleFactor !== undefined)
-      this._emulation.deviceScaleFactor = options.deviceScaleFactor;
-    if (options.acceptLanguage !== undefined)
-      this._emulation.acceptLanguage = options.acceptLanguage;
-    if (options.platform !== undefined)
-      this._emulation.platform = options.platform;
+    this._emulation = { ...options.emulation };
+    this._recordVideo = options.recordVideo === true;
+    this._proxyAuth = options.proxyAuth;
   }
 
   addInitScript(script: string): void {
@@ -121,9 +106,9 @@ export class CDPBrowserContext {
     this._connection.on(
       'Target.attachedToTarget',
       (params: any) => {
-        const info = params.targetInfo ?? {};
+        const info = params.targetInfo;
         if (
-          info.type === 'page' &&
+          info?.type === 'page' &&
           info.browserContextId === this._browserContextId
         ) {
           // A popup that could not be initialised runs without the init
@@ -143,10 +128,11 @@ export class CDPBrowserContext {
   async addCookies(cookies: Array<Record<string, unknown>>): Promise<void> {
     for (const cookie of cookies) {
       const c = { ...cookie };
+      // A cookie named by its domain is set for that host's origin; its own
+      // path, when it has one, travels with it.
       if (!c.url && c.domain) {
         const scheme = c.secure ? 'https' : 'http';
-        const domain = String(c.domain).replace(/^\./, '');
-        c.url = `${scheme}://${domain}${c.path ?? '/'}`;
+        c.url = `${scheme}://${String(c.domain).replace(/^\./, '')}`;
       }
       await this._connection.send('Network.setCookie', c);
     }
@@ -166,21 +152,26 @@ export class CDPBrowserContext {
     await this._connection.send('Network.clearBrowserCookies', {});
   }
 
+  /**
+   * Closes every page (a page already closed answers at once) and disposes
+   * the context; a page that could not be closed is named after the context
+   * is disposed.
+   */
   async close(): Promise<void> {
-    // Close all pages
-    for (const page of this._pages) {
-      try {
-        await page.close();
-      } catch {
-        // page may already be closed
-      }
-    }
+    const pages = this._pages;
     this._pages = [];
-
-    // Dispose the browser context
+    const closed = await Promise.allSettled(pages.map((page) => page.close()));
     await this._connection.send('Target.disposeBrowserContext', {
       browserContextId: this._browserContextId,
     });
+    const failed = closed.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : [],
+    );
+    if (failed.length)
+      throw new AggregateError(
+        failed,
+        `closing the browser context left ${failed.length} page(s) unclosed: ${failed.map(String).join('; ')}`,
+      );
   }
 
   get pages(): readonly CDPPage[] {
