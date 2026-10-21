@@ -1,9 +1,14 @@
 import { runHealthProbe } from '../_shared/health-runner.mjs';
 import { detectInstagramBanSignals } from '../../../dist/platforms/instagram/ban_signals.js';
+import { HTTP_OK } from '../../worker/weles-api-server/routes/http-status.mjs';
 
 // instagram.com/api/v1/* endpoints need an x-ig-app-id + x-csrftoken header
 // set. Probe the root /feed — authed users stay on instagram.com, unauthed
-// get redirected to /accounts/login/.
+// get redirected to /accounts/login/. A public profile declares itself in its
+// Open Graph metadata (og:type profile, https://ogp.me/#types), which
+// Instagram serves to a signed-out reader as well.
+const PROFILE_OPEN_GRAPH = /property="og:type"\s+content="profile"/;
+
 await runHealthProbe({
   platform: 'instagram',
   loggedInUrl: 'https://www.instagram.com/',
@@ -11,20 +16,15 @@ await runHealthProbe({
   loggedOutUrl: (u) => `https://www.instagram.com/${encodeURIComponent(u)}/`,
   loggedOutRegex: /instagram\.com\/[^/?]+\/$/,
   banDetector: detectInstagramBanSignals,
-  extractLoggedIn: (body, resp) => {
-    const finalUrl = resp?.url ?? '';
-    const authed =
-      !/\/accounts\/login/.test(finalUrl) && /instagram\.com/.test(finalUrl);
-
-    return {
-      ok: authed && resp?.status === 200,
-      karma: null,
-      is_suspended: resp?.signal?.signal === 'suspended',
-    };
-  },
+  extractLoggedIn: (_body, resp) => ({
+    ok:
+      resp.status === HTTP_OK &&
+      !new URL(resp.url).pathname.startsWith('/accounts/login'),
+    karma: null,
+    is_suspended: resp.signal?.signal === 'suspended',
+  }),
   extractLoggedOut: (resp) =>
-    resp.status === 200 &&
-    /property="og:type"\s+content="profile"/.test(
-      typeof resp.body === 'string' ? resp.body : '',
-    ),
+    resp.status === HTTP_OK &&
+    typeof resp.body === 'string' &&
+    PROFILE_OPEN_GRAPH.test(resp.body),
 });

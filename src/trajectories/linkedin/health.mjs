@@ -1,5 +1,9 @@
 import { runHealthProbe } from '../_shared/health-runner.mjs';
 import { detectLinkedInBanSignals } from '../../../dist/platforms/linkedin/ban_signals.js';
+import {
+  HTTP_FORBIDDEN,
+  HTTP_OK,
+} from '../../worker/weles-api-server/routes/http-status.mjs';
 
 await runHealthProbe({
   platform: 'linkedin',
@@ -10,25 +14,29 @@ await runHealthProbe({
   banDetector: detectLinkedInBanSignals,
   extractLoggedIn: (body, resp) => {
     // Voyager API requires a csrf-token header that a plain page navigation
-    // doesn't send, so we see 403 "CSRF check failed" on a cookie-authed but
-    // header-incomplete request. That 403 still PROVES the session cookies
-    // are valid — an unauthed request gets 401 / authwall redirect instead.
-    const status = resp?.status;
-    const textBody = typeof body === 'string' ? body : null;
+    // doesn't send, so a cookie-authed but header-incomplete request is
+    // answered 403 with Voyager's own CSRF refusal. That refusal still proves
+    // the session cookies are valid: an unauthed request gets 401 or the
+    // authwall redirect instead.
     const csrfOnly =
-      status === 403 && textBody && /csrf check failed/i.test(textBody);
-    const ok = !!(body?.miniProfile?.entityUrn || body?.plainId || csrfOnly);
+      resp.status === HTTP_FORBIDDEN &&
+      typeof body === 'string' &&
+      /csrf check failed/i.test(body);
+    const profile = body && typeof body === 'object' ? body : {};
     return {
-      ok,
-      karma: body?.connectionsCount ?? null,
-      is_suspended: !!(
-        body?.restricted || body?.accountStatus === 'RESTRICTED'
+      ok: Boolean(profile.miniProfile?.entityUrn || profile.plainId || csrfOnly),
+      karma:
+        typeof profile.connectionsCount === 'number'
+          ? profile.connectionsCount
+          : null,
+      is_suspended: Boolean(
+        profile.restricted || profile.accountStatus === 'RESTRICTED',
       ),
     };
   },
-  // Non-member requests can return 999 for an existing profile. A registration
-  // username can also differ from the canonical profile slug, so 404 alone
-  // does not establish an account restriction.
-  extractLoggedOut: (resp) =>
-    resp.status === 200 || resp.status === 999 || resp.status === 404,
+  // Only a profile page LinkedIn served shows the profile is public. LinkedIn
+  // answers non-members with its own refusal statuses for existing profiles,
+  // and a registration username can differ from the canonical profile slug,
+  // so any other answer cannot tell.
+  extractLoggedOut: (resp) => (resp.status === HTTP_OK ? true : null),
 });

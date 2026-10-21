@@ -16,6 +16,7 @@ function statusOf(phrase) {
 export const HTTP_OK = statusOf('OK');
 export const HTTP_INVALID_REQUEST = statusOf('Bad Request');
 export const HTTP_UNAUTHORIZED = statusOf('Unauthorized');
+export const HTTP_FORBIDDEN = statusOf('Forbidden');
 export const HTTP_NOT_FOUND = statusOf('Not Found');
 export const HTTP_TARGET_REFUSED = statusOf('Unprocessable Entity');
 export const HTTP_BUSY = statusOf('Too Many Requests');
