@@ -7,11 +7,11 @@
 // the owner-only WELES_CREDENTIALS_FILE holds the fields under the role name.
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
+import { readAcquiredField } from '../../dist/secrets/scoped-service/transport.js';
 import {
   checkedTokenFile,
-  readAcquiredField,
   skarbiecEndpoint,
-} from '../../dist/secrets/scoped-service/transport.js';
+} from '../../dist/secrets/scoped-service/transport/binding.js';
 import { stadoBinary } from './skarbiec-runtime.mjs';
 import {
   localCredentialsFile,

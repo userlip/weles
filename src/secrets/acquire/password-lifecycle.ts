@@ -67,11 +67,11 @@ const isRequestId = (value: string | undefined) =>
 
 /** What is missing for the managed password reader of `secret`: the mismatch the catalog in force names, else the absent grant. */
 function readerProblem(secret: string, tenantId: string | null | undefined, absent: string): string[] {
-  if (hasWelesManagedCredentialReader(secret, 'password', tenantId)) return [];
-  // A reader missing because the deployed catalog grants the item on another
-  // field is a different fix from a reader nobody declared.
+  // A catalog that grants the item on another field, or cannot be read, is
+  // named first: it is a different fix from a reader nobody declared.
   const mismatch = welesManagedCredentialReaderMismatch(secret, 'password', tenantId);
   if (mismatch) return [mismatch];
+  if (hasWelesManagedCredentialReader(secret, 'password', tenantId)) return [];
   return [absent];
 }
 

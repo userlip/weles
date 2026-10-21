@@ -16,7 +16,7 @@ import {
   checkedTokenFile,
   deployedFile,
   skarbiecEndpoint,
-} from '../transport.js';
+} from '../transport/binding.js';
 import { isWelesAcquiredSecretValue } from './value.js';
 
 /**

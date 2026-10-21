@@ -3,11 +3,8 @@
 // check and the write of a credential a browser job acquired.
 
 import { SERVICE_CONTRACTS, resolvedAcquiredSecretContract } from './scoped-service/contracts.js';
-import {
-  readScopedField,
-  readAcquiredField,
-  welesManagedCredentialReaderMismatch,
-} from './scoped-service/transport.js';
+import { readScopedField, readAcquiredField } from './scoped-service/transport.js';
+import { welesManagedCredentialReaderMismatch } from './scoped-service/transport/grants.js';
 import { SkarbiecAcquisitionError } from './scoped-service/acquisition-failure.js';
 import type { WelesServiceSecret } from './scoped-service/transport.js';
 export {
@@ -19,11 +16,11 @@ export type {
   WelesAcquiredSecret,
   WelesAcquiredSecretContract,
 } from './scoped-service/contracts.js';
+export { hasWelesAcquiredSecretWriter } from './scoped-service/transport.js';
 export {
-  hasWelesAcquiredSecretWriter,
   hasWelesManagedCredentialReader,
   welesManagedCredentialReaderMismatch,
-} from './scoped-service/transport.js';
+} from './scoped-service/transport/grants.js';
 export type { WelesServiceSecret } from './scoped-service/transport.js';
 export { isWelesAcquiredSecretValue } from './scoped-service/acquired/value.js';
 export { writeWelesAcquiredSecret } from './scoped-service/acquired/write.js';

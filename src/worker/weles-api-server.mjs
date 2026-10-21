@@ -107,7 +107,7 @@ const { resolvedAcquiredSecretContract } = await import(
   `${REPO}/dist/secrets/scoped-service/contracts.js`
 );
 const { checkedTokenFile, skarbiecEndpoint } = await import(
-  `${REPO}/dist/secrets/scoped-service/transport.js`
+  `${REPO}/dist/secrets/scoped-service/transport/binding.js`
 );
 const { createCredentialOperationService } = await import(
   './weles-api-server/credentials/service.mjs'
