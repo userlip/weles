@@ -1,11 +1,13 @@
 // The Weles services whose credentials trajectories read and write through
-// src/_shared/scoped-secrets.mjs, each with its exact consumer identities and
-// the fields its credential holds.
+// src/_shared/scoped-secrets.mjs, each with its reader identity and the
+// fields its credential holds.
 //
 // Each service's `item` is the vault role its credential plays: reads ask the
-// acquisition catalog and Skarbiec for `role:<item>`, writes go to the item
-// playing that role (`secrets put --role`), and the local credentials file
-// keys the fields by that name. No vault item id is written here.
+// acquisition catalog and Skarbiec for `role:<item>`, and the local
+// credentials file keys the fields by that name. A service Weles writes
+// declares the Skarbiec `kind` its item is stored as; the write goes to the
+// item playing the role through `stado credentials put --role`, under Stado's
+// own identity on the host. No vault item id is written here.
 
 const LOGIN_FIELDS = Object.freeze({ username: true, password: true });
 const LOGIN_WITH_TOTP_FIELDS = Object.freeze({
@@ -33,8 +35,7 @@ export const SERVICES = Object.freeze({
     consumer: 'weles-google-ads-client',
     item: 'weles-google-ads-login',
     tokenFile: 'weles-google-ads-client-skarbiec-token',
-    writerConsumer: 'weles-google-ads-writer',
-    writerTokenFile: 'weles-google-ads-writer-skarbiec-token',
+    kind: 'login',
     fields: LOGIN_WITH_TOTP_FIELDS,
   }),
   gmail: Object.freeze({
@@ -113,24 +114,21 @@ export const SERVICES = Object.freeze({
     consumer: 'weles-oxylabs-mobile-proxy-client',
     item: 'weles-oxylabs-mobile-proxy',
     tokenFile: 'weles-oxylabs-mobile-proxy-client-skarbiec-token',
-    writerConsumer: 'weles-oxylabs-mobile-proxy-writer',
-    writerTokenFile: 'weles-oxylabs-mobile-proxy-writer-skarbiec-token',
+    kind: 'proxy',
     fields: BASIC_PROXY_FIELDS,
   }),
   oxylabsIsp: Object.freeze({
     consumer: 'weles-oxylabs-isp-proxy-client',
     item: 'weles-oxylabs-isp-proxy',
     tokenFile: 'weles-oxylabs-isp-proxy-client-skarbiec-token',
-    writerConsumer: 'weles-oxylabs-isp-proxy-writer',
-    writerTokenFile: 'weles-oxylabs-isp-proxy-writer-skarbiec-token',
+    kind: 'proxy',
     fields: ENDPOINT_PROXY_FIELDS,
   }),
   oxylabsDedicatedIsp: Object.freeze({
     consumer: 'weles-oxylabs-dedicated-isp-proxy-client',
     item: 'weles-oxylabs-dedicated-isp-proxy',
     tokenFile: 'weles-oxylabs-dedicated-isp-proxy-client-skarbiec-token',
-    writerConsumer: 'weles-oxylabs-dedicated-isp-proxy-writer',
-    writerTokenFile: 'weles-oxylabs-dedicated-isp-proxy-writer-skarbiec-token',
+    kind: 'proxy',
     fields: ENDPOINT_PROXY_FIELDS,
   }),
   brightdataProxy: Object.freeze({

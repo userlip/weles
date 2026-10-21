@@ -3,15 +3,12 @@
 // acquisition the TypeScript transport performs
 // (src/secrets/scoped-service/transport.ts readAcquiredField), asking for the
 // role the credential plays, and a writable service's fields are written to
-// the item playing that role with its own writer identity. Without Skarbiec,
-// the owner-only WELES_CREDENTIALS_FILE holds the fields under the role name.
+// the item playing that role by `stado credentials put --role`, under Stado's
+// own identity on the host. Without Skarbiec, the owner-only
+// WELES_CREDENTIALS_FILE holds the fields under the role name.
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { readAcquiredField } from '../../dist/secrets/scoped-service/transport.js';
-import {
-  checkedTokenFile,
-  skarbiecEndpoint,
-} from '../../dist/secrets/scoped-service/transport/binding.js';
 import { stadoBinary } from './skarbiec-runtime.mjs';
 import {
   localCredentialsFile,
@@ -67,31 +64,25 @@ export function readScopedSecret(serviceName, field) {
   return value;
 }
 
-/** The service, refused by name unless it declares a writer identity. */
+/** The service, refused by name unless it declares the item kind Weles writes. */
 function writableService(serviceName) {
   const service = declaredService(serviceName);
-  if (!service.writerConsumer || !service.writerTokenFile)
+  if (!service.kind)
     throw new Error(
-      `no exact Weles scoped secret writer contract exists for ${serviceName}`,
+      `Weles does not write ${serviceName}: a written service declares the Skarbiec kind its item is stored as in src/_shared/scoped-secrets/services.mjs`,
     );
   return service;
 }
 
-/** The writer token file of `serviceName`, refused by name when not issued. */
-function writerTokenFile(serviceName, service) {
-  const tokenFile = checkedTokenFile(service.writerTokenFile);
-  if (tokenFile === null)
-    throw new Error(
-      `the scoped Skarbiec writer token file ${service.writerTokenFile} for ${serviceName} has not been issued`,
-    );
-  return tokenFile;
-}
-
+/**
+ * Refuses, before a trajectory changes anything at the provider, a service
+ * this host cannot write: one Weles does not write, or, with Skarbiec, a host
+ * without the Stado program the write runs through.
+ */
 export function assertScopedSecretWriter(serviceName) {
-  const service = writableService(serviceName);
+  writableService(serviceName);
   if (localCredentialsFile()) return;
-  skarbiecEndpoint();
-  writerTokenFile(serviceName, service);
+  stadoBinary();
 }
 
 /** One line of text: what a scoped field may hold. */
@@ -134,10 +125,13 @@ export function writeScopedSecretItem(serviceName, fields) {
     return;
   }
   const input = Buffer.from(JSON.stringify(normalized));
+  const command = ['credentials', 'put', '--role', service.item];
   try {
+    // Stado writes as itself: the child gets no Skarbiec consumer, token or
+    // endpoint of this process, which Stado would refuse as an override.
     const result = spawnSync(
       stadoBinary(),
-      ['secrets', 'put', '--role', service.item],
+      [...command, '--type', service.kind],
       {
         input,
         encoding: 'buffer',
@@ -146,9 +140,6 @@ export function writeScopedSecretItem(serviceName, fields) {
         env: {
           HOME: homedir(),
           ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
-          WC_SKARBIEC_URL: skarbiecEndpoint(),
-          WC_SKARBIEC_CONSUMER: service.writerConsumer,
-          WC_SKARBIEC_TOKEN_FILE: writerTokenFile(serviceName, service),
         },
       },
     );
@@ -160,7 +151,7 @@ export function writeScopedSecretItem(serviceName, fields) {
           : `exited with status ${result.status}`;
       const said = result.stderr.toString('utf8').trim();
       throw new Error(
-        `scoped Skarbiec write failed for ${serviceName}: stado secrets put ${exited}${said ? `: ${said}` : ' and wrote nothing to stderr'}`,
+        `scoped Skarbiec write failed for ${serviceName}: stado ${command.join(' ')} ${exited}${said ? `: ${said}` : ' and wrote nothing to stderr'}`,
       );
     }
   } finally {
