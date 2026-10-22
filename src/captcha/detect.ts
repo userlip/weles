@@ -1,72 +1,113 @@
 /**
- * Captcha detection and auto-solving — matches Python weles.captcha.detect API.
+ * Captcha detection and solving on a page: find the widget in any frame,
+ * solve it with the configured services, and hand the token to the page.
  */
 
+import type { Page } from 'playwright';
 import { CaptchaSolver } from './solver.js';
 import { pageSettled } from '../browser/settled.js';
 import {
   braveProofOfWorkState,
   solveBraveProofOfWork,
 } from './brave_proof_of_work.js';
-
-type Page = any;
+import { deliverCaptchaToken } from './page/token.js';
+import {
+  solveHcaptchaEnterprise,
+  type CaptchaSession,
+} from './page/hcaptcha-enterprise.js';
 
 interface CaptchaInfo {
   type: string;
-  sitekey: string;
+  /** Absent when the widget is present but names no key in the page. */
+  sitekey?: string;
   blob?: string;
   subdomain?: string;
 }
 
-// Selector-based detection executed in any frame's document. Returns the
-// captcha info or null. Same logic as before but runs per-frame so platforms
-// that wrap the vendor widget in a same-origin iframe (LinkedIn checkpoint at
-// /checkpoint/challenge/captchaInternal, GitHub recover behind /login/two
-// /factor) are detected too.
-const FRAME_DETECT_SCRIPT = `
-  (() => {
-    const rcFrames = Array.from(document.querySelectorAll('iframe[src*="recaptcha"]'));
-    for (const f of rcFrames) {
-      const src = f.getAttribute('src') || '';
-      const km = src.match(/[?&]k=([^&]+)/);
-      if (km && km[1]) return { type: src.indexOf('/enterprise/') >= 0 ? 'recaptcha-enterprise' : 'recaptcha', sitekey: km[1] };
-    }
-    const rcDiv = document.querySelector('.g-recaptcha[data-sitekey]');
-    if (rcDiv) { const dk = rcDiv.getAttribute('data-sitekey') || ''; if (dk) return { type: 'recaptcha', sitekey: dk }; }
-    const cf = document.querySelector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile');
-    if (cf) { const csrc = cf.getAttribute('src') || ''; const ck = cf.getAttribute('data-sitekey') || (csrc.match(/[?&](?:sitekey|k)=([^&]+)/) || [])[1] || ''; if (ck) return { type: 'turnstile', sitekey: decodeURIComponent(ck) }; }
-    const hc = document.querySelector('iframe[src*="hcaptcha.com"], .h-captcha');
-    if (hc) { const hsrc = hc.getAttribute('src') || ''; const hk = hc.getAttribute('data-sitekey') || (hsrc.match(/sitekey=([^&]+)/) || [])[1] || ''; return { type: 'hcaptcha', sitekey: hk }; }
-    const fc = document.querySelector('iframe[src*="arkoselabs"], iframe[src*="funcaptcha"]');
-    if (fc) {
-      const fsrc = fc.getAttribute('src') || '';
-      const fp = (fsrc.match(/[?&]pkey=([^&]+)/) || [])[1] || (fsrc.match(/\\/([A-F0-9-]{36})\\//) || [])[1] || '';
-      const fb = (fsrc.match(/data%5Bblob%5D=([^&]+)/) || [])[1] || (fsrc.match(/[?&]data=([^&]+)/) || [])[1] || '';
-      return { type: 'funcaptcha', sitekey: fp, blob: decodeURIComponent(fb), subdomain: (new URL(fsrc)).origin };
-    }
-    return null;
-  })()
-`;
+/**
+ * Runs in each frame's document, so a vendor widget wrapped in a same-origin
+ * iframe one level below the page is found. A widget's key is read from its
+ * data attribute or from its frame address's query or fragment.
+ */
+function detectInDocument(): CaptchaInfo | null {
+  const param = (element: Element, name: string): string | null => {
+    const src = element.getAttribute('src');
+    if (!src) return null;
+    const address = new URL(src, location.href);
+    return (
+      address.searchParams.get(name) ||
+      new URLSearchParams(address.hash.replace(/^#/, '')).get(name)
+    );
+  };
+  for (const frame of Array.from(
+    document.querySelectorAll('iframe[src*="recaptcha"]'),
+  )) {
+    const key = param(frame, 'k');
+    if (!key) continue;
+    const enterprise = frame.getAttribute('src')?.includes('/enterprise/');
+    return {
+      type: enterprise ? 'recaptcha-enterprise' : 'recaptcha',
+      sitekey: key,
+    };
+  }
+  const recaptchaKey = document
+    .querySelector('.g-recaptcha[data-sitekey]')
+    ?.getAttribute('data-sitekey');
+  if (recaptchaKey) return { type: 'recaptcha', sitekey: recaptchaKey };
+  const turnstile = document.querySelector(
+    'iframe[src*="challenges.cloudflare.com"], .cf-turnstile',
+  );
+  if (turnstile) {
+    const key =
+      turnstile.getAttribute('data-sitekey') ||
+      param(turnstile, 'sitekey') ||
+      param(turnstile, 'k');
+    if (key) return { type: 'turnstile', sitekey: key };
+  }
+  const hcaptcha = document.querySelector(
+    'iframe[src*="hcaptcha.com"], .h-captcha',
+  );
+  if (hcaptcha) {
+    const key =
+      hcaptcha.getAttribute('data-sitekey') || param(hcaptcha, 'sitekey');
+    return key ? { type: 'hcaptcha', sitekey: key } : { type: 'hcaptcha' };
+  }
+  const arkose = document.querySelector(
+    'iframe[src*="arkoselabs"], iframe[src*="funcaptcha"]',
+  );
+  const arkoseSrc = arkose?.getAttribute('src');
+  if (!arkose || !arkoseSrc) return null;
+  const address = new URL(arkoseSrc, location.href);
+  const pathKey = address.pathname.match(
+    /\/(?<key>[A-F\d]+(?:-[A-F\d]+)+)\//i,
+  )?.groups?.key;
+  const info: CaptchaInfo = { type: 'funcaptcha', subdomain: address.origin };
+  const key = param(arkose, 'pkey') || pathKey;
+  if (key) info.sitekey = key;
+  const blob = param(arkose, 'data[blob]') || param(arkose, 'data');
+  if (blob) info.blob = blob;
+  return info;
+}
 
 /** Detect captcha type and sitekey on the current page, once the page and its frames have loaded. */
 export async function detectCaptcha(page: Page): Promise<CaptchaInfo | null> {
   // The load event fires only after every iframe present has loaded, so the
   // widget frames are readable after it without a polling window.
-  await page.waitForLoadState?.('load');
-  // Try main frame, then every child frame. LinkedIn wraps the widget in
-  // /checkpoint/challenge/captchaInternal so the challenge iframe lives one
-  // level deeper than the main DOM.
-  const frames = page.frames?.() ?? [page.mainFrame?.() ?? page];
-  for (const f of frames) {
-    const info: any = await (f.evaluate
-      ? f.evaluate(FRAME_DETECT_SCRIPT)
-      : page.evaluate(FRAME_DETECT_SCRIPT)
-    ).catch(() => null);
+  await page.waitForLoadState('load');
+  const frames = page.frames();
+  for (const frame of frames) {
+    let info: CaptchaInfo | null = null;
+    try {
+      info = await frame.evaluate(detectInDocument);
+    } catch (error) {
+      console.log(
+        `[captcha] frame ${frame.url()} could not be searched: ${String(error)}`,
+      );
+    }
     if (info) {
       // A sitekey is public page data; it is logged whole.
-      const frame = typeof f.url === 'function' ? f.url() : 'main page';
       console.log(
-        `[captcha] Detected: ${info.type} sitekey=${info.sitekey} frame=${frame}`,
+        `[captcha] Detected: ${info.type} sitekey=${info.sitekey} frame=${frame.url()}`,
       );
       return info;
     }
@@ -77,117 +118,40 @@ export async function detectCaptcha(page: Page): Promise<CaptchaInfo | null> {
   return null;
 }
 
-async function framesFor(page: Page): Promise<any[]> {
-  return page.frames?.() ?? [page.mainFrame?.() ?? page];
-}
-
-async function injectCaptchaToken(
-  page: Page,
-  selectors: string[],
-  token: string,
-): Promise<boolean> {
-  let injected = false;
-  for (const frame of await framesFor(page)) {
-    const ok = await frame
-      .evaluate?.(
-        ({ selectors, token }: { selectors: string[]; token: string }) => {
-          let touched = false;
-          for (const selector of selectors) {
-            for (const el of Array.from(
-              document.querySelectorAll(selector),
-            ) as Array<HTMLInputElement | HTMLTextAreaElement>) {
-              el.value = token;
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-              el.dispatchEvent(new Event('change', { bubbles: true }));
-              touched = true;
-            }
-          }
-          return touched;
-        },
-        { selectors, token },
-      )
-      .catch(() => false);
-    injected ||= !!ok;
-  }
-  return injected;
-}
-
-async function invokeCaptchaCallbacks(
-  page: Page,
-  token: string,
-): Promise<boolean> {
-  let invoked = false;
-  for (const frame of await framesFor(page)) {
-    const ok = await frame
-      .evaluate?.((token: string) => {
-        let touched = false;
-        const callbackKey =
-          /(^|[-_])(callback|promise-callback|expired-callback|error-callback)$/i;
-        // `seen` ends every cycle, so the walk covers the whole client
-        // object however deep the provider nests its callbacks.
-        const visit = (value: unknown, seen: Set<unknown>) => {
-          if (!value || seen.has(value)) return;
-          if (typeof value !== 'object') return;
-          seen.add(value);
-          for (const [key, entry] of Object.entries(
-            value as Record<string, unknown>,
-          )) {
-            if (typeof entry === 'function') {
-              if (!callbackKey.test(key)) continue;
-              try {
-                (entry as (token: string) => void)(token);
-                touched = true;
-              } catch {
-                /* ignore non-token callbacks */
-              }
-            } else {
-              visit(entry, seen);
-            }
-          }
-        };
-        visit((window as any).___grecaptcha_cfg?.clients, new Set<unknown>());
-        visit((window as any).___turnstile_cfg?.clients, new Set<unknown>());
-        return touched;
-      }, token)
-      .catch(() => false);
-    invoked ||= !!ok;
-  }
-  return invoked;
-}
+type ArkoseData = { publicKey?: string; blob?: string; subdomain?: string };
 
 /** Detect captcha, solve it, and inject the token. Null means no supported CAPTCHA was present. */
 export async function solvePageCaptcha(
   page: Page,
   solver?: CaptchaSolver,
-  session?: any,
+  session?: CaptchaSession,
 ): Promise<boolean | null> {
-  // Check MutationObserver-captured Arkose data first (Twitter pattern: iframe appears and disappears quickly)
-  const arkose = await page
-    .evaluate?.('window.__arkoseData')
-    ?.catch(() => null);
+  // Arkose data a MutationObserver captured: the challenge iframe can appear
+  // and disappear before detection runs.
+  const arkose = (await page.evaluate('window.__arkoseData')) as
+    | ArkoseData
+    | undefined;
   if (arkose?.publicKey) {
     console.log(
       `[captcha] MutationObserver captured Arkose: pkey=${arkose.publicKey} blob=${!!arkose.blob}`,
     );
-    const s = solver ?? new CaptchaSolver();
     return solveFuncaptchaOnPage(
       page,
-      arkose.publicKey,
-      arkose.blob,
-      arkose.subdomain,
-      s,
+      { type: 'funcaptcha', ...arkose, sitekey: arkose.publicKey },
+      solver ?? new CaptchaSolver(),
     );
   }
-  // Check intercepted API captcha data (Discord pattern: API returns 400 with captcha before iframe loads)
-  if (session?.captchaResponse?.captcha_sitekey && session?.captchaFormData) {
+  // A captcha demand the sign-in API answered with, kept before any iframe
+  // loaded.
+  const demandedKey = session?.captchaResponse?.captcha_sitekey;
+  if (demandedKey && session?.captchaFormData) {
     console.log(
       `[captcha] Found intercepted captcha data, using enterprise solver`,
     );
-    const s = solver ?? new CaptchaSolver();
     return solveHcaptchaEnterprise(
       page,
-      session.captchaResponse.captcha_sitekey,
-      s,
+      demandedKey,
+      solver ?? new CaptchaSolver(),
       session,
     );
   }
@@ -198,152 +162,52 @@ export async function solvePageCaptcha(
   }
   const info = await detectCaptcha(page);
   if (!info) return null;
-  const s = solver ?? new CaptchaSolver();
-  switch (info.type) {
-    case 'recaptcha-enterprise': {
-      const token = await s.solveRecaptchaV2(page, info.sitekey, {
-        enterprise: true,
-      });
-      if (!token) return false;
-      if (typeof token !== 'string') return true;
-      const injected = await injectCaptchaToken(
-        page,
-        ['#g-recaptcha-response', 'textarea[name="g-recaptcha-response"]'],
-        token,
-      );
-      const invoked = await invokeCaptchaCallbacks(page, token);
-      if (!injected && !invoked)
-        console.log(
-          '[captcha] reCAPTCHA token solved but no page field/callback accepted it',
-        );
-      return injected || invoked;
-    }
-    case 'recaptcha': {
-      const token = await s.solveRecaptchaV2(page, info.sitekey);
-      if (!token) return false;
-      if (typeof token !== 'string') return true;
-      const injected = await injectCaptchaToken(
-        page,
-        ['#g-recaptcha-response', 'textarea[name="g-recaptcha-response"]'],
-        token,
-      );
-      const invoked = await invokeCaptchaCallbacks(page, token);
-      if (!injected && !invoked)
-        console.log(
-          '[captcha] reCAPTCHA token solved but no page field/callback accepted it',
-        );
-      return injected || invoked;
-    }
-    case 'turnstile': {
-      const token = await s.solveTurnstile(info.sitekey, page.url?.() ?? '');
-      if (!token) return false;
-      const injected = await injectCaptchaToken(
-        page,
-        [
-          'input[name="cf-turnstile-response"]',
-          'textarea[name="cf-turnstile-response"]',
-          '.cf-turnstile-response',
-        ],
-        token,
-      );
-      const invoked = await invokeCaptchaCallbacks(page, token);
-      if (!injected && !invoked)
-        console.log(
-          '[captcha] Turnstile token solved but no page field/callback accepted it',
-        );
-      return injected || invoked;
-    }
-    case 'hcaptcha':
-      return solveHcaptchaEnterprise(page, info.sitekey, s, session);
-    case 'funcaptcha':
-      return solveFuncaptchaOnPage(
-        page,
-        info.sitekey,
-        info.blob,
-        info.subdomain,
-        s,
-      );
-  }
-  return false;
-}
-
-async function solveHcaptchaEnterprise(
-  page: Page,
-  sitekey: string,
-  solver: CaptchaSolver,
-  session?: any,
-): Promise<boolean> {
-  const url = page.url?.() ?? '';
-  const captchaData = session?.captchaResponse;
-  const formData = session?.captchaFormData;
-  const extraHeaders = session?.captchaHeaders ?? {};
-  if (!captchaData || !formData) {
-    console.log(
-      `[captcha] No intercepted API data (captchaResponse=${!!captchaData} formData=${!!formData}), trying basic solve`,
-    );
-    return !!(await solver.solveHcaptcha(sitekey, url));
-  }
-  const ua =
-    (await page.evaluate?.('navigator.userAgent')?.catch(() => '')) ?? '';
-  console.log(
-    `[captcha] Enterprise hCaptcha: sitekey=${captchaData.captcha_sitekey} rqdata=${!!captchaData.captcha_rqdata} ua=${ua}`,
-  );
-  // One solve and one resubmission: asking again for a captcha means the
-  // provider's token was refused, which a second token on the same flagged
-  // session does not change.
-  const sk = captchaData.captcha_sitekey || sitekey;
-  const proxy = session?.proxyConfig;
-  const token = await solver.solveHcaptcha(sk, url, {
-    enterprisePayload: {
-      rqdata: captchaData.captcha_rqdata ?? '',
-      rqtoken: captchaData.captcha_rqtoken,
-    },
-    userAgent: ua,
-    proxy,
-  });
-  if (!token) {
-    console.log(
-      '[captcha] hcaptcha_enterprise_unsolved: no provider returned a token',
-    );
+  const { sitekey } = info;
+  if (!sitekey) {
+    console.log(`[captcha] ${info.type} is present but names no sitekey`);
     return false;
   }
-  console.log('[captcha] Enterprise hCaptcha solved, resubmitting');
-  formData.captcha_key = token;
-  if (captchaData.captcha_rqtoken)
-    formData.captcha_rqtoken = captchaData.captcha_rqtoken;
-  const hdrs = JSON.stringify({
-    'Content-Type': 'application/json',
-    ...extraHeaders,
-  });
-  const body = JSON.stringify(formData);
-  const endpoint = session?.captchaEndpoint || '/api/v9/auth/register';
-  const result = await page
-    .evaluate(
-      `(async()=>{var r=await fetch(${JSON.stringify(endpoint)},{method:'POST',headers:${hdrs},body:${JSON.stringify(body)}});var d=await r.json().catch(()=>({}));return{status:r.status,data:d}})()`,
-    )
-    .catch((e: any) => ({ error: e.message }));
-  console.log(`[captcha] Resubmit: ${JSON.stringify(result)}`);
-  if (result?.status >= 200 && result?.status < 300) return true;
-  if (result?.data?.captcha_key)
-    console.log(
-      '[captcha] hcaptcha_enterprise_token_refused: the endpoint asked for a captcha again',
-    );
+  const s = solver ?? new CaptchaSolver();
+  switch (info.type) {
+    case 'recaptcha-enterprise':
+    case 'recaptcha': {
+      const token = await s.solveRecaptchaV2(page, sitekey, {
+        enterprise: info.type === 'recaptcha-enterprise',
+      });
+      if (!token) return false;
+      // A solver that clicked the widget itself answers true, not a token.
+      if (typeof token !== 'string') return true;
+      return deliverCaptchaToken(page, 'recaptcha', token);
+    }
+    case 'turnstile': {
+      const token = await s.solveTurnstile(sitekey, page.url());
+      if (!token) return false;
+      return deliverCaptchaToken(page, 'turnstile', token);
+    }
+    case 'hcaptcha':
+      return solveHcaptchaEnterprise(page, sitekey, s, session);
+    case 'funcaptcha':
+      return solveFuncaptchaOnPage(page, { ...info, sitekey }, s);
+  }
+  console.log(`[captcha] ${info.type} has no solver`);
   return false;
 }
 
 async function solveFuncaptchaOnPage(
   page: Page,
-  publicKey: string,
-  blob?: string,
-  subdomain?: string,
-  solver?: CaptchaSolver,
+  info: CaptchaInfo & { sitekey: string },
+  solver: CaptchaSolver,
 ): Promise<boolean> {
-  const s = solver ?? new CaptchaSolver();
-  const url = page.url?.() ?? '';
+  const { sitekey, blob, subdomain } = info;
   console.log(
-    `[captcha] FunCaptcha: pkey=${publicKey} blob=${!!blob} subdomain=${subdomain}`,
+    `[captcha] FunCaptcha: pkey=${sitekey} blob=${!!blob} subdomain=${subdomain}`,
   );
-  const token = await s.solveFuncaptcha(publicKey, url, subdomain, blob);
+  const token = await solver.solveFuncaptcha(
+    sitekey,
+    page.url(),
+    subdomain,
+    blob,
+  );
   if (!token) {
     console.log('[captcha] FunCaptcha solve failed');
     return false;
