@@ -10,10 +10,8 @@ import {
   totalmem,
   userInfo,
 } from 'node:os';
+import { PUBLIC_ADDRESS_SERVICE } from '../../utils/runtime/public-address.js';
 import { captureFailure, captureFailures, safeExec } from './failures.js';
-
-/** The service that answers the caller's public address as plain text. */
-const PUBLIC_ADDRESS_SERVICE = 'https://api.ipify.org';
 
 /** Where each platform keeps a machine id that survives reboots. */
 const MACHINE_ID_READERS: Readonly<
