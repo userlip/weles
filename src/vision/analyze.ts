@@ -7,7 +7,7 @@
  * a regular expression or the first numbers in it.
  */
 
-import type { FunctionTool } from '../agent/jeden.js';
+import type { FunctionTool } from '../agent/model/router-call.js';
 import {
   CLICK_AT,
   type Control,

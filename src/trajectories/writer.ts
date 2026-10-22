@@ -1,5 +1,5 @@
 import { callJeden } from '../agent/loop.js';
-import type { FunctionTool } from '../agent/jeden.js';
+import type { FunctionTool } from '../agent/model/router-call.js';
 
 export type WelesTrajectoryWriterInput = {
   objective: string;

@@ -5,7 +5,7 @@
 
 import type { WelesCapabilityPurpose } from '../../utils/capability.js';
 import type { IdentityField } from '../../session/identity/generated.js';
-import type { FunctionTool } from '../jeden.js';
+import type { FunctionTool } from '../model/router-call.js';
 
 export type CredentialFieldClass = 'password' | 'email' | 'username' | 'token' | 'api-key';
 

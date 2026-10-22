@@ -11,7 +11,8 @@
  * listed.
  */
 
-import { callJeden, type FunctionTool } from '../agent/jeden.js';
+import { callJeden } from '../agent/jeden.js';
+import type { FunctionTool } from '../agent/model/router-call.js';
 
 /** One declared function: its arguments are exactly `fields`, all required. */
 export function pageFunction(

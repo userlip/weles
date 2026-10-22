@@ -6,7 +6,8 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { callJeden, type FunctionTool } from '../agent/jeden.js';
+import { callJeden } from '../agent/jeden.js';
+import type { FunctionTool } from '../agent/model/router-call.js';
 import { runRecordingsDir } from '../session/run-recordings.js';
 import {
   PageQuestionError,
