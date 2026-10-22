@@ -73,15 +73,13 @@ export type {
   SignedArtifactResponse,
 } from './worker/artifacts/artifact-delivery.js';
 
-export {
-  FileJourneyStorage,
-  runWelesOnboarding,
-  WELES_FIRST_USE_FALLBACK,
-} from './onboarding/first-use.js';
+export { runWelesOnboarding } from './onboarding/first-use.js';
+export { FileJourneyStorage } from './onboarding/journey-storage.js';
+export { WELES_FIRST_USE_FALLBACK } from './onboarding/journey-surface.js';
 export type {
   WelesOnboardingInput,
   WelesOnboardingView,
-} from './onboarding/first-use.js';
+} from './onboarding/view/view.js';
 export {
   importWelesTrajectoryDocument,
   importWelesTrajectoryFile,

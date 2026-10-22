@@ -3,10 +3,8 @@ import {
   importWelesTrajectoryFile,
   type WelesImportReport,
 } from '../runtime/import.js';
-import {
-  runWelesOnboarding,
-  type WelesOnboardingInput,
-} from '../onboarding/first-use.js';
+import { runWelesOnboarding } from '../onboarding/first-use.js';
+import type { WelesOnboardingInput } from '../onboarding/view/view.js';
 import type { ParsedCli } from '../cli.js';
 import { exitStatusFor, printAnswer, UsageError } from './usage.js';
 

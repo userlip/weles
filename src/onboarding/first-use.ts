@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto';
-import { homedir, hostname, userInfo } from 'node:os';
-import { join } from 'node:path';
 import {
   JourneyClient,
   StadoJourneyTransport,
-  type JourneyProgress,
-  type JourneyStorage,
   type JourneyTransport,
 } from '../onboarding-runtime';
 
@@ -14,13 +10,8 @@ import {
   OfflineJourneyTransport,
   VersionPinnedTransport,
 } from './journey-transport.js';
+import { loadReceiptVerifier, requireVerifiedClaims } from './receipt.js';
 import {
-  loadReceiptVerifier,
-  requireVerifiedClaims,
-  type ReceiptClaims,
-} from './receipt.js';
-import {
-  CONTENT,
   JOURNEY_ID,
   JOURNEY_VERSION,
   PRODUCT_ID,
@@ -29,128 +20,37 @@ import {
   definition,
   hasPinnedProductSurface,
 } from './journey-surface.js';
-
-export { FileJourneyStorage } from './journey-storage.js';
-export { WELES_FIRST_USE_FALLBACK } from './journey-surface.js';
+import {
+  ONBOARDING_ACTIONS,
+  render,
+  stableSubject,
+  stateDirectory,
+  type ControlPlane,
+  type OnboardingAction,
+  type WelesOnboardingInput,
+  type WelesOnboardingView,
+} from './view/view.js';
 
 const TOKEN_ENVIRONMENT_KEY = 'WELES_STADO_INTEGRATION_TOKEN';
-const SHA256 = /^[0-9a-f]{64}$/i;
+/** A run that states no action reads where the journey stands. */
+const DEFAULT_ACTION: OnboardingAction = 'status';
+/** A SHA-256 hex digest is as long as the algorithm's own digest. */
+const SHA256_HEX_LENGTH = createHash('sha256').digest('hex').length;
 
-type OnboardingAction = 'status' | 'next' | 'import' | 'verify' | 'reset';
-
-export type WelesOnboardingInput = {
-  action?: OnboardingAction;
-  subject?: string;
-  stateDirectory?: string;
-  receipt?: unknown;
-  receiptKeys?: Readonly<Record<string, string>>;
-  environment?: NodeJS.ProcessEnv;
-  fetch?: typeof fetch;
-  importReport?: Readonly<{
-    imported: number;
-    unchanged: number;
-    refused: number;
-  }>;
-};
-
-export type WelesOnboardingView = {
-  product_id: typeof PRODUCT_ID;
-  journey_id: typeof JOURNEY_ID;
-  journey_version: typeof JOURNEY_VERSION;
-  status: JourneyProgress['status'];
-  attempt_id: string;
-  screen: {
-    id: string;
-    title: string;
-    body: string;
-    actions: readonly string[];
-  };
-  control_plane: 'connected' | 'offline';
-  // Present when queued first-use events were refused by the control plane;
-  // they stay queued and are sent again on the next run.
-  undelivered_events?: string;
-  verified_receipt?: {
-    task_id: string;
-    outcome: string;
-    evidence_digest: string;
-    key_id: string;
-  };
-};
-
-function stableSubject(
-  input: WelesOnboardingInput,
-  environment: NodeJS.ProcessEnv,
-): string {
-  return (
-    input.subject?.trim() ||
-    environment.WELES_ONBOARDING_SUBJECT?.trim() ||
-    `${userInfo().username}@${hostname()}`
-  );
+function isSha256Hex(value: string): boolean {
+  return value.length === SHA256_HEX_LENGTH && /^[\da-f]+$/i.test(value);
 }
 
-function stateDirectory(
-  input: WelesOnboardingInput,
-  environment: NodeJS.ProcessEnv,
-): string {
-  return (
-    input.stateDirectory ||
-    environment.WELES_ONBOARDING_STATE_DIR?.trim() ||
-    join(homedir(), '.weles', 'onboarding')
-  );
-}
-
-type ControlPlane = { connected: boolean; undeliveredEvents?: string };
-
-function render(
-  client: {
-    progress: JourneyProgress | null;
-    screen: { screen_id: string; actions: readonly string[] } | null;
-  },
-  plane: ControlPlane,
-  claims?: ReceiptClaims,
-): WelesOnboardingView {
-  if (!client.progress || !client.screen)
-    throw new Error('Weles onboarding did not start');
-  const content = CONTENT[client.screen.screen_id];
-  if (!content)
-    throw new Error(
-      `Weles has no product content for journey screen ${client.screen.screen_id}`,
-    );
-  return {
-    product_id: PRODUCT_ID,
-    journey_id: JOURNEY_ID,
-    journey_version: JOURNEY_VERSION,
-    status: client.progress.status,
-    attempt_id: client.progress.attempt_id,
-    screen: {
-      id: client.screen.screen_id,
-      title: content.title,
-      body: content.body,
-      actions:
-        client.progress.status === 'completed' ? [] : client.screen.actions,
-    },
-    control_plane: plane.connected ? 'connected' : 'offline',
-    ...(plane.undeliveredEvents
-      ? { undelivered_events: plane.undeliveredEvents }
-      : {}),
-    ...(claims
-      ? {
-          verified_receipt: {
-            task_id: claims.taskId,
-            outcome: claims.outcome,
-            evidence_digest: claims.evidenceDigest,
-            key_id: claims.keyId,
-          },
-        }
-      : {}),
-  };
+/** A whole number of items, none negative. */
+function isCount(value: number): boolean {
+  return /^\d+$/.test(String(value));
 }
 
 export async function runWelesOnboarding(
   input: WelesOnboardingInput = {},
 ): Promise<WelesOnboardingView> {
-  const action = input.action ?? 'status';
-  if (!['status', 'next', 'import', 'verify', 'reset'].includes(action))
+  const action = input.action ?? DEFAULT_ACTION;
+  if (!Object.hasOwn(ONBOARDING_ACTIONS, action))
     throw new Error(`unknown onboarding action: ${action}`);
 
   const environment = input.environment ?? process.env;
@@ -159,10 +59,7 @@ export async function runWelesOnboarding(
   const baseUrl = environment.STADO_INTEGRATION_API_URL?.trim();
   const rawToken = environment[TOKEN_ENVIRONMENT_KEY];
   const token = rawToken?.trim();
-  if (
-    rawToken &&
-    (rawToken !== token || /[\u0000-\u001f\u007f]/u.test(rawToken))
-  ) {
+  if (rawToken && (rawToken !== token || /\p{Cc}/u.test(rawToken))) {
     throw new Error(
       `${TOKEN_ENVIRONMENT_KEY} contains invalid whitespace or control characters`,
     );
@@ -274,13 +171,10 @@ export async function runWelesOnboarding(
     const report = input.importReport;
     if (
       !report ||
-      !Number.isInteger(report.imported) ||
-      !Number.isInteger(report.unchanged) ||
-      !Number.isInteger(report.refused) ||
-      report.imported < 0 ||
-      report.unchanged < 0 ||
-      report.refused < 0 ||
-      report.imported + report.unchanged === 0
+      !isCount(report.imported) ||
+      !isCount(report.unchanged) ||
+      !isCount(report.refused) ||
+      !(report.imported + report.unchanged)
     ) {
       throw new Error(
         'onboarding import requires a persisted Weles import result',
@@ -305,7 +199,7 @@ export async function runWelesOnboarding(
     if (
       !input.receipt ||
       !input.receiptKeys ||
-      Object.keys(input.receiptKeys).length === 0
+      !Object.keys(input.receiptKeys).length
     ) {
       throw new Error(
         'receipt verification requires a receipt and trusted public-key map',
@@ -320,18 +214,19 @@ export async function runWelesOnboarding(
         `verified receipt outcome is not a completed Weles workflow: ${claims.outcome}`,
       );
     }
-    const receiptRevision = SHA256.test(claims.evidenceDigest)
+    const receiptRevision = isSha256Hex(claims.evidenceDigest)
       ? `sha256:${claims.evidenceDigest.toLowerCase()}`
       : `receipt:${createHash('sha256').update(claims.evidenceDigest).digest('hex')}`;
+    const receiptEvidence = {
+      task_id: claims.taskId,
+      outcome: claims.outcome,
+      evidence_digest: claims.evidenceDigest,
+      receipt_key_id: claims.keyId,
+    };
     const completed = await client.complete(
       { authorized_browser_workflow_completed: true },
       receiptRevision,
-      {
-        task_id: claims.taskId,
-        outcome: claims.outcome,
-        evidence_digest: claims.evidenceDigest,
-        receipt_key_id: claims.keyId,
-      },
+      receiptEvidence,
     );
     if (!completed)
       throw new Error(
@@ -340,12 +235,7 @@ export async function runWelesOnboarding(
     await client.observeFirstSuccess(
       { authorized_browser_workflow_completed: true },
       receiptRevision,
-      {
-        task_id: claims.taskId,
-        outcome: claims.outcome,
-        evidence_digest: claims.evidenceDigest,
-        receipt_key_id: claims.keyId,
-      },
+      receiptEvidence,
     );
     return render(client, plane, claims);
   }
