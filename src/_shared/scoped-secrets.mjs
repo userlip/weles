@@ -87,16 +87,15 @@ export function assertScopedSecretWriter(serviceName) {
   stadoBinary();
 }
 
-/** One line of text: what a scoped field may hold. */
+/**
+ * What a scoped field may hold: text that is not blank and carries no NUL.
+ * A field may span lines, as a PEM private key does; both writers carry the
+ * value inside JSON, which keeps its line breaks.
+ */
 function fieldValue(serviceName, field, value) {
-  if (
-    typeof value !== 'string' ||
-    !value.trim() ||
-    /[\r\n]/.test(value) ||
-    value.includes('\0')
-  )
+  if (typeof value !== 'string' || !value.trim() || value.includes('\0'))
     throw new Error(
-      `refusing invalid scoped secret write for ${serviceName}/${field}: the value must be one line of text`,
+      `refusing invalid scoped secret write for ${serviceName}/${field}: the value must be non-blank text without NUL characters`,
     );
   return value.trim();
 }

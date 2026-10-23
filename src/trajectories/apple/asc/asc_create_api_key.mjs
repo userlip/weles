@@ -1,170 +1,123 @@
-import { pageSettled } from '../../_shared/page/settled.mjs';
-// Generate an App Store Connect API key through an already authenticated persistent profile.
-// Authentication is delegated exclusively to an explicitly authorized apple_login run.
+// Generate an App Store Connect API key through an already authenticated
+// persistent profile and keep it as the vault item playing the App Store
+// Connect API role: the key id, the issuer id the page shows and the .p8
+// private key, read from the download in memory and never written to disk.
+// Authentication is delegated to an explicitly authorized apple_login run;
+// a sign-in, password or code prompt ends this run.
 //
 // Usage:
-//   node src/trajectories/apple/asc/asc_create_api_key.mjs
+//   KEY_NAME=<name> node src/trajectories/apple/asc/asc_create_api_key.mjs
+
 import { WSession } from '../../../../dist/session/wsession.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
-import { clickOffered } from '../../_shared/page/judged/seen.mjs';
-import { homedir } from 'node:os';
+import { pageSettled } from '../../_shared/page/settled.mjs';
+import {
+  clickOffered,
+  pageShows,
+  shownText,
+} from '../../_shared/page/judged/seen.mjs';
+import { keptProfileDir } from '../../_shared/profile/persona.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
+import { assertScopedSecretWriter } from '../../../_shared/scoped-secrets.mjs';
+import { keepDownloadedKey } from '../../_shared/apple/downloaded-key.mjs';
 
-async function requireAuthenticatedSession(s) {
-  await pageSettled(s.page);
-  const landed = new URL(s.page.url());
-  // Apple's sign-in lives on its identity hosts or a /login route.
-  const loginUrl =
-    ['idmsa.apple.com', 'appleid.apple.com'].includes(landed.hostname) ||
-    landed.pathname.startsWith('/login');
-  const authIframe =
-    (await s.page
-      .locator(
-        'iframe[src*="idmsa.apple.com"], iframe[src*="appleid.apple.com"]',
-      )
-      .count()) > 0;
-  let authPrompt = false;
-  for (const frame of s.page.frames()) {
-    authPrompt ||= await frame
-      .locator(
-        [
-          '#account_name_text_field',
-          '#password_text_field',
-          'input[type="password"]',
-          'input[aria-label*="digit"]',
-          'input[aria-label*="Digit"]',
-          'input[type="tel"][maxlength="1"]',
-        ].join(', '),
-      )
-      .first()
-      .isVisible()
-      .catch(() => false);
-    if (authPrompt) break;
-  }
-  if (loginUrl || authIframe || authPrompt) {
-    throw new Error(
-      'FAIL_CLOSED: Apple login/password/2FA is required; this trajectory will not authenticate. An explicitly authorized apple_login is the only permitted login path.',
-    );
-  }
-}
-
-const API_URL = 'https://appstoreconnect.apple.com/access/integrations/api';
+const SERVICE = 'appleAppStoreConnectApi';
+const API_URL = new URL(
+  'https://appstoreconnect.apple.com/access/integrations/api',
+);
+/** The hosts Apple serves its sign-in from. */
+const APPLE_SIGN_IN_HOSTS = Object.freeze({
+  'idmsa.apple.com': true,
+  'appleid.apple.com': true,
+});
 const KEY_NAME = statedText(
   ['KEY_NAME'],
   'the name the new App Store Connect API key is given',
 );
-const OUT_DIR = `${homedir()}/.swiatowid`;
 
-async function requireApiPage(s) {
-  await requireAuthenticatedSession(s);
-  let parsedUrl = new URL(s.page.url?.() || 'about:blank');
-  const authenticatedHost =
-    parsedUrl.hostname === 'appstoreconnect.apple.com' &&
-    !parsedUrl.pathname.startsWith('/login');
-  if (
-    authenticatedHost &&
-    !parsedUrl.pathname.startsWith('/access/integrations/api')
-  ) {
-    await s.goto(API_URL);
-    await pageSettled(s.page);
-    await requireAuthenticatedSession(s);
-    parsedUrl = new URL(s.page.url?.() || 'about:blank');
-  }
-  if (
-    parsedUrl.hostname !== 'appstoreconnect.apple.com' ||
-    !parsedUrl.pathname.startsWith('/access/integrations/api')
-  ) {
+/** Refuse a page that is asking to sign in: this trajectory never authenticates. */
+async function requireAuthenticatedSession(page) {
+  const landed = new URL(page.url());
+  const signingIn =
+    Object.hasOwn(APPLE_SIGN_IN_HOSTS, landed.hostname) ||
+    landed.pathname.startsWith('/login') ||
+    (await pageShows(
+      page,
+      'Does the page ask to sign in to Apple, or for an Apple password or a two-factor verification code?',
+    ));
+  if (signingIn)
     throw new Error(
-      'FAIL_CLOSED: authenticated App Store Connect API integrations page was not confirmed; run an explicitly authorized apple_login before retrying.',
+      `FAIL_CLOSED: ${landed.href} asks for an Apple sign-in, password or code; this trajectory will not authenticate. An explicitly authorized apple_login is the only permitted login path.`,
     );
-  }
-  console.log(`[asc-create] strona API — ${parsedUrl.href}`);
 }
 
-async function clickGenerate(page) {
-  const clickables = await page.evaluate(() => {
-    const els = [
-      ...document.querySelectorAll(
-        'button, a, [role="button"], [role="menuitem"]',
-      ),
-    ];
-    return [
-      ...new Set(
-        els
-          .map((e) =>
-            (e.getAttribute('aria-label') || e.textContent || '')
-              .replace(/\s+/g, ' ')
-              .trim(),
-          )
-          .filter(Boolean),
-      ),
-    ];
-  });
-  console.log(
-    '[asc-create] klikalne na stronie: ' + JSON.stringify(clickables),
-  );
+/** Open the API integrations page and confirm it is the one shown. */
+async function requireApiPage(s) {
+  await s.goto(API_URL.href);
+  await pageSettled(s.page);
+  await requireAuthenticatedSession(s.page);
+  const shown = new URL(s.page.url());
+  if (
+    shown.hostname !== API_URL.hostname ||
+    !shown.pathname.startsWith(API_URL.pathname)
+  )
+    throw new Error(
+      `FAIL_CLOSED: the App Store Connect API integrations page was not reached (the browser shows ${shown.href}); run an explicitly authorized apple_login before retrying.`,
+    );
+  console.log(`[asc-create] API page ${shown.href}`);
+}
 
-  const opened = await clickOffered(
-    page,
-    'the control that generates a new API key',
-  );
-  console.log('[asc-create] generate-open=' + opened);
-  await pageSettled(page);
+/** Click the control `description` names, refusing the run when the page offers none. */
+async function requireClick(page, description) {
+  if (!(await clickOffered(page, description)))
+    throw new Error(
+      `ASC_API_KEY_FLOW_FAILED on ${page.url()}: the page offers no ${description}`,
+    );
+}
 
+/** Generate the key with App Manager access and start its download. */
+async function generateKey(page) {
+  await requireClick(page, 'the control that generates a new API key');
   const name = page.getByRole('textbox').first();
-  if ((await name.count()) > 0) {
-    await humanFill(page, name, KEY_NAME);
-    await pageSettled(page);
-  }
-  await clickOffered(page, 'the App Manager access option');
+  if (!(await name.count()))
+    throw new Error(
+      `ASC_API_KEY_FLOW_FAILED on ${page.url()}: the new key's name field is not shown`,
+    );
+  await humanFill(page, name, KEY_NAME);
   await pageSettled(page);
-  await clickOffered(page, 'the button that generates the key');
-  await pageSettled(page);
-  const dl = await clickOffered(page, 'the control that downloads the API key');
-  console.log('[asc-create] download=' + dl);
+  await requireClick(page, 'the App Manager access option');
+  await requireClick(page, 'the button that generates the key');
+  await requireClick(page, 'the control that downloads the API key');
 }
 
+assertScopedSecretWriter(SERVICE);
 const s = await WSession.start({
   label: 'asc_create_api_key',
-  userDataDir: `${OUT_DIR}/asc-profile`,
+  userDataDir: keptProfileDir('apple_app_store_connect'),
   headless: false,
 });
 try {
-  await s.goto(API_URL);
   await requireApiPage(s);
-  await pageSettled(s.page);
-
-  // Arm the download capture before the clicks so the key is caught however
-  // quickly it arrives. A step that fails ends the run with its error and the
-  // page it was on; nothing waits for someone to finish it in the window.
-  const downloadPromise = s.page.waitForEvent('download');
-  try {
-    await clickGenerate(s.page);
-  } catch (e) {
-    throw new Error(
-      `ASC_API_KEY_FLOW_FAILED on ${s.page.url()}: ${e.message}`,
-      { cause: e },
-    );
-  }
-
-  console.log('[asc-create] waiting for the .p8 download');
-  const download = await downloadPromise;
-  const suggested = download.suggestedFilename(); // AuthKey_<KEYID>.p8
-  const dest = `${OUT_DIR}/${suggested}`;
-  await download.saveAs(dest);
-  const keyId = suggested.replace(/^AuthKey_/, '').replace(/\.p8$/, '');
-  console.log(`SAVED_P8=${dest}`);
-  console.log(`KEY_ID=${keyId}`);
-  console.log(
-    'PASS: API key downloaded — OKNO ZOSTAJE OTWARTE (świadomie nie zamykam sesji).',
+  const issuerId = await shownText(
+    s.page,
+    'Issuer ID of this team’s App Store Connect API keys',
   );
-  // Deliberately NOT closing: the live, logged-in window stays open so the
-  // session is never thrown away again. The .p8 is already saved to disk and the
-  // key id is printed above, so the result is captured without tearing down.
+  if (!issuerId)
+    throw new Error(
+      `ASC_ISSUER_ID_NOT_SHOWN on ${s.page.url()}: the page shows no Issuer ID, which the key is used with`,
+    );
+  // Armed before the clicks, so the key is caught however quickly it arrives.
+  const downloaded = s.page.waitForEvent('download');
+  await generateKey(s.page);
+  const keyId = await keepDownloadedKey(await downloaded, SERVICE, {
+    issuer_id: issuerId,
+  });
+  console.log(`KEY_ID=${keyId}`);
+  console.log(`ISSUER_ID=${issuerId}`);
+  console.log(
+    'PASS: the App Store Connect API key is kept in the vault; the browser window stays open',
+  );
 } catch (e) {
-  console.log('FAIL:', e.message);
-  // No teardown on failure either — leave the window so you can finish
-  // manually; the error is rethrown so the run exits failed instead of
-  // reading as success to its caller.
+  console.log('FAIL:', e instanceof Error ? e.message : String(e));
   throw e;
 }
