@@ -1,11 +1,11 @@
-// A trajectory's own service credentials (src/_shared/scoped-secrets/
-// services.mjs): each field is read through the workload-bound Skarbiec
-// acquisition the TypeScript transport performs
-// (src/secrets/scoped-service/transport.ts readAcquiredField), asking for the
-// role the credential plays, and a writable service's fields are written to
-// the item playing that role by `stado credentials put --role`, under Stado's
-// own identity on the host. Without Skarbiec, the owner-only
-// WELES_CREDENTIALS_FILE holds the fields under the role name.
+// A trajectory's own service credentials (the one service catalog,
+// src/secrets/scoped-service/catalog/services.json): each field is read
+// through the workload-bound Skarbiec acquisition the TypeScript transport
+// performs (src/secrets/scoped-service/transport.ts readAcquiredField),
+// asking for the role the credential plays, and a writable service's fields
+// are written to the item playing that role by `stado credentials put
+// --role`, under Stado's own identity on the host. Without Skarbiec, the
+// owner-only WELES_CREDENTIALS_FILE holds the fields under the role name.
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { readAcquiredField } from '../../dist/secrets/scoped-service/transport.js';
@@ -15,15 +15,17 @@ import {
   readLocalField,
   writeLocalFields,
 } from './local-credentials.mjs';
-import { SERVICES } from './scoped-secrets/services.mjs';
+import { SERVICE_CONTRACTS } from '../../dist/secrets/scoped-service/catalog/services.js';
+
+const CATALOG = 'src/secrets/scoped-service/catalog/services.json';
 
 /** The service `serviceName` names, refused by name when none is declared. */
 function declaredService(serviceName) {
-  if (!Object.hasOwn(SERVICES, serviceName))
+  if (!Object.hasOwn(SERVICE_CONTRACTS, serviceName))
     throw new Error(
-      `unknown Weles scoped secret service: ${serviceName}; declare it in src/_shared/scoped-secrets/services.mjs`,
+      `unknown Weles scoped secret service: ${serviceName}; declare it in ${CATALOG}`,
     );
-  return SERVICES[serviceName];
+  return SERVICE_CONTRACTS[serviceName];
 }
 
 /** The service, refused unless its credential holds a username and password. */
@@ -69,7 +71,7 @@ function writableService(serviceName) {
   const service = declaredService(serviceName);
   if (!service.kind)
     throw new Error(
-      `Weles does not write ${serviceName}: a written service declares the Skarbiec kind its item is stored as in src/_shared/scoped-secrets/services.mjs`,
+      `Weles does not write ${serviceName}: a written service declares the Skarbiec kind its item is stored as in ${CATALOG}`,
     );
   return service;
 }
