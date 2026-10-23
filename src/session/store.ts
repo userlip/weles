@@ -27,7 +27,7 @@ export interface CookieParam {
   expires?: number;
   httpOnly?: boolean;
   secure?: boolean;
-  sameSite?: string;
+  sameSite?: 'Strict' | 'Lax' | 'None';
   [key: string]: unknown;
 }
 

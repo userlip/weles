@@ -25,7 +25,7 @@ import {
   welesManagedCredentialReaderMismatch,
 } from '../scoped-service.js';
 import { welesAcquiredSecretWriterProblem } from '../scoped-service/transport.js';
-import type { AcquireSecretRequest, AcquireSecretResult, CredentialOperation } from './request.js';
+import type { AcquireSecretRequest, AcquireSecretResult } from './request.js';
 import {
   ENTRA_ORIGIN,
   ENTRA_PROVIDER,
@@ -43,18 +43,37 @@ import {
 const REQUEST_ID_LENGTH = createHash('sha256').digest('hex').length;
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-// The trajectory each lifecycle runs for each operation it offers.
-const MICROSOFT_ACTIONS: Partial<Record<CredentialOperation, string>> = {
+// The trajectory each lifecycle runs for each operation it offers, typed by
+// the queued answer that names it, so an operation the lifecycle does not
+// offer can never be answered as queued.
+type QueuedAnswer = Extract<
+  AcquireSecretResult,
+  { status: 'operation_queued' }
+>;
+type MicrosoftQueued = Extract<QueuedAnswer, { provider: 'microsoft' }>;
+type EntraQueued = Extract<QueuedAnswer, { provider: 'microsoft_entra' }>;
+const MICROSOFT_ACTIONS: Readonly<
+  Record<MicrosoftQueued['operation'], MicrosoftQueued['action']>
+> = {
   adopt: 'microsoft_adopt_password',
   verify: 'microsoft_verify_password',
   rotate: 'microsoft_reset_password',
 };
-const ENTRA_ACTIONS: Partial<Record<CredentialOperation, string>> = {
+const ENTRA_ACTIONS: Readonly<
+  Record<EntraQueued['operation'], EntraQueued['action']>
+> = {
   adopt: 'microsoft_entra_adopt_password',
   verify: 'microsoft_entra_verify_password',
   rotate: 'microsoft_entra_reset_password',
   reset: 'microsoft_entra_reset_password',
 };
+
+function offers<K extends string>(
+  actions: Readonly<Record<K, string>>,
+  operation: string,
+): operation is K {
+  return Object.hasOwn(actions, operation);
+}
 
 function normalized(value: string | null | undefined): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -63,19 +82,32 @@ function normalized(value: string | null | undefined): string | undefined {
 const matches = (pattern: RegExp, value: string | undefined) =>
   typeof value === 'string' && pattern.test(value);
 const isRequestId = (value: string | undefined) =>
-  typeof value === 'string' && value.length === REQUEST_ID_LENGTH && /^[a-f\d]+$/i.test(value);
+  typeof value === 'string' &&
+  value.length === REQUEST_ID_LENGTH &&
+  /^[a-f\d]+$/i.test(value);
 
 /** What is missing for the managed password reader of `secret`: the mismatch the catalog in force names, else the absent grant. */
-function readerProblem(secret: string, tenantId: string | null | undefined, absent: string): string[] {
+function readerProblem(
+  secret: string,
+  tenantId: string | null | undefined,
+  absent: string,
+): string[] {
   // A catalog that grants the item on another field, or cannot be read, is
   // named first: it is a different fix from a reader nobody declared.
-  const mismatch = welesManagedCredentialReaderMismatch(secret, 'password', tenantId);
+  const mismatch = welesManagedCredentialReaderMismatch(
+    secret,
+    'password',
+    tenantId,
+  );
   if (mismatch) return [mismatch];
   if (hasWelesManagedCredentialReader(secret, 'password', tenantId)) return [];
   return [absent];
 }
 
-function writerProblem(secret: string, tenantId: string | null | undefined): string[] {
+function writerProblem(
+  secret: string,
+  tenantId: string | null | undefined,
+): string[] {
   const problem = welesAcquiredSecretWriterProblem(secret, tenantId);
   if (problem === null) return [];
   return [problem];
@@ -87,8 +119,7 @@ export async function queueMicrosoftPasswordOperation(
   enqueue: typeof queueAction = queueAction,
 ): Promise<AcquireSecretResult> {
   const { operation } = request;
-  const action = MICROSOFT_ACTIONS[operation];
-  if (!action) {
+  if (!offers(MICROSOFT_ACTIONS, operation)) {
     return {
       status: 'unsupported_operation',
       secret: def.secret,
@@ -97,6 +128,7 @@ export async function queueMicrosoftPasswordOperation(
       message: `${operation} is not supported for a Microsoft account password`,
     };
   }
+  const action = MICROSOFT_ACTIONS[operation];
   const accountEmail = normalized(request.accountEmail);
   if (!accountEmail || !EMAIL.test(accountEmail)) {
     return {
@@ -109,14 +141,26 @@ export async function queueMicrosoftPasswordOperation(
       message: 'Microsoft password operations require one exact account email',
     };
   }
-  const binding = microsoftAccountBinding(accountEmail, def.secret, request.tenantId);
+  const binding = microsoftAccountBinding(
+    accountEmail,
+    def.secret,
+    request.tenantId,
+  );
   const { accountId } = binding;
   const missing = [
-    ...(isRequestId(request.requestId) ? [] : ['one exact credential operation request id']),
-    ...(!accountId && !binding.error ? ['one uniquely matching active Microsoft account'] : []),
+    ...(isRequestId(request.requestId)
+      ? []
+      : ['one exact credential operation request id']),
+    ...(!accountId && !binding.error
+      ? ['one uniquely matching active Microsoft account']
+      : []),
     ...(binding.error ? [binding.error] : []),
     ...writerProblem(def.secret, request.tenantId),
-    ...readerProblem(def.secret, request.tenantId, `tenant-scoped Skarbiec reader for ${def.secret}/password`),
+    ...readerProblem(
+      def.secret,
+      request.tenantId,
+      `tenant-scoped Skarbiec reader for ${def.secret}/password`,
+    ),
   ];
   if (missing.length || !accountId) {
     return {
@@ -130,7 +174,12 @@ export async function queueMicrosoftPasswordOperation(
     };
   }
   const params = paramsFor(def, { ...request, accountEmail });
-  const actionLogId = await enqueue(action, accountId, params, request.priority);
+  const actionLogId = await enqueue(
+    action,
+    accountId,
+    params,
+    request.priority,
+  );
   return {
     status: 'operation_queued',
     operation,
@@ -150,8 +199,7 @@ export async function queueEntraPasswordOperation(
   enqueue: typeof queueAction = queueAction,
 ): Promise<AcquireSecretResult> {
   const { operation } = request;
-  const action = ENTRA_ACTIONS[operation];
-  if (!action) {
+  if (!offers(ENTRA_ACTIONS, operation)) {
     return {
       status: 'unsupported_operation',
       secret: def.secret,
@@ -160,6 +208,7 @@ export async function queueEntraPasswordOperation(
       message: `${operation} is not supported for a Microsoft Entra directory password`,
     };
   }
+  const action = ENTRA_ACTIONS[operation];
   const accountUpn = normalized(request.accountUpn);
   const tenantId = normalized(request.tenantId);
   const principalObjectId = normalized(request.principalObjectId);
@@ -167,33 +216,57 @@ export async function queueEntraPasswordOperation(
   // The Entra directory id addresses the identity, not a Weles Skarbiec tenant.
   const skarbiecTenantId = null;
   const coordinates =
-    accountUpn && tenantId && principalObjectId &&
-    ENTRA_UPN.test(accountUpn) && LOWER_UUID.test(tenantId) && LOWER_UUID.test(principalObjectId)
+    accountUpn &&
+    tenantId &&
+    principalObjectId &&
+    ENTRA_UPN.test(accountUpn) &&
+    LOWER_UUID.test(tenantId) &&
+    LOWER_UUID.test(principalObjectId)
       ? { accountUpn, tenantId, principalObjectId }
       : undefined;
   const binding = coordinates
-    ? entraAccountBinding(coordinates.accountUpn, def.secret, coordinates.tenantId, coordinates.principalObjectId, skarbiecTenantId)
+    ? entraAccountBinding(
+        coordinates.accountUpn,
+        def.secret,
+        coordinates.tenantId,
+        coordinates.principalObjectId,
+        skarbiecTenantId,
+      )
     : undefined;
   const missing = [
-    ...(isRequestId(request.requestId) ? [] : ['one exact credential operation request id']),
+    ...(isRequestId(request.requestId)
+      ? []
+      : ['one exact credential operation request id']),
     ...(matches(ENTRA_UPN, accountUpn) ? [] : ['one exact Entra account UPN']),
-    ...(matches(LOWER_UUID, tenantId) ? [] : ['one exact lowercase Entra tenant id']),
-    ...(matches(LOWER_UUID, principalObjectId) ? [] : ['one exact lowercase Entra principal object id']),
-    ...(contract && contract.field === 'password' && contract.item === def.secret
+    ...(matches(LOWER_UUID, tenantId)
+      ? []
+      : ['one exact lowercase Entra tenant id']),
+    ...(matches(LOWER_UUID, principalObjectId)
+      ? []
+      : ['one exact lowercase Entra principal object id']),
+    ...(contract &&
+    contract.field === 'password' &&
+    contract.item === def.secret
       ? []
       : [`exact Skarbiec password contract for ${def.secret}`]),
     ...(contract && contract.sourceOrigin === ENTRA_ORIGIN
       ? []
       : [`Entra credential source origin ${ENTRA_ORIGIN} for ${def.secret}`]),
     ...(binding && !binding.accountId && !binding.error
-      ? ['one uniquely matching active account bound to the requested Entra identity']
+      ? [
+          'one uniquely matching active account bound to the requested Entra identity',
+        ]
       : []),
     ...(binding && binding.error ? [binding.error] : []),
     ...writerProblem(def.secret, skarbiecTenantId),
     // A reset writes a password nobody knew, so it needs no reader.
     ...(operation === 'reset'
       ? []
-      : readerProblem(def.secret, skarbiecTenantId, `scoped Skarbiec reader for ${def.secret}/password`)),
+      : readerProblem(
+          def.secret,
+          skarbiecTenantId,
+          `scoped Skarbiec reader for ${def.secret}/password`,
+        )),
   ];
   if (missing.length || !coordinates || !binding || !binding.accountId) {
     return {
@@ -207,7 +280,12 @@ export async function queueEntraPasswordOperation(
     };
   }
   const params = paramsFor(def, { ...request, ...coordinates });
-  const actionLogId = await enqueue(action, binding.accountId, params, request.priority);
+  const actionLogId = await enqueue(
+    action,
+    binding.accountId,
+    params,
+    request.priority,
+  );
   return {
     status: 'operation_queued',
     operation,

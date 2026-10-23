@@ -16,14 +16,15 @@ export type NavigatingPage =
   | (NavigationEvents & { mainFrame(): unknown })
   | { page(): NavigationEvents };
 export type EvaluatingPage = {
-  evaluate(pageFunction: () => Promise<void>): Promise<unknown>;
+  evaluate(pageFunction: () => unknown): Promise<unknown>;
 } & NavigatingPage;
 
 function navigationOf(target: NavigatingPage): {
   events: NavigationEvents;
   frame: unknown;
 } {
-  if ('mainFrame' in target) return { events: target, frame: target.mainFrame() };
+  if ('mainFrame' in target)
+    return { events: target, frame: target.mainFrame() };
   return { events: target.page(), frame: target };
 }
 
