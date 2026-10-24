@@ -109,6 +109,23 @@ export async function request(url, init) {
   );
 }
 
+/**
+ * The body of a successful answer `request` returned, read by `read` (for
+ * example `(response) => response.json()`). A connection lost while it is
+ * read, or a body `read` cannot take, is an error naming the path, the
+ * status the answer had already given and the cause.
+ */
+export async function readBody(url, response, read) {
+  try {
+    return await read(response);
+  } catch (error) {
+    throw new Error(
+      `Figma HTTP ${response.status} for ${new URL(url).pathname}, and its body could not be read: ${describeError(error)}`,
+      { cause: error },
+    );
+  }
+}
+
 /** Gzips `source` into `destination` at zlib's best compression. */
 export async function gzipFile(source, destination) {
   await new Promise((resolve, reject) => {
@@ -126,7 +143,9 @@ export async function gzipFile(source, destination) {
 /** Downloads `url` to `destination`; contentType is the one served, or null. */
 export async function download(url, destination) {
   const response = await request(url, {});
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = Buffer.from(
+    await readBody(url, response, (answer) => answer.arrayBuffer()),
+  );
   mkdirSync(dirname(destination), { recursive: true });
   writeFileSync(destination, buffer);
   return {

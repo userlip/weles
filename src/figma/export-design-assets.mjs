@@ -13,6 +13,7 @@ import {
   download,
   extensionFor,
   gzipFile,
+  readBody,
   request,
   sha256,
   slugify,
@@ -44,23 +45,27 @@ export async function exportDesignAssets(requestPath) {
 
   async function figmaJson(path) {
     const bearer = tokenBuffer.toString('utf8');
-    const response = await request(`https://api.figma.com${path}`, {
+    const url = `https://api.figma.com${path}`;
+    const response = await request(url, {
       headers: { 'X-Figma-Token': bearer },
     });
-    return response.json();
+    return readBody(url, response, (answer) => answer.json());
   }
   async function figmaDocument(fileKey, nodesPath, vocabularyPath) {
     mkdirSync(cacheRoot, { recursive: true });
     const cachePath = join(cacheRoot, `${fileKey}.json`);
     if (!existsSync(cachePath)) {
       const bearer = tokenBuffer.toString('utf8');
-      const response = await request(
-        `https://api.figma.com/v1/files/${fileKey}`,
-        {
-          headers: { 'X-Figma-Token': bearer },
-        },
+      const url = `https://api.figma.com/v1/files/${fileKey}`;
+      const response = await request(url, {
+        headers: { 'X-Figma-Token': bearer },
+      });
+      writeFileSync(
+        cachePath,
+        Buffer.from(
+          await readBody(url, response, (answer) => answer.arrayBuffer()),
+        ),
       );
-      writeFileSync(cachePath, Buffer.from(await response.arrayBuffer()));
     }
     const summaryPath = join(cacheRoot, `${fileKey}.summary.json`);
     // One parse writes the node index and the design vocabulary — the colour
@@ -176,7 +181,9 @@ export async function exportDesignAssets(requestPath) {
       for (const [imageRef, url] of Object.entries(images)) {
         if (!url) continue;
         const response = await request(url, {});
-        const buffer = Buffer.from(await response.arrayBuffer());
+        const buffer = Buffer.from(
+          await readBody(url, response, (answer) => answer.arrayBuffer()),
+        );
         const contentType = response.headers.get('content-type');
         const path = join(
           'assets',

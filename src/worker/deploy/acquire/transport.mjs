@@ -1,22 +1,21 @@
 import { describeError } from '../../../_shared/error-chain/index.cjs';
 
 // Only refusal responses pass through this reader. Successful credential bodies
-// remain in the launcher's validated single-field path. A refusal whose body
-// cannot be read is an error naming its status and why the read failed.
+// remain in the launcher's validated single-field path. The detail it answers
+// goes into the caller's own refusal, which names the endpoint, the stage and
+// the item; a refusal whose body cannot be read is answered with why the read
+// failed, so the caller still refuses with its context and its coded stop.
 export async function readRefusalDetail(response) {
-  let text;
+  let detail;
   try {
-    text = await response.text();
+    detail = (await response.text())
+      .replace(/"value"\s*:\s*"(?:[^"\\]|\\.)*"/g, '"value":"<redacted>"')
+      .replace(/\s+/g, ' ')
+      .trim();
   } catch (error) {
-    throw new Error(
-      `HTTP ${response.status} refusal body could not be read: ${describeError(error)}`,
-      { cause: error },
-    );
+    detail = `and its body could not be read: ${describeError(error)}`;
   }
-  return text
-    .replace(/"value"\s*:\s*"(?:[^"\\]|\\.)*"/g, '"value":"<redacted>"')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return detail;
 }
 
 export function acquisitionPost({ endpoint, consumer, item, field, stop }) {

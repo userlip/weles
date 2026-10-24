@@ -1,11 +1,11 @@
 /** The message of `value` and of every cause under it, outermost first. */
 export function describeError(value: unknown): string;
 
-/** One error of a chain: its name, message and own system fields. */
+/** One error of a chain: its name, message and, when it carries one, its code. */
 export type CauseLevel = {
   name: string;
   message: string;
-  fields: Record<string, string | number>;
+  code?: string;
 };
 
 /** Every error under `value`, outermost first, as data. */

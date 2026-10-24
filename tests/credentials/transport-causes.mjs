@@ -41,7 +41,7 @@ if (process.env[SIGN_IN_CHILD]) {
   } catch (error) {
     answer = {
       code: error.code, stage: error.stage, status: error.status,
-      endpoint: error.endpoint, causes: causeChain(error),
+      endpoint: error.endpoint, message: error.message, causes: causeChain(error),
     };
   }
   process.stdout.write(JSON.stringify(answer));
@@ -83,9 +83,14 @@ async function closedPort(host) {
   return port;
 }
 
-function has(causes, expected) {
-  return causes.some((level) =>
-    Object.entries(expected).every(([name, value]) => level.fields[name] === value));
+function has(causes, code) {
+  return causes.some((level) => level.code === code);
+}
+
+// What a reader is shown names the failure: the displayed message holds the
+// code and the place (host, or address and port) the real failure reported.
+function names(message, ...observed) {
+  return observed.every((part) => message.includes(String(part)));
 }
 
 function ran(run) {
@@ -152,26 +157,27 @@ async function qualify() {
     assert.equal(missing.code, 'oauth_transport_failed');
     assert.equal(missing.stage, 'oauth_exchange');
     assert.equal(missing.endpoint, kimi);
-    assert.ok(has(missing.causes, { code: 'ENOTFOUND', hostname: unresolvable }),
-      JSON.stringify(missing.causes));
+    assert.ok(has(missing.causes, 'ENOTFOUND'), JSON.stringify(missing.causes));
+    assert.ok(names(missing.message, 'ENOTFOUND', unresolvable), missing.message);
 
     const refused = signIn(report, `http://${host}:${port}`);
     report.sign_in_closed_proxy = refused;
     assert.equal(refused.code, 'oauth_transport_failed');
     assert.equal(refused.stage, 'oauth_exchange');
     assert.equal(refused.endpoint, kimi);
-    assert.ok(has(refused.causes, { code: 'ECONNREFUSED', address: host, port }),
-      JSON.stringify(refused.causes));
+    assert.ok(has(refused.causes, 'ECONNREFUSED'), JSON.stringify(refused.causes));
+    assert.ok(names(refused.message, 'ECONNREFUSED', port), refused.message);
 
-    // A real fetch failure whose non-system levels carry extra enumerable
-    // text (a response body, a credential): only the message of such a level
-    // and the system error's own fields are named, never that text.
+    // A real fetch failure whose levels carry extra enumerable text (a
+    // response body, a credential), the system error's own level included:
+    // only messages and codes are named, never that text.
     const leaked = `secret-${randomUUID()}`;
     const fetched = await fetch(`https://${randomUUID()}.invalid/`).then(
       () => assert.fail('a host under .invalid answered'),
       (error) => error,
     );
     fetched.responseBody = leaked;
+    if (fetched.cause instanceof Error) fetched.cause.responseBody = leaked;
     const wrapped = new Error('the credential call failed', { cause: fetched });
     wrapped.authorization = `Bearer ${leaked}`;
     const described = describeError(wrapped);
@@ -179,7 +185,8 @@ async function qualify() {
     report.extra_fields = { described, levels };
     assert.ok(!described.includes(leaked), described);
     assert.ok(!JSON.stringify(levels).includes(leaked), JSON.stringify(levels));
-    assert.ok(has(levels, { code: 'ENOTFOUND' }), JSON.stringify(levels));
+    assert.ok(has(levels, 'ENOTFOUND'), JSON.stringify(levels));
+    assert.ok(names(described, 'ENOTFOUND'), described);
 
     await mkdir(area, { recursive: true });
     const tokenFile = join(area, 'admission-token');
@@ -209,8 +216,8 @@ async function qualify() {
     assert.equal(unavailable.status, http.HTTP_STATUS_SERVICE_UNAVAILABLE);
     assert.equal(unavailable.body.code, 'WELES_CREDENTIAL_AUTH_UNAVAILABLE');
     assert.ok(unavailable.body.message.includes(skarbiec.origin), unavailable.body.message);
-    assert.ok(has(unavailable.body.causes, { code: 'ENOTFOUND', hostname: skarbiec.hostname }),
-      JSON.stringify(unavailable.body.causes));
+    assert.ok(has(unavailable.body.causes, 'ENOTFOUND'), JSON.stringify(unavailable.body.causes));
+    assert.ok(names(unavailable.body.message, 'ENOTFOUND', skarbiec.hostname), unavailable.body.message);
 
     const twice = await sent(origin, [
       'Authorization',
