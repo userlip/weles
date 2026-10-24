@@ -16,13 +16,16 @@
 
 import { readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
+import { describeError } from '../../../_shared/error-chain/index.cjs';
 import { readRefusalDetail } from './transport.mjs';
 
 const [, , consumer, item, field, tokenFile, operation, operationId, ...extra] =
   process.argv;
 const exactName = /^[A-Za-z\d._-]+$/;
 const exactCoordinate = (value) =>
-  exactName.test(value.startsWith('role:') ? value.slice('role:'.length) : value);
+  exactName.test(
+    value.startsWith('role:') ? value.slice('role:'.length) : value,
+  );
 if (
   extra.length ||
   [consumer, item, field, tokenFile, operation, operationId].some((v) => !v) ||
@@ -40,7 +43,9 @@ if (
 
 const endpointText = process.env.WC_SKARBIEC_URL?.trim();
 if (!endpointText)
-  throw new Error('WC_SKARBIEC_URL is required from the Stado service directory');
+  throw new Error(
+    'WC_SKARBIEC_URL is required from the Stado service directory',
+  );
 const endpoint = new URL(endpointText);
 
 const chunks = [];
@@ -82,7 +87,9 @@ try {
   }
   const bearer = token.toString('utf8');
   if (!bearer || /\s/.test(bearer))
-    throw new Error(`the Skarbiec writer token in ${tokenFile} is empty or holds whitespace`);
+    throw new Error(
+      `the Skarbiec writer token in ${tokenFile} is empty or holds whitespace`,
+    );
   // Skarbiec's write modes: acquire stores a new acquisition's whole item,
   // stage the one field of an operation on an item Weles controls.
   const mode = operation === 'acquire' ? 'acquire' : 'stage';
@@ -102,20 +109,39 @@ try {
         mode,
         operation_id: operationId,
         provider_verified: true,
-        ...(captureOrigin === undefined ? {} : { capture_origin: captureOrigin }),
+        ...(captureOrigin === undefined
+          ? {}
+          : { capture_origin: captureOrigin }),
       }),
     });
   } catch (cause) {
     throw new Error(
-      `Skarbiec at ${endpoint.origin} is unreachable for ${consumer} writing ${item}#${field}: ${cause?.cause?.code ?? cause?.message}`,
+      `Skarbiec at ${endpoint.origin} is unreachable for ${consumer} writing ${item}#${field}: ${describeError(cause)}`,
+      { cause },
     );
   }
   if (!response.ok)
     throw new Error(
       `Skarbiec refused ${consumer} writing ${item}#${field} (${mode}): HTTP ${response.status}: ${await readRefusalDetail(response)}`,
     );
-  const answer = await response.text();
-  const result = JSON.parse(answer);
+  let answer;
+  try {
+    answer = await response.text();
+  } catch (cause) {
+    throw new Error(
+      `Skarbiec at ${endpoint.origin} answered ${consumer} writing ${item}#${field} with HTTP ${response.status}, and its body could not be read: ${describeError(cause)}`,
+      { cause },
+    );
+  }
+  let result;
+  try {
+    result = JSON.parse(answer);
+  } catch (cause) {
+    throw new Error(
+      `Skarbiec answered the write of ${item}#${field} with a body that is not JSON (${describeError(cause)}): ${answer}`,
+      { cause },
+    );
+  }
   if (!result || result.ok !== true || result.id !== item)
     throw new Error(
       `Skarbiec answered the write of ${item}#${field} with something other than its own acknowledgement: ${answer}`,

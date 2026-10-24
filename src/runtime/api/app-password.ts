@@ -1,3 +1,4 @@
+import { describeError } from '../../_shared/error-chain/index.cjs';
 import {
   operatorJson,
   welesOperatorConnection,
@@ -162,11 +163,9 @@ export async function appPasswordRun(
       );
     return row;
   } catch (cause) {
-    const error = cause instanceof Error ? cause.message : String(cause);
-    const detail =
-      cause instanceof Error && cause.cause ? `: ${String(cause.cause)}` : '';
-    throw new Error(`${operation} ${connection.endpoint}: ${error}${detail}`, {
-      cause,
-    });
+    throw new Error(
+      `${operation} ${connection.endpoint}: ${describeError(cause)}`,
+      { cause },
+    );
   }
 }

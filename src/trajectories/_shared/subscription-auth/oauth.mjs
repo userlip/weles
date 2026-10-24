@@ -1,4 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { constants as http } from 'node:http2';
+import { describeError } from '../../../_shared/error-chain/index.cjs';
 
 // Public OAuth clients and endpoints from the providers' authentication protocols.
 // These exchanges never invoke a provider CLI or touch its local credential store.
@@ -19,16 +21,43 @@ const CLAUDE = {
     'user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload',
 };
 
+// RFC 7636 section 4.1 recommends a verifier of as many random octets as the
+// S256 challenge's SHA-256 digest holds; the state is drawn the same length.
+const PKCE_OCTETS = createHash('sha256').digest().length;
+// One second in Date's milliseconds, read from the clock's own epoch.
+const MILLISECONDS_PER_SECOND = Date.parse('1970-01-01T00:00:01Z');
+// OpenAI's device token endpoint answers a grant the user has not approved
+// yet with these statuses.
+const CODEX_PENDING = new Set([
+  http.HTTP_STATUS_FORBIDDEN,
+  http.HTTP_STATUS_NOT_FOUND,
+]);
+
 /** Each provider's authorize page, for callers that check a URL against it. */
 export const AUTHORIZE_PAGES = { claude: CLAUDE.authorize };
 
 export class AuthenticationFailure extends Error {
-  constructor(code, stage, message, status = null) {
-    super(message);
+  // options is Error's own ({ cause }), so the failure keeps what it wraps.
+  constructor(code, stage, message, status = null, options) {
+    super(message, options);
     this.code = code;
     this.stage = stage;
     this.status = status;
   }
+}
+
+/** The exchange with `url` failed in transport, before an answer or while
+ * reading its body (then with its status); the endpoint and cause stay. */
+function transportFailure(url, error, status) {
+  const failure = new AuthenticationFailure(
+    'oauth_transport_failed',
+    'oauth_exchange',
+    `${url}: ${describeError(error)}`,
+    status,
+    { cause: error },
+  );
+  failure.endpoint = url;
+  return failure;
 }
 
 async function post(url, payload, form = false) {
@@ -45,15 +74,16 @@ async function post(url, payload, form = false) {
       body: form ? new URLSearchParams(payload) : JSON.stringify(payload),
     });
   } catch (error) {
-    throw new AuthenticationFailure(
-      'oauth_transport_failed',
-      'oauth_exchange',
-      `${url}: ${error.message}`,
-    );
+    throw transportFailure(url, error, null);
   }
   // The body is read as text first so an answer that is not JSON reaches the
-  // refusal whole, with the parse error, instead of 'did not return JSON'.
-  const body = await response.text();
+  // refusal whole, with the parse error; a lost connection is a transport one.
+  let body;
+  try {
+    body = await response.text();
+  } catch (error) {
+    throw transportFailure(url, error, response.status);
+  }
   let data;
   try {
     data = JSON.parse(body);
@@ -98,14 +128,14 @@ function credential(provider, tokens, expectedEmail) {
   if (provider === 'codex') {
     let identity;
     try {
-      identity = JSON.parse(
-        Buffer.from(tokens.id_token.split('.')[1], 'base64url').toString(),
-      );
-    } catch {
+      // A JWT is header.payload.signature (RFC 7519 section 7.2).
+      const [, payload] = tokens.id_token.split('.');
+      identity = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    } catch (error) {
       throw new AuthenticationFailure(
         'oauth_identity_missing',
         'grant_validation',
-        'OpenAI did not return a readable identity token',
+        `OpenAI did not return a readable identity token: ${describeError(error)}`,
       );
     }
     if (identity.email?.toLowerCase() !== expectedEmail.toLowerCase()) {
@@ -140,22 +170,23 @@ function credential(provider, tokens, expectedEmail) {
       claudeAiOauth: {
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
-        expiresAt: Date.now() + tokens.expires_in * 1000,
+        expiresAt: Date.now() + tokens.expires_in * MILLISECONDS_PER_SECOND,
         scopes: String(tokens.scope || CLAUDE.scopes).split(' '),
       },
     };
   }
   return {
     ...tokens,
-    expires_at: Math.floor(Date.now() / 1000) + tokens.expires_in,
+    expires_at:
+      Math.floor(Date.now() / MILLISECONDS_PER_SECOND) + tokens.expires_in,
   };
 }
 
 /** Start an OAuth transaction; only the approved Weles browser sees its URL/code. */
 export async function beginOAuth(provider) {
   if (provider === 'claude') {
-    const verifier = randomBytes(32).toString('base64url');
-    const state = randomBytes(32).toString('base64url');
+    const verifier = randomBytes(PKCE_OCTETS).toString('base64url');
+    const state = randomBytes(PKCE_OCTETS).toString('base64url');
     const query = new URLSearchParams({
       client_id: CLAUDE.client,
       response_type: 'code',
@@ -256,7 +287,7 @@ export async function finishOAuth(transaction, expectedEmail, displayedCode) {
   }
   const pending =
     provider === 'codex'
-      ? [403, 404].includes(answer.status)
+      ? CODEX_PENDING.has(answer.status)
       : ['authorization_pending', 'slow_down'].includes(answer.data.error);
   if (!pending) accepted(answer, 'device_authorization');
   throw new AuthenticationFailure(

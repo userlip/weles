@@ -1,6 +1,7 @@
 // One single-turn chat completion through the configured model route: Brama
 // with this workload's bearer and signed identity, or the direct provider.
 import { createHash, createHmac } from 'node:crypto';
+import { describeError } from '../../_shared/error-chain/index.cjs';
 import { modelMessageContent } from './message.js';
 import type { ModelRouterConfig } from './router-config.js';
 
@@ -128,13 +129,19 @@ export async function completeThroughRouter(
     headers: routeHeaders(cfg, body),
     body,
   }).catch((error: unknown) => {
-    const cause = error instanceof Error ? error.cause : undefined;
     throw new Error(
-      `${cfg.direct ? 'WELES_MODEL_ENDPOINT' : 'Brama'} POST ${address} for ${model} failed: ${String(error)}${cause ? `; cause: ${String(cause)}` : ''}`,
+      `${cfg.direct ? 'WELES_MODEL_ENDPOINT' : 'Brama'} POST ${address} for ${model} failed: ${describeError(error)}`,
       { cause: error },
     );
   });
-  const text = await response.text();
+  // A connection lost while the answer's body is read is the same transport
+  // failure, now with the status the answer had already given.
+  const text = await response.text().catch((error: unknown) => {
+    throw new Error(
+      `${cfg.direct ? 'WELES_MODEL_ENDPOINT' : 'Brama'} POST ${address} for ${model} answered HTTP ${response.status}, and its body could not be read: ${describeError(error)}`,
+      { cause: error },
+    );
+  });
   if (!response.ok)
     throw new Error(`model router ${response.status} for ${model}: ${text}`);
   let payload: CompletionPayload;

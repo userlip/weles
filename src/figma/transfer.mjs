@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { dirname, extname } from 'node:path';
 import { constants, createGzip } from 'node:zlib';
+import { describeError } from '../_shared/error-chain/index.cjs';
 
 /**
  * A file-name fragment of `value`: its letters and digits, accents removed,
@@ -86,15 +87,21 @@ export async function request(url, init) {
   try {
     response = await fetch(url, init);
   } catch (error) {
-    const cause = [error?.message, error?.cause?.code, error?.cause?.message]
-      .filter(Boolean)
-      .join(': ');
-    throw new Error(`Figma network failure for ${path}: ${cause}`, {
-      cause: error,
-    });
+    throw new Error(
+      `Figma network failure for ${path}: ${describeError(error)}`,
+      { cause: error },
+    );
   }
   if (response.ok) return response;
-  const body = await response.text();
+  let body;
+  try {
+    body = await response.text();
+  } catch (error) {
+    throw new Error(
+      `Figma HTTP ${response.status} for ${path}, and its body could not be read: ${describeError(error)}`,
+      { cause: error },
+    );
+  }
   const retryAfter = response.headers.get('retry-after');
   const after = retryAfter ? ` (Retry-After: ${retryAfter})` : '';
   throw new Error(
