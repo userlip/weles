@@ -174,15 +174,30 @@ export function writeWelesAcquiredSecret(
       // The helper's own words are the cause: they are passed on whole, with
       // the credential itself redacted wherever it appears.
       const exited = result.error
-        ? `could not run: ${result.error.message}`
+        ? `failed: ${result.error.message}${
+            result.signal
+              ? `; was ended by signal ${result.signal}`
+              : result.status !== null
+                ? `; exited with status ${result.status}`
+                : ''
+          }`
         : result.signal
           ? `was ended by signal ${result.signal}`
           : `exited with status ${result.status}`;
-      const said = Buffer.isBuffer(result.stderr)
-        ? result.stderr.toString('utf8').split(value).join('[redacted]').trim()
-        : '';
+      // Buffer presence is independent of whether a process error was returned.
+      const stderr = Buffer.isBuffer(result.stderr)
+        ? (() => {
+            const said = result.stderr
+              .toString('utf8')
+              .split(value)
+              .join('[redacted]')
+              .trim();
+            return said ? `: ${said}` : ' and wrote nothing to stderr';
+          })()
+        : ' and no stderr was captured';
       throw new Error(
-        `scoped Skarbiec write failed for ${secretName}/${field} via ${skarbiecEndpoint(tenantId)}: the write helper ${exited}${said ? `: ${said}` : ' and wrote nothing to stderr'}`,
+        `scoped Skarbiec write failed for ${secretName}/${field} via ${skarbiecEndpoint(tenantId)}: the write helper ${exited}${stderr}`,
+        { cause: result.error },
       );
     }
   } finally {

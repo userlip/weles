@@ -75,17 +75,24 @@ function helperEnd(result: HelperRun): string {
 
 /**
  * The helper's standard output once it ran and exited cleanly; otherwise the
- * refusal `refuse` builds from what the helper wrote to standard error and
- * how it ended, its output cleared first.
+ * refusal keeps its process cause and captured standard error independently.
+ * Undefined stderr means no buffer was captured, not that execution never
+ * started. Captured credential output is cleared before constructing a refusal.
  */
 function succeeded(
   result: HelperRun,
-  refuse: (stderr: string, ended: string) => Error,
+  refuse: (stderr: string | undefined, ended: string) => Error,
 ): Buffer {
-  if (result.error) throw refuse('', `could not run: ${result.error.message}`);
-  if (result.status || result.signal) {
-    result.stdout.fill('');
-    throw refuse(result.stderr.toString('utf8'), helperEnd(result));
+  if (result.error || result.status || result.signal) {
+    result.stdout?.fill('');
+    const ended = result.error
+      ? `failed: ${result.error.message}${
+          result.signal || result.status !== null ? `; ${helperEnd(result)}` : ''
+        }`
+      : helperEnd(result);
+    const error = refuse(result.stderr?.toString('utf8'), ended);
+    if (result.error) error.cause = result.error;
+    throw error;
   }
   return result.stdout;
 }
@@ -138,9 +145,15 @@ export function readScopedField(
     },
   );
   const output = succeeded(result, (stderr, ended) => {
-    const said = stderr.trim();
+    const said = stderr?.trim();
+    const quoted =
+      stderr === undefined
+        ? ' and no stderr was captured'
+        : said
+          ? `: ${said}`
+          : ' and wrote nothing to stderr';
     return new Error(
-      `scoped Skarbiec read failed for role ${role}/${field} as ${consumer}: stado credentials get ${ended}${said ? `: ${said}` : ' and wrote nothing to stderr'}`,
+      `scoped Skarbiec read failed for role ${role}/${field} as ${consumer}: stado credentials get ${ended}${quoted}`,
     );
   });
   try {
@@ -198,12 +211,18 @@ export function readAcquiredField(
     // Repeat the authority's own words. Collapsing every refusal into one
     // sentence made an unregistered consumer, an out-of-window grant and a
     // missing scope line indistinguishable, and each needs a different fix.
+    if (stderr === undefined)
+      return new SkarbiecAcquisitionError(
+        `workload-bound Skarbiec acquisition failed for ${coordinate}/${field} as consumer ${consumer} against ${endpoint}: the helper ${ended} and no stderr was captured`,
+        { item: coordinate, field, consumer },
+        null,
+      );
     const { reason, lines } = acquisitionStderr(stderr);
     const diagnosis = lines.length
       ? lines.join(' | ')
-      : `the helper ${ended} with no diagnosis`;
+      : 'no diagnosis';
     return new SkarbiecAcquisitionError(
-      `workload-bound Skarbiec acquisition failed for ${coordinate}/${field} as consumer ${consumer} against ${endpoint}: ${diagnosis}`,
+      `workload-bound Skarbiec acquisition failed for ${coordinate}/${field} as consumer ${consumer} against ${endpoint}: the helper ${ended}: ${diagnosis}`,
       { item: coordinate, field, consumer },
       reason,
     );
