@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import type { Persona, PersonaDevice } from '../../browser/persona.js';
 import type { Identity } from '../../utils/identity/identity.js';
 import type { ExitReputation } from '../../proxy/policy.js';
-import { snapshotSanitizedEnvironment } from '../../utils/sanitize-env.js';
+import { environmentNames } from '../../utils/sanitize-env.js';
 import { recordingsDir } from '../run-recordings.js';
 import type { SessionProxy } from './session-request.js';
 
@@ -143,7 +143,7 @@ export function writePrelaunchSessionMeta(request: SessionMetaRequest): void {
       realized_fingerprint: null,
       proxy_requested: request.proxyRequested,
       env_flags: snapshotEnvFlags(),
-      env_all: snapshotSanitizedEnvironment(),
+      env_names: environmentNames(),
       sticky_session_id: proxyObj?.sticky_session_id,
       sticky_hash: proxyObj?.sticky_hash,
       exit_reputation: proxyObj?.exit_reputation,
@@ -191,7 +191,7 @@ export function writeRealizedSessionMeta(realized: RealizedSessionMeta): void {
       realized_fingerprint: Record<string, unknown>;
       proxy_requested: unknown;
       env_flags: Record<string, string | undefined>;
-      env_all: Record<string, string>;
+      env_names: string[];
       sticky_session_id?: string;
       sticky_hash?: string;
       exit_reputation?: ExitReputation;
@@ -216,8 +216,8 @@ export function writeRealizedSessionMeta(realized: RealizedSessionMeta): void {
       // Required Record (never null); individual flags are undefined when
       // unset — that absence is itself meaningful provenance.
       env_flags: snapshotEnvFlags(),
-      // G15: the COMPLETE runner env (all keys), secret values redacted.
-      env_all: snapshotSanitizedEnvironment(),
+      // G15: the names of every runner env variable, never their values.
+      env_names: environmentNames(),
       // G4: which sticky exit this session pinned to. Undefined for
       // non-sticky / url-form proxies (legitimately — only sticky-capable
       // providers populate it), so it is NOT forced non-null.
@@ -233,8 +233,8 @@ export function writeRealizedSessionMeta(realized: RealizedSessionMeta): void {
       // given (ws.identity is generated then); session_meta.json doubles as
       // the storage backup for non-register runs that never call saveAccount.
       identity: realized.identity,
-      // G9: per-run human-timing seed (required non-null) — makes this run's
-      // mouse/typing jitter reproducible from the row.
+      // Per-run human-timing seed (required): the run's pointer-trace and
+      // typing choices are reproducible from the row.
       timing_seed: realized.timingSeed,
       started_at: new Date().toISOString(),
     };

@@ -19,7 +19,10 @@ import { dashboardProjects } from '../session/projects.mjs';
 
 const INDENT = '  ';
 // Sources land where the caller says; nothing under one person's home is assumed.
-const OUT_DIR = statedText(['OVERLEAF_SOURCES_DIR'], 'the directory the project zips are written to');
+const OUT_DIR = statedText(
+  ['OVERLEAF_SOURCES_DIR'],
+  'the directory the project zips are written to',
+);
 mkdirSync(OUT_DIR, { recursive: true });
 const evidence = overleafEvidence('overleaf_download_all');
 
@@ -30,8 +33,15 @@ try {
   console.log(`[download_all] dashboard projects found: ${projects.length}`);
   const results = [];
   for (const project of projects) {
-    const answer = await s.ctx.request.get(`https://www.overleaf.com/project/${project.id}/download/zip`);
-    const result = { id: project.id, title: project.name, ok: answer.ok(), status: answer.status() };
+    const answer = await s.ctx.request.get(
+      `https://www.overleaf.com/project/${project.id}/download/zip`,
+    );
+    const result = {
+      id: project.id,
+      title: project.name,
+      ok: answer.ok(),
+      status: answer.status(),
+    };
     if (result.ok) {
       const zip = await answer.body();
       writeFileSync(join(OUT_DIR, `${project.id}.zip`), zip);
@@ -40,13 +50,18 @@ try {
     results.push(result);
     console.log(`PROJECT ${JSON.stringify(result)}`);
   }
-  writeFileSync(join(OUT_DIR, '_index.json'), JSON.stringify(results, null, INDENT));
+  writeFileSync(
+    join(OUT_DIR, '_index.json'),
+    JSON.stringify(results, null, INDENT),
+  );
   const refused = results.filter((result) => !result.ok);
   if (refused.length)
     throw new Error(
       `OVERLEAF_DOWNLOAD_REFUSED: ${refused.map((result) => `${result.id} answered HTTP ${result.status}`).join('; ')}; index ${join(OUT_DIR, '_index.json')}`,
     );
-  console.log(`PASS: downloaded ${results.length} project sources into ${OUT_DIR}`);
+  console.log(
+    `PASS: downloaded ${results.length} project sources into ${OUT_DIR}`,
+  );
 } catch (error) {
   console.error(`FAIL: ${error.message}`);
   process.exitCode = exitStatusFor(error);

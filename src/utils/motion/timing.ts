@@ -1,50 +1,50 @@
-/** Shared timing utilities — single source for randomBetween and waitMs. */
+/** The run's human-timing draw: the seeded stream every pointer, typing and jitter choice draws from. */
+import { createHash } from 'node:crypto';
 
-// G9: per-run human-timing RNG. When a seed is set (once, at session start via
-// seedHumanTiming) the human-timing/mouse/typing jitter draws route through a
-// deterministic mulberry32 PRNG so a run's timing is reproducible from the
-// recorded seed. When NO seed is set, humanRandom falls back to Math.random and
-// behavior is byte-for-byte identical to before this change — seeding is opt-in
-// and never alters timing unless a seed has been wired. mulberry32 is a uniform
-// [0,1) generator, statistically equivalent to Math.random for this use.
-let _humanRng: (() => number) | null = null;
-let _humanSeed: number | null = null;
+// Every session seeds this at start (session/wsession/browser-launch.ts,
+// recorded as result.run.timing_seed), so a run's draws are reproducible from
+// that seed. A draw before any session seeded it is refused: drawing from an
+// unseeded source would make the run unreproducible without saying so.
+//
+// The stream is SHA-256 over the seed and a counter, one digest per draw, in
+// the manner of NIST SP 800-90A's Hash_DRBG: each draw is the digest's first
+// 32-bit word.
+let humanSeed: number | null = null;
+let drawn = Number.MIN_SAFE_INTEGER;
 
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+/** The largest 32-bit word, read from a word whose every bit is set. */
+const ALL_ONES = Buffer.alloc(Uint32Array.BYTES_PER_ELEMENT, 'ff', 'hex').readUInt32BE();
 
-/** Set the per-run timing seed. Idempotent-ish: last call wins. */
+/** Set the per-run timing seed; the last call wins and the stream restarts. */
 export function seedHumanTiming(seed: number): void {
-  _humanSeed = seed >>> 0;
-  _humanRng = mulberry32(_humanSeed);
+  [humanSeed] = Uint32Array.of(seed);
+  drawn = Number.MIN_SAFE_INTEGER;
 }
 
-/** The seed in effect for this run, or null if unseeded (Math.random fallback). */
+/** The seed in effect for this run, or null before any session seeded it. */
 export function getHumanTimingSeed(): number | null {
-  return _humanSeed;
+  return humanSeed;
 }
 
-/**
- * Uniform [0,1) draw for human-timing jitter. Uses the seeded PRNG when a seed
- * has been set, else Math.random (unchanged legacy behavior). All human-timing
- * randomness SHOULD route through this so a run is reproducible from its seed.
- */
+/** The next 32-bit word of the run's stream. */
+function nextWord(): number {
+  if (humanSeed === null) {
+    throw new Error(
+      'human timing was drawn before any session seeded it (seedHumanTiming runs at session start); the run would not be reproducible from its recorded seed',
+    );
+  }
+  drawn++;
+  return createHash('sha256').update(`${humanSeed}:${drawn}`).digest().readUInt32BE();
+}
+
+/** A uniform draw over [0, 1] from the run's seeded stream. */
 export function humanRandom(): number {
-  return _humanRng ? _humanRng() : Math.random();
+  return nextWord() / ALL_ONES;
 }
 
-export function randomBetween(min: number, max: number): number {
-  return min + humanRandom() * (max - min);
-}
-
-export function waitMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** A uniform index below `count` from the run's seeded stream. */
+export function humanIndex(count: number): number {
+  if (!Number.isSafeInteger(count) || !(count > Number.MIN_VALUE))
+    throw new Error(`humanIndex needs a whole count of choices, got ${count}`);
+  return nextWord() % count;
 }

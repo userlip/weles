@@ -1,10 +1,11 @@
 /**
- * The reviewed observation trajectory. One file reads a declared origin under
- * a declared dwell budget, on any platform that has a ban detector.
+ * The reviewed observation trajectory. One file reads a declared origin for a
+ * declared number of screens, on any platform that has a ban detector.
  *
  * src/worker/deploy/weles-observation-declaration.json says what a run reads
- * and for how long, admission resolves it before this process exists, and
- * this file spends exactly the budget it was given. Every run writes
+ * and how many screens it scrolls, admission resolves it before this process
+ * exists, and this file scrolls exactly those screens, each after the page
+ * settles, never for a stated time. Every run writes
  * recordings/<platform>_<verb>/ban_signal.json from the platform's ban
  * detector, read and kept by the shared action verdict
  * (`./action/verdict.mjs`), so the worker can detect silent bans. A run that
@@ -24,7 +25,7 @@ import { detectLinkedInBanSignals } from '../../../dist/platforms/linkedin/ban_s
 import { detectDiscordBanSignals } from '../../../dist/platforms/discord/ban_signals.js';
 import { detectGitHubBanSignals } from '../../../dist/platforms/github/ban_signals.js';
 import { detectProductHuntBanSignals } from '../../../dist/platforms/producthunt/ban_signals.js';
-import { humanIdlePause } from '../../../dist/human/mouse.js';
+import { pageSettled } from './page/settled.mjs';
 import { declaredObservation } from './observation.mjs';
 import { handleBrowse } from './runner/handlers.mjs';
 import { checkReachable } from './action/reachable.mjs';
@@ -79,7 +80,9 @@ try {
         reason: `no active ${PLATFORM} account`,
       },
     };
-    throw new Error(`OBSERVATION_ACCOUNT_REQUIRED: no active ${PLATFORM} account`);
+    throw new Error(
+      `OBSERVATION_ACCOUNT_REQUIRED: no active ${PLATFORM} account`,
+    );
   }
   console.log(
     `[benign] ${observed.observation} acct=${acct.username} reads=${observed.reads} origin=${observed.origin}`,
@@ -89,14 +92,12 @@ try {
   s = await WSession.start({ label, proxy: proxyUrl, persona });
   await s.goto(observed.origin);
   checkReachable(s, PLATFORM);
-  // The declared dwell budget: `scrolls` bursts, each followed by an idle read
-  // of the declared length. A budget of no scrolls still spends one idle read,
-  // because a run that navigates and closes at once has not observed anything.
-  const resultValue = await handleBrowse(s, {
-    scrolls: observed.scrolls,
-    dwellMs: observed.dwellMs,
-  });
-  if (!observed.scrolls) await humanIdlePause(observed.dwellMs);
+  // The declared reading: `scrolls` screens, each read once the page has
+  // settled after the wheel. A budget of no scrolls still reads the first
+  // screen once it has settled, because a run that navigates and closes at
+  // once has not observed anything.
+  await pageSettled(s.page);
+  const resultValue = await handleBrowse(s, { scrolls: observed.scrolls });
   banSignal = await verdictAfterAction(s, cfg, resultValue);
   // A verdict that is not healthy after the loop is the run's outcome.
   if (banSignal && !banSignal.healthy)

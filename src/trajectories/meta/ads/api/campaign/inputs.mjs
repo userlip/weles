@@ -45,7 +45,8 @@ export const campaignCreate = (resource) =>
       process.env.CAMPAIGN_LIFETIME_BUDGET_USD ||
         (resource === 'campaign' ? process.env.LIFETIME_BUDGET_USD : undefined),
     ),
-    is_adset_budget_sharing_enabled: process.env.IS_ADSET_BUDGET_SHARING_ENABLED,
+    is_adset_budget_sharing_enabled:
+      process.env.IS_ADSET_BUDGET_SHARING_ENABLED,
   });
 
 export const targeting = () =>

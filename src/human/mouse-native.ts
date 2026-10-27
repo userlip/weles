@@ -1,15 +1,18 @@
-// Native macOS event emission through CGEventPost. OS-queue events retain
-// native movement deltas, timestamps, and subpixel coordinates.
+// Native macOS event emission through CGEventPost (cliclick). OS-queue events
+// retain native movement deltas, timestamps, and subpixel coordinates.
 //
-// This module is the ONLY mouse/keyboard path for humanized atoms.
+// A page coordinate becomes a screen coordinate by the page content's screen
+// origin, measured, never assumed: cliclick puts the OS pointer inside the
+// window, and the page's own pointer event states its screen and client
+// position at once, so their difference is where the content sits on screen.
 
-import { execFileSync, execSync, spawnSync } from 'node:child_process';
-import { randomBetween } from '../utils/motion/timing.js';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { humanRandom } from '../utils/motion/timing.js';
 
+/** Where the page's content area starts on screen, in screen points. */
 export interface NativeOffset {
   winX: number;
   winY: number;
-  chromeY: number;
 }
 
 let nativeAvailable = false;
@@ -17,20 +20,17 @@ let nativeAvailable = false;
 function runCliclick(
   operation: string,
   args: string[],
-  sensitiveText = '',
+  sensitiveText?: string,
 ): void {
   const result = spawnSync('cliclick', args, {
     encoding: 'utf8',
     stdio: 'pipe',
   });
-  if (!result.error && result.status === 0) return;
-  let detail =
-    result.error?.message ?? (result.stderr?.trim() || 'no error output');
-  if (sensitiveText) detail = detail.replaceAll(sensitiveText, '[redacted]');
-  const code =
-    (result.error as NodeJS.ErrnoException | undefined)?.code ?? 'none';
+  if (!result.error && result.signal === null && !result.status) return;
+  const said = result.error ? result.error.message : result.stderr.trim();
+  const detail = sensitiveText ? said.replaceAll(sensitiveText, '[redacted]') : said;
   throw new Error(
-    `native input ${operation} failed: code=${code}, status=${result.status ?? 'none'}, signal=${result.signal ?? 'none'}; ${detail}`,
+    `native input ${operation} failed: error=${JSON.stringify((result.error as NodeJS.ErrnoException | undefined)?.code)}, status=${result.status}, signal=${result.signal}; ${detail}`,
   );
 }
 
@@ -42,12 +42,13 @@ export function assertCliclickAvailable(): void {
 
 // The parent of process `pid` as `ps` reports it; 0 above the first process.
 function parentOf(pid: number): number {
-  return Number(
-    execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], {
-      encoding: 'utf8',
-      stdio: 'pipe',
-    }).trim(),
-  );
+  const answer = execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  }).trim();
+  if (!/^\d+$/.test(answer))
+    throw new Error(`ps answered ${JSON.stringify(answer)} for the parent of ${pid}`);
+  return Number(answer);
 }
 
 function assertNativeInputTargetIsFrontmost(): void {
@@ -86,42 +87,57 @@ function assertNativeInputTargetIsFrontmost(): void {
   );
 }
 
-// Get the browser window's screen position + chrome (title+url+tabs) height
-// by evaluating window.screenX/Y/outerHeight/innerHeight in the page. Hard
-// fails when the page can't return screenX/Y.
+/** The measured content origin of each page, kept for the page's life. */
+const measured = new WeakMap<object, NativeOffset>();
+
+/**
+ * The screen origin of the page's content area. The OS pointer is put at a
+ * point the window's own frame places inside its content (below the toolbar,
+ * within the content's width), and the page's next pointer event answers
+ * screenX - clientX and screenY - clientY: the origin, as the browser itself
+ * maps the two. A page that is not focused and visible is refused.
+ */
 export async function getOffsetFromPage(page: any): Promise<NativeOffset> {
-  const r = await page.evaluate(
-    `(() => ({ sX: window.screenX, sY: window.screenY, iH: window.innerHeight, oH: window.outerHeight, visibility: document.visibilityState, focused: document.hasFocus(), href: location.href }))()`,
+  const known = measured.get(page);
+  if (known) return known;
+  const frame = await page.evaluate(
+    `(() => ({ sX: window.screenX, sY: window.screenY, iW: window.innerWidth, iH: window.innerHeight, oH: window.outerHeight, visibility: document.visibilityState, focused: document.hasFocus(), href: location.href }))()`,
   ); // allow-raw-playwright: implementation file — defines the humanized atom
-  if (!r || typeof r.sX !== 'number') {
+  if (!frame || typeof frame.sX !== 'number' || typeof frame.oH !== 'number') {
     throw new Error(
-      'cannot resolve window offset — humanized atoms require OS-coord translation',
+      'cannot read the window frame (screenX/screenY/innerWidth/innerHeight/outerHeight) of the page native input drives',
     );
   }
   if (
     process.env.WELES_NATIVE_INPUT_ALLOW_UNFOCUSED !== '1' &&
-    (r.visibility !== 'visible' || r.focused !== true)
+    (frame.visibility !== 'visible' || frame.focused !== true)
   ) {
     throw new Error(
-      `native input blocked: target page is not focused and visible (visibility=${r.visibility}, focused=${r.focused}, href=${r.href})`,
+      `native input blocked: target page is not focused and visible (visibility=${frame.visibility}, focused=${frame.focused}, href=${frame.href})`,
     );
   }
-  // Empirical 89px on macOS Chromium — outerHeight-innerHeight returns 80
-  // but captured clientY is 9px off, consistent with chrome=89.
-  return { winX: r.sX, winY: r.sY, chromeY: 89 };
+  assertCliclickAvailable();
+  assertNativeInputTargetIsFrontmost();
+  await page.evaluate(
+    `(() => { delete window.__welesContentOrigin; addEventListener('pointermove', (e) => { window.__welesContentOrigin = { winX: e.screenX - e.clientX, winY: e.screenY - e.clientY }; }, { once: true, capture: true }); })()`,
+  ); // allow-raw-playwright: implementation file — reads the origin the browser maps
+  const probeX = Math.round(frame.sX + frame.iW * humanRandom());
+  const probeY = Math.round(frame.sY + frame.oH - frame.iH * humanRandom());
+  runCliclick('content origin probe', [`m:${probeX},${probeY}`]);
+  const handle = await page.waitForFunction('window.__welesContentOrigin'); // allow-raw-playwright: the page's own answer to the probe
+  const origin = (await handle.jsonValue()) as NativeOffset;
+  measured.set(page, origin);
+  return origin;
 }
 
 function toScreen(
   off: NativeOffset,
   cssX: number,
   cssY: number,
-  jitter = 1,
 ): { sx: number; sy: number } {
   return {
-    sx: Math.round(off.winX + cssX + randomBetween(-jitter, jitter)),
-    sy: Math.round(
-      off.winY + off.chromeY + cssY + randomBetween(-jitter, jitter),
-    ),
+    sx: Math.round(off.winX + cssX),
+    sy: Math.round(off.winY + cssY),
   };
 }
 
@@ -147,7 +163,6 @@ export async function nativeBatchMove(
 ): Promise<void> {
   assertCliclickAvailable();
   assertNativeInputTargetIsFrontmost();
-  if (!points.length) return;
   for (const p of points) {
     const { sx, sy } = toScreen(offset, p.x, p.y);
     runCliclick('pointer waypoint', [`m:${sx},${sy}`]);
@@ -175,39 +190,6 @@ export async function nativeType(text: string): Promise<void> {
   }
 }
 
-/**
- * OS-event keypress. Maps portable key names to keycodes.
- * Supported: 'enter'|'return', 'tab', 'esc'|'escape', 'delete'|'backspace',
- * 'space', 'arrow-down'|'down', 'arrow-up'|'up', 'arrow-left'|'left',
- * 'arrow-right'|'right'. Unknown keys throw.
- */
-export function nativeKeyPress(key: string): void {
-  assertCliclickAvailable();
-  assertNativeInputTargetIsFrontmost();
-  const k = key.toLowerCase();
-  const map: Record<string, string> = {
-    enter: 'return',
-    return: 'return',
-    tab: 'tab',
-    esc: 'esc',
-    escape: 'esc',
-    delete: 'delete',
-    backspace: 'delete',
-    space: 'space',
-    'arrow-down': 'arrow-down',
-    down: 'arrow-down',
-    'arrow-up': 'arrow-up',
-    up: 'arrow-up',
-    'arrow-left': 'arrow-left',
-    left: 'arrow-left',
-    'arrow-right': 'arrow-right',
-    right: 'arrow-right',
-  };
-  const kc = map[k];
-  if (!kc) throw new Error(`nativeKeyPress: unsupported key ${key}`);
-  runCliclick('keypress', [`kp:${kc}`]);
-}
-
 /** Select-all-and-delete via OS event queue. Cmd+A then Delete. */
 export function nativeSelectAllAndDelete(): void {
   assertCliclickAvailable();
@@ -218,22 +200,4 @@ export function nativeSelectAllAndDelete(): void {
     'ku:cmd',
     'kp:delete',
   ]);
-}
-
-export function getWindowOffset(processName = 'Chromium'): NativeOffset {
-  // Default: assume --window-position=0,0 in CHROMIUM_ARGS (browser pinned
-  // to screen top-left). macOS menu bar is 25px tall; Chromium title+url+tabs
-  // add ~85px. Total chromeY = 85. Override via env if unavailable.
-  const envX = parseInt(process.env.WELES_WIN_X ?? '0', 10);
-  const envY = parseInt(process.env.WELES_WIN_Y ?? '0', 10);
-  const envC = parseInt(process.env.WELES_CHROME_Y ?? '85', 10);
-  try {
-    const pos = execSync(
-      `osascript -e 'tell application "System Events" to tell process "${processName}" to get position of window 1' 2>/dev/null`,
-      { encoding: 'utf8' },
-    ).trim();
-    const [winX, winY] = pos.split(',').map((s) => parseInt(s.trim(), 10));
-    if (!isNaN(winX) && !isNaN(winY)) return { winX, winY, chromeY: envC };
-  } catch {}
-  return { winX: envX, winY: envY, chromeY: envC };
 }

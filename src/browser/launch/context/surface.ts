@@ -7,10 +7,7 @@
 import { FingerprintGenerator } from 'fingerprint-generator';
 import type { BrowserName, OperatingSystem } from 'header-generator';
 import { toConfig } from '../../../fingerprint.js';
-import {
-  hostHardware,
-  honestHostEnabled,
-} from '../../../runtime/host_hardware.js';
+import type { HostHardware } from '../../../runtime/host_hardware.js';
 import type { Persona } from '../../persona.js';
 import type { RuntimeFingerprintConfig } from '../support.js';
 import { honestScreenEnabled } from './window.js';
@@ -31,8 +28,10 @@ export function launchFingerprint(input: {
   persona: Persona | undefined;
   userAgent: string | undefined;
   headless: boolean;
+  /** The measured host surface, given only when the target system is the host's. */
+  host?: HostHardware;
 }): RuntimeFingerprintConfig {
-  const { targetOs, browserType, persona, headless } = input;
+  const { targetOs, browserType, persona, headless, host } = input;
   const isChromium = browserType === 'chromium';
   const size = persona?.screen;
   const sample = new FingerprintGenerator({
@@ -92,44 +91,38 @@ export function launchFingerprint(input: {
   }
 
   // Honest host (WELES_HONEST_HOST=0 opts out, e.g. cross-OS personas): when
-  // the target OS is the host's, report the machine's real GPU, cores,
-  // memory, OS version and, with WELES_HONEST_SCREEN, its display.
-  if (honestHostEnabled()) {
-    const hw = hostHardware();
-    if (hw.osFamily === targetOs) {
-      const n = fpConfig.navigator;
-      n.hardwareConcurrency = hw.cores;
-      n.deviceMemory = hw.deviceMemory;
-      if (hw.glRenderer) {
-        fpConfig.webgl = {
-          ...fpConfig.webgl,
-          renderer: hw.glRenderer,
-          unmaskedRenderer: hw.glRenderer,
-          ...(hw.glUnmaskedVendor
-            ? { unmaskedVendor: hw.glUnmaskedVendor }
-            : {}),
-        };
-      }
-      if (hw.screen && honestScreenEnabled(headless)) {
-        const sc = hw.screen;
-        fpConfig.screen = {
-          ...fpConfig.screen,
-          width: sc.width,
-          height: sc.height,
-          availWidth: sc.availWidth,
-          availHeight: sc.availHeight,
-          availTop: sc.availTop,
-          colorDepth: sc.colorDepth,
-          pixelDepth: sc.colorDepth,
-        };
-        fpConfig.window = { ...fpConfig.window, devicePixelRatio: sc.dpr };
-      }
-      // Carried to the cppConfig build for the platformVersion override.
-      fpConfig._honestHost = hw;
-      console.log(
-        `[async_api] honest-host: chip=${JSON.stringify(hw.chip)} cores=${hw.cores} memory=${hw.deviceMemory}GB os=${JSON.stringify(hw.osVersion)}`,
-      );
+  // the target OS is the host's, report what the same browser build measured
+  // on this machine: its GPU strings, cores, memory and, with
+  // WELES_HONEST_SCREEN, its display.
+  if (host) {
+    const n = fpConfig.navigator;
+    n.hardwareConcurrency = host.cores;
+    if (host.deviceMemory !== undefined) n.deviceMemory = host.deviceMemory;
+    fpConfig.webgl = {
+      ...fpConfig.webgl,
+      renderer: host.glRenderer,
+      unmaskedRenderer: host.glRenderer,
+      unmaskedVendor: host.glUnmaskedVendor,
+    };
+    if (host.screen && honestScreenEnabled(headless)) {
+      const sc = host.screen;
+      fpConfig.screen = {
+        ...fpConfig.screen,
+        width: sc.width,
+        height: sc.height,
+        availWidth: sc.availWidth,
+        availHeight: sc.availHeight,
+        availTop: sc.availTop,
+        colorDepth: sc.colorDepth,
+        pixelDepth: sc.colorDepth,
+      };
+      fpConfig.window = { ...fpConfig.window, devicePixelRatio: sc.dpr };
     }
+    // Carried to the cppConfig build for the platformVersion override.
+    fpConfig._honestHost = host;
+    console.log(
+      `[async_api] honest-host: ${browserType} ${host.browserVersion} renderer=${JSON.stringify(host.glRenderer)} cores=${host.cores} memory=${host.deviceMemory} clientHints=${JSON.stringify(host.clientHints)}`,
+    );
   }
   return fpConfig;
 }

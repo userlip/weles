@@ -21,26 +21,41 @@ export async function runTopup(run) {
   const s = await WSession.start({ label: run.label, browser: 'chromium' });
   try {
     await run.signIn(s, code);
-    const response = await s.page.goto(run.fundsUrl, { waitUntil: 'domcontentloaded' });
-    if (!response) throw new Error(`${code}_FUNDS_PAGE_UNANSWERED: ${run.fundsUrl}; nothing was charged`);
+    const response = await s.page.goto(run.fundsUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    if (!response)
+      throw new Error(
+        `${code}_FUNDS_PAGE_UNANSWERED: ${run.fundsUrl}; nothing was charged`,
+      );
     if (!response.ok())
-      throw new Error(`${code}_FUNDS_PAGE_HTTP_ERROR: HTTP ${response.status()} at ${response.url()}; nothing was charged`);
+      throw new Error(
+        `${code}_FUNDS_PAGE_HTTP_ERROR: HTTP ${response.status()} at ${response.url()}; nothing was charged`,
+      );
     await pageSettled(s.page);
     if (run.clearPage) await run.clearPage(s);
     const amount = s.page
-      .locator('input[type="number"], input[name*="amount" i], input[inputmode="numeric"]')
+      .locator(
+        'input[type="number"], input[name*="amount" i], input[inputmode="numeric"]',
+      )
       .filter({ visible: true })
       .first();
     if (!(await amount.isVisible()))
-      throw new Error(`${code}_AMOUNT_FIELD_ABSENT: ${s.page.url()} shows no amount field for $${usd}; nothing was charged`);
+      throw new Error(
+        `${code}_AMOUNT_FIELD_ABSENT: ${s.page.url()} shows no amount field for $${usd}; nothing was charged`,
+      );
     await amount.click();
     await amount.fill(String(usd));
     const kept = await amount.inputValue();
     if (Number(kept) !== usd)
-      throw new Error(`${code}_AMOUNT_NOT_KEPT: the amount field holds "${kept}", not ${usd}; nothing was charged`);
+      throw new Error(
+        `${code}_AMOUNT_NOT_KEPT: the amount field holds "${kept}", not ${usd}; nothing was charged`,
+      );
     console.log(`[trajectory] amount filled: $${usd}`);
     if (!(await findAndClickPayButton(s.page)))
-      throw new Error(`${code}_PAY_CONTROL_ABSENT: ${s.page.url()} offers no pay or checkout button; nothing was charged`);
+      throw new Error(
+        `${code}_PAY_CONTROL_ABSENT: ${s.page.url()} offers no pay or checkout button; nothing was charged`,
+      );
     await pageSettled(s.page);
     console.log(`PASS-CHARGED: checkout initiated, url=${s.page.url()}`);
   } finally {

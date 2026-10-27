@@ -12,7 +12,8 @@ import {
 import { GOOGLE_ACCOUNTS_HOST } from '../../_shared/profile/google_session.mjs';
 
 // Google's pages that offer an account to sign in with.
-const CHOOSER_PATHS = /accountchooser|oauthchooseaccount|identifier|\/signin\/oauth|\/o\/oauth2/;
+const CHOOSER_PATHS =
+  /accountchooser|oauthchooseaccount|identifier|\/signin\/oauth|\/o\/oauth2/;
 const MARKS = {
   account_row: 'gis_account_chooser',
   other_account: 'gis_use_another_account',
@@ -35,7 +36,14 @@ function offeredKind(view) {
   return null;
 }
 
-export function googleChooser({ login, mark, humanFill, humanClickLocator, humanType, step }) {
+export function googleChooser({
+  login,
+  mark,
+  humanFill,
+  humanClickLocator,
+  humanType,
+  step,
+}) {
   let identifierEntered = false;
   const acted = new WeakMap();
 
@@ -54,10 +62,15 @@ export function googleChooser({ login, mark, humanFill, humanClickLocator, human
   /** Act on the chooser `active` shows; answers whether it is a chooser page. */
   async function advance(active) {
     const view = await observeGisPage(active, login.email);
-    if (!view || view.host !== GOOGLE_ACCOUNTS_HOST || !CHOOSER_PATHS.test(view.pathname))
+    if (
+      !view ||
+      view.host !== GOOGLE_ACCOUNTS_HOST ||
+      !CHOOSER_PATHS.test(view.pathname)
+    )
       return false;
     const current = new URL(active.url());
-    if (current.host !== view.host || current.pathname !== view.pathname) return true;
+    if (current.host !== view.host || current.pathname !== view.pathname)
+      return true;
     const kind = offeredKind(view);
     if (!kind) return true;
     const key = `${active.url()}|${kind}`;
@@ -72,7 +85,14 @@ export function googleChooser({ login, mark, humanFill, humanClickLocator, human
         throw error;
       }
       identifierEntered = true;
-      await enterGoogleCredentials({ page: active, login, mark, humanFill, humanClickLocator, humanType });
+      await enterGoogleCredentials({
+        page: active,
+        login,
+        mark,
+        humanFill,
+        humanClickLocator,
+        humanType,
+      });
     } else {
       await clickTagged(active, kind);
       mark(MARKS[kind]);

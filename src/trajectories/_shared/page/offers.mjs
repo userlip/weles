@@ -29,7 +29,13 @@ export async function autocompleteField(page, kind) {
 // The attached frame whose URL has this origin's host, or undefined; a frame
 // whose address does not parse (about:blank before it loads) has no host.
 export function frameFrom(page, host) {
-  return page.frames().find((frame) => URL.canParse(frame.url()) && new URL(frame.url()).hostname.endsWith(host));
+  return page
+    .frames()
+    .find(
+      (frame) =>
+        URL.canParse(frame.url()) &&
+        new URL(frame.url()).hostname.endsWith(host),
+    );
 }
 
 // Clicks the first of these controls that is visible and says which one, or

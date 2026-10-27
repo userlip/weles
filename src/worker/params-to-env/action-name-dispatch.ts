@@ -22,7 +22,9 @@ import { analyticsCatalogActions } from '../params/analytics-actions.js';
 function declaredAnalyticsInputs(action: string): string[] {
   const actions = analyticsCatalogActions();
   if (!Object.hasOwn(actions, action))
-    throw new Error(`analytics action ${action} is declared in no analytics-service catalog`);
+    throw new Error(
+      `analytics action ${action} is declared in no analytics-service catalog`,
+    );
   return actions[action];
 }
 
@@ -60,7 +62,9 @@ export function applyActionNameDispatch(
   // → set PLATFORM + PROVIDER env so cross_login/run.mjs can table-lookup
   // the target URL + OAuth-button regex without one-trajectory-file-per-pair.
   if (trajPath.endsWith('/cross_login/run.mjs')) {
-    const named = /^(?<platform>[a-z]+)_login_via_(?<provider>[a-z]+)$/.exec(action);
+    const named = /^(?<platform>[a-z]+)_login_via_(?<provider>[a-z]+)$/.exec(
+      action,
+    );
     if (named?.groups) {
       env.PLATFORM = named.groups.platform;
       env.PROVIDER = named.groups.provider;

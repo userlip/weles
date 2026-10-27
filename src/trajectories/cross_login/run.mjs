@@ -23,9 +23,21 @@ const LOGIN_PAGES = {
   threads: 'https://www.threads.net/login',
 };
 
-const platform = statedText(['PLATFORM'], 'the platform signed in to (the action name before _login_via_)');
-const provider = statedText(['PROVIDER'], 'the platform whose account signs in (the action name after _login_via_)');
+const platform = statedText(
+  ['PLATFORM'],
+  'the platform signed in to (the action name before _login_via_)',
+);
+const provider = statedText(
+  ['PROVIDER'],
+  'the platform whose account signs in (the action name after _login_via_)',
+);
 if (!Object.hasOwn(LOGIN_PAGES, platform))
-  throw new Error(`CROSS_LOGIN_PLATFORM_UNKNOWN: no login page is known for ${platform}; add it to LOGIN_PAGES`);
+  throw new Error(
+    `CROSS_LOGIN_PLATFORM_UNKNOWN: no login page is known for ${platform}; add it to LOGIN_PAGES`,
+  );
 
-await runCrossLogin({ targetPlatform: platform, targetUrl: LOGIN_PAGES[platform], provider });
+await runCrossLogin({
+  targetPlatform: platform,
+  targetUrl: LOGIN_PAGES[platform],
+  provider,
+});

@@ -25,7 +25,11 @@ import {
   welesManagedCredentialReaderMismatch,
 } from '../scoped-service.js';
 import { welesAcquiredSecretWriterProblem } from '../scoped-service/transport.js';
-import type { AcquireSecretRequest, AcquireSecretResult } from './request.js';
+import type {
+  AcquireSecretRequest,
+  AcquireSecretResult,
+  CredentialOperation,
+} from './request.js';
 import {
   ENTRA_ORIGIN,
   ENTRA_PROVIDER,
@@ -43,37 +47,18 @@ import {
 const REQUEST_ID_LENGTH = createHash('sha256').digest('hex').length;
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-// The trajectory each lifecycle runs for each operation it offers, typed by
-// the queued answer that names it, so an operation the lifecycle does not
-// offer can never be answered as queued.
-type QueuedAnswer = Extract<
-  AcquireSecretResult,
-  { status: 'operation_queued' }
->;
-type MicrosoftQueued = Extract<QueuedAnswer, { provider: 'microsoft' }>;
-type EntraQueued = Extract<QueuedAnswer, { provider: 'microsoft_entra' }>;
-const MICROSOFT_ACTIONS: Readonly<
-  Record<MicrosoftQueued['operation'], MicrosoftQueued['action']>
-> = {
+// The trajectory each lifecycle runs for each operation it offers.
+const MICROSOFT_ACTIONS: Partial<Record<CredentialOperation, string>> = {
   adopt: 'microsoft_adopt_password',
   verify: 'microsoft_verify_password',
   rotate: 'microsoft_reset_password',
 };
-const ENTRA_ACTIONS: Readonly<
-  Record<EntraQueued['operation'], EntraQueued['action']>
-> = {
+const ENTRA_ACTIONS: Partial<Record<CredentialOperation, string>> = {
   adopt: 'microsoft_entra_adopt_password',
   verify: 'microsoft_entra_verify_password',
   rotate: 'microsoft_entra_reset_password',
   reset: 'microsoft_entra_reset_password',
 };
-
-function offers<K extends string>(
-  actions: Readonly<Record<K, string>>,
-  operation: string,
-): operation is K {
-  return Object.hasOwn(actions, operation);
-}
 
 function normalized(value: string | null | undefined): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -119,7 +104,8 @@ export async function queueMicrosoftPasswordOperation(
   enqueue: typeof queueAction = queueAction,
 ): Promise<AcquireSecretResult> {
   const { operation } = request;
-  if (!offers(MICROSOFT_ACTIONS, operation)) {
+  const action = MICROSOFT_ACTIONS[operation];
+  if (!action) {
     return {
       status: 'unsupported_operation',
       secret: def.secret,
@@ -128,7 +114,6 @@ export async function queueMicrosoftPasswordOperation(
       message: `${operation} is not supported for a Microsoft account password`,
     };
   }
-  const action = MICROSOFT_ACTIONS[operation];
   const accountEmail = normalized(request.accountEmail);
   if (!accountEmail || !EMAIL.test(accountEmail)) {
     return {
@@ -199,7 +184,8 @@ export async function queueEntraPasswordOperation(
   enqueue: typeof queueAction = queueAction,
 ): Promise<AcquireSecretResult> {
   const { operation } = request;
-  if (!offers(ENTRA_ACTIONS, operation)) {
+  const action = ENTRA_ACTIONS[operation];
+  if (!action) {
     return {
       status: 'unsupported_operation',
       secret: def.secret,
@@ -208,7 +194,6 @@ export async function queueEntraPasswordOperation(
       message: `${operation} is not supported for a Microsoft Entra directory password`,
     };
   }
-  const action = ENTRA_ACTIONS[operation];
   const accountUpn = normalized(request.accountUpn);
   const tenantId = normalized(request.tenantId);
   const principalObjectId = normalized(request.principalObjectId);

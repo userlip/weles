@@ -195,7 +195,7 @@ export function activeSkarbiecBinary() {
  * interface, as the system reports its interfaces (internal ones are the
  * loopback). A name is not resolved to decide it.
  */
-function loopbackAddress(hostname) {
+export function loopbackAddress(hostname) {
   const address = hostname.replace(/^\[|\]$/g, '');
   return Object.values(networkInterfaces())
     .flat()

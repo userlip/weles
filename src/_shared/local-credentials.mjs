@@ -36,7 +36,9 @@ function readItems(path) {
     metadata = lstatSync(path);
   } catch (error) {
     if (error?.code === 'ENOENT') return {};
-    throw new Error(`WELES_CREDENTIALS_FILE ${path} cannot be read: ${said(error)}`);
+    throw new Error(
+      `WELES_CREDENTIALS_FILE ${path} cannot be read: ${said(error)}`,
+    );
   }
   if (
     !metadata.isFile() ||
@@ -52,10 +54,14 @@ function readItems(path) {
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'));
   } catch (error) {
-    throw new Error(`WELES_CREDENTIALS_FILE ${path} is not JSON: ${said(error)}`);
+    throw new Error(
+      `WELES_CREDENTIALS_FILE ${path} is not JSON: ${said(error)}`,
+    );
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`WELES_CREDENTIALS_FILE ${path} must be an object of items`);
+    throw new Error(
+      `WELES_CREDENTIALS_FILE ${path} must be an object of items`,
+    );
   }
   for (const [item, fields] of Object.entries(parsed)) {
     if (
@@ -88,7 +94,10 @@ export function writeLocalFields(path, item, fields) {
     ...(Object.hasOwn(items, item) ? items[item] : {}),
     ...fields,
   };
-  const staged = join(dirname(path), `.${basename(path)}.${process.pid}.staged`);
+  const staged = join(
+    dirname(path),
+    `.${basename(path)}.${process.pid}.staged`,
+  );
   writeFileSync(staged, JSON.stringify(items, null, INDENT) + '\n', {
     mode: OWNER_ONLY,
     flag: 'wx',

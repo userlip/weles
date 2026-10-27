@@ -40,7 +40,9 @@ await runAction({
     if (await unfollowForm.count()) return `already following ${TARGET_USER}`;
     await followForm.waitFor({ state: 'visible' });
     const submit = followForm
-      .locator('button[type="submit"], button:not([type]), input[type="submit"]')
+      .locator(
+        'button[type="submit"], button:not([type]), input[type="submit"]',
+      )
       .filter({ visible: true })
       .first();
     await submit.waitFor({ state: 'visible' });
@@ -60,7 +62,9 @@ await runAction({
     );
     const responseError = await response.finished();
     if (responseError)
-      throw new Error('GITHUB_FOLLOW_RESPONSE_FAILED', { cause: responseError });
+      throw new Error('GITHUB_FOLLOW_RESPONSE_FAILED', {
+        cause: responseError,
+      });
     if (!response.ok())
       throw new Error(
         `GITHUB_FOLLOW_REFUSED: HTTP ${response.status()} at ${response.url()}`,

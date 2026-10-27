@@ -17,13 +17,22 @@ import { confirmedFill, statedField } from '../page/confirmed-fill.mjs';
 import { fitsField } from '../page/fits.mjs';
 import { shows } from '../page/shows.mjs';
 import { loadAvatarFile } from '../runner/avatar-loader.mjs';
-import { accountCharacter, findAccount, updateAccountMetadata } from '../skarbiec/accounts.mjs';
+import {
+  accountCharacter,
+  findAccount,
+  updateAccountMetadata,
+} from '../skarbiec/accounts.mjs';
 
 /** The account's linked character, refused when it has none. */
 export function linkedCharacter(platform, acct) {
   const character = accountCharacter(findAccount(platform, acct.username));
-  if (!character) throw new Error(`PROFILE_CHARACTER_MISSING: ${platform}/${acct.username} has no linked character`);
-  console.log(`[${platform}-profile] character: ${character.name} (niche=${character.niche})`);
+  if (!character)
+    throw new Error(
+      `PROFILE_CHARACTER_MISSING: ${platform}/${acct.username} has no linked character`,
+    );
+  console.log(
+    `[${platform}-profile] character: ${character.name} (niche=${character.niche})`,
+  );
   return character;
 }
 
@@ -35,10 +44,16 @@ export async function editProfileToCharacter(s, acct, platform, editor) {
   const changed = [];
   for (const [label, target] of Object.entries(targets)) {
     const field = fields[label];
-    if (!(await statedField(field, target, `the ${platform} ${label} field`))) continue;
+    if (!(await statedField(field, target, `the ${platform} ${label} field`)))
+      continue;
     if ((await field.inputValue()) === target) continue;
     await fitsField(field, target, `the ${platform} ${label}`);
-    await confirmedFill(s.page, field, target, `the ${platform} ${label} field`);
+    await confirmedFill(
+      s.page,
+      field,
+      target,
+      `the ${platform} ${label} field`,
+    );
     changed.push(label);
   }
   if (changed.length) {
@@ -46,9 +61,13 @@ export async function editProfileToCharacter(s, acct, platform, editor) {
     const kept = await editor.kept(s.page);
     for (const label of changed)
       if (!shows(String(kept[label]), targets[label]))
-        throw new Error(`PROFILE_NOT_SAVED: ${platform} shows a different ${label} after saving (${String(kept[label]).length} characters)`);
+        throw new Error(
+          `PROFILE_NOT_SAVED: ${platform} shows a different ${label} after saving (${String(kept[label]).length} characters)`,
+        );
   }
-  const [firstImage] = Array.isArray(character.training_images) ? character.training_images : [];
+  const [firstImage] = Array.isArray(character.training_images)
+    ? character.training_images
+    : [];
   const avatarUrl = character.avatar_url ? character.avatar_url : firstImage;
   if (avatarUrl) {
     await editor.uploadAvatar(s.page, await loadAvatarFile(avatarUrl));
@@ -59,5 +78,7 @@ export async function editProfileToCharacter(s, acct, platform, editor) {
     profile_url: editor.profileUrl(acct.username),
     updated_at: new Date().toISOString(),
   });
-  return changed.length ? `${acct.username} profile changed: ${changed.join(', ')}` : `${acct.username} profile already matches the character`;
+  return changed.length
+    ? `${acct.username} profile changed: ${changed.join(', ')}`
+    : `${acct.username} profile already matches the character`;
 }

@@ -32,7 +32,11 @@ export async function summarizeLinkedinPage(page) {
     const visible = (el) => {
       const r = el.getBoundingClientRect();
       const s = window.getComputedStyle(el);
-      return Boolean(r.width && r.height) && s.visibility !== 'hidden' && s.display !== 'none';
+      return (
+        Boolean(r.width && r.height) &&
+        s.visibility !== 'hidden' &&
+        s.display !== 'none'
+      );
     };
     return {
       url,
@@ -97,8 +101,9 @@ export function getLinkedinChallengeSignal(summary) {
   const iframes = Array.isArray(summary.iframes) ? summary.iframes : [];
   const visibleInputs = inputs.filter((input) => input.visible);
   const hasVisibleSignupForm =
-    visibleInputs.some((input) => input.name === 'email-address' || input.type === 'email') &&
-    visibleInputs.some((input) => input.type === 'password');
+    visibleInputs.some(
+      (input) => input.name === 'email-address' || input.type === 'email',
+    ) && visibleInputs.some((input) => input.type === 'password');
   const challengeFrames = iframes
     .filter((frame) => frame.visible && !isDormantInvisibleRecaptcha(frame))
     .map((frame) => String(frame.src));
@@ -106,7 +111,9 @@ export function getLinkedinChallengeSignal(summary) {
     !hasVisibleSignupForm &&
     (address.includes('/checkpoint/challenge') ||
       challengeFrames.some(
-        (src) => src.includes('challengeIframe') || CAPTCHA_FRAME_HOSTS.some((host) => src.includes(host)),
+        (src) =>
+          src.includes('challengeIframe') ||
+          CAPTCHA_FRAME_HOSTS.some((host) => src.includes(host)),
       ))
   )
     return 'challenge_page';
@@ -123,13 +130,17 @@ export async function assertNoLinkedinChallengePage(session, stage) {
   const summary = await summarizeLinkedinPage(session.page);
   const signal = getLinkedinChallengeSignal(summary);
   if (signal)
-    throw new Error(`DETECTION_TRIGGERED: ${signal} stage=${stage} summary=${JSON.stringify(summary)}`);
+    throw new Error(
+      `DETECTION_TRIGGERED: ${signal} stage=${stage} summary=${JSON.stringify(summary)}`,
+    );
   return summary;
 }
 
 /** LinkedIn's session state in the context: its cookie count and whether li_at is set. */
 export async function getLinkedinAuthState(session) {
-  const linkedinCookies = (await session.ctx.cookies()).filter((c) => /linkedin\.com$/.test(c.domain));
+  const linkedinCookies = (await session.ctx.cookies()).filter((c) =>
+    /linkedin\.com$/.test(c.domain),
+  );
   const liAt = linkedinCookies.find((c) => c.name === 'li_at' && c.value);
   return {
     final_url: session.page.url(),

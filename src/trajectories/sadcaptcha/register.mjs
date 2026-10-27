@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { WSession } from '../../../dist/session/wsession.js';
 import { CaptchaSolver } from '../../../dist/captcha/solver.js';
 import { registrationPassword } from '../../../dist/utils/identity/password.js';
-import { humanIdlePause } from '../../../dist/human/mouse.js';
+import { pageSettled } from '../_shared/page/settled.mjs';
 import { writeServiceCredentials } from '../_shared/skarbiec/accounts.mjs';
 
 // SadCaptcha rejects gmail aliases; use a fresh wisentmedia.com mailbox instead.
@@ -19,7 +19,7 @@ const s = await WSession.start({
 });
 try {
   await s.goto('https://www.sadcaptcha.com/register');
-  await humanIdlePause('deliberate');
+  await pageSettled(s.page);
   await s.page.locator('input#username').click();
   await s.page.locator('input#username').pressSequentially(EMAIL);
   await s.page.locator('input#password1').click();
@@ -43,7 +43,7 @@ try {
   console.log('[trajectory] reCAPTCHA token injected');
 
   await s.page.locator('input[type="submit"]').click();
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   console.log(`[trajectory] post-register url=${s.page.url()}`);
 
   if (/\/register/.test(s.page.url())) {
@@ -58,9 +58,7 @@ try {
     password,
   });
   console.log(`PASS: registered ${EMAIL}; credentials persisted to ${item}`);
-} catch (e) {
-  console.log('FAIL:', e.message);
-  process.exitCode = 1;
 } finally {
+  // A failure is thrown on to the runner, which reports it and exits failed.
   await s.close();
 }

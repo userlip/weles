@@ -14,7 +14,10 @@ import { loginUnusualWhales } from './session/login.mjs';
 const ORIGIN = 'https://unusualwhales.com';
 // The page's path, and whether it takes the stated date window.
 const PAGES = {
-  option_flow_alerts: { path: '/option-flow-alerts?ticker_symbol={ticker}', dated: false },
+  option_flow_alerts: {
+    path: '/option-flow-alerts?ticker_symbol={ticker}',
+    dated: false,
+  },
   overview: { path: '/stock/{ticker}/overview', dated: true },
   chart: { path: '/stock/{ticker}/chart', dated: true },
   flow_alerts: { path: '/stock/{ticker}/flow-alerts', dated: true },
@@ -42,7 +45,10 @@ const PAGES = {
 };
 
 function pageUrl(ticker, page) {
-  const url = new URL(PAGES[page].path.replace('{ticker}', encodeURIComponent(ticker)), ORIGIN);
+  const url = new URL(
+    PAGES[page].path.replace('{ticker}', encodeURIComponent(ticker)),
+    ORIGIN,
+  );
   const { START_DATE: start, END_DATE: end } = process.env;
   if (PAGES[page].dated && start) {
     url.searchParams.set('start_date', start);

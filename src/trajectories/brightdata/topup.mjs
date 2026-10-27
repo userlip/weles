@@ -13,6 +13,12 @@ await runTopup({
   signIn: brightdataSignIn,
   fundsUrl: 'https://brightdata.com/cp/billing_flow?type=top_up',
   clearPage: async (s) => {
-    while (await clickOffered(s.page, 'the button that closes or skips a survey or onboarding popup')) await pageSettled(s.page);
+    while (
+      await clickOffered(
+        s.page,
+        'the button that closes or skips a survey or onboarding popup',
+      )
+    )
+      await pageSettled(s.page);
   },
 });

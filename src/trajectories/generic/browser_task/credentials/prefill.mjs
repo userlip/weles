@@ -9,7 +9,11 @@ import { CREDENTIAL_FIELD_ABSENT } from '../../../../../dist/session/wsession-he
  * Fill the prefill entries the page shows, record each in `initialHistory`,
  * leave the rest in the constraints, and answer the fills that landed.
  */
-export async function applyCredentialPrefill(session, constraints, initialHistory) {
+export async function applyCredentialPrefill(
+  session,
+  constraints,
+  initialHistory,
+) {
   const entries = Array.isArray(constraints.credential_prefill)
     ? constraints.credential_prefill
     : [];
@@ -28,8 +32,14 @@ export async function applyCredentialPrefill(session, constraints, initialHistor
       typeof capability !== 'object' ||
       Array.isArray(capability)
     )
-      throw new Error('credential_prefill entry is incomplete: it needs a target, a field_class and a capability');
-    const outcome = await session.fillCredential(target, fieldClass, capability);
+      throw new Error(
+        'credential_prefill entry is incomplete: it needs a target, a field_class and a capability',
+      );
+    const outcome = await session.fillCredential(
+      target,
+      fieldClass,
+      capability,
+    );
     if (outcome === CREDENTIAL_FIELD_ABSENT) {
       pending.push(entry);
       console.log(

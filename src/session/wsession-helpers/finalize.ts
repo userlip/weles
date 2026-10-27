@@ -53,10 +53,16 @@ export async function wsClick(s: WSession, target: string): Promise<string> {
     const selected = await clickSelectorControl(s.page, target);
     if (selected !== null) return selected;
     const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const texts = [new RegExp(`^\\s*${escaped}\\s*$`, 'i'), new RegExp(escaped, 'i')];
+    const texts = [
+      new RegExp(`^\\s*${escaped}\\s*$`, 'i'),
+      new RegExp(escaped, 'i'),
+    ];
     for (const root of [...childFrames(s), s.page]) {
       for (const text of texts) {
-        const control = root.locator(CONTROLS).filter({ hasText: text, visible: true }).first();
+        const control = root
+          .locator(CONTROLS)
+          .filter({ hasText: text, visible: true })
+          .first();
         if (await control.count()) {
           await humanClickLocator(s.page, control);
           return `clicked ${target}`;
@@ -68,7 +74,15 @@ export async function wsClick(s: WSession, target: string): Promise<string> {
       // Finds the control whose text or label is the target (or holds it),
       // across shadow roots, and marks it for a trusted click. The control
       // is described by its whole text, never a cut of it.
-      ({ wanted, mark, selector }: { wanted: string; mark: string; selector: string }) => {
+      ({
+        wanted,
+        mark,
+        selector,
+      }: {
+        wanted: string;
+        mark: string;
+        selector: string;
+      }) => {
         const all = (root: any): any[] => {
           let hits: any[] = Array.from(root.querySelectorAll(selector));
           root.querySelectorAll('*').forEach((el: any) => {
@@ -87,7 +101,9 @@ export async function wsClick(s: WSession, target: string): Promise<string> {
           return Boolean(box.width && box.height) && el.offsetParent !== null;
         });
         const exact = controls.find((el) => words(el) === wanted);
-        const hit = exact ? exact : controls.find((el) => words(el).includes(wanted));
+        const hit = exact
+          ? exact
+          : controls.find((el) => words(el).includes(wanted));
         if (!hit) return null;
         const checkbox = hit.querySelector('input[type="checkbox"]');
         (checkbox ? checkbox : hit).setAttribute('data-weles-click', mark);

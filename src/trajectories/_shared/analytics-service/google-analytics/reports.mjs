@@ -14,7 +14,10 @@ async function openExpectedDashboardSection(s, cfg) {
   if (cfg.showsTagInstructions) {
     await openDataStreamDetail(s);
     await pageSettled(s.page);
-    await clickDescribed(s.page, 'the button that shows the tag installation instructions');
+    await clickDescribed(
+      s.page,
+      'the button that shows the tag installation instructions',
+    );
     await pageSettled(s.page);
   }
 }

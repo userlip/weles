@@ -45,7 +45,10 @@ function listedNames() {
 }
 
 /** The record kinds Weles writes into a credential item's context. */
-const CREDENTIAL_RECORD_KINDS = new Set(['service-credential', 'service-login']);
+const CREDENTIAL_RECORD_KINDS = new Set([
+  'service-credential',
+  'service-login',
+]);
 
 function allCredentialItems() {
   return listedNames()
@@ -150,7 +153,7 @@ export async function patchCredential(id, patch) {
     if (Object.hasOwn(patch, key)) document.context[key] = patch[key];
   }
   document.context.updated_at = new Date().toISOString();
-  skarbiec(['set-json', String(id)], JSON.stringify(document));
+  skarbiec(['set', String(id)], JSON.stringify(document));
   return [rowFromItem(String(id), document)];
 }
 
@@ -176,7 +179,7 @@ export async function upsertCredential(row) {
   // item being written over its fields and context.
   if (!listedNames().includes(id)) {
     skarbiec(
-      ['set-json', id, '--type', 'login'],
+      ['set', id, '--type', 'login'],
       JSON.stringify({
         schema: 'skarbiec.item.v2',
         kind: 'login',
@@ -198,7 +201,7 @@ export async function upsertCredential(row) {
   if (Object.hasOwn(row, 'category')) context.category = row.category;
   if (Object.hasOwn(row, 'metadata')) context.metadata = row.metadata;
   document.context = context;
-  skarbiec(['set-json', id], JSON.stringify(document));
+  skarbiec(['set', id], JSON.stringify(document));
   return [rowFromItem(id, document)];
 }
 

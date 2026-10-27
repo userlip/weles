@@ -10,20 +10,37 @@
 // be a second answer path with a second redaction policy, which is exactly the
 // way a token gets out.
 
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { constants as http } from 'node:http2';
 import { TOKEN, BRAMA_REAUTH_TOKEN, ALLOW_UNAUTH } from './configuration.mjs';
+
+// Whether the header a caller sent is `expected`, compared over equal-length
+// digests so the time taken does not tell a caller how much of a token it
+// guessed. A header that was not sent is no match.
+function headerIs(header, expected) {
+  if (typeof header !== 'string') return false;
+  const digest = (value) => createHash('sha256').update(value).digest();
+  return timingSafeEqual(digest(header), digest(expected));
+}
+
+// Whether the request carries `token` as its bearer or its x-api-key; every
+// Weles facade that takes its own token admits callers through this check.
+export function carriesToken(req, token) {
+  return (
+    headerIs(req.headers.authorization, `Bearer ${token}`) ||
+    headerIs(req.headers['x-api-key'], token)
+  );
+}
 
 function tokenAuthorized(req) {
   if (!TOKEN) return false;
-  if (String(req.headers.authorization || '') === `Bearer ${TOKEN}`)
-    return true;
-  return String(req.headers['x-api-key'] || '') === TOKEN;
+  return carriesToken(req, TOKEN);
 }
 
 export function reauthAuthorized(req) {
   return Boolean(
     BRAMA_REAUTH_TOKEN &&
-      String(req.headers.authorization || '') ===
-        `Bearer ${BRAMA_REAUTH_TOKEN}`,
+      headerIs(req.headers.authorization, `Bearer ${BRAMA_REAUTH_TOKEN}`),
   );
 }
 
@@ -37,64 +54,81 @@ export function json(res, code, obj, { redact = true } = {}) {
   res.end(body);
 }
 
-// Secret-shape redactor (same shapes as the secret-boundary hook): never let a
-// token leave over HTTP. Operates on the serialized form so nested fields count.
+// The middle word of a <service>_<kind>_<value> token.
+const SECRET_KINDS = { secret: true, key: true, token: true, pat: true, api: true, db: true };
+
+// The secret shapes an answer never carries, each with what replaces it:
+// a JSON Web Token (three base64url segments, the first two JSON objects),
+// a PEM private key, a Slack token, an AWS access key id (AKIA or ASIA), and
+// a <service>_<kind>_<value> token whose value mixes letters and digits (an
+// identifier such as account_key_id is not one).
+const SECRET_SHAPES = [
+  [/eyJ[\w-]+\.eyJ[\w-]+\.[\w-]+/g, '[redacted-jwt]'],
+  [
+    /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+    '[redacted-pem]',
+  ],
+  [/xox[baprs]-[A-Za-z\d-]+/g, '[redacted-slack]'],
+  [/\bA[KS]IA(?=[A-Z\d]*\d)[A-Z\d]+\b/g, '[redacted-aws]'],
+  [
+    new RegExp(
+      `\\b[a-z]+_(?:${Object.keys(SECRET_KINDS).join('|')})_(?=[A-Za-z\\d]*\\d)(?=[A-Za-z\\d]*[A-Za-z])[A-Za-z\\d]+`,
+      'gi',
+    ),
+    '[redacted-secret]',
+  ],
+];
+
+// Secret-shape redactor: never let a token leave over HTTP. Operates on the
+// serialized form so nested fields count. A value that cannot be serialized
+// cannot be redacted, so it is the error; it is never answered as it was.
 export function redactSecrets(obj) {
-  let s;
+  let serialized;
   try {
-    s = JSON.stringify(obj);
-  } catch {
-    return obj;
-  }
-  if (!s) return obj;
-  s = s
-    .replace(
-      /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
-      '[redacted-jwt]',
-    )
-    .replace(
-      /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-      '[redacted-pem]',
-    )
-    .replace(/xox[baprs]-[A-Za-z0-9-]{8,}/g, '[redacted-slack]')
-    .replace(/\b(AKIA|ASIA)[0-9A-Z]{16}\b/g, '[redacted-aws]')
-    .replace(
-      /\b[a-z]{1,12}_(secret|key|token|pat|api|db)_[A-Za-z0-9]{12,}/gi,
-      '[redacted-secret]',
+    serialized = JSON.stringify(obj);
+  } catch (error) {
+    throw new Error(
+      `the answer could not be serialized, so it cannot be redacted: ${error.message}`,
     );
-  try {
-    return JSON.parse(s);
-  } catch {
-    return obj;
   }
+  if (serialized === undefined) return obj;
+  const redacted = SECRET_SHAPES.reduce(
+    (text, [shape, replacement]) => text.replace(shape, replacement),
+    serialized,
+  );
+  return JSON.parse(redacted);
 }
 
 export function requireTokenAuthorization(req, res) {
   if (tokenAuthorized(req)) return true;
-  json(res, TOKEN ? 401 : 500, {
-    ok: false,
-    error: TOKEN ? 'unauthorized' : 'missing_WELES_API_TOKEN',
-  });
+  if (TOKEN)
+    json(res, http.HTTP_STATUS_UNAUTHORIZED, { ok: false, error: 'unauthorized' });
+  else
+    json(res, http.HTTP_STATUS_INTERNAL_SERVER_ERROR, {
+      ok: false,
+      error: 'missing_WELES_API_TOKEN',
+    });
   return false;
 }
 
 // The whole request body as JSON. No size is chosen here: every route behind
 // this reader takes a Weles bearer, and what a route accepts is decided by
-// that route's own shape checks.
+// that route's own shape checks. A body that is not JSON is refused with the
+// parser's reason.
 export function readBody(req) {
   return new Promise((resolveBody, reject) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
-      const text = Buffer.concat(chunks).toString('utf8');
+      const text = Buffer.concat(chunks).toString();
       if (!text.trim()) {
         resolveBody({});
         return;
       }
       try {
         resolveBody(JSON.parse(text));
-      } catch (e) {
-        reject(new Error('invalid_json'));
+      } catch (error) {
+        reject(new Error(`invalid_json: ${error.message}`));
       }
     });
     req.on('error', reject);
@@ -107,7 +141,7 @@ export function readText(req) {
   return new Promise((resolveBody, reject) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
-    req.on('end', () => resolveBody(Buffer.concat(chunks).toString('utf8')));
+    req.on('end', () => resolveBody(Buffer.concat(chunks).toString()));
     req.on('error', reject);
   });
 }

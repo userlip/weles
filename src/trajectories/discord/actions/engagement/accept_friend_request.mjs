@@ -13,11 +13,21 @@
 import { runDiscordAction } from '../../../_shared/discord/run.mjs';
 import { readDiscordNoContent } from '../../../_shared/discord/response.mjs';
 import { statedCount } from '../../../_shared/inputs/stated.mjs';
-import { clickDescribed, pageShows } from '../../../_shared/page/judged/seen.mjs';
-import { pageSettled, responseAfterAction } from '../../../_shared/page/settled.mjs';
+import {
+  clickDescribed,
+  pageShows,
+} from '../../../_shared/page/judged/seen.mjs';
+import {
+  pageSettled,
+  responseAfterAction,
+} from '../../../_shared/page/settled.mjs';
 import { updateAccountMetadata } from '../../../_shared/skarbiec/accounts.mjs';
 
-const ACCEPT_LIMIT = statedCount('ACCEPT_LIMIT', 'how many pending friend requests are accepted', 'DISCORD_ACCEPT_LIMIT_INVALID');
+const ACCEPT_LIMIT = statedCount(
+  'ACCEPT_LIMIT',
+  'how many pending friend requests are accepted',
+  'DISCORD_ACCEPT_LIMIT_INVALID',
+);
 const RELATIONSHIP = /^\/api\/v\d+\/users\/@me\/relationships\/(?<id>\d+)$/;
 
 await runDiscordAction({
@@ -29,18 +39,42 @@ await runDiscordAction({
     await pageSettled(s.page);
     const accepted = [];
     while (accepted.length < ACCEPT_LIMIT) {
-      if (!(await pageShows(s.page, 'Does the Pending tab list an incoming friend request with an accept button?'))) break;
+      if (
+        !(await pageShows(
+          s.page,
+          'Does the Pending tab list an incoming friend request with an accept button?',
+        ))
+      )
+        break;
       const answer = await responseAfterAction(
         s.page,
-        (request) => request.method() === 'PUT' && RELATIONSHIP.test(new URL(request.url()).pathname),
-        () => clickDescribed(s.page, 'the accept button of the first incoming friend request'),
+        (request) =>
+          request.method() === 'PUT' &&
+          RELATIONSHIP.test(new URL(request.url()).pathname),
+        () =>
+          clickDescribed(
+            s.page,
+            'the accept button of the first incoming friend request',
+          ),
       );
-      await readDiscordNoContent(answer, 'accept_friend_request', 'DISCORD_ACCEPT');
-      const entry = { target_id: new URL(answer.url()).pathname.match(RELATIONSHIP).groups.id, at: new Date().toISOString() };
+      await readDiscordNoContent(
+        answer,
+        'accept_friend_request',
+        'DISCORD_ACCEPT',
+      );
+      const entry = {
+        target_id: new URL(answer.url()).pathname.match(RELATIONSHIP).groups.id,
+        at: new Date().toISOString(),
+      };
       accepted.push(entry);
       updateAccountMetadata(acct.id, (current) => ({
         ...current,
-        friend_requests_accepted: [...(Array.isArray(current.friend_requests_accepted) ? current.friend_requests_accepted : []), entry],
+        friend_requests_accepted: [
+          ...(Array.isArray(current.friend_requests_accepted)
+            ? current.friend_requests_accepted
+            : []),
+          entry,
+        ],
       }));
       console.log(`[accept_friend] accepted ${entry.target_id}`);
       await pageSettled(s.page);

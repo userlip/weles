@@ -1,79 +1,10 @@
-// Environment signals beyond the navigator surface: the WebRTC leak guard,
-// timezone, plugins, connection, Bluetooth and keyboard presence, and the
-// Intl locale. Loaded right after navigator.js by src/page-init/loader.ts;
-// both read the same __weles and the same window.__welesDefine helper.
-
-// --- WebRTC IP-leak mitigation ---
-// Real Chrome exposes RTCPeerConnection, but on a proxied/automation run STUN
-// can leak the local network IP and sometimes bypass the proxy. We keep the
-// API present (removing it is a bot tell) but strip host/srflx candidates from
-// the SDP and suppress icecandidate events so the probe/anti-bot sees no IPs.
-(function blockWebRTCLeak() {
-  if (typeof RTCPeerConnection === 'undefined') return;
-  try {
-    const Original = RTCPeerConnection;
-    const stripHostSrflx = function (sdp) {
-      if (typeof sdp !== 'string') return sdp;
-      // Remove host and server-reflexive (srflx) candidates. Leave relay/TURN.
-      return sdp.replace(
-        /a=candidate:[^\r\n]+\s+(host|srflx)[^\r\n]*(?:\r\n|\n)/g,
-        '',
-      );
-    };
-    function RTCPeerConnectionShim(configuration) {
-      const pc = new Original(configuration);
-      // Filter createOffer/createAnswer SDP before it reaches the page.
-      const wrap = function (orig) {
-        return function () {
-          const p = orig.apply(pc, arguments);
-          return p.then(function (desc) {
-            if (desc && typeof desc.sdp === 'string')
-              desc.sdp = stripHostSrflx(desc.sdp);
-            return desc;
-          });
-        };
-      };
-      pc.createOffer = wrap(pc.createOffer.bind(pc));
-      pc.createAnswer = wrap(pc.createAnswer.bind(pc));
-      // Filter manually-set local descriptions too.
-      const origSetLocal = pc.setLocalDescription.bind(pc);
-      pc.setLocalDescription = function (desc) {
-        if (desc && typeof desc.sdp === 'string')
-          desc.sdp = stripHostSrflx(desc.sdp);
-        return origSetLocal(desc);
-      };
-      // Suppress icecandidate events — they carry the leaked addresses.
-      const origAddEventListener = pc.addEventListener.bind(pc);
-      pc.addEventListener = function (type, listener, options) {
-        if (type === 'icecandidate') return undefined;
-        return origAddEventListener(type, listener, options);
-      };
-      let userOnIceCandidate = null;
-      Object.defineProperty(pc, 'onicecandidate', {
-        get: function () {
-          return userOnIceCandidate;
-        },
-        set: function (fn) {
-          userOnIceCandidate = typeof fn === 'function' ? fn : null;
-        },
-        configurable: true,
-        enumerable: true,
-      });
-      return pc;
-    }
-    RTCPeerConnectionShim.prototype = Original.prototype;
-    if (window.__welesNativeString)
-      window.__welesNativeString(RTCPeerConnectionShim, 'RTCPeerConnection');
-    Object.defineProperty(window, 'RTCPeerConnection', {
-      value: RTCPeerConnectionShim,
-      configurable: true,
-      writable: true,
-      enumerable: true,
-    });
-  } catch (e) {
-    /* leave native WebRTC */
-  }
-})();
+// Environment signals beyond the navigator surface: timezone, plugins,
+// connection, Bluetooth and keyboard presence, and the Intl locale. Loaded
+// right after navigator.js by src/page-init/loader.ts; both read the same
+// __weles and the same window.__welesDefine helper. The WebRTC leak guard is
+// navigator/webrtc.js, loaded on every launch path. A patch that cannot
+// install itself says so under the page-init failure marker Weles reads
+// (src/page-init/failures.ts).
 
 // --- Timezone ---
 if (__weles.timezone && __weles.timezone.offset !== undefined) {
@@ -113,16 +44,20 @@ if (__weles.timezone && __weles.timezone.offset !== undefined) {
       'PDF Viewer,Chrome PDF Viewer,Chromium PDF Viewer,Microsoft Edge PDF Viewer,WebKit built-in PDF'.split(
         ',',
       );
+    // Each PDF plugin lists the same MIME types, indexed in order with its
+    // length, as Chrome's PluginArray entries do.
+    const mimeTypes = [mt0, mt1];
     const plugins = names.map((name) => {
       const p = Object.create(Plugin.prototype);
       Object.defineProperties(p, {
         name: { value: name, enumerable: true },
         filename: { value: 'internal-pdf-viewer', enumerable: true },
         description: { value: 'Portable Document Format', enumerable: true },
-        length: { value: 2, enumerable: true },
-        0: { value: mt0, enumerable: true },
-        1: { value: mt1, enumerable: true },
+        length: { value: mimeTypes.length, enumerable: true },
       });
+      mimeTypes.forEach((mimeType, index) =>
+        Object.defineProperty(p, index, { value: mimeType, enumerable: true }),
+      );
       return p;
     });
     const arr = Object.create(PluginArray.prototype);
@@ -143,66 +78,54 @@ if (__weles.timezone && __weles.timezone.offset !== undefined) {
       configurable: true,
       enumerable: true,
     });
-  } catch {
-    /* leave native */
+  } catch (error) {
+    console.debug(
+      '__weles_page_init_failure__',
+      JSON.stringify({ patch: 'plugins', error: String((error && error.message) || error) }),
+    );
   }
 })();
 
-// --- navigator.connection downlink/effectiveType/rtt: realistic Chrome values ---
-// PX networkInfo block: weles reports the host's throttled estimate (downlink<2,
-// rtt 100-200); real Chrome on a normal connection reports downlink=10, rtt=50.
-// Override BOTH the NetworkInformation instance AND its prototype because some
-// code paths read getters off the instance directly (and because iframes get a
-// fresh NetworkInformation that inherits from the same prototype).
+// --- navigator.connection: the figures the device profile declares ---
+// The network figures a page reads (downlink, effectiveType, rtt, saveData)
+// come from the generated device's navigator.connection, so they agree with
+// the rest of the emulated device. A profile that declares none leaves the
+// browser's own figures and says so under the page-init failure marker.
 (function patchConnection() {
   if (typeof navigator === 'undefined' || !navigator.connection) return;
+  const declared = __weles.navigator && __weles.navigator.connection;
+  if (!declared || typeof declared !== 'object') {
+    console.debug(
+      '__weles_page_init_failure__',
+      JSON.stringify({ patch: 'connection', error: 'the device profile declares no navigator.connection figures; the browser reports its own' }),
+    );
+    return;
+  }
   const apply = (target) => {
-    const mk = (name, val) => {
-      const g = function () {
-        return val;
+    for (const [name, value] of Object.entries(declared)) {
+      const getter = function () {
+        return value;
       };
       if (window.__welesNativeString)
-        window.__welesNativeString(g, 'get ' + name);
-      return g;
-    };
-    try {
-      Object.defineProperty(target, 'downlink', {
-        get: mk('downlink', 10),
+        window.__welesNativeString(getter, 'get ' + name);
+      Object.defineProperty(target, name, {
+        get: getter,
         configurable: true,
         enumerable: true,
       });
-    } catch {}
-    try {
-      Object.defineProperty(target, 'effectiveType', {
-        get: mk('effectiveType', '4g'),
-        configurable: true,
-        enumerable: true,
-      });
-    } catch {}
-    try {
-      Object.defineProperty(target, 'rtt', {
-        get: mk('rtt', 50),
-        configurable: true,
-        enumerable: true,
-      });
-    } catch {}
-    try {
-      Object.defineProperty(target, 'saveData', {
-        get: mk('saveData', false),
-        configurable: true,
-        enumerable: true,
-      });
-    } catch {}
+    }
   };
-  apply(navigator.connection);
+  // Both the instance and its prototype: some code reads the getters off the
+  // instance, and an iframe's NetworkInformation inherits from the prototype.
   try {
+    apply(navigator.connection);
     apply(Object.getPrototypeOf(navigator.connection));
-  } catch {}
-  // NetworkInformation prototype reachable via constructor too.
-  try {
-    if (typeof NetworkInformation !== 'undefined')
-      apply(NetworkInformation.prototype);
-  } catch {}
+  } catch (error) {
+    console.debug(
+      '__weles_page_init_failure__',
+      JSON.stringify({ patch: 'connection', error: String((error && error.message) || error) }),
+    );
+  }
 })();
 
 // --- navigator.bluetooth / navigator.keyboard stubs ---
@@ -280,8 +203,11 @@ if (__weles.timezone && __weles.timezone.offset !== undefined) {
         enumerable: true,
       });
     }
-  } catch {
-    /* leave native bluetooth/keyboard */
+  } catch (error) {
+    console.debug(
+      '__weles_page_init_failure__',
+      JSON.stringify({ patch: 'bluetooth-keyboard', error: String((error && error.message) || error) }),
+    );
   }
 })();
 

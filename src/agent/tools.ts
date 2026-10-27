@@ -7,9 +7,12 @@
 
 import type { WSession } from '../session/wsession.js';
 import type { IdentityField } from '../session/identity/generated.js';
-import type { CapabilityRef, WelesCapabilityPurpose } from '../utils/capability.js';
+import type {
+  CapabilityRef,
+  WelesCapabilityPurpose,
+} from '../utils/capability.js';
 import { assertNonCredentialInput } from '../utils/capability.js';
-import { enforceBrowserEvidenceToolPolicy } from './browser-evidence-policy.js';
+import { enforceBrowserEvidenceToolPolicy } from './browser-evidence-policy/interactive-control/tool-dispatch.js';
 import { hashDiagnosticValue } from '../session/wsession/run-provenance.js';
 import {
   CAPABILITY_PURPOSES,
@@ -23,7 +26,12 @@ export { BROWSER_TOOLS, DECIDED_ON_LIVE_PAGE } from './tools/declarations.js';
 export type ToolArgs = Record<string, unknown>;
 
 type WaitState = 'attached' | 'visible' | 'hidden' | 'detached';
-const WAIT_STATES: Record<WaitState, true> = { attached: true, visible: true, hidden: true, detached: true };
+const WAIT_STATES: Record<WaitState, true> = {
+  attached: true,
+  visible: true,
+  hidden: true,
+  detached: true,
+};
 /** The locator state wait_for waits for when the call names none, as its declaration says. */
 const DEFAULT_WAIT_STATE: WaitState = 'visible';
 
@@ -46,7 +54,9 @@ function isWaitState(value: string): value is WaitState {
 function stringArg(args: ToolArgs, key: string): string {
   const value = args[key];
   if (typeof value !== 'string')
-    throw new Error(`invalid ${key}: expected a string, received ${value === null ? 'null' : typeof value}`);
+    throw new Error(
+      `invalid ${key}: expected a string, received ${value === null ? 'null' : typeof value}`,
+    );
   return value;
 }
 
@@ -57,7 +67,10 @@ function literalInput(args: ToolArgs, key: string, target?: string): string {
 function waitState(args: ToolArgs): WaitState {
   if (args.state === undefined) return DEFAULT_WAIT_STATE;
   const state = stringArg(args, 'state');
-  if (!isWaitState(state)) throw new Error(`invalid state: ${state} is not one of ${Object.keys(WAIT_STATES).join(', ')}`);
+  if (!isWaitState(state))
+    throw new Error(
+      `invalid state: ${state} is not one of ${Object.keys(WAIT_STATES).join(', ')}`,
+    );
   return state;
 }
 
@@ -66,7 +79,10 @@ function capabilityArg(value: unknown): CapabilityRef {
     !value ||
     typeof value !== 'object' ||
     Array.isArray(value) ||
-    Object.keys(value).some((key) => !['capability_id', 'purpose', 'resource', 'target'].includes(key)) ||
+    Object.keys(value).some(
+      (key) =>
+        !['capability_id', 'purpose', 'resource', 'target'].includes(key),
+    ) ||
     !('capability_id' in value) ||
     typeof value.capability_id !== 'string' ||
     !('purpose' in value) ||
@@ -78,7 +94,8 @@ function capabilityArg(value: unknown): CapabilityRef {
   ) {
     throw new Error('invalid capability reference');
   }
-  if (!isCapabilityPurpose(value.purpose)) throw new Error('invalid capability reference');
+  if (!isCapabilityPurpose(value.purpose))
+    throw new Error('invalid capability reference');
   return {
     capability_id: value.capability_id,
     purpose: value.purpose,
@@ -87,8 +104,16 @@ function capabilityArg(value: unknown): CapabilityRef {
   };
 }
 
-export async function dispatch(session: WSession, tool: string, args: ToolArgs): Promise<string> {
-  const authorization = await enforceBrowserEvidenceToolPolicy(session, tool, args);
+export async function dispatch(
+  session: WSession,
+  tool: string,
+  args: ToolArgs,
+): Promise<string> {
+  const authorization = await enforceBrowserEvidenceToolPolicy(
+    session,
+    tool,
+    args,
+  );
   if (authorization) return authorization.invoke();
   switch (tool) {
     case 'click':
@@ -99,8 +124,13 @@ export async function dispatch(session: WSession, tool: string, args: ToolArgs):
     }
     case 'fill_credential': {
       const fieldClass = stringArg(args, 'field_class');
-      if (!isCredentialFieldClass(fieldClass)) throw new Error('invalid field_class');
-      return session.fillCredential(stringArg(args, 'target'), fieldClass, capabilityArg(args.capability));
+      if (!isCredentialFieldClass(fieldClass))
+        throw new Error('invalid field_class');
+      return session.fillCredential(
+        stringArg(args, 'target'),
+        fieldClass,
+        capabilityArg(args.capability),
+      );
     }
     case 'fill_identity': {
       const field = stringArg(args, 'field');
@@ -109,7 +139,8 @@ export async function dispatch(session: WSession, tool: string, args: ToolArgs):
     }
     case 'store_credential': {
       const fieldClass = stringArg(args, 'field_class');
-      if (fieldClass !== 'token' && fieldClass !== 'api-key') throw new Error('invalid credential storage field_class');
+      if (fieldClass !== 'token' && fieldClass !== 'api-key')
+        throw new Error('invalid credential storage field_class');
       return session.storeCredential(stringArg(args, 'target'), fieldClass);
     }
     case 'focus':
@@ -121,16 +152,27 @@ export async function dispatch(session: WSession, tool: string, args: ToolArgs):
     case 'navigate':
       return session.goto(stringArg(args, 'url'));
     case 'scroll':
-      return session.scroll(stringArg(args, 'direction'), args.amount === undefined ? undefined : Number(args.amount));
+      return session.scroll(
+        stringArg(args, 'direction'),
+        args.amount === undefined ? undefined : Number(args.amount),
+      );
     case 'wait_for':
-      return session.waitFor(stringArg(args, 'selector'), { state: waitState(args) });
+      return session.waitFor(stringArg(args, 'selector'), {
+        state: waitState(args),
+      });
     case 'read':
       return session.read(stringArg(args, 'question'));
     case 'select_option':
-      return session.select(stringArg(args, 'target'), stringArg(args, 'value'));
+      return session.select(
+        stringArg(args, 'target'),
+        stringArg(args, 'value'),
+      );
     case 'set_control': {
       const selector = stringArg(args, 'selector');
-      const value = typeof args.value === 'string' ? assertNonCredentialInput(args.value, selector) : args.value;
+      const value =
+        typeof args.value === 'string'
+          ? assertNonCredentialInput(args.value, selector)
+          : args.value;
       return session.setControl(selector, value, args.checked);
     }
     case 'js_click':
@@ -141,15 +183,22 @@ export async function dispatch(session: WSession, tool: string, args: ToolArgs):
     case 'solve_captcha':
       return session.solveCaptcha();
     case 'check_email':
-      return session.newestMail(stringArg(args, 'email'), stringArg(args, 'sender'));
+      return session.newestMail(
+        stringArg(args, 'email'),
+        stringArg(args, 'sender'),
+      );
     case 'generate_identity': {
-      if (session.identity) return 'generated identity already available; use fill_identity for its fields';
+      if (session.identity)
+        return 'generated identity already available; use fill_identity for its fields';
       const platform = stringArg(args, 'platform');
       const id = await session.generateIdentity(platform);
       return `generated identity ready for fill_identity platform=${platform} username_hash=${hashDiagnosticValue(id.username)}`;
     }
     case 'check_sms':
-      return session.checkSms(stringArg(args, 'service'), stringArg(args, 'country'));
+      return session.checkSms(
+        stringArg(args, 'service'),
+        stringArg(args, 'country'),
+      );
     case 'poll_sms_code':
       return session.textedCode();
     case 'save_account':
@@ -160,6 +209,8 @@ export async function dispatch(session: WSession, tool: string, args: ToolArgs):
         name: args.name === undefined ? undefined : stringArg(args, 'name'),
       });
     default:
-      throw new Error(`UNKNOWN_TOOL: ${tool} is not one of the declared browser tools`);
+      throw new Error(
+        `UNKNOWN_TOOL: ${tool} is not one of the declared browser tools`,
+      );
   }
 }

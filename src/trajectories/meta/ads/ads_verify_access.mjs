@@ -12,7 +12,10 @@ import { WSession } from '../../../../dist/session/wsession.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { shownText } from '../../_shared/page/judged/seen.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
-import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import {
+  keptProfileDir,
+  stableProfilePersona,
+} from '../../_shared/profile/persona.mjs';
 import { profileForCheck } from '../../_shared/profile/clone.mjs';
 import { holdsMetaSession } from '../../_shared/profile/meta_session.mjs';
 import { isLoginUrl } from './session/login_wall.mjs';

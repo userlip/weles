@@ -15,7 +15,10 @@ import {
 import { closeGoogleAdsSession } from './_close_session.mjs';
 import { readScopedLogin } from '../../../_shared/scoped-secrets.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
-import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import {
+  keptProfileDir,
+  stableProfilePersona,
+} from '../../_shared/profile/persona.mjs';
 import {
   holdsGoogleSession,
   onGoogleSignIn,

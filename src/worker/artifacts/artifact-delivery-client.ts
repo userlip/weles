@@ -1,3 +1,5 @@
+import { serviceOrigin } from '../../utils/runtime/service-origin.js';
+import { secretSetting } from '../../utils/runtime/settings.js';
 import {
   normalizeArtifactLocators,
   signedObjectParts,
@@ -10,59 +12,20 @@ import {
   type SignedArtifactResponse,
 } from './artifact-delivery.js';
 
-const MIN_SECRET_BYTES = 32;
-
 export type ArtifactDeliveryClientConfig = {
   baseUrl: string;
   publicBaseUrl: string;
   token: string;
 };
 
-function secureOrigin(raw: string, name: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    throw new Error(`${name} must be a valid URL`);
-  }
-  const loopback =
-    parsed.hostname === 'localhost' ||
-    parsed.hostname === '127.0.0.1' ||
-    parsed.hostname === '::1' ||
-    parsed.hostname === '[::1]';
-  if (
-    parsed.username ||
-    parsed.password ||
-    parsed.search ||
-    parsed.hash ||
-    (parsed.pathname !== '/' && parsed.pathname !== '')
-  ) {
-    throw new Error(
-      `${name} must be an origin without credentials, path, query, or fragment`,
-    );
-  }
-  if (
-    parsed.protocol !== 'https:' &&
-    !(parsed.protocol === 'http:' && loopback)
-  ) {
-    throw new Error(`${name} must use HTTPS, except for loopback HTTP`);
-  }
-  return parsed.origin;
-}
-
 export function loadArtifactDeliveryClientConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): ArtifactDeliveryClientConfig {
-  const baseUrl = String(env.WELES_ARTIFACT_DELIVERY_URL ?? '').trim();
-  const token = String(env.WELES_ARTIFACT_DELIVERY_TOKEN ?? '').trim();
-  if (!baseUrl) throw new Error('missing required WELES_ARTIFACT_DELIVERY_URL');
-  if (!token) throw new Error('missing required WELES_ARTIFACT_DELIVERY_TOKEN');
-  if (Buffer.byteLength(token) < MIN_SECRET_BYTES) {
-    throw new Error(
-      'WELES_ARTIFACT_DELIVERY_TOKEN must contain at least 32 bytes',
-    );
-  }
-  const origin = secureOrigin(baseUrl, 'WELES_ARTIFACT_DELIVERY_URL');
+  const token = secretSetting(env, 'WELES_ARTIFACT_DELIVERY_TOKEN');
+  const origin = serviceOrigin(
+    'WELES_ARTIFACT_DELIVERY_URL',
+    env.WELES_ARTIFACT_DELIVERY_URL,
+  );
   return {
     baseUrl: origin,
     publicBaseUrl: origin,

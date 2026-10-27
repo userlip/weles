@@ -21,13 +21,25 @@ import { persistContext } from './persist.mjs';
 
 /** The symbol and the catalog pages this run is asked for. */
 function marketRequest(site, code, catalog) {
-  const ticker = statedText(['TICKER'], `the symbol ${site} is scraped for`).toUpperCase();
+  const ticker = statedText(
+    ['TICKER'],
+    `the symbol ${site} is scraped for`,
+  ).toUpperCase();
   const pages = process.env.PAGES
-    ? process.env.PAGES.split(',').map((page) => page.trim()).filter(Boolean)
-    : [statedText(['PAGE'], `the ${site} page scraped (or PAGES, comma-separated)`)];
+    ? process.env.PAGES.split(',')
+        .map((page) => page.trim())
+        .filter(Boolean)
+    : [
+        statedText(
+          ['PAGE'],
+          `the ${site} page scraped (or PAGES, comma-separated)`,
+        ),
+      ];
   const unknown = pages.filter((page) => !Object.hasOwn(catalog, page));
   if (unknown.length)
-    throw new Error(`${code}_PAGE_UNKNOWN: ${unknown.join(', ')} not in the page catalog (${Object.keys(catalog).join(', ')})`);
+    throw new Error(
+      `${code}_PAGE_UNKNOWN: ${unknown.join(', ')} not in the page catalog (${Object.keys(catalog).join(', ')})`,
+    );
   return { ticker, pages };
 }
 
@@ -35,9 +47,14 @@ function marketRequest(site, code, catalog) {
 async function captureWholeContent(page, path) {
   const viewport = page.viewportSize();
   const height = await page.evaluate(() =>
-    Math.max(...[document.documentElement, ...document.querySelectorAll('*')].map((node) => node.scrollHeight)),
+    Math.max(
+      ...[document.documentElement, ...document.querySelectorAll('*')].map(
+        (node) => node.scrollHeight,
+      ),
+    ),
   );
-  if (height > viewport.height) await page.setViewportSize({ width: viewport.width, height });
+  if (height > viewport.height)
+    await page.setViewportSize({ width: viewport.width, height });
   await pageSettled(page);
   await page.screenshot({ path });
   if (height > viewport.height) await page.setViewportSize(viewport);
@@ -53,15 +70,24 @@ function readMarketPage(page) {
       title: document.title,
       tables: Array.from(document.querySelectorAll('table'), (table) => ({
         headers: Array.from(table.querySelectorAll('thead th, thead td'), text),
-        rows: Array.from(table.querySelectorAll('tbody tr'), (row) => Array.from(row.querySelectorAll('td, th'), text)),
+        rows: Array.from(table.querySelectorAll('tbody tr'), (row) =>
+          Array.from(row.querySelectorAll('td, th'), text),
+        ),
       })),
       svgSeries: Array.from(document.querySelectorAll('svg'), (svg) => ({
-        textLabels: Array.from(svg.querySelectorAll('text'), text).filter(Boolean),
-        ariaLabels: Array.from(svg.querySelectorAll('[aria-label]'), (node) => node.getAttribute('aria-label')),
+        textLabels: Array.from(svg.querySelectorAll('text'), text).filter(
+          Boolean,
+        ),
+        ariaLabels: Array.from(svg.querySelectorAll('[aria-label]'), (node) =>
+          node.getAttribute('aria-label'),
+        ),
       })),
       highcharts: highcharts
         ? highcharts.filter(Boolean).map((chart) =>
-            chart.series.map((series) => ({ name: series.name, data: series.data.map((point) => ({ x: point.x, y: point.y })) })),
+            chart.series.map((series) => ({
+              name: series.name,
+              data: series.data.map((point) => ({ x: point.x, y: point.y })),
+            })),
           )
         : null,
       bodyText: document.body.innerText,
@@ -80,8 +106,15 @@ function readMarketPage(page) {
  * @param {(page: string) => string} scrape.rowPage the page name the persisted row carries
  */
 export async function runMarketScrape(scrape) {
-  const { ticker, pages } = marketRequest(scrape.site, scrape.code, scrape.catalog);
-  const s = await WSession.start({ label: `${scrape.label}_${ticker}`, proxy: statedProxy(`the ${scrape.site} scrape`) });
+  const { ticker, pages } = marketRequest(
+    scrape.site,
+    scrape.code,
+    scrape.catalog,
+  );
+  const s = await WSession.start({
+    label: `${scrape.label}_${ticker}`,
+    proxy: statedProxy(`the ${scrape.site} scrape`),
+  });
   const results = [];
   try {
     if (scrape.signIn) await scrape.signIn(s);
@@ -91,7 +124,10 @@ export async function runMarketScrape(scrape) {
         console.error(`[${scrape.label}] ${page} -> ${url}`);
         await s.goto(url);
         await pageSettled(s.page);
-        const screenshotPath = join(runRecordingsDir(scrape.label), `${ticker}_${page}.png`);
+        const screenshotPath = join(
+          runRecordingsDir(scrape.label),
+          `${ticker}_${page}.png`,
+        );
         await captureWholeContent(s.page, screenshotPath);
         const data = await readMarketPage(s.page);
         const persisted = await persistContext({
@@ -117,7 +153,9 @@ export async function runMarketScrape(scrape) {
   process.stdout.write(`${JSON.stringify({ ticker, pages, results })}\n`);
   const failed = results.filter((result) => result.error);
   if (failed.length && !process.exitCode) {
-    const error = new Error(`${scrape.code}_PAGES_FAILED: ${failed.map((result) => `${result.page} (${result.error})`).join('; ')}`);
+    const error = new Error(
+      `${scrape.code}_PAGES_FAILED: ${failed.map((result) => `${result.page} (${result.error})`).join('; ')}`,
+    );
     console.error(`FAIL: ${error.message}`);
     process.exitCode = exitStatusFor(error);
   }

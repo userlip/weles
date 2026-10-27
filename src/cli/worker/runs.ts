@@ -33,9 +33,7 @@ const elapsed = new Intl.NumberFormat(undefined, {
 function silence(lastOutputAt: string | null, startedAt: string): string {
   const since = Date.parse(lastOutputAt ? lastOutputAt : startedAt);
   const quiet = elapsed.format(Date.now() - since);
-  return lastOutputAt
-    ? `last wrote ${quiet} ago`
-    : `wrote nothing in ${quiet}`;
+  return lastOutputAt ? `last wrote ${quiet} ago` : `wrote nothing in ${quiet}`;
 }
 
 /** Whether the person was told, and whether the waiting process still runs. */

@@ -6,7 +6,7 @@ import {
   analyzeChallengeOutcome,
   type ChallengeOutcome,
 } from './challenge_outcome.js';
-import { snapshotSanitizedEnvironment } from '../../utils/sanitize-env.js';
+import { environmentNames } from '../../utils/sanitize-env.js';
 import { recordingsBase } from '../../session/run-recordings.js';
 
 type JsonRead = { value: any | null; failure: string | null };
@@ -23,7 +23,10 @@ function unanalysed(error: unknown): {
   failure: string;
 } {
   const cause = error instanceof Error ? error.message : String(error);
-  return { outcome: null, failure: `session.har could not be analysed: ${cause}` };
+  return {
+    outcome: null,
+    failure: `session.har could not be analysed: ${cause}`,
+  };
 }
 
 // Artifacts live under recordings/<run_uuid>/ across varying sub-action/label
@@ -107,10 +110,25 @@ export async function readChallengeOutcome(
   }
 }
 
+/**
+ * The environment variable names a run recorded: its env_names, or the names
+ * of an older envelope's env_all (whose values are never carried on), or
+ * none when it recorded neither.
+ */
+function recordedEnvironmentNames(m: Record<string, unknown>): string[] {
+  if (Array.isArray(m.env_names)) return m.env_names.filter((name): name is string => typeof name === 'string');
+  const recorded = m.env_all;
+  if (recorded && typeof recorded === 'object' && !Array.isArray(recorded)) {
+    return environmentNames(recorded as Record<string, string | undefined>);
+  }
+  return [];
+}
+
 // Build the rich result.session (+ identity + run) from session_meta.json /
-// proxy_preflight.json written by WSession. Falls back to a meta_missing
-// envelope (requested proxy + full env) when the run died before any session
-// existed — so a run is never a black hole. Mirrors the worker importer exactly.
+// proxy_preflight.json written by WSession. A run that died before any
+// session existed is answered as meta_missing (or meta_unreadable) with the
+// proxy it requested — so a run is never a black hole. Mirrors the worker
+// importer exactly.
 export async function importRunProvenance(
   runId: string,
   params?: Record<string, unknown>,
@@ -132,11 +150,7 @@ export async function importRunProvenance(
       realized_fingerprint: m.realized_fingerprint,
       proxy_requested: m.proxy_requested,
       env_flags: m.env_flags,
-      env_all: snapshotSanitizedEnvironment(
-        m.env_all && typeof m.env_all === 'object'
-          ? (m.env_all as Record<string, string | undefined>)
-          : {},
-      ),
+      env_names: recordedEnvironmentNames(m),
       sticky_session_id: m.sticky_session_id,
       sticky_hash: m.sticky_hash,
       exit_reputation: m.exit_reputation,
@@ -153,7 +167,6 @@ export async function importRunProvenance(
         : { meta_missing: true }),
       proxy_requested: (params as Record<string, unknown> | undefined)
         ?.proxy_url_override,
-      env_all: snapshotSanitizedEnvironment(),
     };
   }
   const preflight = await readJsonInRun(runId, 'proxy_preflight.json');

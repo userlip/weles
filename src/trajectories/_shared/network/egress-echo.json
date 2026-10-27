@@ -1,0 +1,4 @@
+{
+  "description": "The echo service every Weles exit check asks for the public address its traffic leaves from, and the host a proxy tunnel is tested against when no platform host is declared.",
+  "url": "https://api.ipify.org"
+}

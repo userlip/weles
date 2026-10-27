@@ -22,7 +22,13 @@ const { values } = parseArgs({
 });
 const session = { resolveEnv: (value) => value };
 try {
-  for (const name of ['skrzynka', 'organization', 'recipient', 'sender', 'code'])
+  for (const name of [
+    'skrzynka',
+    'organization',
+    'recipient',
+    'sender',
+    'code',
+  ])
     assert.ok(values[name]?.trim(), `--${name} is required`);
   const stored = JSON.parse(
     command(values.skrzynka, [
@@ -40,7 +46,9 @@ try {
     stored.some((message) => message.body_text.includes(values.code)),
     `Skrzynka holds no message to ${values.recipient} carrying the fixture code`,
   );
-  const { wsNewestMail } = await import('../../dist/session/wsession-helpers/close/account_record.js');
+  const { wsNewestMail } = await import(
+    '../../dist/session/wsession-helpers/close/account_record.js'
+  );
   process.env.WELES_SKRZYNKA_BIN = values.skrzynka;
 
   delete process.env.WELES_SKRZYNKA_ORGANIZATION;
@@ -54,8 +62,14 @@ try {
   const read = await wsNewestMail(session, values.recipient, values.sender);
   report.operations.push({ check_email: 'stored', answer: read });
   const [newest] = stored;
-  assert.ok(read.includes(`Subject: ${newest.subject}`), 'check_email answers the newest mail with its subject');
-  assert.ok(read.includes(values.code), 'check_email answers the mail text that carries the code');
+  assert.ok(
+    read.includes(`Subject: ${newest.subject}`),
+    'check_email answers the newest mail with its subject',
+  );
+  assert.ok(
+    read.includes(values.code),
+    'check_email answers the mail text that carries the code',
+  );
 
   report.status = 'passed';
 } catch (error) {

@@ -17,9 +17,7 @@ let admitted = false;
 function required(name) {
   const value = process.env[name]?.trim();
   if (!value)
-    throw new Error(
-      `${name} is required for the isolated provider journey`,
-    );
+    throw new Error(`${name} is required for the isolated provider journey`);
   return value;
 }
 
@@ -27,7 +25,9 @@ function fixture(name) {
   const path = realpathSync(required(name));
   const allowed = `${realpathSync(join(root, 'build/real-tests'))}${sep}`;
   if (!path.startsWith(allowed))
-    throw new Error(`${name} must be an isolated vault under build/real-tests/`);
+    throw new Error(
+      `${name} must be an isolated vault under build/real-tests/`,
+    );
   return path;
 }
 
@@ -105,7 +105,10 @@ try {
   report.skarbiec_binary_sha256 = createHash('sha256')
     .update(readFileSync(skarbiec))
     .digest('hex');
-  report.fixtures = { refusal_vault: refusalVault, success_vault: successVault };
+  report.fixtures = {
+    refusal_vault: refusalVault,
+    success_vault: successVault,
+  };
   admitted = true;
 
   for (const [source, destination, entry] of [
@@ -138,7 +141,8 @@ try {
       `${account.platform} fixture must have real email and password`,
     );
     assert.ok(
-      Array.isArray(account.metadata.cookies) && account.metadata.cookies.length,
+      Array.isArray(account.metadata.cookies) &&
+        account.metadata.cookies.length,
       `${account.platform} fixture must have a real authenticated session`,
     );
   }

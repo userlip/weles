@@ -3,7 +3,10 @@
 // Center link, found by it from its description
 // (`_shared/page/judged/seen.mjs`).
 import { pageSettled } from '../../../_shared/page/settled.mjs';
-import { clickDescribed, shownText } from '../../../_shared/page/judged/seen.mjs';
+import {
+  clickDescribed,
+  shownText,
+} from '../../../_shared/page/judged/seen.mjs';
 import { statedPhone } from './settings.mjs';
 
 /**

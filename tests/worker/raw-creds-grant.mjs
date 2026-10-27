@@ -36,7 +36,10 @@ const root = join('build', 'real-tests', 'worker', `raw-creds-${stamp}`);
 mkdirSync(root, { recursive: true });
 const report = join(root, 'report.txt');
 const revision = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
-writeFileSync(report, `revision: ${revision.stdout.trim()}\nendpoint: ${base.origin}\n`);
+writeFileSync(
+  report,
+  `revision: ${revision.stdout.trim()}\nendpoint: ${base.origin}\n`,
+);
 
 async function exchange(method, path, { authorized, body }) {
   const headers = { 'content-type': 'application/json' };

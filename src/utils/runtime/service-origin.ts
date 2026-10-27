@@ -3,9 +3,16 @@
 // fragment. One check for every setting that names such an origin.
 import { networkInterfaces } from 'node:os';
 
-/** Whether `hostname` is this machine's own loopback: localhost or an address of an internal interface. */
+/** The name reserved for the loopback interface (RFC 6761, section 6.3): https://www.rfc-editor.org/rfc/rfc6761#section-6.3 */
+const LOOPBACK_NAME = 'localhost';
+
+/**
+ * Whether `hostname` is this machine's own loopback: the reserved name, or an
+ * address of an interface the system marks internal. The one judge every
+ * Weles setting asks, so no module keeps its own list of loopback spellings.
+ */
 export function loopbackHost(hostname: string): boolean {
-  if (hostname === 'localhost') return true;
+  if (hostname === LOOPBACK_NAME) return true;
   const address = hostname.replace(/^\[(?<inner>.*)\]$/, '$<inner>');
   return Object.values(networkInterfaces()).some((entries) =>
     entries?.some((entry) => entry.internal && entry.address === address),

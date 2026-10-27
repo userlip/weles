@@ -76,7 +76,9 @@ const REQUEST_TABS = [
   { tab: 'completed', holds: 'completed requests' },
 ];
 
-const legacyRequests = new URL('https://business.facebook.com/settings/requests');
+const legacyRequests = new URL(
+  'https://business.facebook.com/settings/requests',
+);
 legacyRequests.searchParams.set('business_id', BUSINESS_ID);
 const pendingAdAccounts = new URL(businessSettingsUrl('ad_accounts/'));
 pendingAdAccounts.searchParams.set('selected_asset_type', 'ad-account');

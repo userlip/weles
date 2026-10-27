@@ -5,12 +5,12 @@
  * when nothing was captured.
  */
 export async function screenshotIfPossible(s, label) {
-  try {
-    return await s.screenshot(label);
-  } catch (error) {
-    console.log(
-      `[screenshot] ${label} not captured: ${String(error?.message ?? error)}`,
-    );
-    return false;
-  }
+  const [capture] = await Promise.allSettled([s.screenshot(label)]);
+  if (capture.status === 'fulfilled') return capture.value;
+  const cause =
+    capture.reason instanceof Error
+      ? capture.reason.message
+      : String(capture.reason);
+  console.log(`[screenshot] ${label} not captured: ${cause}`);
+  return false;
 }

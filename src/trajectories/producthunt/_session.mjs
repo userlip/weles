@@ -16,41 +16,67 @@ import {
 import { answerOAuthConsent } from '../_shared/oauth/consent.mjs';
 import { clickDescribed, clickOffered } from '../_shared/page/judged/seen.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
-import { findAccount, listAccounts, updateAccountMetadata } from '../_shared/skarbiec/accounts.mjs';
+import {
+  findAccount,
+  listAccounts,
+  updateAccountMetadata,
+} from '../_shared/skarbiec/accounts.mjs';
 
 const HOME = 'https://www.producthunt.com/';
 const HANDLE_PATH = /^\/@(?<handle>[^/?#]+)/;
-const hasCookies = (account) => Array.isArray(account.metadata.cookies) && account.metadata.cookies.length;
+const hasCookies = (account) =>
+  Array.isArray(account.metadata.cookies) && account.metadata.cookies.length;
 
 /** An X account with cookies that no Product Hunt account is linked to yet; refused when there is none. */
 export async function findUsableTwitterAccount() {
   const linked = new Set();
   for (const account of listAccounts('producthunt')) {
-    if (account.metadata.linked_twitter_username) linked.add(account.metadata.linked_twitter_username.toLowerCase());
+    if (account.metadata.linked_twitter_username)
+      linked.add(account.metadata.linked_twitter_username.toLowerCase());
     // Accounts recorded before the link was kept carry the X name as their own.
     linked.add(account.username.toLowerCase());
   }
-  const free = listAccounts('twitter').find((account) => hasCookies(account) && !linked.has(account.username.toLowerCase()));
-  if (!free) throw new Error('PRODUCTHUNT_NO_FREE_X_ACCOUNT: every X account with cookies is already linked to a Product Hunt account');
+  const free = listAccounts('twitter').find(
+    (account) =>
+      hasCookies(account) && !linked.has(account.username.toLowerCase()),
+  );
+  if (!free)
+    throw new Error(
+      'PRODUCTHUNT_NO_FREE_X_ACCOUNT: every X account with cookies is already linked to a Product Hunt account',
+    );
   return free;
 }
 
 /** The X account `phAcct` was linked with; refused when the link or the account is missing. */
 export function linkedTwitterAccount(phAcct) {
   const name = phAcct.metadata.linked_twitter_username;
-  if (!name) throw new Error(`PRODUCTHUNT_X_LINK_MISSING: Product Hunt account ${phAcct.username} records no linked X account`);
+  if (!name)
+    throw new Error(
+      `PRODUCTHUNT_X_LINK_MISSING: Product Hunt account ${phAcct.username} records no linked X account`,
+    );
   const twitter = findAccount('twitter', name);
-  if (!twitter) throw new Error(`PRODUCTHUNT_X_ACCOUNT_MISSING: Product Hunt account ${phAcct.username} is linked to X ${name}, which Skarbiec does not hold`);
-  if (!hasCookies(twitter)) throw new Error(`PRODUCTHUNT_X_COOKIES_MISSING: X account ${name} holds no cookies to sign in with`);
+  if (!twitter)
+    throw new Error(
+      `PRODUCTHUNT_X_ACCOUNT_MISSING: Product Hunt account ${phAcct.username} is linked to X ${name}, which Skarbiec does not hold`,
+    );
+  if (!hasCookies(twitter))
+    throw new Error(
+      `PRODUCTHUNT_X_COOKIES_MISSING: X account ${name} holds no cookies to sign in with`,
+    );
   return twitter;
 }
 
 /** Records on the Product Hunt account which X account it signed up through. */
 export async function stampLinkedTwitter(phUsername, twUsername) {
   const account = findAccount('producthunt', phUsername);
-  if (!account) throw new Error(`cannot link X ${twUsername}: Product Hunt account ${phUsername} was not saved`);
+  if (!account)
+    throw new Error(
+      `cannot link X ${twUsername}: Product Hunt account ${phUsername} was not saved`,
+    );
   updateAccountMetadata(account.id, { linked_twitter_username: twUsername });
-  console.log(`[ph] stamped linked_twitter_username="${twUsername}" on ${account.id}`);
+  console.log(
+    `[ph] stamped linked_twitter_username="${twUsername}" on ${account.id}`,
+  );
 }
 
 /** Signs `s` in to Product Hunt through the X account `twitter`. */
@@ -60,14 +86,29 @@ export async function signInThroughX(s, twitter) {
   await s.goto(HOME);
   await pageSettled(s.page);
   await clickOffered(s.page, "the button that opens Product Hunt's sign-in");
-  await clickDescribed(s.page, 'the button that signs in with X (Twitter), not Google or Apple');
+  await clickDescribed(
+    s.page,
+    'the button that signs in with X (Twitter), not Google or Apple',
+  );
   await pageSettled(s.page);
   await answerOAuthConsent(s.page);
   // Back on Product Hunt once past its own OAuth callback route.
   const onProductHunt = onHost(new URL(HOME).hostname.replace(/^www\./, ''));
-  await waitForNavBackTo(s.page, (url) => onProductHunt(url) && !url.pathname.startsWith('/auth/'));
-  if (!(await clearReCaptchaGate(s, new CaptchaSolver(), '/captcha_verification', HOME)))
-    throw new Error(`PRODUCTHUNT_CAPTCHA_GATE: the captcha after signing in through X ${twitter.username} was not cleared`);
+  await waitForNavBackTo(
+    s.page,
+    (url) => onProductHunt(url) && !url.pathname.startsWith('/auth/'),
+  );
+  if (
+    !(await clearReCaptchaGate(
+      s,
+      new CaptchaSolver(),
+      '/captcha_verification',
+      HOME,
+    ))
+  )
+    throw new Error(
+      `PRODUCTHUNT_CAPTCHA_GATE: the captcha after signing in through X ${twitter.username} was not cleared`,
+    );
 }
 
 /** Signs the existing Product Hunt account `phAcct` in again, through the X account it is linked with. */
@@ -82,16 +123,21 @@ export async function loginViaTwitter(s, phAcct) {
  * Refused, with both observations, when neither names one.
  */
 export async function extractPhHandle(s) {
-  const answer = await s.ctx.request.post('https://www.producthunt.com/frontend/graphql', {
-    headers: { 'content-type': 'application/json' },
-    data: JSON.stringify({ query: 'query Me { user { username } }' }),
-  });
+  const answer = await s.ctx.request.post(
+    'https://www.producthunt.com/frontend/graphql',
+    {
+      headers: { 'content-type': 'application/json' },
+      data: JSON.stringify({ query: 'query Me { user { username } }' }),
+    },
+  );
   const body = answer.ok() ? await answer.json() : null;
-  const handle = body && body.data && body.data.user ? body.data.user.username : null;
+  const handle =
+    body && body.data && body.data.user ? body.data.user.username : null;
   if (handle) return handle;
   await s.goto('https://www.producthunt.com/my/profile');
   await pageSettled(s.page);
-  const redirected = new URL(s.page.url()).pathname.match(HANDLE_PATH)?.groups.handle;
+  const redirected = new URL(s.page.url()).pathname.match(HANDLE_PATH)?.groups
+    .handle;
   if (redirected) return redirected;
   throw new Error(
     `PRODUCTHUNT_HANDLE_UNREAD: the Me query answered ${answer.status()} ${JSON.stringify(body)}, and /my/profile led to ${s.page.url()}`,

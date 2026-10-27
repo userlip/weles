@@ -8,7 +8,10 @@
 import { WSession } from '../../../../dist/session/wsession.js';
 import { pageCondition } from '../../_shared/page/settled.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
-import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import {
+  keptProfileDir,
+  stableProfilePersona,
+} from '../../_shared/profile/persona.mjs';
 import { bringBrowserToFront } from '../../_shared/action/window.mjs';
 import { recordPageState } from '../../_shared/diagnostics/page_state.mjs';
 

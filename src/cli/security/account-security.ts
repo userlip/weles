@@ -1,6 +1,6 @@
 import type { ParsedCli } from '../../cli.js';
 import { accountSecurityRun } from '../../runtime/api/account-security.js';
-import { printAnswer, UsageError } from '../usage.js';
+import { FAILURE_STATUS, printAnswer, UsageError } from '../usage.js';
 
 // The identity provider whose account security is read is an argument, and
 // google is the one implemented. Reading a run back needs only its id.
@@ -18,7 +18,7 @@ export async function runAccountSecurity(parsed: ParsedCli): Promise<void> {
     )
   ) {
     throw new UsageError(
-      'account-security accepts --provider with --login-role, or --run; it cannot enable, disable or enrol 2FA',
+      'security accepts --provider with --login-role, or --run; it cannot enable, disable or enrol 2FA',
     );
   }
   const loginRole = parsed.options['login-role'];
@@ -39,7 +39,7 @@ export async function runAccountSecurity(parsed: ParsedCli): Promise<void> {
   }
   if (runId === undefined && parsed.options.provider !== PROVIDER) {
     throw new UsageError(
-      `account-security needs --provider naming the identity provider whose account it reads; Weles reads ${PROVIDER}`,
+      `security needs --provider naming the identity provider whose account it reads; Weles reads ${PROVIDER}`,
     );
   }
   const row = await accountSecurityRun(
@@ -51,5 +51,5 @@ export async function runAccountSecurity(parsed: ParsedCli): Promise<void> {
     row.error ||
     (row.completed_at && !row.result)
   )
-    process.exitCode = 1;
+    process.exitCode = FAILURE_STATUS;
 }

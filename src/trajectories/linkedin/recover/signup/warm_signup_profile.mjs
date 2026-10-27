@@ -9,10 +9,7 @@
  * WELES_HEADLESS switch.
  */
 import { WSession } from '../../../../../dist/session/wsession.js';
-import {
-  humanIdlePause,
-  humanScrollPage,
-} from '../../../../../dist/human/mouse.js';
+import { humanScrollPage } from '../../../../../dist/human/mouse.js';
 import { runRecordingsDir } from '../../../../../dist/session/run-recordings.js';
 import { exitStatusFor } from '../../../../../dist/cli/usage.js';
 import { runOutputPath } from '#run-output';
@@ -144,7 +141,6 @@ try {
         return `warmed ${s.page.url()}`;
       });
       await humanScrollPage(s.page, 'down');
-      await humanIdlePause('deliberate');
       transitions.push(await s.page.evaluate(visibleSummaryScript, stage));
     } catch (e) {
       transitions.push({ stage, url, error: causeOf(e) });
@@ -159,7 +155,6 @@ try {
     return `signup ${s.page.url()}`;
   });
   await humanScrollPage(s.page, 'down');
-  await humanIdlePause('deliberate');
   const signup = await s.page.evaluate(visibleSummaryScript, 'signup_landing');
 
   const storage = await s.ctx.storageState();

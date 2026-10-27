@@ -11,7 +11,7 @@
  * session. A failure is thrown. The steps it is made of live in ./register/.
  */
 import { WSession } from '../../../dist/session/wsession.js';
-import { humanIdlePause } from '../../../dist/human/mouse.js';
+import { pageSettled } from '../_shared/page/settled.mjs';
 import {
   assertLinkedinDedicatedIspProxy,
   assertLinkedinProxyStable,
@@ -37,9 +37,15 @@ import {
   warmManifest,
   warmProfileDir,
 } from './register/run_request.mjs';
-import { enterLinkedinSignup, prewarmLinkedinGuestSession } from './register/signup_entry.mjs';
+import {
+  enterLinkedinSignup,
+  prewarmLinkedinGuestSession,
+} from './register/signup_entry.mjs';
 import { hashValue, writeSubmitDiagnostics } from './register/diagnostics.mjs';
-import { linkedinFailureReasons, loadProxyPreflightSummary } from './register/refusal.mjs';
+import {
+  linkedinFailureReasons,
+  loadProxyPreflightSummary,
+} from './register/refusal.mjs';
 import { createLinkedinAccount } from './register/account_creation.mjs';
 
 const LABEL = 'linkedin_register';
@@ -69,16 +75,23 @@ function recordStage(stage, data) {
 
 console.log(`[register] proxy request: ${safeRequestedProxy(requestedProxy)}`);
 console.log(`[register] entry url: ${requestedEntryUrl}`);
-if (guestPrewarmUrls.length) console.log(`[register] guest prewarm urls: ${guestPrewarmUrls.length}`);
-if (warmProfileDir) console.log(`[register] warm profile dir: ${warmProfileDir}`);
-if (warmManifest) console.log('[register] warm manifest loaded: persona+proxy replay enabled');
+if (guestPrewarmUrls.length)
+  console.log(`[register] guest prewarm urls: ${guestPrewarmUrls.length}`);
+if (warmProfileDir)
+  console.log(`[register] warm profile dir: ${warmProfileDir}`);
+if (warmManifest)
+  console.log('[register] warm manifest loaded: persona+proxy replay enabled');
 
 let verdict;
 let failure;
 try {
-  recordStage('proxy_request_received', { requested_proxy: safeRequestedProxy(requestedProxy) });
+  recordStage('proxy_request_received', {
+    requested_proxy: safeRequestedProxy(requestedProxy),
+  });
   assertLinkedinRegisterProxyRequest(requestedProxy);
-  recordStage('proxy_request_validated', { requested_proxy: safeRequestedProxy(requestedProxy) });
+  recordStage('proxy_request_validated', {
+    requested_proxy: safeRequestedProxy(requestedProxy),
+  });
   s = await WSession.start({
     label: LABEL,
     proxy: sessionProxy,
@@ -122,12 +135,21 @@ try {
     });
     console.log('[register] LINKEDIN_REGISTER_STOP_AFTER_SIGNUP_READY reached');
   } else {
-    await humanIdlePause('deliberate');
-    proxyWatch.expectedExitIp = await assertLinkedinProxyStable(s, 'after_goto', proxyWatch.expectedExitIp);
+    await pageSettled(s.page);
+    proxyWatch.expectedExitIp = await assertLinkedinProxyStable(
+      s,
+      'after_goto',
+      proxyWatch.expectedExitIp,
+    );
     recordStage('proxy_stable_after_goto');
     await assertNoLinkedinChallengePage(s, 'after_goto');
     recordStage('no_challenge_after_goto');
-    const authState = await createLinkedinAccount({ session: s, identity: id, recordStage, proxyWatch });
+    const authState = await createLinkedinAccount({
+      session: s,
+      identity: id,
+      recordStage,
+      proxyWatch,
+    });
     recordStage('pass');
     verdict = {
       signal: 'healthy',
@@ -137,7 +159,11 @@ try {
         email_hash: hashValue(id.email),
         final_url: s.page.url(),
         auth: authState,
-        diagnostics: await getLinkedinFailureDiagnostics(s, requestedProxy, proxyWatch.expectedExitIp),
+        diagnostics: await getLinkedinFailureDiagnostics(
+          s,
+          requestedProxy,
+          proxyWatch.expectedExitIp,
+        ),
         failure_reasons: [],
         stage_events: stageEvents,
       },
@@ -150,12 +176,19 @@ try {
   const signal = classifyLinkedinRegisterFailure(error.message, finalUrl);
   recordStage('failure_classified', { signal, error: error.message });
   let diagnostics = {
-    proxy: { requested: safeRequestedProxy(requestedProxy), preflight: loadProxyPreflightSummary() },
+    proxy: {
+      requested: safeRequestedProxy(requestedProxy),
+      preflight: loadProxyPreflightSummary(),
+    },
   };
   if (s) {
     let unread;
     try {
-      diagnostics = await getLinkedinFailureDiagnostics(s, requestedProxy, proxyWatch.expectedExitIp);
+      diagnostics = await getLinkedinFailureDiagnostics(
+        s,
+        requestedProxy,
+        proxyWatch.expectedExitIp,
+      );
     } catch (diagnosticsError) {
       unread = diagnosticsError;
     }
@@ -174,7 +207,12 @@ try {
       attempted_email_hash: id ? hashValue(id.email) : null,
       expected_exit_ip: proxyWatch.expectedExitIp,
       diagnostics,
-      failure_reasons: linkedinFailureReasons(signal, error.message, finalUrl, diagnostics),
+      failure_reasons: linkedinFailureReasons(
+        signal,
+        error.message,
+        finalUrl,
+        diagnostics,
+      ),
       stage_events: stageEvents,
     },
   };
@@ -189,7 +227,10 @@ if (verdict) {
     await keepVerdict(LABEL, null, verdict);
   } catch (keepError) {
     failure = failure
-      ? new AggregateError([failure, keepError], `${failure.message}; and its verdict was not kept: ${keepError.message}`)
+      ? new AggregateError(
+          [failure, keepError],
+          `${failure.message}; and its verdict was not kept: ${keepError.message}`,
+        )
       : keepError;
   }
 }

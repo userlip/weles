@@ -78,7 +78,7 @@ export function setRecord(kind, id, itemKind, fields) {
   const fresh = !recordIds(kind).includes(id);
   run(
     [
-      'set-json',
+      'set',
       id,
       '--type',
       itemKind,
@@ -97,5 +97,5 @@ export function setRecord(kind, id, itemKind, fields) {
 export function patchContext(id, patch) {
   const document = readWelesRecord(id);
   document.context = { ...objectMember(id, document, 'context'), ...patch };
-  run(['set-json', requireItem(id)], JSON.stringify(document));
+  run(['set', requireItem(id)], JSON.stringify(document));
 }

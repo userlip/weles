@@ -17,7 +17,9 @@ export async function githubIssuePost(s) {
     .locator('bdi.js-issue-title, .js-issue-title, [data-testid="issue-title"]')
     .first();
   if (!(await title.count()))
-    throw new Error(`GITHUB_NOT_AN_ISSUE: ${s.page.url()} shows no issue title`);
+    throw new Error(
+      `GITHUB_NOT_AN_ISSUE: ${s.page.url()} shows no issue title`,
+    );
   const opening = s.page.locator('.markdown-body').first();
   return {
     postTitle: await title.innerText(),

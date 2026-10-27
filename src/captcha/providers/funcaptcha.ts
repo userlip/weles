@@ -6,7 +6,7 @@
 
 import { costTracker } from '../../utils/runtime/cost.js';
 import { markAllProvidersFailed, markCaptchaChallenge } from '../events.js';
-import { apiSolve, type CaptchaCredentials } from './api.js';
+import { apiSolve, twoCaptchaSolve, type CaptchaCredentials } from './api.js';
 
 export async function solveFuncaptchaToken(
   creds: CaptchaCredentials,
@@ -58,34 +58,10 @@ export async function solveFuncaptchaToken(
     if (surl) params.set('surl', surl);
     if (blob) params.set('data[blob]', blob);
     console.log(`[captcha:api] 2captcha funcaptcha surl=${surl}`);
-    const cr = (await (
-      await fetch('https://2captcha.com/in.php?' + params.toString())
-    )
-      .json()
-      .catch(() => ({}))) as any;
-    if (cr.status === 1 && cr.request) {
-      const tid = cr.request;
-      console.log(`[captcha:api] 2captcha taskId=${tid}`);
-      // One read: 2captcha has no push or blocking answer.
-      const res = (await (
-        await fetch(
-          `https://2captcha.com/res.php?key=${creds.twocaptcha}&action=get&id=${tid}&json=1`,
-        )
-      ).json()) as any;
-      if (res.status === 1) {
-        console.log(`[captcha:api] 2captcha solved`);
-        costTracker.recordCaptcha('twocaptcha', 'funcaptcha');
-        return res.request;
-      }
-      if (res.request === 'CAPCHA_NOT_READY')
-        console.log(
-          `[captcha:api] captcha_2captcha_processing: task ${tid} has no result yet`,
-        );
-      else console.log(`[captcha:api] 2captcha error: ${res.request}`);
-    } else {
-      console.log(
-        `[captcha:api] 2captcha create error: ${cr.request ?? cr.error_text ?? JSON.stringify(cr)}`,
-      );
+    const token = await twoCaptchaSolve(creds.twocaptcha, params, 'funcaptcha');
+    if (token) {
+      costTracker.recordCaptcha('twocaptcha', 'funcaptcha');
+      return token;
     }
   }
   if (creds.capmonster) {

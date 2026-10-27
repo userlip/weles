@@ -20,7 +20,7 @@ import {
 } from './google_sso/openai_mailbox.mjs';
 import {
   handleCodexConsentPage,
-  isTerminalHost,
+  isTerminalUrl,
 } from './google_sso/openai_consent.mjs';
 import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
 import { gotoAuthorize } from './google_sso/navigation/authorize.mjs';
@@ -141,8 +141,7 @@ export async function doGoogleSso({
             mark('openai_callback');
             return popupPage;
           }
-          const current = new URL(popupPage.url());
-          if (isTerminalHost(current.host, current.href)) {
+          if (isTerminalUrl(popupPage.url())) {
             mark('openai_callback');
             return popupPage;
           }
@@ -191,7 +190,7 @@ export async function doGoogleSso({
           mark('openai_callback');
           return page;
         }
-        if (isTerminalHost(st.host, st.href)) {
+        if (isTerminalUrl(st.href)) {
           mark('openai_callback');
           return page;
         }
@@ -233,10 +232,7 @@ export async function doGoogleSso({
           // redirects to platform.openai.com/chatgpt.com. Wait for any OpenAI
           // terminal URL; do NOT reload authorizeUrl (it would re-trigger the
           // consent flow).
-          const landed = await urlMatching(page, (u) => {
-            const url = new URL(u);
-            return isTerminalHost(url.host, url.href);
-          });
+          const landed = await urlMatching(page, (u) => isTerminalUrl(u));
           mark('openai_callback');
           console.log(`[google_sso] consent landed on ${landed}`);
           return page;

@@ -55,33 +55,60 @@ const STADO_CONFIG = process.env.STADO_CONFIG
   : path.join(os.homedir(), '.config', 'stado', 'config.json');
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const expandHome = (value) => (value.startsWith('~/') ? path.join(os.homedir(), value.slice('~/'.length)) : value);
+const expandHome = (value) =>
+  value.startsWith('~/')
+    ? path.join(os.homedir(), value.slice('~/'.length))
+    : value;
 const succeeded = (status) => new Response(null, { status }).ok;
 
 /** The object API's address, bearer file and CA file: the environment's pair, else the Stado config's. */
 function objectApiSettings() {
-  const { WELES_OBJECT_API_URL: url, WELES_OBJECT_API_TOKEN_FILE: tokenFile, WELES_OBJECT_API_CA_FILE: caFile } = process.env;
-  if (url && tokenFile) return { url, tokenFile, caFile, source: 'environment' };
+  const {
+    WELES_OBJECT_API_URL: url,
+    WELES_OBJECT_API_TOKEN_FILE: tokenFile,
+    WELES_OBJECT_API_CA_FILE: caFile,
+  } = process.env;
+  if (url && tokenFile)
+    return { url, tokenFile, caFile, source: 'environment' };
   if (url || tokenFile)
-    throw new Error('WELES_OBJECT_API_URL and WELES_OBJECT_API_TOKEN_FILE are stated together or not at all');
+    throw new Error(
+      'WELES_OBJECT_API_URL and WELES_OBJECT_API_TOKEN_FILE are stated together or not at all',
+    );
   if (!existsSync(STADO_CONFIG))
-    throw new Error(`no object API configuration: ${STADO_CONFIG} is absent and WELES_OBJECT_API_URL / WELES_OBJECT_API_TOKEN_FILE are unset`);
+    throw new Error(
+      `no object API configuration: ${STADO_CONFIG} is absent and WELES_OBJECT_API_URL / WELES_OBJECT_API_TOKEN_FILE are unset`,
+    );
   const config = JSON.parse(readFileSync(STADO_CONFIG, 'utf8'));
   const stado = config.storage && config.storage.stado;
   if (!stado || !stado.url || !stado.token_file)
-    throw new Error(`${STADO_CONFIG} has no storage.stado.url and storage.stado.token_file to publish through`);
-  return { url: stado.url, tokenFile: stado.token_file, caFile: stado.ca_file, source: STADO_CONFIG };
+    throw new Error(
+      `${STADO_CONFIG} has no storage.stado.url and storage.stado.token_file to publish through`,
+    );
+  return {
+    url: stado.url,
+    tokenFile: stado.token_file,
+    caFile: stado.ca_file,
+    source: STADO_CONFIG,
+  };
 }
 
 function objectApi() {
   const settings = objectApiSettings();
   const tokenPath = expandHome(settings.tokenFile);
-  if (!existsSync(tokenPath)) throw new Error(`object API bearer file is absent: ${tokenPath}`);
+  if (!existsSync(tokenPath))
+    throw new Error(`object API bearer file is absent: ${tokenPath}`);
   const token = readFileSync(tokenPath, 'utf8').trim();
   if (!token) throw new Error(`object API bearer file is empty: ${tokenPath}`);
   const caFile = settings.caFile ? expandHome(settings.caFile) : undefined;
-  if (caFile && !existsSync(caFile)) throw new Error(`object API CA file is absent: ${caFile}`);
-  return { endpoint: new URL(settings.url), token, tokenPath, caFile, source: settings.source };
+  if (caFile && !existsSync(caFile))
+    throw new Error(`object API CA file is absent: ${caFile}`);
+  return {
+    endpoint: new URL(settings.url),
+    token,
+    tokenPath,
+    caFile,
+    source: settings.source,
+  };
 }
 
 // One request, on core http/https so an endpoint behind the fleet's own CA works
@@ -91,17 +118,26 @@ function request(method, api, body) {
   const target = new URL(`${api.endpoint.origin}/api/object`);
   target.searchParams.set('uri', OBJECT_URI);
   const transport = target.protocol === 'https:' ? https : http;
-  const options = { method, headers: { Authorization: `Bearer ${api.token}`, Accept: 'application/json' } };
+  const options = {
+    method,
+    headers: {
+      Authorization: `Bearer ${api.token}`,
+      Accept: 'application/json',
+    },
+  };
   if (body) {
     options.headers['Content-Type'] = 'application/json';
     options.headers['Content-Length'] = String(body.byteLength);
   }
-  if (target.protocol === 'https:' && api.caFile) options.ca = readFileSync(api.caFile);
+  if (target.protocol === 'https:' && api.caFile)
+    options.ca = readFileSync(api.caFile);
   const { promise, resolve, reject } = Promise.withResolvers();
   const req = transport.request(target, options, (res) => {
     const chunks = [];
     res.on('data', (chunk) => chunks.push(chunk));
-    res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+    res.on('end', () =>
+      resolve({ status: res.statusCode, body: Buffer.concat(chunks) }),
+    );
   });
   req.on('error', reject);
   if (body) req.write(body);
@@ -112,26 +148,43 @@ function request(method, api, body) {
 const bytes = readFileSync(REQUIREMENTS_FILE);
 const declaration = JSON.parse(bytes.toString('utf8'));
 if (declaration.schema !== REQUIREMENTS_SCHEMA)
-  throw new Error(`${REQUIREMENTS_FILE} declares schema '${declaration.schema}', expected '${REQUIREMENTS_SCHEMA}'`);
-if (!declaration.trajectories) throw new Error(`${REQUIREMENTS_FILE} declares no trajectories`);
+  throw new Error(
+    `${REQUIREMENTS_FILE} declares schema '${declaration.schema}', expected '${REQUIREMENTS_SCHEMA}'`,
+  );
+if (!declaration.trajectories)
+  throw new Error(`${REQUIREMENTS_FILE} declares no trajectories`);
 const trajectories = Object.entries(declaration.trajectories);
-if (!trajectories.length) throw new Error(`${REQUIREMENTS_FILE} declares no trajectories`);
+if (!trajectories.length)
+  throw new Error(`${REQUIREMENTS_FILE} declares no trajectories`);
 for (const [trajectory, required] of trajectories) {
-  if (!Array.isArray(required)) throw new Error(`${trajectory} does not declare a list of capabilities`);
-  const unknown = required.filter((capability) => !KNOWN_CAPABILITIES.includes(capability));
+  if (!Array.isArray(required))
+    throw new Error(`${trajectory} does not declare a list of capabilities`);
+  const unknown = required.filter(
+    (capability) => !KNOWN_CAPABILITIES.includes(capability),
+  );
   if (unknown.length)
-    throw new Error(`${trajectory} declares capability '${unknown.join("', '")}', which is not one of ${KNOWN_CAPABILITIES.join(', ')}`);
+    throw new Error(
+      `${trajectory} declares capability '${unknown.join("', '")}', which is not one of ${KNOWN_CAPABILITIES.join(', ')}`,
+    );
 }
 
 const api = objectApi();
-process.stdout.write(`file      ${REQUIREMENTS_FILE} (${bytes.byteLength} bytes, sha256 ${digest(bytes)})\n`);
-process.stdout.write(`declares  ${trajectories.map(([name, required]) => `${name}=[${required.join(',')}]`).join(' ')}\n`);
+process.stdout.write(
+  `file      ${REQUIREMENTS_FILE} (${bytes.byteLength} bytes, sha256 ${digest(bytes)})\n`,
+);
+process.stdout.write(
+  `declares  ${trajectories.map(([name, required]) => `${name}=[${required.join(',')}]`).join(' ')}\n`,
+);
 process.stdout.write(`endpoint  ${api.endpoint.origin} (from ${api.source})\n`);
-process.stdout.write(`bearer    ${api.tokenPath} (${api.token.length} chars, sha256 ${digest(api.token)})\n`);
+process.stdout.write(
+  `bearer    ${api.tokenPath} (${api.token.length} chars, sha256 ${digest(api.token)})\n`,
+);
 process.stdout.write(`uri       ${OBJECT_URI}\n`);
 
 const put = await request('PUT', api, bytes);
-process.stdout.write(`PUT       HTTP ${put.status} ${put.body.toString('utf8').trim()}\n`);
+process.stdout.write(
+  `PUT       HTTP ${put.status} ${put.body.toString('utf8').trim()}\n`,
+);
 if (!succeeded(put.status)) {
   const object = new URL(OBJECT_URI);
   throw new Error(
@@ -143,7 +196,9 @@ if (!succeeded(put.status)) {
 // that returns different bytes is the shape of failure worth catching, and the
 // consumers all arrive through this door.
 const got = await request('GET', api);
-process.stdout.write(`GET       HTTP ${got.status} (${got.body.byteLength} bytes, sha256 ${digest(got.body)})\n`);
+process.stdout.write(
+  `GET       HTTP ${got.status} (${got.body.byteLength} bytes, sha256 ${digest(got.body)})\n`,
+);
 if (!succeeded(got.status) || !got.body.equals(bytes))
   throw new Error(
     `PUBLISH_NOT_READ_BACK: the published object does not read back byte-identical (local ${bytes.byteLength} bytes ${digest(bytes)}, remote ${got.body.byteLength} bytes ${digest(got.body)})`,

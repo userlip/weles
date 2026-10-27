@@ -16,33 +16,62 @@ import { statedProxy } from '../../_shared/inputs/stated.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 
 const [, , ...QUERIES] = process.argv;
-if (!QUERIES.length) throw new Error('SCHOLAR_QUERY_REQUIRED: name at least one arXiv id or title');
+if (!QUERIES.length)
+  throw new Error(
+    'SCHOLAR_QUERY_REQUIRED: name at least one arXiv id or title',
+  );
 
 /** Whether Google shows its rate-limit page or a captcha in place of the results. */
 const gated = (page) =>
-  page.evaluate(() => location.pathname.startsWith('/sorry') || Boolean(document.querySelector('#captcha-form, #gs_captcha_f, iframe[src*="recaptcha"]')));
+  page.evaluate(
+    () =>
+      location.pathname.startsWith('/sorry') ||
+      Boolean(
+        document.querySelector(
+          '#captcha-form, #gs_captcha_f, iframe[src*="recaptcha"]',
+        ),
+      ),
+  );
 
 async function citations(s, query) {
-  await s.goto(`https://scholar.google.com/scholar?q=${encodeURIComponent(query)}`);
+  await s.goto(
+    `https://scholar.google.com/scholar?q=${encodeURIComponent(query)}`,
+  );
   await pageSettled(s.page);
   if (await gated(s.page)) {
     const answer = await s.solveCaptcha();
-    if (answer !== 'captcha solved') throw new Error(`scholar_captcha_unsolved: ${answer}`);
+    if (answer !== 'captcha solved')
+      throw new Error(`scholar_captcha_unsolved: ${answer}`);
     await pageSettled(s.page);
-    if (await gated(s.page)) throw new Error('scholar_rate_limited: the captcha came back after it was solved');
+    if (await gated(s.page))
+      throw new Error(
+        'scholar_rate_limited: the captcha came back after it was solved',
+      );
   }
   const tile = await s.page.evaluate(() => {
     const result = document.querySelector('.gs_r.gs_or.gs_scl');
     if (!result) return null;
     const cites = result.querySelector('a[href*="cites="]');
     const title = result.querySelector('.gs_rt');
-    return { title: title ? title.textContent.trim() : null, cites: cites ? cites.textContent.match(/\d+/)?.[0] : null };
+    return {
+      title: title ? title.textContent.trim() : null,
+      cites: cites ? cites.textContent.match(/\d+/)?.[0] : null,
+    };
   });
-  if (!tile) throw new Error(`scholar_no_results: the settled page shows no result tile (${s.page.url()})`);
-  return { title: tile.title, citations: tile.cites ? Number(tile.cites) : Number(Boolean(tile.cites)) };
+  if (!tile)
+    throw new Error(
+      `scholar_no_results: the settled page shows no result tile (${s.page.url()})`,
+    );
+  return {
+    title: tile.title,
+    citations: tile.cites ? Number(tile.cites) : Number(Boolean(tile.cites)),
+  };
 }
 
-const s = await WSession.start({ label: 'scholar_citations', proxy: statedProxy('each Google Scholar query') });
+const s = await WSession.start({
+  label: 'scholar_citations',
+  proxy: statedProxy('each Google Scholar query'),
+});
 const failures = [];
 try {
   console.log('key\tcitations\ttitle');
@@ -54,7 +83,11 @@ try {
         console.log(`${query}\tERR\t${error.message}`);
       },
     );
-  if (failures.length) throw new AggregateError(failures, `${failures.length} of ${QUERIES.length} queries failed`);
+  if (failures.length)
+    throw new AggregateError(
+      failures,
+      `${failures.length} of ${QUERIES.length} queries failed`,
+    );
 } catch (error) {
   console.error(`FAIL: ${error.message}`);
   process.exitCode = exitStatusFor(error);

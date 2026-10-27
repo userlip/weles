@@ -25,7 +25,13 @@ const VALUES = {
 
 /** Whether some field of the form holds exactly `value`. */
 const formHolds = (page, value) =>
-  page.evaluate((wanted) => [...document.querySelectorAll('input, textarea')].some((field) => field.value === wanted), value);
+  page.evaluate(
+    (wanted) =>
+      [...document.querySelectorAll('input, textarea')].some(
+        (field) => field.value === wanted,
+      ),
+    value,
+  );
 
 await runAction({
   platform: 'producthunt',
@@ -40,14 +46,19 @@ await runAction({
     for (const [field, value] of Object.entries(VALUES)) {
       await fillDescribed(s.page, `the profile's ${field} field`, value);
       if ((await s.page.evaluate(() => document.activeElement.value)) !== value)
-        throw new Error(`PRODUCTHUNT_PROFILE_FIELD_MISMATCH: the ${field} field does not hold the stated value as typed`);
+        throw new Error(
+          `PRODUCTHUNT_PROFILE_FIELD_MISMATCH: the ${field} field does not hold the stated value as typed`,
+        );
     }
     await clickDescribed(s.page, 'the button that saves the profile');
     await pageSettled(s.page);
     await s.page.reload({ waitUntil: 'domcontentloaded' });
     await pageSettled(s.page);
     for (const [field, value] of Object.entries(VALUES))
-      if (!(await formHolds(s.page, value))) throw new Error(`PRODUCTHUNT_PROFILE_NOT_SAVED: the saved profile does not hold the stated ${field}`);
+      if (!(await formHolds(s.page, value)))
+        throw new Error(
+          `PRODUCTHUNT_PROFILE_NOT_SAVED: the saved profile does not hold the stated ${field}`,
+        );
     return `${acct.username} profile saved`;
   },
 });

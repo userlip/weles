@@ -1,6 +1,6 @@
 // One entry of the observation declaration, checked: its name, origin, what it
-// reads there, its dwell budget and the reviewed trajectory it runs. Every
-// refusal names the entry and what it lacks.
+// reads there, how many screens it reads and the reviewed trajectory it runs.
+// Every refusal names the entry and what it lacks.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -37,9 +37,12 @@ const PLACEHOLDERS: Record<string, true> = {
 /** One `{name}` placeholder in a declared origin. */
 export const PLACEHOLDER = /\{(?<name>[a-z_]+)\}/g;
 
+/**
+ * How many viewports a run reads. Each is read once the page has settled after
+ * the wheel; no clock paces it, so an entry's `ms` range is not read.
+ */
 export type ObservationDwell = {
   readonly scrolls: number;
-  readonly ms: readonly [number, number];
 };
 
 export type DeclaredObservation = {
@@ -71,15 +74,12 @@ function wholeCount(value: unknown): value is number {
   );
 }
 
-/** Whole scrolls, and a range of milliseconds that starts above nothing. */
+/** Whole scrolls, as the entry's dwell states them. */
 function dwellOf(raw: unknown): ObservationDwell | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
-  const { scrolls, ms } = raw as Record<string, unknown>;
-  if (!wholeCount(scrolls) || !Array.isArray(ms)) return undefined;
-  const [low, high, ...beyond]: unknown[] = ms;
-  if (beyond.length || !wholeCount(low) || !wholeCount(high)) return undefined;
-  if (!low || high < low) return undefined;
-  return { scrolls, ms: [low, high] };
+  const { scrolls } = raw as Record<string, unknown>;
+  if (!wholeCount(scrolls)) return undefined;
+  return { scrolls };
 }
 
 /** The placeholder names a declared origin carries. */
@@ -143,7 +143,7 @@ export function declaredEntry(
   const dwell = dwellOf(entry.dwell);
   if (!dwell)
     throw new Error(
-      `declared observation ${observation} must declare a dwell budget of whole scrolls and an ascending ms range`,
+      `declared observation ${observation} must declare a dwell of whole scrolls`,
     );
   if (!trajectory.startsWith(TRAJECTORY_ROOT) || trajectory.includes('..'))
     throw new Error(

@@ -42,16 +42,25 @@ async function realHandle(acct) {
     targetHost: 'www.reddit.com',
   });
   try {
-    const stored = Array.isArray(acct.metadata?.cookies) ? acct.metadata.cookies : [];
-    const cookies = stored.filter((c) => c?.name && c.value && c.domain && c.path);
+    const stored = Array.isArray(acct.metadata?.cookies)
+      ? acct.metadata.cookies
+      : [];
+    const cookies = stored.filter(
+      (c) => c?.name && c.value && c.domain && c.path,
+    );
     if (cookies.length) await s.ctx.addCookies(cookies);
     await s.goto('https://www.reddit.com/api/me.json');
     const answer = s.capturedResponses.find((r) => ME.test(r.url));
-    if (!answer?.body) throw new Error('REDDIT_HANDLE_UNREAD: Reddit returned no /api/me.json body for the account');
+    if (!answer?.body)
+      throw new Error(
+        'REDDIT_HANDLE_UNREAD: Reddit returned no /api/me.json body for the account',
+      );
     const me = JSON.parse(answer.body);
     const handle = me?.data?.name;
     if (typeof handle !== 'string' || !handle)
-      throw new Error(`REDDIT_HANDLE_UNREAD: /api/me.json names no account (${answer.body})`);
+      throw new Error(
+        `REDDIT_HANDLE_UNREAD: /api/me.json names no account (${answer.body})`,
+      );
     return handle;
   } finally {
     await s.close();
@@ -60,20 +69,41 @@ async function realHandle(acct) {
 
 try {
   const acct = await getSocialAccount('reddit');
-  if (!acct) throw new Error('REDDIT_ACCOUNT_UNAVAILABLE: Skarbiec holds no active reddit account');
-  const vantages = statedCount('REDDIT_SHADOWBAN_VANTAGES', 'how many logged-out vantages probe the profile');
+  if (!acct)
+    throw new Error(
+      'REDDIT_ACCOUNT_UNAVAILABLE: Skarbiec holds no active reddit account',
+    );
+  const vantages = statedCount(
+    'REDDIT_SHADOWBAN_VANTAGES',
+    'how many logged-out vantages probe the profile',
+  );
   const handle = await realHandle(acct);
-  console.log(`[shadowban_check] probing handle=${handle} (stored=${acct.username})`);
+  console.log(
+    `[shadowban_check] probing handle=${handle} (stored=${acct.username})`,
+  );
   const result = await probeShadowban(handle, vantages);
   console.log(`[shadowban_check] verdict=${result.verdict}`);
-  for (const vantage of result.vantages) console.log(`[shadowban_check]   ${JSON.stringify(vantage)}`);
+  for (const vantage of result.vantages)
+    console.log(`[shadowban_check]   ${JSON.stringify(vantage)}`);
 
   const dir = runRecordingsDir('reddit_shadowban_check');
   mkdirSync(dir, { recursive: true });
-  const outPath = join(dir, `${acct.username}_${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+  const outPath = join(
+    dir,
+    `${acct.username}_${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
+  );
   writeFileSync(
     outPath,
-    JSON.stringify({ account_id: acct.id, username: acct.username, real_handle: handle, ...result }, null, ' '),
+    JSON.stringify(
+      {
+        account_id: acct.id,
+        username: acct.username,
+        real_handle: handle,
+        ...result,
+      },
+      null,
+      ' ',
+    ),
   );
   console.log(`[shadowban_check] snapshot -> ${outPath}`);
 
@@ -82,7 +112,9 @@ try {
     console.log('[shadowban_check] stored status=shadowbanned in Skarbiec');
   }
   if (result.verdict === 'indeterminate')
-    throw new Error(`REDDIT_SHADOWBAN_INDETERMINATE: the vantages reached no verdict (snapshot ${outPath})`);
+    throw new Error(
+      `REDDIT_SHADOWBAN_INDETERMINATE: the vantages reached no verdict (snapshot ${outPath})`,
+    );
 } catch (error) {
   console.log(`FAIL: ${error.message}`);
   process.exitCode = exitStatusFor(error);

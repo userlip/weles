@@ -10,7 +10,10 @@
 // and reports a phone approval only after Google displays its device prompt.
 import { mkdirSync } from 'node:fs';
 import { keptProfilePath } from '../../../profile/persona.mjs';
-import { googleSignInUrl, onGoogleSignIn as onSignIn } from '../../../profile/google_session.mjs';
+import {
+  googleSignInUrl,
+  onGoogleSignIn as onSignIn,
+} from '../../../profile/google_session.mjs';
 import { humanFill, humanType } from '../../../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../../../dist/human/mouse.js';
 import { readDocument } from '../../../../../../dist/state/skarbiec-records.js';
@@ -51,13 +54,18 @@ export function loginMaterial(loginItem) {
     document,
     email: fields.username,
     password: fields.password,
-    seed: typeof fields.totp_secret === 'string' ? fields.totp_secret.trim() : undefined,
+    seed:
+      typeof fields.totp_secret === 'string'
+        ? fields.totp_secret.trim()
+        : undefined,
   };
 }
 
 /** Where one Google account's persistent browser profile lives, created or not. */
 export function accountProfilePath(login) {
-  const account = (login.email || login.loginItem).toLowerCase().replace(/[^a-z\d._@-]+/g, '_');
+  const account = (login.email || login.loginItem)
+    .toLowerCase()
+    .replace(/[^a-z\d._@-]+/g, '_');
   return keptProfilePath('google-account', account);
 }
 

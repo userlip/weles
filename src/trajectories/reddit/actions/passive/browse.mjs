@@ -2,7 +2,7 @@
  * Reddit organic browse — reads the declared origin, scrolls, exits.
  * Lowest-friction observation in the warming/mature/active menu. No clicks.
  *
- * The origin and the dwell budget are declaration content: admission resolved
+ * The origin and the screens it scrolls are declaration content: admission resolved
  * reddit.browse and its {subreddit} before this process existed, so nothing
  * here names a URL or a scroll count. Uses the account's stored persona +
  * proxy via resolveAccountSession. The account's verdict after the browse is
@@ -16,10 +16,7 @@ import {
 import { WSession } from '../../../../../dist/session/wsession.js';
 import { detectRedditBanSignals } from '../../../../../dist/platforms/reddit/ban_signals.js';
 import { banSignalOf } from '../../../_shared/auth/ban-signal.mjs';
-import {
-  humanIdlePause,
-  humanScrollPage,
-} from '../../../../../dist/human/mouse.js';
+import { humanScrollPage } from '../../../../../dist/human/mouse.js';
 import { declaredObservation } from '../../../_shared/observation.mjs';
 import { keepVerdict } from '../../../_shared/action/verdict.mjs';
 
@@ -43,14 +40,17 @@ const s = await WSession.start({
 });
 try {
   await s.goto(observed.origin);
-  // Idle scroll: simulate skimming the feed without clicking anything, for
-  // exactly as long as the declared dwell budget allows.
+  // Idle scroll: skim the feed without clicking anything, the declared
+  // number of screens, each read once the page has settled after the wheel.
   for (const step of Array(observed.scrolls).keys()) {
     await humanScrollPage(s.page, 'down');
-    await humanIdlePause(observed.dwellMs);
     console.log(`[browse] scrolled after ${step} earlier scrolls`);
   }
-  const banSignal = await banSignalOf(detectRedditBanSignals, s, 'after browsing');
+  const banSignal = await banSignalOf(
+    detectRedditBanSignals,
+    s,
+    'after browsing',
+  );
   console.log(`[ban-signal] ${banSignal.signal}`);
   if (!banSignal.healthy)
     throw Object.assign(

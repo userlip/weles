@@ -46,6 +46,15 @@ export interface ResolvedProxy {
   sticky_hash?: string;
   city?: string;
   exit_reputation?: ExitReputation;
+  /**
+   * The base64 SHA-256 SPKI hashes of the certificate authority a provider
+   * that intercepts TLS by design signs with, from its Skarbiec item's
+   * `tls_spki` field. Chromium trusts exactly these for the session
+   * (`--ignore-certificate-errors-spki-list`); every other certificate is
+   * verified, so a proxy that intercepts without declaring them is refused by
+   * the certificate error, never read through.
+   */
+  tls_spki?: string[];
 }
 
 /**
@@ -99,40 +108,53 @@ export function parseProxyUrl(url: string): ProxyConfig {
   };
 }
 
-export function hydratePinnedProxy(pin: ProxyConfig): ProxyConfig | undefined {
-  if (pin.username && pin.password) return pin;
+/** A pinned proxy made usable again, or the field or secret that keeps it from being. */
+export type HydratedPin = { proxy: ProxyConfig } | { refused: string };
+
+/**
+ * Rebuild a saved pin into the proxy it named, from what the pin recorded
+ * and the provider's secrets. Nothing is inferred: a pin that does not state
+ * its pool type, its provider or (for a sticky exit) its country and session
+ * is refused naming the field (`pinned_proxy_incomplete:<field>`), so an
+ * account never moves to an exit its pin did not name.
+ */
+export function hydratePinnedProxy(pin: ProxyConfig): HydratedPin {
+  if (pin.username && pin.password) return { proxy: pin };
   const accountCredential = pin.credential_ref
     ? readOptionalPinnedProxyCredential(pin.credential_ref)
     : undefined;
   if (accountCredential && pin.credential_mode === 'exact') {
     return {
-      ...pin,
-      username: accountCredential.username,
-      password: accountCredential.password,
+      proxy: {
+        ...pin,
+        username: accountCredential.username,
+        password: accountCredential.password,
+      },
     };
   }
 
   const provider = pin.provider ?? providerFromHost(pin.host);
-  if (!provider) return undefined;
-  const proxyType =
-    proxyTypeOf(pin.proxy_type) ??
-    (provider === 'decodo' ? 'isp' : 'residential');
+  if (!provider) return { refused: 'pinned_proxy_incomplete:provider' };
+  const proxyType = proxyTypeOf(pin.proxy_type);
+  if (!proxyType) return { refused: 'pinned_proxy_incomplete:proxy_type' };
   let username = accountCredential?.username;
   let password = accountCredential?.password;
   if (!username || !password) {
     const secretService = secretServiceFor(provider, proxyType);
-    if (!secretService) return undefined;
+    if (!secretService)
+      return { refused: `pinned_proxy_secret_undeclared:${provider}:${proxyType}` };
     username = readOptionalWelesServiceSecret(secretService, 'username');
     password = readOptionalWelesServiceSecret(secretService, 'password');
+    if (!username || !password)
+      return { refused: `pinned_proxy_secret_unread:${secretService}` };
   }
-  if (!username || !password) return undefined;
   if (proxyType === 'isp')
-    return { ...pin, provider, proxy_type: proxyType, username, password };
+    return { proxy: { ...pin, provider, proxy_type: proxyType, username, password } };
 
-  // A sticky exit is rebuilt in the country it was pinned in; a pin that
-  // never recorded one cannot be rebuilt, and the caller resolves a new exit.
+  // A sticky exit is rebuilt in the country and session it was pinned in.
   const sessionId = pin.sticky_session_id;
-  if (!sessionId || !pin.country) return undefined;
+  if (!sessionId) return { refused: 'pinned_proxy_incomplete:sticky_session_id' };
+  if (!pin.country) return { refused: 'pinned_proxy_incomplete:country' };
   const sticky = stickyCredentials(
     provider,
     proxyType,
@@ -144,11 +166,13 @@ export function hydratePinnedProxy(pin: ProxyConfig): ProxyConfig | undefined {
     },
   );
   return {
-    ...pin,
-    provider,
-    proxy_type: proxyType,
-    username: sticky.username,
-    password: sticky.password,
+    proxy: {
+      ...pin,
+      provider,
+      proxy_type: proxyType,
+      username: sticky.username,
+      password: sticky.password,
+    },
   };
 }
 

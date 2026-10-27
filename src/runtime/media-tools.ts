@@ -68,12 +68,17 @@ export function playwrightCacheRoot(): string {
  * an error: the host installation is then the one that counts.
  */
 export function bundledFfmpegPath(): string | null {
-  const parsed = JSON.parse(readFileSync(findPlaywrightManifest(), 'utf8')) as {
+  const manifest = findPlaywrightManifest();
+  const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as {
     browsers?: Array<{ name?: string; revision?: string }>;
   };
-  const revision =
-    (parsed.browsers ?? []).find((entry) => entry.name === 'ffmpeg')
-      ?.revision ?? '';
+  // Playwright's manifest always lists its browsers; one without the list is
+  // not a release that declares no ffmpeg but a manifest Weles cannot read.
+  if (!Array.isArray(parsed.browsers))
+    throw new Error(`${manifest} declares no browsers list`);
+  const revision = parsed.browsers.find(
+    (entry) => entry.name === 'ffmpeg',
+  )?.revision;
   if (!revision) return null;
   const name =
     process.platform === 'darwin'

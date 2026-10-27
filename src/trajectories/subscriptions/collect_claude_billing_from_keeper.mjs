@@ -30,7 +30,9 @@ await runKeeperCollector({
     const lines = linesOf(await page.text());
     const planAt = lines.findIndex((line) => PLAN_LINE.test(line));
     if (planAt < 0)
-      throw new Error('CLAUDE_BILLING_UNREAD: the keeper page names no "<plan> plan" line, so it is not the Claude billing page');
+      throw new Error(
+        'CLAUDE_BILLING_UNREAD: the keeper page names no "<plan> plan" line, so it is not the Claude billing page',
+      );
     const [plan, usageLine] = lines.slice(planAt);
     const cancelLine = lines.find((line) => CANCEL_LINE.test(line));
     const invoices = invoiceRows(lines, AMOUNT);

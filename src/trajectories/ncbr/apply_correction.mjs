@@ -10,7 +10,10 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { exitStatusFor } from '../../../dist/cli/usage.js';
-import { runId, runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import {
+  runId,
+  runRecordingsDir,
+} from '../../../dist/session/run-recordings.js';
 import { projectPage } from '../_shared/ncbr/project_page.mjs';
 import { loadPlan } from './correction/plan.mjs';
 import {
@@ -43,7 +46,9 @@ const report = {
   projectId: plan.project.id,
   applicationNumber: plan.project.applicationNumber,
   planSha256,
-  sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+  sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim(),
   startedAt: new Date().toISOString(),
   submissionClicked: false,
   results,
@@ -57,16 +62,27 @@ const selected = (scope) => !scopeFilter || scope.label === scopeFilter;
 
 async function correctSection(page, section) {
   await openScope(page, section, projectUrl);
-  const result = { scope: section.label, beforeFields: await snapshotFields(page) };
+  const result = {
+    scope: section.label,
+    beforeFields: await snapshotFields(page),
+  };
   results.push(result);
   if (mode === 'inspect') {
     retain('inspecting');
     return;
   }
-  result.fields = await prepareFields(page, section.fields, plan, section.label);
+  result.fields = await prepareFields(
+    page,
+    section.fields,
+    plan,
+    section.label,
+  );
   retain('prepared');
   // LSI2 drops text typed into a second field before the first is saved; save every changed field separately.
-  const changed = mode === 'apply' ? result.fields.filter((field) => field.before !== field.expected) : [];
+  const changed =
+    mode === 'apply'
+      ? result.fields.filter((field) => field.before !== field.expected)
+      : [];
   for (const [index, field] of changed.entries()) {
     if (index) await openScope(page, section, projectUrl);
     await fillPrepared(page, [field]);
@@ -75,31 +91,49 @@ async function correctSection(page, section) {
   await openScope(page, section, projectUrl);
   await verifyPrepared(page, result.fields);
   result.afterFields = await snapshotFields(page);
-  result.screenshot = join(reportDir, `section-${section.label.replace(/[^a-z0-9.-]/gi, '_')}.png`);
+  result.screenshot = join(
+    reportDir,
+    `section-${section.label.replace(/[^a-z0-9.-]/gi, '_')}.png`,
+  );
   await page.screenshot({ path: result.screenshot, fullPage: true });
   retain('verified');
 }
 
 async function correctRow(page, collection, row) {
   await openRow(page, collection, row, projectUrl);
-  const result = { scope: collection.label, rowNeedle: row.rowNeedle, beforeFields: await snapshotFields(page) };
+  const result = {
+    scope: collection.label,
+    rowNeedle: row.rowNeedle,
+    beforeFields: await snapshotFields(page),
+  };
   results.push(result);
   if (mode === 'inspect') {
     await closeDrawer(page);
     retain('inspecting');
     return;
   }
-  result.fields = await prepareFields(page, await nestedFields(page, row), plan, collection.label);
+  result.fields = await prepareFields(
+    page,
+    await nestedFields(page, row),
+    plan,
+    collection.label,
+  );
   retain('prepared');
-  const choices = result.fields.filter((field) => field.control && field.before !== field.expected);
+  const choices = result.fields.filter(
+    (field) => field.control && field.before !== field.expected,
+  );
   const texts = result.fields.filter((field) => !field.control);
   if (mode === 'apply' && choices.length) {
     await fillPrepared(page, choices);
     await save(page, true, choices);
     await openRow(page, collection, row, projectUrl);
-    for (const field of texts) field.before = await (await oneField(page, field.name)).inputValue();
+    for (const field of texts)
+      field.before = await (await oneField(page, field.name)).inputValue();
   }
-  const changedTexts = mode === 'apply' ? texts.filter((field) => field.before !== field.expected) : [];
+  const changedTexts =
+    mode === 'apply'
+      ? texts.filter((field) => field.before !== field.expected)
+      : [];
   if (!changedTexts.length) await closeDrawer(page);
   for (const [index, field] of changedTexts.entries()) {
     if (index) await openRow(page, collection, row, projectUrl);
@@ -126,7 +160,13 @@ async function recordFailure(page, error) {
     }
   }
   retain('failed', error);
-  console.error(JSON.stringify({ status: report.status, error: report.error, reportPath }, null, ' '));
+  console.error(
+    JSON.stringify(
+      { status: report.status, error: report.error, reportPath },
+      null,
+      ' ',
+    ),
+  );
 }
 
 const browser = await chromium.connectOverCDP(endpoint);
@@ -135,10 +175,12 @@ try {
   page = projectPage(browser, projectUrl);
   report.identity = await identity(page, projectUrl, plan.project);
   retain('inspecting');
-  for (const section of plan.sections.filter(selected)) await correctSection(page, section);
+  for (const section of plan.sections.filter(selected))
+    await correctSection(page, section);
   for (const collection of plan.collections.filter(selected))
     for (const row of collection.rows) await correctRow(page, collection, row);
-  if (!results.length) throw new Error('The requested scope selected no sections or rows');
+  if (!results.length)
+    throw new Error('The requested scope selected no sections or rows');
   report.finalIdentity = await identity(page, projectUrl, plan.project);
   report.finishedAt = new Date().toISOString();
   retain('complete');
@@ -151,7 +193,11 @@ try {
         results: results.map((result) => ({
           scope: result.scope,
           rowNeedle: result.rowNeedle,
-          fields: result.fields?.map(({ name, persisted, sha256 }) => ({ name, persisted, sha256 })),
+          fields: result.fields?.map(({ name, persisted, sha256 }) => ({
+            name,
+            persisted,
+            sha256,
+          })),
         })),
       },
       null,

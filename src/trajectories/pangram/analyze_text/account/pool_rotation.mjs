@@ -39,11 +39,16 @@ function domainSummary(accounts) {
 function activePangramAccounts() {
   const accounts = listAccounts('pangram');
   const accountId = process.env.ACCOUNT_ID?.trim();
-  const selected = accountId ? accounts.filter((account) => account.id === accountId) : accounts;
+  const selected = accountId
+    ? accounts.filter((account) => account.id === accountId)
+    : accounts;
   const limit =
     process.env.PANGRAM_ACCOUNT_POOL_LIMIT === undefined
       ? selected.length
-      : statedCount('PANGRAM_ACCOUNT_POOL_LIMIT', 'how many Pangram accounts the rotation considers');
+      : statedCount(
+          'PANGRAM_ACCOUNT_POOL_LIMIT',
+          'how many Pangram accounts the rotation considers',
+        );
   return selected.slice(Number(), limit).map((account) => ({
     ...account,
     created_at: account.document.context?.created_at,
@@ -99,12 +104,21 @@ async function rejection(acct, error) {
       );
     }
   }
-  return { account_id: acct.id, username: acct.username, reason: error.details.reason };
+  return {
+    account_id: acct.id,
+    username: acct.username,
+    reason: error.details.reason,
+  };
 }
 
 async function selectSingleConfiguredAccount() {
   const acct = await getSocialAccount('pangram');
-  if (!acct) return { account: null, reason: 'no_account', pool: { available_count: Number(), total_accounts: Number() } };
+  if (!acct)
+    return {
+      account: null,
+      reason: 'no_account',
+      pool: { available_count: Number(), total_accounts: Number() },
+    };
   const accounts = [acct];
   return {
     account: acct,
@@ -115,7 +129,8 @@ async function selectSingleConfiguredAccount() {
 }
 
 export async function selectPangramAccountForRun() {
-  if (process.env.PANGRAM_ACCOUNT_ROTATION === '0') return selectSingleConfiguredAccount();
+  if (process.env.PANGRAM_ACCOUNT_ROTATION === '0')
+    return selectSingleConfiguredAccount();
 
   const accounts = activePangramAccounts();
   const ledger = readUsageLedger();

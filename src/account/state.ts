@@ -18,7 +18,10 @@ export async function deactivateAccount(
   reason: string,
 ): Promise<Deactivation> {
   if (!accountId)
-    return { deactivated: false, cause: `the run named no account to deactivate (${reason})` };
+    return {
+      deactivated: false,
+      cause: `the run named no account to deactivate (${reason})`,
+    };
   const metadata = {
     ...currentMetadata,
     banned_reason: reason,
@@ -31,21 +34,31 @@ export async function deactivateAccount(
       (held): Deactivation => {
         if (!held) {
           console.log(`[account-state] deactivate ${id}: no such account`);
-          return { deactivated: false, cause: `Skarbiec holds no account ${id}` };
+          return {
+            deactivated: false,
+            cause: `Skarbiec holds no account ${id}`,
+          };
         }
         console.log(`[account-state] deactivated ${id} (${reason})`);
         return { deactivated: true, account: id };
       },
       (refused: unknown): Deactivation => {
-        const message = refused instanceof Error ? refused.message : String(refused);
+        const message =
+          refused instanceof Error ? refused.message : String(refused);
         console.log(`[account-state] deactivate ${id} refused: ${message}`);
-        return { deactivated: false, cause: `Skarbiec refused deactivating account ${id}: ${message}` };
+        return {
+          deactivated: false,
+          cause: `Skarbiec refused deactivating account ${id}: ${message}`,
+        };
       },
     );
 }
 
 /** The clause a ban refusal ends with: the account deactivated, or why not. */
-export function deactivationClause(outcome: Deactivation, username: string): string {
+export function deactivationClause(
+  outcome: Deactivation,
+  username: string,
+): string {
   return outcome.deactivated
     ? `${username} is deactivated`
     : `${username} is still active: ${outcome.cause}`;

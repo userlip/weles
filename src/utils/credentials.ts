@@ -27,9 +27,10 @@ interface ServiceCredential {
 export async function getByCategory(
   category: string,
 ): Promise<ServiceCredential[]> {
+  // listServiceMetadata answers only the records filed under `category`.
   return listServiceMetadata(category).map((record) => ({
-    display_name: String(record.display_name ?? record.id),
-    category: String(record.category ?? ''),
+    display_name: record.display_name ? String(record.display_name) : String(record.id),
+    category,
     proxy_host: record.host ? String(record.host) : null,
     proxy_port: record.port ? String(record.port) : null,
     api_key_env_var: record.api_key_env_var
@@ -57,13 +58,11 @@ export async function getCaptchaCredentials(): Promise<{
     nocaptcha: readOptionalWelesServiceSecret('noCaptcha', 'api_key'),
     nopecha: readOptionalWelesServiceSecret('nopecha', 'api_key'),
   };
+  const configured = Object.entries(credentials)
+    .filter(([, value]) => value)
+    .map(([name]) => name);
   console.log(
-    `[credentials] Captcha services: ${
-      Object.entries(credentials)
-        .filter(([, value]) => value)
-        .map(([name]) => name)
-        .join(', ') || 'none'
-    }`,
+    `[credentials] Captcha services: ${configured.length ? configured.join(', ') : 'none configured'}`,
   );
   return credentials;
 }
@@ -101,30 +100,35 @@ export async function getSocialAccount(
   const accounts = candidates.filter(
     (account) => account?.platform === platform,
   );
-  if (!accounts.length) return null;
+  const [first] = accounts;
+  if (!first) return null;
   // An account is fresh when nothing marked its cookies stale, or a verified
   // login minted cookies after the mark. A stale mark is lifted by that login,
-  // not by a day passing.
-  const fresh =
-    accounts.find((account) => {
-      const staleMs = Date.parse(
-        String(account?.metadata.cookies_stale_at ?? ''),
-      );
-      const mintMs = Date.parse(
-        String(account?.metadata.cookies_minted_at ?? ''),
-      );
-      return (
-        !Number.isFinite(staleMs) ||
-        (Number.isFinite(mintMs) && mintMs >= staleMs)
-      );
-    }) ?? accounts[0];
-  if (!fresh) return null;
+  // not by a day passing. With no fresh account, the first is still answered:
+  // its stored login is what refreshes the cookies.
+  const fresh = accounts.find((account) => {
+    const staleMs = instant(account?.metadata.cookies_stale_at);
+    const mintMs = instant(account?.metadata.cookies_minted_at);
+    return (
+      !Number.isFinite(staleMs) ||
+      (Number.isFinite(mintMs) && mintMs >= staleMs)
+    );
+  });
+  let chosen = first;
+  if (fresh) chosen = fresh;
+  if (!chosen) return null;
   return {
-    id: fresh.id,
-    platform: fresh.platform,
-    username: fresh.username,
-    metadata: { ...fresh.metadata, password: fresh.password },
+    id: chosen.id,
+    platform: chosen.platform,
+    username: chosen.username,
+    metadata: { ...chosen.metadata, password: chosen.password },
   };
+}
+
+/** The instant a metadata timestamp names; NaN when it names none. */
+function instant(value: unknown): number {
+  if (typeof value !== 'string') return Number.NaN;
+  return Date.parse(value);
 }
 
 /**
@@ -146,7 +150,8 @@ export async function markCookiesStale(accountId: string): Promise<void> {
 
 async function markAndRelogin(accountId: string): Promise<void> {
   const account = getAccount(accountId);
-  if (!account) throw new Error(`no account ${accountId} in the Weles account store`);
+  if (!account)
+    throw new Error(`no account ${accountId} in the Weles account store`);
   updateAccount(accountId, {
     metadata: { cookies_stale_at: new Date().toISOString() },
   });
@@ -231,11 +236,16 @@ export async function platformAdminSessionReady(
   } catch (error) {
     // The cause is part of the answer: "skarbiec_error" alone does not say
     // whether the vault was locked, unreachable or refused the grant.
-    return {
-      ready: false,
-      source: `skarbiec_error:${service}: ${error instanceof Error ? error.message : String(error)}`,
-    };
+    return vaultUnreadable(service, error);
   }
+}
+
+/** The readiness answer of a platform admin whose grant could not be read, naming the vault's error. */
+function vaultUnreadable(service: string, error: unknown): { ready: boolean; source: string } {
+  return {
+    ready: false,
+    source: `skarbiec_error:${service}: ${error instanceof Error ? error.message : String(error)}`,
+  };
 }
 
 export type { ServiceCredential };

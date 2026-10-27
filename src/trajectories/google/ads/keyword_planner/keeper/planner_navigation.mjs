@@ -34,13 +34,17 @@ const GOOGLE_ADS_HOST = 'ads.google.com';
 /** Whether `url` is Google Ads' account selection route. */
 function onAccountPicker(url) {
   const { hostname, pathname } = new URL(url);
-  return hostname === GOOGLE_ADS_HOST && pathname.startsWith('/nav/selectaccount');
+  return (
+    hostname === GOOGLE_ADS_HOST && pathname.startsWith('/nav/selectaccount')
+  );
 }
 
 /** Whether `url` is one of Google Ads' Keyword Planner routes. */
 function onPlannerRoute(url) {
   const { hostname, pathname } = new URL(url);
-  return hostname === GOOGLE_ADS_HOST && pathname.startsWith('/aw/keywordplanner');
+  return (
+    hostname === GOOGLE_ADS_HOST && pathname.startsWith('/aw/keywordplanner')
+  );
 }
 
 function adsUrl(pathname) {

@@ -11,16 +11,20 @@ import { join, resolve } from 'node:path';
 import { refuse } from './running.mjs';
 
 export const REPO = resolve(import.meta.dirname, '..', '..', '..');
-export const HOME = process.env.HOME || homedir();
+// os.homedir() answers $HOME when it is set and the account's home otherwise.
+export const HOME = homedir();
 export const PATH_PREFIX =
   '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
-/** The env files the deployment owns, in the order they override each other. */
+/**
+ * The env files the deployment owns, in the order they override each other.
+ * None of them holds a secret: every secret is a startup field below, redeemed
+ * from Skarbiec by role.
+ */
 export const ENV_FILES = [
   join(HOME, 'weles/var/worker.env'),
   join(HOME, 'weles/var/worker-content.env'),
   join(HOME, '.config/weles/worker.env'),
-  join(HOME, '.weles/secrets.env'),
   join(HOME, '.stado/weles-model.env'),
 ];
 
@@ -116,27 +120,22 @@ export const STARTUP_FIELDS = [
   ],
 ];
 
+/** One `KEY=value` line, optionally prefixed by `export`. */
+const ASSIGNMENT = /^(?:export\s+)?(?<key>[A-Za-z_]\w*)\s*=(?<written>.*)$/;
+/** A value the deployment wrapped in matching single or double quotes. */
+const QUOTED = /^(?<quote>["'])(?<inner>.*)\k<quote>$/;
+
 /** `KEY=value` lines the deployment wrote, with the shell quoting it used. */
 export function loadEnvFile(path) {
   if (!existsSync(path)) return;
   for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
-    const separator = trimmed.indexOf('=');
-    if (separator <= 0) continue;
-    const key = trimmed
-      .slice(0, separator)
-      .replace(/^export\s+/, '')
-      .trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    let value = trimmed.slice(separator + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    process.env[key] = value;
+    const assignment = ASSIGNMENT.exec(trimmed);
+    if (!assignment) continue;
+    const value = assignment.groups.written.trim();
+    const quoted = QUOTED.exec(value);
+    process.env[assignment.groups.key] = quoted ? quoted.groups.inner : value;
   }
 }
 

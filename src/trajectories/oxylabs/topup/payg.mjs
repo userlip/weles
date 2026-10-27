@@ -90,10 +90,7 @@ export async function topUpPayAsYouGo(s, usd) {
   let stripeConfirmed = false;
   s.ctx.on('request', (req) => {
     const url = new URL(req.url());
-    if (
-      url.hostname === 'api.stripe.com' &&
-      url.pathname.endsWith('/confirm')
-    )
+    if (url.hostname === 'api.stripe.com' && url.pathname.endsWith('/confirm'))
       stripeConfirmed = true;
   });
   console.log(`[trajectory] CONFIRM: continuing to pay for ${targetGb} GB`);

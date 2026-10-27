@@ -93,6 +93,6 @@ export function findProxyByDisplayName(name) {
 export function persistProxyContext(id, patch) {
   const document = readItem(id);
   document.context = { ...objectMember(id, document, 'context'), ...patch };
-  skarbiec(['set-json', id], JSON.stringify(document));
+  skarbiec(['set', id], JSON.stringify(document));
   return true;
 }

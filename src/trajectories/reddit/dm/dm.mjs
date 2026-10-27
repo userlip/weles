@@ -18,9 +18,20 @@ import { confirmedFill } from '../../_shared/page/confirmed-fill.mjs';
 import { responseAfterAction } from '../../_shared/page/settled.mjs';
 
 const ERROR_CALL = /\.error\.(?<code>[A-Z_]+)/g;
-const RECIPIENT = statedText(['RECIPIENT_HANDLE'], 'the Reddit username the message goes to').replace(/^u\//, '').replace(/^\//, '');
-const SUBJECT = statedText(['DM_SUBJECT'], 'the subject line of the message a real person receives');
-const MESSAGE = statedText(['DM_MESSAGE'], 'the text sent from a real account to a real person');
+const RECIPIENT = statedText(
+  ['RECIPIENT_HANDLE'],
+  'the Reddit username the message goes to',
+)
+  .replace(/^u\//, '')
+  .replace(/^\//, '');
+const SUBJECT = statedText(
+  ['DM_SUBJECT'],
+  'the subject line of the message a real person receives',
+);
+const MESSAGE = statedText(
+  ['DM_MESSAGE'],
+  'the text sent from a real account to a real person',
+);
 
 await runAction({
   platform: 'reddit',
@@ -28,26 +39,58 @@ await runAction({
   feedUrl: 'https://old.reddit.com/',
   banDetector: detectRedditBanSignals,
   act: async (s) => {
-    await s.goto(`https://old.reddit.com/message/compose/?to=${encodeURIComponent(RECIPIENT)}`);
-    const to = s.page.locator('input#send_to').filter({ visible: true }).first();
+    await s.goto(
+      `https://old.reddit.com/message/compose/?to=${encodeURIComponent(RECIPIENT)}`,
+    );
+    const to = s.page
+      .locator('input#send_to')
+      .filter({ visible: true })
+      .first();
     await to.waitFor({ state: 'visible' });
     // A recipient field holding another name would send the message to them.
-    if ((await to.inputValue()).toLowerCase() !== RECIPIENT.toLowerCase()) await confirmedFill(s.page, to, RECIPIENT, 'the Reddit recipient field');
-    await humanClickLocator(s.page, s.page.locator('input#subject').filter({ visible: true }).first());
+    if ((await to.inputValue()).toLowerCase() !== RECIPIENT.toLowerCase())
+      await confirmedFill(s.page, to, RECIPIENT, 'the Reddit recipient field');
+    await humanClickLocator(
+      s.page,
+      s.page.locator('input#subject').filter({ visible: true }).first(),
+    );
     await humanType(s.page, SUBJECT);
-    await humanClickLocator(s.page, s.page.locator('textarea#message-text, form#compose-message textarea[name="text"]').filter({ visible: true }).first());
+    await humanClickLocator(
+      s.page,
+      s.page
+        .locator(
+          'textarea#message-text, form#compose-message textarea[name="text"]',
+        )
+        .filter({ visible: true })
+        .first(),
+    );
     await humanType(s.page, MESSAGE);
-    const send = s.page.locator('form#compose-message button[type="submit"]').filter({ visible: true }).first();
+    const send = s.page
+      .locator('form#compose-message button[type="submit"]')
+      .filter({ visible: true })
+      .first();
     await send.waitFor({ state: 'visible' });
     const answer = await responseAfterAction(
       s.page,
-      (request) => request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/api/compose'),
+      (request) =>
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname.endsWith('/api/compose'),
       () => humanClickLocator(s.page, send),
     );
     const body = await answer.text();
-    if (!answer.ok()) throw new Error(`REDDIT_DM_HTTP_ERROR: ${answer.status()} from ${answer.url()}: ${body}`);
-    const refused = [...new Set([...body.matchAll(ERROR_CALL)].map((match) => match.groups.code))];
-    if (refused.length) throw new Error(`REDDIT_DM_REFUSED: reddit answered ${refused.join(', ')}: ${body}`);
+    if (!answer.ok())
+      throw new Error(
+        `REDDIT_DM_HTTP_ERROR: ${answer.status()} from ${answer.url()}: ${body}`,
+      );
+    const refused = [
+      ...new Set(
+        [...body.matchAll(ERROR_CALL)].map((match) => match.groups.code),
+      ),
+    ];
+    if (refused.length)
+      throw new Error(
+        `REDDIT_DM_REFUSED: reddit answered ${refused.join(', ')}: ${body}`,
+      );
     return `sent a private message to u/${RECIPIENT}`;
   },
 });

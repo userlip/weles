@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 // before this process existed:
 //
 //   * a declared observation — GENERIC_OBSERVATION plus the reviewed
-//     trajectory, origin, dwell budget and reading the declaration names, all
+//     trajectory, origin, screens to scroll and reading the declaration names, all
 //     set by the dispatcher's admission step; or
 //   * the keeper's own objective, driven by browser_task with the keeper
 //     phase first, which is what src/secrets/acquire.ts queues.

@@ -14,7 +14,10 @@ import {
 } from './_profile_guard.mjs';
 import { closeGoogleAdsSession } from './_close_session.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
-import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import {
+  keptProfileDir,
+  stableProfilePersona,
+} from '../../_shared/profile/persona.mjs';
 import {
   holdsGoogleSession,
   onGoogleSignIn,
@@ -27,9 +30,7 @@ const SOURCE_USER_DATA_DIR = keptProfileDir('google_ads');
 const WAIT_FOR_LOGIN = process.env.WAIT_FOR_LOGIN === '1';
 const STATED_CUSTOMER =
   process.env.GOOGLE_ADS_CUSTOMER_ID || process.env.CUSTOMER_ID;
-const CUSTOMER_ID = STATED_CUSTOMER
-  ? STATED_CUSTOMER.replace(/\D/g, '')
-  : null;
+const CUSTOMER_ID = STATED_CUSTOMER ? STATED_CUSTOMER.replace(/\D/g, '') : null;
 const USE_PROFILE_CLONE = process.env.GOOGLE_VERIFY_USE_PROFILE_CLONE !== '0';
 
 function targetUrl() {

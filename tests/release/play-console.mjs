@@ -107,7 +107,11 @@ try {
 } catch (error) {
   failure = error;
   report.status = connected ? 'failed' : 'blocked';
-  report.error = { name: error.name, message: error.message, stack: error.stack };
+  report.error = {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+  };
 } finally {
   await evidence.finish();
 }

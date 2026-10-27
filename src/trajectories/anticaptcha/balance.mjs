@@ -1,6 +1,9 @@
 // AntiCaptcha balance check via real browser login, signed in through the
 // shared Google SSO identity (../_shared/services/balance/run.mjs).
-import { getGoogleSsoCreds, patchServiceBalance } from '../_shared/services/google_sso.mjs';
+import {
+  getGoogleSsoCreds,
+  patchServiceBalance,
+} from '../_shared/services/google_sso.mjs';
 import { runGoogleSsoBalance } from '../_shared/services/balance/run.mjs';
 
 await runGoogleSsoBalance({

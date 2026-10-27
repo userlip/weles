@@ -6,16 +6,25 @@
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { statedText } from '../../_shared/inputs/stated.mjs';
 import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
-import { pageSettled, responseAfterAction } from '../../_shared/page/settled.mjs';
+import {
+  pageSettled,
+  responseAfterAction,
+} from '../../_shared/page/settled.mjs';
 import { dashboardProjects } from '../session/projects.mjs';
 
 const [, , projectArg, repoArg] = process.argv;
 export const PROJECT = projectArg
   ? projectArg
-  : statedText(['OVERLEAF_PROJECT'], 'the Overleaf project: its id, or text its dashboard title contains');
+  : statedText(
+      ['OVERLEAF_PROJECT'],
+      'the Overleaf project: its id, or text its dashboard title contains',
+    );
 export const REPO_SLUG = repoArg
   ? repoArg
-  : statedText(['OVERLEAF_GITHUB_REPO'], 'owner/name of the GitHub repository the project is linked to');
+  : statedText(
+      ['OVERLEAF_GITHUB_REPO'],
+      'owner/name of the GitHub repository the project is linked to',
+    );
 const HEX = /^[\dA-Fa-f]+$/;
 
 /**
@@ -26,13 +35,19 @@ const HEX = /^[\dA-Fa-f]+$/;
  */
 export async function projectCandidates(page) {
   const wanted = PROJECT.toLowerCase();
-  const candidates = (await dashboardProjects(page)).filter(({ id, name }) => id === PROJECT || name.toLowerCase().includes(wanted));
+  const candidates = (await dashboardProjects(page)).filter(
+    ({ id, name }) => id === PROJECT || name.toLowerCase().includes(wanted),
+  );
   if (candidates.length) {
-    console.log(`[overleaf] ${candidates.length} project match(es); choosing by the GitHub link to ${REPO_SLUG}`);
+    console.log(
+      `[overleaf] ${candidates.length} project match(es); choosing by the GitHub link to ${REPO_SLUG}`,
+    );
     return candidates;
   }
   if (HEX.test(PROJECT)) return [{ id: PROJECT, name: '(by id)' }];
-  throw new Error(`OVERLEAF_PROJECT_NOT_FOUND: no dashboard project has the id or a title containing "${PROJECT}"`);
+  throw new Error(
+    `OVERLEAF_PROJECT_NOT_FOUND: no dashboard project has the id or a title containing "${PROJECT}"`,
+  );
 }
 
 /**
@@ -48,10 +63,19 @@ export async function openSyncDialog(page) {
   await responseAfterAction(
     page,
     (request) => new URL(request.url()).pathname.includes('/github-sync/'),
-    () => clickDescribed(page, 'the GitHub card of the integrations panel, which syncs the project with a GitHub repository'),
+    () =>
+      clickDescribed(
+        page,
+        'the GitHub card of the integrations panel, which syncs the project with a GitHub repository',
+      ),
   );
-  const dialog = page.locator('.modal-dialog').filter({ visible: true }).first();
+  const dialog = page
+    .locator('.modal-dialog')
+    .filter({ visible: true })
+    .first();
   await dialog.waitFor({ state: 'visible' });
   await pageSettled(page);
-  return (await dialog.innerText()).toLowerCase().includes(REPO_SLUG.toLowerCase());
+  return (await dialog.innerText())
+    .toLowerCase()
+    .includes(REPO_SLUG.toLowerCase());
 }

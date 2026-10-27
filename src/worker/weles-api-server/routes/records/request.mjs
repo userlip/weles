@@ -34,6 +34,10 @@ export function platformFilter(body) {
   return text(object(body, 'body').platform, 'platform', { required: false });
 }
 
+export function serviceCategory(body) {
+  return text(object(body, 'body').category, 'category', { required: true });
+}
+
 export function accountId(body) {
   return text(object(body, 'body').account_id, 'account_id', {
     required: true,

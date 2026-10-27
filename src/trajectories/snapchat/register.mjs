@@ -31,7 +31,9 @@ async function firstField(s, what, finders) {
     const found = await find();
     if (found) return found;
   }
-  throw new Error(`SNAPCHAT_FIELD_MISSING: the signup at ${s.page.url()} shows no ${what} field`);
+  throw new Error(
+    `SNAPCHAT_FIELD_MISSING: the signup at ${s.page.url()} shows no ${what} field`,
+  );
 }
 
 async function fillStep(s, what, finders, value) {
@@ -41,12 +43,21 @@ async function fillStep(s, what, finders, value) {
 
 /** The birth date: one date input (ISO date), else month, day and year selects. */
 async function fillBirthDate(s, id) {
-  const dateInput = s.page.locator('input[type="date"]').filter({ visible: true }).first();
+  const dateInput = s.page
+    .locator('input[type="date"]')
+    .filter({ visible: true })
+    .first();
   if (await dateInput.count()) {
-    const [isoDate] = new Date(`${id.birthMonth} ${id.birthDay}, ${id.birthYear} UTC`).toISOString().split('T');
+    const [isoDate] = new Date(
+      `${id.birthMonth} ${id.birthDay}, ${id.birthYear} UTC`,
+    )
+      .toISOString()
+      .split('T');
     await dateInput.fill(isoDate);
   } else {
-    await s.page.locator('select[name="month"]').selectOption({ label: id.birthMonth });
+    await s.page
+      .locator('select[name="month"]')
+      .selectOption({ label: id.birthMonth });
     await s.page.locator('select[name="day"]').selectOption(id.birthDay);
     await s.page.locator('select[name="year"]').selectOption(id.birthYear);
   }
@@ -56,12 +67,20 @@ async function fillBirthDate(s, id) {
 async function verifyContact(s, id) {
   const email = await autocompleteField(s.page, 'email');
   const phone = await autocompleteField(s.page, 'tel');
-  const codeField = () => firstField(s, 'verification code', [() => autocompleteField(s.page, 'one-time-code'), () => field(s.page, 'code')]);
+  const codeField = () =>
+    firstField(s, 'verification code', [
+      () => autocompleteField(s.page, 'one-time-code'),
+      () => field(s.page, 'code'),
+    ]);
   if (email) {
     await humanFill(s.page, email, id.email);
     await continueSignup(s);
     const codeInput = await codeField();
-    const code = await mailedCode(id.email, 'snapchat', await fieldCodeLength(codeInput));
+    const code = await mailedCode(
+      id.email,
+      'snapchat',
+      await fieldCodeLength(codeInput),
+    );
     await humanFill(s.page, codeInput, code);
     await continueSignup(s);
     return { email: id.email };
@@ -75,25 +94,57 @@ async function verifyContact(s, id) {
     await continueSignup(s);
     return { email: id.email, phone: number };
   }
-  throw new Error(`SNAPCHAT_CONTACT_STEP_UNKNOWN: the signup at ${s.page.url()} asks for neither an email nor a phone`);
+  throw new Error(
+    `SNAPCHAT_CONTACT_STEP_UNKNOWN: the signup at ${s.page.url()} asks for neither an email nor a phone`,
+  );
 }
 
-const s = await WSession.start({ label: 'snapchat_register', proxy: statedProxy('the Snapchat signup') });
+const s = await WSession.start({
+  label: 'snapchat_register',
+  proxy: statedProxy('the Snapchat signup'),
+});
 try {
   const id = await s.generateIdentity('snapchat');
   console.log(`[sc] identity: ${id.username} / ${id.email}`);
   await s.goto(SIGNUP.href);
   await pageSettled(s.page);
-  await humanFill(s.page, await firstField(s, 'first name', [() => autocompleteField(s.page, 'given-name'), () => field(s.page, 'firstName')]), id.firstName);
-  const lastName = (await autocompleteField(s.page, 'family-name')) || (await field(s.page, 'lastName'));
+  await humanFill(
+    s.page,
+    await firstField(s, 'first name', [
+      () => autocompleteField(s.page, 'given-name'),
+      () => field(s.page, 'firstName'),
+    ]),
+    id.firstName,
+  );
+  const lastName =
+    (await autocompleteField(s.page, 'family-name')) ||
+    (await field(s.page, 'lastName'));
   if (lastName) await humanFill(s.page, lastName, id.lastName);
   await continueSignup(s);
   await fillBirthDate(s, id);
-  await fillStep(s, 'username', [() => autocompleteField(s.page, 'username'), () => field(s.page, 'username')], id.username);
-  await fillStep(s, 'password', [() => autocompleteField(s.page, 'new-password'), () => field(s.page, 'password')], id.password);
+  await fillStep(
+    s,
+    'username',
+    [
+      () => autocompleteField(s.page, 'username'),
+      () => field(s.page, 'username'),
+    ],
+    id.username,
+  );
+  await fillStep(
+    s,
+    'password',
+    [
+      () => autocompleteField(s.page, 'new-password'),
+      () => field(s.page, 'password'),
+    ],
+    id.password,
+  );
   const contact = await verifyContact(s, id);
   await urlMatching(s.page, (url) => new URL(url).pathname !== SIGNUP.pathname);
-  console.log(`[sc] ${await s.saveAccount('snapchat', { username: id.username, password: id.password, status: 'verified', ...contact })}`);
+  console.log(
+    `[sc] ${await s.saveAccount('snapchat', { username: id.username, password: id.password, status: 'verified', ...contact })}`,
+  );
   console.log(`PASS: ${id.username}`);
 } catch (error) {
   console.error(`FAIL: ${error.message}`);

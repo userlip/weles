@@ -15,8 +15,10 @@ import { runAccountSecurity } from './cli/security/account-security.js';
 import { runAppPassword } from './cli/security/app-password.js';
 import { runAppleDeveloperId } from './cli/security/apple-developer-id.js';
 import { runAppleLogin } from './cli/security/apple-login.js';
+import { runRecordingsScrub } from './cli/security/recordings-scrub.js';
 import { runWorker } from './cli/worker/index.js';
 import { runKeeper } from './cli/keeper.js';
+import { runPointer } from './cli/pointer.js';
 import { adoptRecords } from './state/skarbiec-records.js';
 import { HELP, UsageError, exitStatusFor, printAnswer } from './cli/usage.js';
 
@@ -31,13 +33,15 @@ export type CliCommand =
   | 'release'
   | 'design'
   | 'runs'
-  | 'account-security'
-  | 'app-password'
-  | 'developer-certificate'
+  | 'security'
+  | 'password'
+  | 'certificate'
   | 'login'
   | 'worker'
   | 'records'
-  | 'keeper';
+  | 'recordings'
+  | 'keeper'
+  | 'pointer';
 
 export type ParsedCli = {
   command: CliCommand;
@@ -116,13 +120,15 @@ const COMMAND_RUNS: Readonly<
   release: runRelease,
   design: runDesign,
   runs: runRuns,
-  'account-security': runAccountSecurity,
-  'app-password': runAppPassword,
-  'developer-certificate': runAppleDeveloperId,
+  security: runAccountSecurity,
+  password: runAppPassword,
+  certificate: runAppleDeveloperId,
   login: runAppleLogin,
   worker: runWorker,
   records: runRecords,
+  recordings: runRecordingsScrub,
   keeper: runKeeper,
+  pointer: runPointer,
 });
 
 /** The arguments after the interpreter and this script. */

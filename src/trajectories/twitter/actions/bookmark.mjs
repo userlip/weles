@@ -26,6 +26,8 @@ await runAction({
       post.locator('[data-testid="removeBookmark"]'),
       'bookmark',
     );
-    return kept ? `${TARGET_URL} is already bookmarked` : `bookmarked ${TARGET_URL}`;
+    return kept
+      ? `${TARGET_URL} is already bookmarked`
+      : `bookmarked ${TARGET_URL}`;
   },
 });

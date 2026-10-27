@@ -33,7 +33,9 @@ export async function authorizeNewLocation(s, login, seenBefore) {
   );
   let target;
   for (const mail of arrived) {
-    for (const [link] of mail.body_text.matchAll(/https:\/\/click\.discord\.com[^\s"]+/g)) {
+    for (const [link] of mail.body_text.matchAll(
+      /https:\/\/click\.discord\.com[^\s"]+/g,
+    )) {
       target = await authorizeTarget(link);
       if (target) break;
     }

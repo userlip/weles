@@ -15,7 +15,8 @@ import {
   writeSubmitDiagnostics,
 } from '../diagnostics.mjs';
 
-const messageOf = (value) => (value instanceof Error ? value.message : String(value));
+const messageOf = (value) =>
+  value instanceof Error ? value.message : String(value);
 
 /**
  * Keep `error` in `diagnostics` and write them under `label`. Fields the
@@ -30,7 +31,10 @@ export async function recordSubmitFailure(label, diagnostics, error) {
     page_url: error.pageUrl,
     status: error.status,
     network_error: error.errorText,
-    cause: error.cause === undefined ? undefined : redactDiagnosticText(messageOf(error.cause)),
+    cause:
+      error.cause === undefined
+        ? undefined
+        : redactDiagnosticText(messageOf(error.cause)),
   };
   try {
     await writeSubmitDiagnostics(label, diagnostics);
@@ -50,10 +54,13 @@ export async function submitObserved(
   try {
     await button.waitFor({ state: 'visible' });
     if (!(await button.isEnabled()))
-      throw Object.assign(new Error('LinkedIn signup submit button is disabled'), {
-        code: 'LINKEDIN_SIGNUP_SUBMIT_DISABLED',
-        pageUrl: session.page.url(),
-      });
+      throw Object.assign(
+        new Error('LinkedIn signup submit button is disabled'),
+        {
+          code: 'LINKEDIN_SIGNUP_SUBMIT_DISABLED',
+          pageUrl: session.page.url(),
+        },
+      );
     const response = await responseAfterAction(
       session.page,
       (request) => request.method() === 'POST' && pattern.test(request.url()),
@@ -74,17 +81,23 @@ export async function submitObserved(
       text = await response.text();
     } catch (cause) {
       diagnostics.response = summarizeResponse(response, null, cause);
-      throw Object.assign(new Error('LinkedIn signup response body could not be read', { cause }), {
-        code: 'LINKEDIN_SIGNUP_RESPONSE_FAILED',
-        ...responseState,
-      });
+      throw Object.assign(
+        new Error('LinkedIn signup response body could not be read', { cause }),
+        {
+          code: 'LINKEDIN_SIGNUP_RESPONSE_FAILED',
+          ...responseState,
+        },
+      );
     }
     diagnostics.response = summarizeResponse(response, text);
     if (!response.ok())
-      throw Object.assign(new Error(`LinkedIn signup returned HTTP ${response.status()}`), {
-        code: 'LINKEDIN_SIGNUP_HTTP_ERROR',
-        ...responseState,
-      });
+      throw Object.assign(
+        new Error(`LinkedIn signup returned HTTP ${response.status()}`),
+        {
+          code: 'LINKEDIN_SIGNUP_HTTP_ERROR',
+          ...responseState,
+        },
+      );
     await pageSettled(session.page);
     diagnostics.after = await collectSubmitState(session.page, afterStage);
     return { response, text, diagnostics };

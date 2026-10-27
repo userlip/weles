@@ -23,7 +23,15 @@ import {
 import { launchChromiumContext } from './browser/launch/chromium.js';
 import { launchFirefoxContext } from './browser/launch/firefox.js';
 import { launchFingerprint } from './browser/launch/context/surface.js';
-import { launchWindow } from './browser/launch/context/window.js';
+import {
+  honestScreenEnabled,
+  launchWindow,
+} from './browser/launch/context/window.js';
+import {
+  honestHostEnabled,
+  hostHardware,
+  hostOsFamily,
+} from './runtime/host_hardware.js';
 import { recordVideoOption } from './browser/launch/context/recording.js';
 import {
   BROWSER_EVIDENCE_POLICY,
@@ -40,6 +48,8 @@ export interface AsyncNewBrowserOptions {
     country?: string;
     exit_ip?: string;
     platform?: string;
+    /** The SPKI hashes of a TLS-intercepting provider's authority (ResolvedProxy.tls_spki). */
+    tls_spki?: string[];
   };
   locale?: string;
   headless?: boolean;
@@ -78,12 +88,28 @@ export async function AsyncNewBrowser(
   const evidencePolicy =
     process.env.WELES_BROWSER_EVIDENCE_POLICY === BROWSER_EVIDENCE_POLICY;
 
+  // The verified browser build is resolved first: the honest-host
+  // measurement reads this host through the same build the run will use.
+  const browserPath = findCustomBrowser(browserType);
+  if (!browserPath)
+    throw new Error(
+      `WELES_${browserType.toUpperCase()}_BINARY_NOT_FOUND: ${customBrowserSearchHint(browserType)}`,
+    );
+  const host =
+    honestHostEnabled() && hostOsFamily() === targetOs
+      ? await hostHardware({
+          browserType,
+          executablePath: browserPath,
+          withScreen: honestScreenEnabled(headless),
+        })
+      : undefined;
   const fpConfig = launchFingerprint({
     targetOs,
     browserType,
     persona,
     userAgent: options.userAgent,
     headless,
+    host,
   });
   const window = launchWindow({ fpConfig, persona, headless, isChromium });
 
@@ -101,10 +127,7 @@ export async function AsyncNewBrowser(
     ctxOpts.acceptDownloads = false;
     ctxOpts.serviceWorkers = 'block';
   }
-  if (options.proxy) {
-    ctxOpts.proxy = options.proxy;
-    if (isChromium) ctxOpts.ignoreHTTPSErrors = true;
-  }
+  if (options.proxy) ctxOpts.proxy = options.proxy;
   const recordVideo =
     options.recordVideo ?? process.env.WELES_DISABLE_RECORDING !== '1';
   if (recordVideo) ctxOpts.recordVideo = recordVideoOption();
@@ -136,13 +159,6 @@ export async function AsyncNewBrowser(
       browserType,
     });
 
-  // Launch only the checksum-verified, deployment-selected browser release.
-  const chromiumPath = findCustomBrowser('chromium');
-  if (!chromiumPath) {
-    throw new Error(
-      `WELES_CHROMIUM_BINARY_NOT_FOUND: ${customBrowserSearchHint('chromium')}`,
-    );
-  }
   const args = [...CHROMIUM_ARGS];
   if (process.env.WELES_CHROMIUM_PROFILE_DIRECTORY) {
     args.push(
@@ -151,6 +167,12 @@ export async function AsyncNewBrowser(
   }
   if (evidencePolicy) args.push(...evidencePolicyArgs());
   if (persona?.language) args.push(`--lang=${persona.language}`);
+  // A provider that intercepts TLS by design is trusted for exactly the
+  // authority it declares; every other certificate is verified.
+  const intercepting = options.proxy?.tls_spki;
+  if (intercepting?.length) {
+    args.push(`--ignore-certificate-errors-spki-list=${intercepting.join(',')}`);
+  }
   return launchChromiumContext({
     options,
     fpConfig,
@@ -159,7 +181,7 @@ export async function AsyncNewBrowser(
     pageDiagnostics,
     browserType,
     args,
-    chromiumPath,
+    chromiumPath: browserPath,
     targetOs,
     captureHar,
   });

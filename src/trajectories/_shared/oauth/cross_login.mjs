@@ -31,7 +31,11 @@ import { answerOAuthConsent } from './consent.mjs';
 /** A refusal before any session, kept as the run's verdict, then thrown. */
 async function refuse(label, signal, message) {
   const failure = new Error(`${signal}: ${message}`);
-  await keepVerdict(label, null, { signal, healthy: false, details: { reason: message } });
+  await keepVerdict(label, null, {
+    signal,
+    healthy: false,
+    details: { reason: message },
+  });
   throw failure;
 }
 
@@ -51,10 +55,19 @@ export async function runCrossLogin(opts) {
   const { targetPlatform, targetUrl, provider } = opts;
   const label = `${targetPlatform}_login_via_${provider}`;
   const acct = await getSocialAccount(targetPlatform);
-  if (!acct) await refuse(label, 'no_target_account', `no active ${targetPlatform} account in Skarbiec`);
+  if (!acct)
+    await refuse(
+      label,
+      'no_target_account',
+      `no active ${targetPlatform} account in Skarbiec`,
+    );
   const providerAcct = await providerAccount(provider);
   if (!providerAcct)
-    await refuse(label, 'provider_account_missing', `no active ${provider} account in Skarbiec`);
+    await refuse(
+      label,
+      'provider_account_missing',
+      `no active ${provider} account in Skarbiec`,
+    );
   const providerCookies = providerAcct.metadata?.cookies;
   if (!Array.isArray(providerCookies) || !providerCookies.length)
     await refuse(
@@ -71,7 +84,12 @@ export async function runCrossLogin(opts) {
   let banSignal;
   let failure;
   try {
-    const injected = await injectProviderCookies(s.ctx, provider, providerCookies, []);
+    const injected = await injectProviderCookies(
+      s.ctx,
+      provider,
+      providerCookies,
+      [],
+    );
     console.log(`[cross-login] injected ${injected} ${provider} cookies`);
     await s.goto(targetUrl);
     await pageSettled(s.page);
@@ -79,13 +97,25 @@ export async function runCrossLogin(opts) {
     // choices only after their own sign-in control is clicked.
     const providerControl = `the button that signs in or continues with ${provider} (an account on ${provider}, not another provider)`;
     let offered = await clickOffered(s.page, providerControl);
-    if (!offered && (await clickOffered(s.page, "the control that opens the site's own sign-in"))) {
+    if (
+      !offered &&
+      (await clickOffered(
+        s.page,
+        "the control that opens the site's own sign-in",
+      ))
+    ) {
       await pageSettled(s.page);
       offered = await clickOffered(s.page, providerControl);
     }
     if (!offered) {
-      banSignal = { signal: 'provider_button_not_found', healthy: false, details: { final_url: s.page.url(), provider } };
-      throw new Error(`provider_button_not_found: ${s.page.url()} offers no sign-in with ${provider}`);
+      banSignal = {
+        signal: 'provider_button_not_found',
+        healthy: false,
+        details: { final_url: s.page.url(), provider },
+      };
+      throw new Error(
+        `provider_button_not_found: ${s.page.url()} offers no sign-in with ${provider}`,
+      );
     }
     await pageSettled(s.page);
     await answerOAuthConsent(s.page);
@@ -103,7 +133,11 @@ export async function runCrossLogin(opts) {
       banSignal =
         unauthed instanceof AuthProbeError
           ? unauthed.banSignal
-          : { signal: 'assert_authed_failed', healthy: false, details: { reason: unauthed.message, final_url: s.page.url() } };
+          : {
+              signal: 'assert_authed_failed',
+              healthy: false,
+              details: { reason: unauthed.message, final_url: s.page.url() },
+            };
       throw unauthed;
     }
     const cookies = await s.ctx.cookies();
@@ -112,26 +146,43 @@ export async function runCrossLogin(opts) {
       currentPersona: persona,
     });
     if (!persisted.ok) {
-      banSignal = { signal: 'cookies_persist_failed', healthy: false, details: { reason: persisted.reason } };
+      banSignal = {
+        signal: 'cookies_persist_failed',
+        healthy: false,
+        details: { reason: persisted.reason },
+      };
       throw new Error(`cookies_persist_failed: ${persisted.reason}`);
     }
     banSignal = {
       signal: 'healthy',
       healthy: true,
-      details: { provider, final_url: s.page.url(), cookies_persisted: cookies.length },
+      details: {
+        provider,
+        final_url: s.page.url(),
+        cookies_persisted: cookies.length,
+      },
     };
-    console.log(`PASS: ${targetPlatform} logged in via ${provider} (${cookies.length} cookies persisted)`);
+    console.log(
+      `PASS: ${targetPlatform} logged in via ${provider} (${cookies.length} cookies persisted)`,
+    );
   } catch (error) {
     failure = error;
     if (!banSignal)
-      banSignal = { signal: 'action_failed', healthy: false, details: { reason: error.message, final_url: s.page.url() } };
+      banSignal = {
+        signal: 'action_failed',
+        healthy: false,
+        details: { reason: error.message, final_url: s.page.url() },
+      };
     console.log('FAIL:', error.message);
   } finally {
     try {
       await keepVerdict(label, acct, { ...banSignal, provider });
     } catch (keepError) {
       failure = failure
-        ? new AggregateError([failure, keepError], `${failure.message}; and its verdict was not kept: ${keepError.message}`)
+        ? new AggregateError(
+            [failure, keepError],
+            `${failure.message}; and its verdict was not kept: ${keepError.message}`,
+          )
         : keepError;
     }
     await s.close();

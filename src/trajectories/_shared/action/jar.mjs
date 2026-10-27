@@ -27,7 +27,9 @@ function sentTo(cookie, host) {
 async function restoreSiteStorage(s, acct) {
   const origins = acct.metadata?.storage_state?.origins;
   const saved = Array.isArray(origins)
-    ? origins.filter((o) => URL.canParse(o?.origin) && Array.isArray(o.localStorage))
+    ? origins.filter(
+        (o) => URL.canParse(o?.origin) && Array.isArray(o.localStorage),
+      )
     : [];
   for (const { origin, localStorage: items } of saved)
     await s.ctx.addInitScript(

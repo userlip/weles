@@ -19,7 +19,7 @@ import { runOutputPath } from '#run-output';
 import { isIPv4 } from 'node:net';
 import { writeFileSync } from 'node:fs';
 import { WSession } from '../../../../dist/session/wsession.js';
-import { humanIdlePause } from '../../../../dist/human/mouse.js';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 import { getScopedGoogleLogin } from '../../_shared/services/google_sso.mjs';
 import { loadTopupCardEnv } from '../../_shared/services/topup_common.mjs';
 import {
@@ -36,8 +36,13 @@ import { openIspProduct, startCheckout } from './isp_subscribe/product.mjs';
 loadTopupCardEnv();
 
 if (process.env.ISP_BUY_CONFIRM !== '1')
-  throw new Error('ISP_BUY_CONFIRM=1 is required before subscribing; nothing was bought');
-const IP_COUNT = statedCount('ISP_IP_COUNT', 'the ISP tier to buy, by its number of IPs');
+  throw new Error(
+    'ISP_BUY_CONFIRM=1 is required before subscribing; nothing was bought',
+  );
+const IP_COUNT = statedCount(
+  'ISP_IP_COUNT',
+  'the ISP tier to buy, by its number of IPs',
+);
 statedChoice(
   ['ISP_LOCATIONS'],
   Object.freeze({ random: 'Oxylabs places the IPs' }),
@@ -45,7 +50,9 @@ statedChoice(
 );
 const login = await getScopedGoogleLogin('oxylabsDashboard');
 if (!login)
-  throw new Error('the Oxylabs dashboard Google login is not in Skarbiec; nothing was bought');
+  throw new Error(
+    'the Oxylabs dashboard Google login is not in Skarbiec; nothing was bought',
+  );
 
 const s = await WSession.start({
   label: 'oxylabs_isp_subscribe',
@@ -63,11 +70,13 @@ try {
   await s.page.goto('https://dashboard.oxylabs.io/en/overview/ISP', {
     waitUntil: 'domcontentloaded',
   });
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   await shot(s, 'isp_ip_list');
   const ipsText = await s.page.evaluate(() => document.body.innerText);
   writeFileSync(`${OUT_DIR}/${stamp()}_post_purchase_isp_text.txt`, ipsText);
-  const ips = [...new Set(ipsText.split(/\s+/).filter((token) => isIPv4(token)))];
+  const ips = [
+    ...new Set(ipsText.split(/\s+/).filter((token) => isIPv4(token))),
+  ];
   if (ips.length < IP_COUNT)
     throw new Error(
       `OXYLABS_ISP_IPS_UNLISTED: the ISP overview lists ${ips.length} IPs after buying ${IP_COUNT}; see ${OUT_DIR}`,

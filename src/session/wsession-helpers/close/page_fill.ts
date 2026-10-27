@@ -129,7 +129,7 @@ export async function fillPage(
     .evaluate(
       `(()=>{var t=${tgt};for(var el of document.querySelectorAll('*')){var r=el.getBoundingClientRect();var ph=(el.getAttribute('placeholder')||'').toLowerCase();if(r.width>50&&r.height>10&&r.x>0&&ph&&ph.indexOf(t)>=0)return{x:r.x+r.width/2,y:r.y+r.height/2}}return null})()`,
     )
-    .catch((error: unknown) => {
+    .catch((error) => {
       throw new Error(
         `could not search the page for a ${target} placeholder: ${error}`,
       );
@@ -140,7 +140,7 @@ export async function fillPage(
   if (!credentialAuthorized) await assertFocusedLiteralInput(s, value);
   // Typing after a failed select-all appends to whatever the field held, so
   // the field would be submitted with a value nobody asked for.
-  await s.page.keyboard.press('Meta+a').catch((error: unknown) => {
+  await s.page.keyboard.press('Meta+a').catch((error) => {
     throw new Error(
       `could not select the existing text of ${target} before typing: ${error}`,
     );

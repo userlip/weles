@@ -31,19 +31,27 @@ function after(lines, label) {
 
 function membership(lines) {
   const upgradeAt = lines.indexOf('Upgrade Plan');
-  if (upgradeAt < 0) throw new Error('KIMI_SUBSCRIPTION_UNREAD: the membership page shows no Upgrade Plan control, so it names no plan');
+  if (upgradeAt < 0)
+    throw new Error(
+      'KIMI_SUBSCRIPTION_UNREAD: the membership page shows no Upgrade Plan control, so it names no plan',
+    );
   const [plan] = lines.toSpliced(upgradeAt).reverse();
   const renewalLine = lines.find((line) => RENEWAL_LINE.test(line));
   const benefitsAt = lines.indexOf('Basic Benefits');
   const [, ...benefits] = benefitsAt < 0 ? [] : lines.slice(benefitsAt);
-  return { plan, renewalLine, benefits: benefits.filter((line) => line !== 'Cancel Plan') };
+  return {
+    plan,
+    renewalLine,
+    benefits: benefits.filter((line) => line !== 'Cancel Plan'),
+  };
 }
 
 function quota(lines) {
   const usageRows = [];
   for (const [index] of lines.entries()) {
     const [label, at, percentage] = lines.slice(index);
-    if (label === 'Kimi Code' && USAGE_AT.test(at) && PERCENT.test(percentage)) usageRows.push({ service: label, at, percentage });
+    if (label === 'Kimi Code' && USAGE_AT.test(at) && PERCENT.test(percentage))
+      usageRows.push({ service: label, at, percentage });
   }
   // The page lists two "Total usage" blocks: the plan's quota, then the gift's.
   const planUsageAt = lines.indexOf('Total usage');
@@ -53,7 +61,10 @@ function quota(lines) {
   return {
     total_usage_percent: after(lines, 'Total usage'),
     reset_at: resetLine ? dayIn(resetLine) : null,
-    gift_usage_percent: giftUsageAt > planUsageAt ? after(lines.slice(giftUsageAt), 'Total usage') : undefined,
+    gift_usage_percent:
+      giftUsageAt > planUsageAt
+        ? after(lines.slice(giftUsageAt), 'Total usage')
+        : undefined,
     gift_expires_at: giftExpiryLine ? dayIn(giftExpiryLine) : null,
     recent_usage: usageRows,
     page_lines: lines,
@@ -63,8 +74,13 @@ function quota(lines) {
 /** The largest paid invoice on the latest date any invoice was paid; null when none is paid. */
 function currentPlanCost(invoices) {
   const paid = invoices.filter((invoice) => PAID.test(invoice.status));
-  const [latest] = paid.map((invoice) => invoice.date).toSorted().reverse();
-  const onLatest = paid.filter((invoice) => invoice.date === latest).map((invoice) => invoice.amount_usd);
+  const [latest] = paid
+    .map((invoice) => invoice.date)
+    .toSorted()
+    .reverse();
+  const onLatest = paid
+    .filter((invoice) => invoice.date === latest)
+    .map((invoice) => invoice.amount_usd);
   return onLatest.length ? Math.max(...onLatest) : null;
 }
 
@@ -92,11 +108,15 @@ await runKeeperCollector({
         source: 'kimi.com membership subscription UI',
         collected_at: new Date().toISOString(),
         renewal_line: info.renewalLine,
-        monthly_cost_basis: 'largest paid invoice on latest invoice date in Billing & Invoices UI',
+        monthly_cost_basis:
+          'largest paid invoice on latest invoice date in Billing & Invoices UI',
         benefits: info.benefits,
         invoices,
         quota: usage,
-        page_lines: { subscription_info: membershipLines, billing: billingLines },
+        page_lines: {
+          subscription_info: membershipLines,
+          billing: billingLines,
+        },
       },
     };
   },

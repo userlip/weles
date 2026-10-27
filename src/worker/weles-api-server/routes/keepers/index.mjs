@@ -65,16 +65,18 @@ async function list() {
     if (error.code === 'ENOENT') return [];
     throw error;
   }
-  return Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory())
-      .map(async (entry) => {
-        try {
-          return await command(entry.name, 'status');
-        } catch (error) {
-          return { ok: false, session: entry.name, error: error.message };
-        }
-      }),
+  const sessions = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  // One keeper that does not answer is listed with its error; it does not hide
+  // the others.
+  const answers = await Promise.allSettled(
+    sessions.map((session) => command(session, 'status')),
+  );
+  return answers.map((answer, index) =>
+    answer.status === 'fulfilled'
+      ? answer.value
+      : { ok: false, session: sessions[index], error: answer.reason.message },
   );
 }
 

@@ -88,7 +88,12 @@ try {
     await snapshot(s.page, 'code_only_filled');
     await clickControl(s.page, 'submit_code_only', SUBMIT_FORM);
     await snapshot(s.page, 'after_code_only_submit');
-    await clickWhenShown(s.page, 'skip_passkey', PASSKEY_OFFERED, DECLINE_PASSKEY);
+    await clickWhenShown(
+      s.page,
+      'skip_passkey',
+      PASSKEY_OFFERED,
+      DECLINE_PASSKEY,
+    );
     await snapshot(s.page, 'after_code_only_passkey_skip');
     await bringBrowserToFront(s, RUN);
   } else {

@@ -64,7 +64,10 @@ async function fillAdAccountId(page) {
       `ad account id field holds ${JSON.stringify(held)}, not ${AD_ACCOUNT_ID}`,
     );
   console.log(
-    JSON.stringify({ stage: 'filled_ad_account_id', adAccountId: AD_ACCOUNT_ID }),
+    JSON.stringify({
+      stage: 'filled_ad_account_id',
+      adAccountId: AD_ACCOUNT_ID,
+    }),
   );
 }
 

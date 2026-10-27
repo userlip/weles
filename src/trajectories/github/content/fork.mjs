@@ -67,7 +67,9 @@ await runAction({
         .first(),
     );
     const landed = new URL(s.page.url());
-    const [landedOwner, landedRepo] = landed.pathname.split('/').filter(Boolean);
+    const [landedOwner, landedRepo] = landed.pathname
+      .split('/')
+      .filter(Boolean);
     if (
       landed.origin !== GITHUB_ORIGIN ||
       landedOwner?.toLowerCase() !== acct.username.toLowerCase() ||

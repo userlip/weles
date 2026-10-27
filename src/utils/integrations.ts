@@ -53,15 +53,20 @@ export async function integrationAction<T>(
   try {
     envelope = JSON.parse(text) as typeof envelope;
   } catch (error) {
-    const shown = text.trim() === '' ? 'an empty body' : `the body ${text.trim()}`;
+    const shown =
+      text.trim() === '' ? 'an empty body' : `the body ${text.trim()}`;
     throw new Error(
       `${endpoint} answered HTTP ${response.status} with ${shown}, which is not JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   if (!response.ok || envelope.ok !== true || !envelope.result) {
     // The boundary's own error when it states one, else the whole envelope.
-    const refusal = Object.hasOwn(envelope, 'error') ? envelope.error : envelope;
-    throw new Error(`${endpoint} answered HTTP ${response.status}: ${JSON.stringify(refusal)}`);
+    const refusal = Object.hasOwn(envelope, 'error')
+      ? envelope.error
+      : envelope;
+    throw new Error(
+      `${endpoint} answered HTTP ${response.status}: ${JSON.stringify(refusal)}`,
+    );
   }
   return envelope.result as T;
 }

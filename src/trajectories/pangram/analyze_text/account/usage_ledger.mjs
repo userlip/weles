@@ -27,7 +27,9 @@ export function accountKey(acct) {
 /** The mail domain of the account's address, or null when it states none. */
 export function accountDomain(acct) {
   const address = acct.metadata?.email ? acct.metadata.email : acct.username;
-  const domain = String(address).toLowerCase().match(/@(?<domain>[^>\s]+)/)?.groups.domain;
+  const domain = String(address)
+    .toLowerCase()
+    .match(/@(?<domain>[^>\s]+)/)?.groups.domain;
   return domain ? domain : null;
 }
 
@@ -50,11 +52,15 @@ export function readUsageLedger() {
     text = readFileSync(path, 'utf8');
   } catch (error) {
     if (error.code === 'ENOENT') return {};
-    throw new Error(`cannot read the Pangram account usage ledger ${path}: ${error.message}`);
+    throw new Error(
+      `cannot read the Pangram account usage ledger ${path}: ${error.message}`,
+    );
   }
   const ledger = JSON.parse(text);
   if (!ledger || typeof ledger !== 'object' || Array.isArray(ledger))
-    throw new Error(`the Pangram account usage ledger ${path} is not a ledger object`);
+    throw new Error(
+      `the Pangram account usage ledger ${path} is not a ledger object`,
+    );
   return ledger;
 }
 
@@ -86,7 +92,8 @@ function entryToWrite(ledger, acct) {
   const day = todayKey();
   if (!Object.hasOwn(ledger, day)) ledger[day] = {};
   const key = accountKey(acct);
-  if (!Object.hasOwn(ledger[day], key)) ledger[day][key] = { scan_attempts: Number() };
+  if (!Object.hasOwn(ledger[day], key))
+    ledger[day][key] = { scan_attempts: Number() };
   const entry = ledger[day][key];
   Object.assign(entry, {
     account_id: acct.id,

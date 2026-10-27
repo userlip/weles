@@ -8,7 +8,10 @@
 // untrusted browser and any refusal Google states are each named by the step
 // that met them.
 import { fillAndVerify } from '../../../page/confirmed-fill.mjs';
-import { navEval, readAcrossNavigation } from '../../../page/navigation/read.mjs';
+import {
+  navEval,
+  readAcrossNavigation,
+} from '../../../page/navigation/read.mjs';
 import { pageCondition, pageSettled } from '../../../page/settled.mjs';
 import { clickDescribed, pageShows } from '../../../page/judged/seen.mjs';
 import { logGooglePageDiag } from '../page_diagnostics.mjs';
@@ -56,7 +59,10 @@ function blurField(page, field) {
  */
 export async function waitForGooglePassword({ page, mark }) {
   mark('google_password');
-  const password = page.locator('input[type="password"]').filter({ visible: true }).first();
+  const password = page
+    .locator('input[type="password"]')
+    .filter({ visible: true })
+    .first();
   let selectedPassword = false;
   let openedAlternatives = false;
   for (;;) {
@@ -65,31 +71,49 @@ export async function waitForGooglePassword({ page, mark }) {
     if (await password.isVisible()) return password;
     if (
       !selectedPassword &&
-      (await pageShows(page, 'Does the page list ways to sign in that include entering the account password?'))
+      (await pageShows(
+        page,
+        'Does the page list ways to sign in that include entering the account password?',
+      ))
     ) {
       selectedPassword = true;
       mark('google_password_choice');
-      await clickDescribed(page, 'the option to sign in by entering the account password');
+      await clickDescribed(
+        page,
+        'the option to sign in by entering the account password',
+      );
       continue;
     }
     if (
       !selectedPassword &&
       !openedAlternatives &&
-      (await pageShows(page, 'Does the page offer a control that shows other ways to sign in?'))
+      (await pageShows(
+        page,
+        'Does the page offer a control that shows other ways to sign in?',
+      ))
     ) {
       openedAlternatives = true;
       mark('google_password_alternatives');
-      await clickDescribed(page, 'the control that shows other ways to sign in');
+      await clickDescribed(
+        page,
+        'the control that shows other ways to sign in',
+      );
       continue;
     }
     break;
   }
   const observed = await navEval(
     page,
-    () => ({ host: location.host, path: location.pathname, text: document.body.innerText.replace(/\s+/g, ' ') }),
+    () => ({
+      host: location.host,
+      path: location.pathname,
+      text: document.body.innerText.replace(/\s+/g, ' '),
+    }),
     { state: 'page navigated before diagnosis' },
   );
-  const error = new Error(`Google did not show the selected password challenge: ${JSON.stringify(observed)}`);
+  const error = new Error(
+    `Google did not show the selected password challenge: ${JSON.stringify(observed)}`,
+  );
   error.code = 'google_password_challenge_unavailable';
   error.fatal2fa = true;
   throw error;
@@ -112,27 +136,36 @@ export async function waitForGooglePasswordResult(page) {
       const text = document.body.innerText.replace(/\s+/g, ' ');
       if (rejectedRoutes.some((route) => location.pathname.includes(route)))
         return { ...state, text, code: 'BROWSER_NOT_SECURE' };
-      const alert = Array.from(document.querySelectorAll('[aria-live="assertive"], [role="alert"]'))
+      const alert = Array.from(
+        document.querySelectorAll('[aria-live="assertive"], [role="alert"]'),
+      )
         .map((region) => region.innerText.trim())
         .find(Boolean);
-      if (alert) return { ...state, text: alert, code: 'provider_challenge_refused' };
-      const password = Array.from(document.querySelectorAll('input[type="password"]')).find((input) =>
-        input.checkVisibility({ visibilityProperty: true }),
-      );
+      if (alert)
+        return { ...state, text: alert, code: 'provider_challenge_refused' };
+      const password = Array.from(
+        document.querySelectorAll('input[type="password"]'),
+      ).find((input) => input.checkVisibility({ visibilityProperty: true }));
       if (password?.getAttribute('aria-invalid') === 'true')
         return {
           ...state,
           code: 'GOOGLE_PASSWORD_REJECTED',
           text,
-          invalidInput: { name: password.name, ariaInvalid: password.getAttribute('aria-invalid') },
+          invalidInput: {
+            name: password.name,
+            ariaInvalid: password.getAttribute('aria-invalid'),
+          },
         };
-      if (password || /\/challenge\/pwd(?:\/|$)/.test(location.pathname)) return false;
+      if (password || /\/challenge\/pwd(?:\/|$)/.test(location.pathname))
+        return false;
       return state;
     },
     { rejectedRoutes: REJECTED_ROUTES, googleHost: GOOGLE_ACCOUNTS_HOST },
   );
   if (observed.code) {
-    const error = new Error(`Google password step reports a refusal: ${JSON.stringify(observed)}`);
+    const error = new Error(
+      `Google password step reports a refusal: ${JSON.stringify(observed)}`,
+    );
     error.code = observed.code;
     throw error;
   }
@@ -156,7 +189,9 @@ export async function enterGoogleCredentials({
   // Google renders the identifier as input[type="text"] with
   // autocomplete="username webauthn" (id="identifierId"), or as type="email".
   const email = page
-    .locator('input[type="text"][autocomplete*="username"], input#identifierId, input[name="identifier"], input[type="email"]')
+    .locator(
+      'input[type="text"][autocomplete*="username"], input#identifierId, input[name="identifier"], input[type="email"]',
+    )
     .filter({ visible: true })
     .first();
   await email.waitFor({ state: 'visible' });
@@ -169,14 +204,28 @@ export async function enterGoogleCredentials({
   mark('google_email_submitted');
 
   const password = await waitForGooglePassword({ page, mark });
-  await fillAndVerify(page, password, login.password, humanClickLocator, humanType);
+  await fillAndVerify(
+    page,
+    password,
+    login.password,
+    humanClickLocator,
+    humanType,
+  );
   await blurField(page, password);
   await password.press('Enter');
   await waitForGooglePasswordResult(page);
 
   mark('google_2fa_check');
-  const otpField = () => page.locator(OTP_FIELD).filter({ visible: true }).first();
-  if (!resolveOtp(login) && (await completeGooglePhoneApproval(page, login.email, `${approvalLabel} ${login.email}`))) {
+  const otpField = () =>
+    page.locator(OTP_FIELD).filter({ visible: true }).first();
+  if (
+    !resolveOtp(login) &&
+    (await completeGooglePhoneApproval(
+      page,
+      login.email,
+      `${approvalLabel} ${login.email}`,
+    ))
+  ) {
     mark('google_2fa_phone', { required: true, method: 'phone' });
     return;
   }
@@ -185,7 +234,10 @@ export async function enterGoogleCredentials({
     await logGooglePageDiag(page, 'second_factor_without_code_field');
     // Google defaulted to a push or SMS (the authenticator method then forces
     // a code field), or the account has no second factor at all.
-    const result = await selectAuthenticatorMethod(page, Boolean(login.totpSecret));
+    const result = await selectAuthenticatorMethod(
+      page,
+      Boolean(login.totpSecret),
+    );
     if (result === 'no-2fa') {
       mark('google_2fa_not_requested', { required: false, method: null });
       return;

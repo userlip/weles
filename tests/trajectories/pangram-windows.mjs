@@ -1,10 +1,10 @@
-import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import test from "node:test";
-import { fileURLToPath } from "node:url";
+import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 // A real Pangram analysis, placed by Stado on a Weles host through
 // `stado workload run weles-browser-task` with the pangram_analyze_text
@@ -14,57 +14,57 @@ import { fileURLToPath } from "node:url";
 // for the whole text. The text to analyse is the test's own input,
 // WELES_TEST_PANGRAM_TEXT; WELES_TEST_TARGET pins the host when set. No
 // text is a failed run, never a passed one.
-const root = fileURLToPath(new URL("../../", import.meta.url));
-const directory = join(root, "build/real-tests/pangram-windows", randomUUID());
+const root = fileURLToPath(new URL('../../', import.meta.url));
+const directory = join(root, 'build/real-tests/pangram-windows', randomUUID());
 mkdirSync(directory, { recursive: true });
 const report = {
   command: [process.execPath, ...process.execArgv, ...process.argv],
-  source_revision: execFileSync("git", ["rev-parse", "HEAD"], {
+  source_revision: execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,
-    encoding: "utf8",
+    encoding: 'utf8',
   }).trim(),
   started_at: new Date().toISOString(),
   stado: null,
   cases: [],
 };
 const save = () =>
-  writeFileSync(join(directory, "report.json"), JSON.stringify(report));
-process.once("exit", (code) => {
+  writeFileSync(join(directory, 'report.json'), JSON.stringify(report));
+process.once('exit', (code) => {
   report.exit_status = code;
   report.finished_at = new Date().toISOString();
   save();
 });
 save();
 
-test("a placed Pangram run leaves windows over the analysed text", () => {
+test('a placed Pangram run leaves windows over the analysed text', () => {
   const text = process.env.WELES_TEST_PANGRAM_TEXT;
-  assert.ok(text, "WELES_TEST_PANGRAM_TEXT names the text to analyse");
-  const plan = join(directory, "pangram.plan.json");
+  assert.ok(text, 'WELES_TEST_PANGRAM_TEXT names the text to analyse');
+  const plan = join(directory, 'pangram.plan.json');
   writeFileSync(
     plan,
     JSON.stringify({
-      schema: "wisent.weles-browser-task-plan.v1",
-      action: "pangram_analyze_text",
-      url: "https://www.pangram.com/",
-      objective: "Submit the text to Pangram and read its verdict.",
-      session_label: "weles-test-pangram-windows",
+      schema: 'wisent.weles-browser-task-plan.v1',
+      action: 'pangram_analyze_text',
+      url: 'https://www.pangram.com/',
+      objective: 'Submit the text to Pangram and read its verdict.',
+      session_label: 'weles-test-pangram-windows',
       allow_login: true,
       params: { pangram_text: text },
     }),
   );
   const args = [
-    "workload",
-    "run",
-    "weles-browser-task",
-    "--plan",
+    'workload',
+    'run',
+    'weles-browser-task',
+    '--plan',
     plan,
-    "--json",
+    '--json',
   ];
   if (process.env.WELES_TEST_TARGET)
-    args.push("--target", process.env.WELES_TEST_TARGET);
-  const run = spawnSync("stado", args, { encoding: "utf8" });
+    args.push('--target', process.env.WELES_TEST_TARGET);
+  const run = spawnSync('stado', args, { encoding: 'utf8' });
   report.stado = {
-    command: ["stado", ...args],
+    command: ['stado', ...args],
     status: run.status,
     signal: run.signal,
     stdout: run.stdout,
@@ -85,17 +85,17 @@ test("a placed Pangram run leaves windows over the analysed text", () => {
   );
   assert.equal(
     typeof pangram.text,
-    "string",
-    "the output carries the analysed text",
+    'string',
+    'the output carries the analysed text',
   );
   assert.ok(
     Array.isArray(pangram.windows) && pangram.windows.length,
-    "the output carries windows",
+    'the output carries windows',
   );
   assert.deepEqual(
     pangram.unreadable_windows,
     [],
-    "every window Pangram returned could be placed on the text",
+    'every window Pangram returned could be placed on the text',
   );
   for (const window of pangram.windows) {
     assert.ok(
@@ -107,7 +107,7 @@ test("a placed Pangram run leaves windows over the analysed text", () => {
     );
     assert.equal(
       typeof window.label,
-      "string",
+      'string',
       `the window carries a label: ${JSON.stringify(window)}`,
     );
     assert.ok(
@@ -116,8 +116,8 @@ test("a placed Pangram run leaves windows over the analysed text", () => {
     );
   }
   report.cases.push({
-    name: "windows",
-    status: "passed",
+    name: 'windows',
+    status: 'passed',
     run_id: document.run_id,
     host: document.host,
     windows: pangram.windows.length,

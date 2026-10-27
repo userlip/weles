@@ -13,7 +13,8 @@ import {
   readExitAddress,
   type ProxyEndpoint,
 } from './exit/tunnel.js';
-import { PUBLIC_ADDRESS_SERVICE } from '../../utils/runtime/public-address.js';
+import { publicAddressService } from '../../utils/runtime/public-address.js';
+import { describeError } from '../../_shared/error-chain/index.cjs';
 
 export type ExitPreflightInput = {
   host: string;
@@ -45,8 +46,9 @@ async function connectVerdict(
   probeHost: string,
   displayName: string,
   attemptDiag: ProxyPreflightAttempt,
+  probePort?: number,
 ): Promise<{ rejected: boolean; abandonProvider: boolean }> {
-  const answer = await openTunnel(proxy, probeHost);
+  const answer = await openTunnel(proxy, probeHost, probePort);
   if ('failure' in answer) {
     attemptDiag.rejected_reason = `connect_failed: ${answer.failure}`;
     return { rejected: true, abandonProvider: false };
@@ -62,8 +64,7 @@ async function connectVerdict(
   // credential fails, so the provider is abandoned and its top-up enqueued.
   const { enqueueProviderTopup } = await import('../policy.js');
   await enqueueProviderTopup(displayName).catch((topupError: unknown) => {
-    const cause =
-      topupError instanceof Error ? topupError.message : String(topupError);
+    const cause = describeError(topupError);
     attemptDiag.rejected_reason = `${attemptDiag.rejected_reason}; top-up not enqueued: ${cause}`;
   });
   return { rejected: true, abandonProvider: true };
@@ -93,16 +94,16 @@ export async function preflightExit(
     password: input.stickyPass,
   };
   const proxyUrl = `http://${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password)}@${proxy.host}:${input.port}`;
-  // The run's own target is probed when it names one; otherwise the echo
-  // service the exit address is read from.
-  const probeHost = targetHost || PUBLIC_ADDRESS_SERVICE.hostname;
   let preflightContinue = false;
   try {
+    const service = publicAddressService();
+    const probeHost = targetHost || service.hostname;
     const connected = await connectVerdict(
       proxy,
       probeHost,
       displayName,
       attemptDiag,
+      targetHost || !service.port ? undefined : Number(service.port),
     );
     if (connected.rejected) {
       console.log(
@@ -117,9 +118,9 @@ export async function preflightExit(
     // An exit that cannot be read cannot be checked for burns, country or
     // platform routing; it is rerolled, not used unchecked.
     try {
-      exitIp = await readExitAddress(proxy);
+      exitIp = await readExitAddress(proxy, service);
     } catch (error) {
-      const cause = error instanceof Error ? error.message : String(error);
+      const cause = describeError(error);
       console.log(`[proxy] exit-ip probe err: ${cause}`);
       attemptDiag.rejected_reason = `exit_ip_unreadable: ${cause}`;
       preflightContinue = true;
@@ -216,7 +217,7 @@ export async function preflightExit(
   } catch (error) {
     // A preflight that failed checked nothing: the sticky is rerolled with the
     // cause recorded, never handed to the run as if it had passed.
-    const message = error instanceof Error ? error.message : String(error);
+    const message = describeError(error);
     console.log(`[proxy] preflight err: ${message}`);
     attemptDiag.rejected_reason = `preflight_error: ${message}`;
     preflightContinue = true;

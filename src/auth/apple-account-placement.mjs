@@ -12,7 +12,7 @@ const EXIT_SUCCESS = 0; // https://pubs.opengroup.org/onlinepubs/9799919799/func
 
 /**
  * One Stado command's JSON answer; a failure names the command and says what
- * Stado said on stderr. Its stdout is never quoted: an issue-capabilities
+ * Stado said on stderr. Its stdout is never quoted: an `identity issue`
  * answer carries capabilities, so only its length is named.
  */
 function readStadoJson(argv) {
@@ -61,7 +61,7 @@ function relayArguments(identity, authorizationId) {
     throw new Error('an Apple authorization id is required');
   return [
     'identity',
-    'relay-challenge',
+    'relay',
     '--provider',
     'apple',
     '--identity',
@@ -94,7 +94,7 @@ export function issueAppleLoginCapabilities({
 }) {
   const report = readStadoJson([
     'identity',
-    'issue-capabilities',
+    'issue',
     '--provider',
     'apple',
     '--target',

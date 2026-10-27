@@ -8,14 +8,12 @@
 
 import { ALLOW_UNAUTH, API_TOKEN, SESSION } from './service_settings.mjs';
 import { customerIdOf, keywordsOf, squash } from '../request.mjs';
+import { carriesToken } from '../../../../../worker/weles-api-server/http-exchange.mjs';
 
 export function authorized(req) {
   if (ALLOW_UNAUTH) return true;
   if (!API_TOKEN) return false;
-  return (
-    req.headers.authorization === `Bearer ${API_TOKEN}` ||
-    req.headers['x-api-key'] === API_TOKEN
-  );
+  return carriesToken(req, API_TOKEN);
 }
 
 /** A file-name fragment of `value`: lowercase letters and digits joined by dashes. */
@@ -50,7 +48,8 @@ function requestCustomer(body) {
 
 export function validateReportRequest(body) {
   const customerId = requestCustomer(body);
-  const seeds = body.seedKeywords || body.seeds || body.keywords || body.keyword;
+  const seeds =
+    body.seedKeywords || body.seeds || body.keywords || body.keyword;
   const seedKeywords = seeds
     ? keywordsOf(seeds, 'the request (seedKeywords)')
     : [];

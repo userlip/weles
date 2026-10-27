@@ -160,7 +160,11 @@ try {
   try {
     writeFileSync(
       marker,
-      JSON.stringify({ source_revision: report.source_revision, account, amount }),
+      JSON.stringify({
+        source_revision: report.source_revision,
+        account,
+        amount,
+      }),
       { flag: 'wx' },
     );
   } catch (error) {
@@ -178,7 +182,10 @@ try {
     purchase.stdout,
     new RegExp(`selected saved card ending ${cardLast4}`),
   );
-  assert.match(purchase.stdout, /PASS-CHARGED: Stripe payment intent \S+ succeeded/);
+  assert.match(
+    purchase.stdout,
+    /PASS-CHARGED: Stripe payment intent \S+ succeeded/,
+  );
   const after = await observedBalance(account, 'after');
   report.operations.push({
     observation: 'provider_balance_after',

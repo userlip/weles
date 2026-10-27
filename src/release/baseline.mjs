@@ -32,7 +32,9 @@ function ordered(version) {
  */
 function isBehind(candidate, recorded) {
   if (!SEMVER.test(recorded))
-    throw new Error(`the recorded baseline version ${recorded} is not a version`);
+    throw new Error(
+      `the recorded baseline version ${recorded} is not a version`,
+    );
   const theirs = ordered(recorded);
   for (const [index, mine] of ordered(candidate).entries()) {
     if (mine !== theirs[index]) return mine < theirs[index];

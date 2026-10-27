@@ -120,10 +120,7 @@ async function runPreferredGoogleSso(s, returnUrl) {
 export async function ensurePreferredGoogleAccount(s, returnUrl) {
   const email = preferredGoogleAdsEmail();
   if (onGoogleSignIn(s.page.url())) {
-    if (
-      (await continueFromAccountChooser(s)) &&
-      !onGoogleSignIn(s.page.url())
-    )
+    if ((await continueFromAccountChooser(s)) && !onGoogleSignIn(s.page.url()))
       return true;
     return await runPreferredGoogleSso(s, returnUrl);
   }

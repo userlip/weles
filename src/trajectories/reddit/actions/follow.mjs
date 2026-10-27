@@ -30,13 +30,20 @@ const profileSubreddit = (user) =>
 
 /** The newest post author of SUBREDDIT, as Reddit's own listing names it. */
 async function newestAuthor(page) {
-  const listing = await page.evaluate(async (url) => {
-    const answer = await fetch(url, {
-      credentials: 'include',
-      headers: { Accept: 'application/json' },
-    });
-    return { ok: answer.ok, status: answer.status, body: await answer.text() };
-  }, `${OLD_REDDIT}/r/${encodeURIComponent(SUBREDDIT)}/new/.json?raw_json=1`);
+  const listing = await page.evaluate(
+    async (url) => {
+      const answer = await fetch(url, {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+      return {
+        ok: answer.ok,
+        status: answer.status,
+        body: await answer.text(),
+      };
+    },
+    `${OLD_REDDIT}/r/${encodeURIComponent(SUBREDDIT)}/new/.json?raw_json=1`,
+  );
   if (!listing.ok)
     throw new Error(
       `REDDIT_LISTING_REFUSED: r/${SUBREDDIT}/new answered ${listing.status}: ${listing.body}`,
@@ -46,7 +53,8 @@ async function newestAuthor(page) {
     ? posts
         .map((child) => child.data?.author)
         .find(
-          (name) => name && name !== '[deleted]' && !/^AutoModerator$/i.test(name),
+          (name) =>
+            name && name !== '[deleted]' && !/^AutoModerator$/i.test(name),
         )
     : undefined;
   if (!author)
@@ -75,6 +83,8 @@ await runAction({
       'span.fancy-toggle-button.toggle',
       humanClickLocator,
     );
-    return followed ? `already following u/${author}` : `now following u/${author}`;
+    return followed
+      ? `already following u/${author}`
+      : `now following u/${author}`;
   },
 });

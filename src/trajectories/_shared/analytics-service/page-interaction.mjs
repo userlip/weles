@@ -17,7 +17,10 @@ async function safeGoto(s, url) {
     await s.goto(url);
   } catch (error) {
     await pageSettled(s.page);
-    if (!withoutTrailingSlash(s.page.url()).startsWith(withoutTrailingSlash(url))) throw error;
+    if (
+      !withoutTrailingSlash(s.page.url()).startsWith(withoutTrailingSlash(url))
+    )
+      throw error;
   }
 }
 
@@ -108,7 +111,10 @@ async function clickDomElement(page, selectors, textPattern) {
  * shown; a value that is missing is refused.
  */
 async function fillDomInput(page, selectors, value) {
-  if (!value) throw new Error(`fillDomInput: no value was given for ${selectors.join(', ')}`);
+  if (!value)
+    throw new Error(
+      `fillDomInput: no value was given for ${selectors.join(', ')}`,
+    );
   const filled = await page.evaluate(
     ({ selectors: selectorList, value: inputValue }) => {
       const visible = (node) => {
@@ -130,9 +136,20 @@ async function fillDomInput(page, selectors, value) {
       field.scrollIntoView({ block: 'center', inline: 'center' });
       field.focus();
       const prototype =
-        field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(prototype, 'value').set.call(field, inputValue);
-      field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: inputValue }));
+        field instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(prototype, 'value').set.call(
+        field,
+        inputValue,
+      );
+      field.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertText',
+          data: inputValue,
+        }),
+      );
       field.dispatchEvent(new Event('change', { bubbles: true }));
       field.blur();
       return true;

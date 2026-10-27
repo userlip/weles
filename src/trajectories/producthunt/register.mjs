@@ -12,7 +12,11 @@ import { WSession } from '../../../dist/session/wsession.js';
 import { injectProviderCookies } from '../../../dist/platforms/_shared/cross_platform_oauth.js';
 import { exitStatusFor } from '../../../dist/cli/usage.js';
 import { autoBindCharacter } from '../lib/character-bind.mjs';
-import { findUsableTwitterAccount, stampLinkedTwitter, extractPhHandle } from './_session.mjs';
+import {
+  findUsableTwitterAccount,
+  stampLinkedTwitter,
+  extractPhHandle,
+} from './_session.mjs';
 import { assertAuthed } from '../_shared/auth/auth-probe.mjs';
 import { findAccount } from '../_shared/skarbiec/accounts.mjs';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
@@ -25,22 +29,38 @@ async function signup(s) {
   const twAccount = await findUsableTwitterAccount();
   const { username: twUsername, password: twPassword } = twAccount;
   const twEmail = twAccount.metadata.email;
-  console.log(`[ph] using X account ${twUsername} (${twAccount.metadata.cookies.length} cookies)`);
+  console.log(
+    `[ph] using X account ${twUsername} (${twAccount.metadata.cookies.length} cookies)`,
+  );
   // The Product Hunt account is recorded with X's email and password; without
   // them nothing is created, rather than an account recorded with invented ones.
   if (!twEmail || !twPassword)
     throw new Error(
       `PRODUCTHUNT_X_ACCOUNT_INCOMPLETE: X account ${twUsername} carries no ${twEmail ? 'password' : 'email'} in Skarbiec to record the Product Hunt account with; nothing was created`,
     );
-  console.log(`[ph] injected ${await injectProviderCookies(s.ctx, 'twitter', twAccount.metadata.cookies, [])} X cookies`);
-  await completeProductHuntOnboarding(s, HOME, twAccount, twUsername, twPassword, twEmail);
+  console.log(
+    `[ph] injected ${await injectProviderCookies(s.ctx, 'twitter', twAccount.metadata.cookies, [])} X cookies`,
+  );
+  await completeProductHuntOnboarding(
+    s,
+    HOME,
+    twAccount,
+    twUsername,
+    twPassword,
+    twEmail,
+  );
 
   await s.goto(HOME);
   await pageSettled(s.page);
-  await assertAuthed('producthunt', s, { label: 'producthunt_register_post_oauth' });
+  await assertAuthed('producthunt', s, {
+    label: 'producthunt_register_post_oauth',
+  });
   // Product Hunt's handle can differ from the X username.
   const phUsername = await extractPhHandle(s);
-  if (phUsername !== twUsername) console.log(`[ph] Product Hunt handle "${phUsername}" differs from X "${twUsername}"`);
+  if (phUsername !== twUsername)
+    console.log(
+      `[ph] Product Hunt handle "${phUsername}" differs from X "${twUsername}"`,
+    );
 
   // An X account already linked to a Product Hunt user signs that same user in
   // again; it is recorded once, and never over a different X identity.
@@ -49,19 +69,31 @@ async function signup(s) {
     existing &&
     (existing.metadata.email !== twEmail ||
       existing.password !== twPassword ||
-      (existing.metadata.linked_twitter_username && existing.metadata.linked_twitter_username !== twUsername))
+      (existing.metadata.linked_twitter_username &&
+        existing.metadata.linked_twitter_username !== twUsername))
   )
     throw new Error(
       `PRODUCTHUNT_ACCOUNT_CONFLICT: ${phUsername} is already saved with a different X identity or credential; refusing to claim this account was recorded`,
     );
-  if (existing) console.log(`[ph] Product Hunt account ${phUsername} is already recorded (${existing.id})`);
-  else console.log(`[ph] ${await s.saveAccount('producthunt', { username: phUsername, email: twEmail, password: twPassword })}`);
+  if (existing)
+    console.log(
+      `[ph] Product Hunt account ${phUsername} is already recorded (${existing.id})`,
+    );
+  else
+    console.log(
+      `[ph] ${await s.saveAccount('producthunt', { username: phUsername, email: twEmail, password: twPassword })}`,
+    );
   await stampLinkedTwitter(phUsername, twUsername);
-  console.log(`[bind] ${JSON.stringify(await autoBindCharacter(phUsername, 'producthunt'))}`);
+  console.log(
+    `[bind] ${JSON.stringify(await autoBindCharacter(phUsername, 'producthunt'))}`,
+  );
   return phUsername;
 }
 
-const s = await WSession.start({ label: 'producthunt_register', proxy: statedProxy('the Product Hunt signup') });
+const s = await WSession.start({
+  label: 'producthunt_register',
+  proxy: statedProxy('the Product Hunt signup'),
+});
 try {
   console.log(`PASS: ${await signup(s)}`);
 } catch (error) {

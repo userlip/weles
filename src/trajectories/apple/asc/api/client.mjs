@@ -25,14 +25,20 @@ function token() {
     'how long one App Store Connect API token lives, in seconds (Apple refuses more than twenty minutes)',
   );
   const issuedAt = Math.floor(Date.now() / MILLISECONDS_PER_SECOND);
-  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
-  const signed = `${encode({ alg: 'ES256', kid: key.id, typ: 'JWT' })}.${encode({
-    iss: key.issuer,
-    iat: issuedAt,
-    exp: issuedAt + lifetime,
-    aud: 'appstoreconnect-v1',
-  })}`;
-  const signature = crypto.createSign('SHA256').update(signed).sign({ key: key.pem, dsaEncoding: 'ieee-p1363' });
+  const encode = (value) =>
+    Buffer.from(JSON.stringify(value)).toString('base64url');
+  const signed = `${encode({ alg: 'ES256', kid: key.id, typ: 'JWT' })}.${encode(
+    {
+      iss: key.issuer,
+      iat: issuedAt,
+      exp: issuedAt + lifetime,
+      aud: 'appstoreconnect-v1',
+    },
+  )}`;
+  const signature = crypto
+    .createSign('SHA256')
+    .update(signed)
+    .sign({ key: key.pem, dsaEncoding: 'ieee-p1363' });
   return `${signed}.${signature.toString('base64url')}`;
 }
 
@@ -45,11 +51,17 @@ export async function ascRequest(path, { method, body } = { method: 'GET' }) {
   const url = path.startsWith(API) ? path : `${API}/v1${path}`;
   const answer = await fetch(url, {
     method,
-    headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${token()}`,
+      'Content-Type': 'application/json',
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await answer.text();
-  if (!answer.ok) throw new Error(`ASC_API_REFUSED: ${method} ${url} answered HTTP ${answer.status}: ${text}`);
+  if (!answer.ok)
+    throw new Error(
+      `ASC_API_REFUSED: ${method} ${url} answered HTTP ${answer.status}: ${text}`,
+    );
   return text ? JSON.parse(text) : null;
 }
 

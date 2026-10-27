@@ -3,21 +3,21 @@
  *
  * Admission resolved src/worker/deploy/weles-observation-declaration.json in
  * the dispatcher and put the result in the child's env, so the origin a run
- * reads and the dwell budget it spends are declaration content, not a table
- * inside a trajectory. A reviewed observation trajectory is reachable only
- * through that admission step, so an absent variable is a broken caller, not
- * a default to invent: every one of these refuses instead of guessing.
+ * reads and the screens it reads are declaration content, not a table inside
+ * a trajectory. Each screen is read once the page has settled after the
+ * wheel; no clock paces it. A reviewed observation trajectory is reachable
+ * only through that admission step, so an absent variable is a broken caller,
+ * not a default to invent: every one of these refuses instead of guessing.
  */
 
 function required(name) {
   const raw = process.env[name];
-  const value = typeof raw === 'string' ? raw.trim() : '';
-  if (!value) {
+  if (typeof raw !== 'string' || !raw.trim()) {
     throw new Error(
       `${name} is required: an observation trajectory runs only from a declared observation`,
     );
   }
-  return value;
+  return raw.trim();
 }
 
 /** A whole number written in decimal digits, or NaN. */
@@ -35,23 +35,6 @@ export function declaredObservation() {
       `GENERIC_OBSERVATION_SCROLLS must be a whole scroll budget, not ${process.env.GENERIC_OBSERVATION_SCROLLS}`,
     );
   }
-  // An ascending range: the shortest and the longest dwell, both positive.
-  const [shortest, longest, ...beyond] = required(
-    'GENERIC_OBSERVATION_DWELL_MS',
-  )
-    .split(',')
-    .map(whole);
-  if (
-    beyond.length ||
-    !Number.isInteger(shortest) ||
-    !Number.isInteger(longest) ||
-    !(shortest > 0) ||
-    longest < shortest
-  ) {
-    throw new Error(
-      `GENERIC_OBSERVATION_DWELL_MS must be an ascending millisecond range, not ${process.env.GENERIC_OBSERVATION_DWELL_MS}`,
-    );
-  }
   return {
     observation,
     platform,
@@ -59,6 +42,5 @@ export function declaredObservation() {
     origin: required('GENERIC_OBSERVATION_ORIGIN'),
     reads: required('GENERIC_OBSERVATION_READS'),
     scrolls,
-    dwellMs: [shortest, longest],
   };
 }

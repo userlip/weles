@@ -7,7 +7,12 @@ import type { WelesCapabilityPurpose } from '../../utils/capability.js';
 import type { IdentityField } from '../../session/identity/generated.js';
 import type { FunctionTool } from '../model/router-call.js';
 
-export type CredentialFieldClass = 'password' | 'email' | 'username' | 'token' | 'api-key';
+export type CredentialFieldClass =
+  | 'password'
+  | 'email'
+  | 'username'
+  | 'token'
+  | 'api-key';
 
 export const CAPABILITY_PURPOSES: Record<WelesCapabilityPurpose, true> = {
   'weles.browser.fill': true,
@@ -111,20 +116,34 @@ export const BROWSER_TOOLS: readonly FunctionTool[] = [
   browserTool(
     'fill_identity',
     'Fill one field from the current run-generated identity without exposing its value.',
-    { target: TARGET, field: { type: 'string', enum: Object.keys(IDENTITY_FIELDS) } },
+    {
+      target: TARGET,
+      field: { type: 'string', enum: Object.keys(IDENTITY_FIELDS) },
+    },
   ),
   browserTool(
     'store_credential',
     'Store a newly issued token or API key directly in the task-authorized Skarbiec item. Never read or return its value.',
-    { target: TARGET, field_class: { type: 'string', enum: ['token', 'api-key'] } },
+    {
+      target: TARGET,
+      field_class: { type: 'string', enum: ['token', 'api-key'] },
+    },
   ),
-  browserTool('focus', 'Focus an input by name, type or placeholder, including shadow DOM.', { selector: TEXT }),
+  browserTool(
+    'focus',
+    'Focus an input by name, type or placeholder, including shadow DOM.',
+    { selector: TEXT },
+  ),
   browserTool(
     'type_text',
     'Type literal non-credential text after focusing a non-credential field. The focused field is checked, including inside frames and shadow roots. Never use this to work around fill_credential refusal.',
     { value: TEXT },
   ),
-  browserTool('press_key', 'Press a keyboard key such as Enter, Tab or Escape.', { key: TEXT }),
+  browserTool(
+    'press_key',
+    'Press a keyboard key such as Enter, Tab or Escape.',
+    { key: TEXT },
+  ),
   browserTool('navigate', 'Navigate to the supplied URL.', { url: TEXT }),
   browserTool(
     'scroll',
@@ -143,7 +162,11 @@ export const BROWSER_TOOLS: readonly FunctionTool[] = [
     'Answer a question using only the current screenshot. This cannot click, scroll, navigate or change page state.',
     { question: TEXT },
   ),
-  browserTool('select_option', 'Select a dropdown option, including date pickers.', { target: TARGET, value: TEXT }),
+  browserTool(
+    'select_option',
+    'Select a dropdown option, including date pickers.',
+    { target: TARGET, value: TEXT },
+  ),
   browserTool(
     'set_control',
     'Set and verify a non-credential input, select or textarea by CSS selector in the page or an iframe. The actual field is checked; this is not a workaround for a credential refusal.',
@@ -166,9 +189,13 @@ export const BROWSER_TOOLS: readonly FunctionTool[] = [
     'Wait for the newest mail Skrzynka holds for the address (from a sender containing the hint, or any sender when the hint is empty) and return its sender, subject and text, so its code or link can be used.',
     { email: TEXT, sender: TEXT },
   ),
-  browserTool('generate_identity', 'Generate an identity only for a task-authorized registration on the named platform.', {
-    platform: TEXT,
-  }),
+  browserTool(
+    'generate_identity',
+    'Generate an identity only for a task-authorized registration on the named platform.',
+    {
+      platform: TEXT,
+    },
+  ),
   browserTool(
     'check_sms',
     'Request an SMS number for the authorized service in the stated country code; an unsupported country is refused with the supported list.',

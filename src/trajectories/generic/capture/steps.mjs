@@ -18,7 +18,9 @@ export async function runStep(session, step) {
     return outcome;
   }
   if (step.op === 'hover') {
-    const { humanHoverLocator } = await import('../../../../dist/human/mouse.js');
+    const { humanHoverLocator } = await import(
+      '../../../../dist/human/mouse.js'
+    );
     if (typeof humanHoverLocator !== 'function') {
       throw Object.assign(
         new Error(

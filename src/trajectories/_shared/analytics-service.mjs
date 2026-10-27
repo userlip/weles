@@ -7,7 +7,11 @@
 // run's verdict through the shared verdict writer; a failure is thrown.
 import { WSession } from '../../../dist/session/wsession.js';
 import { SessionStore } from '../../../dist/session/store.js';
-import { ACTIONS, actionName, missingInputs } from './analytics-service/action-catalog.mjs';
+import {
+  ACTIONS,
+  actionName,
+  missingInputs,
+} from './analytics-service/action-catalog.mjs';
 import { safeGoto } from './analytics-service/page-interaction.mjs';
 import { ensureLoggedIn } from './analytics-service/session-login.mjs';
 import { humanScrollPage } from '../../../dist/human/mouse.js';
@@ -46,7 +50,10 @@ async function run(name, cfg) {
       return {
         signal: 'pending_review',
         healthy: true,
-        details: { risk: cfg.risk, reason: 'write/admin action staged for approval' },
+        details: {
+          risk: cfg.risk,
+          reason: 'write/admin action staged for approval',
+        },
       };
     }
     let extra = {};
@@ -55,11 +62,13 @@ async function run(name, cfg) {
     if (opening.dashboard) {
       await safeGoto(s, cfg.url());
       await pageSettled(s.page);
-      if (cfg.platform === 'googleanalytics') await openExpectedDashboardSection(s, cfg);
+      if (cfg.platform === 'googleanalytics')
+        await openExpectedDashboardSection(s, cfg);
     }
     if (opening.interacts) {
       if (cfg.scrolls) await humanScrollPage(s.page, 'down');
-      if (cfg.changesState) extra = { ...extra, ...(await performConfirmedWrite(s, cfg)) };
+      if (cfg.changesState)
+        extra = { ...extra, ...(await performConfirmedWrite(s, cfg)) };
     }
     const evidence = await captureEvidence(s, cfg, extra);
     await assertExpectedEvidence(s, cfg, evidence);
@@ -67,7 +76,10 @@ async function run(name, cfg) {
     return {
       signal: 'healthy',
       healthy: true,
-      details: { final_url: evidence.url, evidence_file: 'service_action_result.json' },
+      details: {
+        final_url: evidence.url,
+        evidence_file: 'service_action_result.json',
+      },
     };
   } catch (error) {
     actionError = error;
@@ -89,7 +101,8 @@ const name = actionName();
 const cfg = ACTIONS[name];
 if (!cfg) throw new Error(`unsupported analytics service action: ${name}`);
 const missing = missingInputs(cfg);
-if (missing.length) throw new Error(`missing required input(s): ${missing.join(', ')}`);
+if (missing.length)
+  throw new Error(`missing required input(s): ${missing.join(', ')}`);
 
 let verdict;
 let failure;
@@ -97,14 +110,21 @@ try {
   verdict = await run(name, cfg);
 } catch (error) {
   failure = error;
-  verdict = { signal: 'service_action_failed', healthy: false, details: { reason: error.message } };
+  verdict = {
+    signal: 'service_action_failed',
+    healthy: false,
+    details: { reason: error.message },
+  };
   console.log('FAIL:', error.message);
 }
 try {
   await keepVerdict(name, null, verdict);
 } catch (keepError) {
   failure = failure
-    ? new AggregateError([failure, keepError], `${failure.message}; and its verdict was not kept: ${keepError.message}`)
+    ? new AggregateError(
+        [failure, keepError],
+        `${failure.message}; and its verdict was not kept: ${keepError.message}`,
+      )
     : keepError;
 }
 if (failure) throw failure;

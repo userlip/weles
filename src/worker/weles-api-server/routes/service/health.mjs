@@ -45,6 +45,7 @@ const ROUTES = Object.freeze([
   'POST /records/accounts/update',
   'POST /records/settings/get',
   'POST /records/settings/set',
+  'POST /records/services/list',
 ]);
 
 export function isHealthRoute(req, url) {

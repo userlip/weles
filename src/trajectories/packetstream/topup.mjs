@@ -17,10 +17,16 @@ const PACKETSTREAM_ORIGIN = 'https://app.packetstream.io';
 async function signIn(s, login) {
   await s.goto(`${PACKETSTREAM_ORIGIN}/login`);
   await pageSettled(s.page);
-  const username = s.page.locator('input[name="username"]').filter({ visible: true }).first();
+  const username = s.page
+    .locator('input[name="username"]')
+    .filter({ visible: true })
+    .first();
   await username.click();
   await username.pressSequentially(login.email);
-  const password = s.page.locator('input[name="password"]').filter({ visible: true }).first();
+  const password = s.page
+    .locator('input[name="password"]')
+    .filter({ visible: true })
+    .first();
   await password.click();
   await password.pressSequentially(login.password);
   await password.press('Enter');
@@ -30,13 +36,19 @@ async function signIn(s, login) {
 }
 
 async function deposit(s, usd) {
-  await s.page.goto(`${PACKETSTREAM_ORIGIN}/dashboard/deposit`, { waitUntil: 'domcontentloaded' });
+  await s.page.goto(`${PACKETSTREAM_ORIGIN}/dashboard/deposit`, {
+    waitUntil: 'domcontentloaded',
+  });
   await pageSettled(s.page);
   const offered = await s.page
     .locator('#paypal-amount option')
-    .evaluateAll((options) => options.map((option) => option.value).filter(Boolean));
+    .evaluateAll((options) =>
+      options.map((option) => option.value).filter(Boolean),
+    );
   if (!offered.includes(String(usd)))
-    throw new Error(`PacketStream offers deposits of ${JSON.stringify(offered)} USD, not ${usd}; nothing was charged`);
+    throw new Error(
+      `PacketStream offers deposits of ${JSON.stringify(offered)} USD, not ${usd}; nothing was charged`,
+    );
   // Selecting the amount fires the dropdown's change handler, which
   // navigates to the payment provider; the page it lands on settles before
   // it is read.
@@ -46,15 +58,23 @@ async function deposit(s, usd) {
   const finalUrl = s.page.url();
   console.log(`[trajectory] post-submit url=${finalUrl}`);
   if (new URL(finalUrl).origin === PACKETSTREAM_ORIGIN)
-    throw new Error(`the deposit dropdown left the page on PacketStream (${finalUrl}) instead of the payment provider`);
+    throw new Error(
+      `the deposit dropdown left the page on PacketStream (${finalUrl}) instead of the payment provider`,
+    );
   return finalUrl;
 }
 
 try {
   const { usd } = topupOpts();
   const login = await getServiceLogin('PacketStream');
-  if (!login) throw new Error('PACKETSTREAM_LOGIN_UNAVAILABLE: Skarbiec holds no PacketStream login');
-  const s = await WSession.start({ label: 'packetstream_topup', browser: 'chromium' });
+  if (!login)
+    throw new Error(
+      'PACKETSTREAM_LOGIN_UNAVAILABLE: Skarbiec holds no PacketStream login',
+    );
+  const s = await WSession.start({
+    label: 'packetstream_topup',
+    browser: 'chromium',
+  });
   try {
     await signIn(s, login);
     const checkout = await deposit(s, usd);

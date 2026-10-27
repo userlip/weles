@@ -16,11 +16,15 @@ import { pageSettled } from '../_shared/page/settled.mjs';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
 import { autoBindCharacter } from '../lib/character-bind.mjs';
 import { messagesTo } from '../../_shared/mail/skrzynka-inbox.mjs';
-import { PUZZLE_FRAME, solveRotationViaCoords } from './captcha/coords_solver.mjs';
+import {
+  PUZZLE_FRAME,
+  solveRotationViaCoords,
+} from './captcha/coords_solver.mjs';
 
 const SIGNUP_URL = 'https://github.com/signup';
 const ALERT = '.flash-error, [role="alert"]';
-const CODE_FIELD = 'input[autocomplete="one-time-code"], input[name*="code"], input[inputmode="numeric"]';
+const CODE_FIELD =
+  'input[autocomplete="one-time-code"], input[name*="code"], input[inputmode="numeric"]';
 
 /** The Arkose public key, its API host and the blob, as the puzzle frame requests them. */
 function watchArkose(ctx) {
@@ -28,8 +32,14 @@ function watchArkose(ctx) {
   ctx.on('request', (req) => {
     const url = new URL(req.url());
     if (!url.hostname.endsWith('arkoselabs.com')) return;
-    const key = `${url.pathname}${url.search}`.match(/public_key[/=](?<key>[\dA-F-]+)/i);
-    if (key) Object.assign(seen, { publicKey: key.groups.key, subdomain: url.hostname });
+    const key = `${url.pathname}${url.search}`.match(
+      /public_key[/=](?<key>[\dA-F-]+)/i,
+    );
+    if (key)
+      Object.assign(seen, {
+        publicKey: key.groups.key,
+        subdomain: url.hostname,
+      });
     const body = req.postData();
     const blob = body && new URLSearchParams(body).get('data[blob]');
     if (blob) seen.blob = blob;
@@ -46,7 +56,9 @@ async function fillField(page, selector, value) {
   await humanType(page, value);
   const actual = await field.inputValue();
   if (actual !== value)
-    throw new Error(`GITHUB_SIGNUP_FIELD_MISMATCH: ${selector} holds ${actual.length} characters after typing ${value.length}`);
+    throw new Error(
+      `GITHUB_SIGNUP_FIELD_MISMATCH: ${selector} holds ${actual.length} characters after typing ${value.length}`,
+    );
   await page.keyboard.press('Tab');
 }
 
@@ -62,14 +74,31 @@ async function leftOrRefused(page, from) {
 /** The puzzle answered by the shared captcha services, its token submitted with GitHub's form. */
 async function solveWithServices(page, arkose, from) {
   if (!arkose.publicKey)
-    throw new Error('GITHUB_ARKOSE_KEY_UNSEEN: the puzzle frame made no request naming its public key, so no captcha service can be asked');
-  const token = await new CaptchaSolver().solveFuncaptcha(arkose.publicKey, SIGNUP_URL, arkose.subdomain, arkose.blob);
+    throw new Error(
+      'GITHUB_ARKOSE_KEY_UNSEEN: the puzzle frame made no request naming its public key, so no captcha service can be asked',
+    );
+  const token = await new CaptchaSolver().solveFuncaptcha(
+    arkose.publicKey,
+    SIGNUP_URL,
+    arkose.subdomain,
+    arkose.blob,
+  );
   if (!token) return false;
-  const form = page.locator('form.js-octocaptcha-parent, form[data-octo-click-hmac]').first();
-  if (!(await form.count())) throw new Error(`GITHUB_CAPTCHA_FORM_MISSING: ${page.url()} shows no octocaptcha form for the token`);
+  const form = page
+    .locator('form.js-octocaptcha-parent, form[data-octo-click-hmac]')
+    .first();
+  if (!(await form.count()))
+    throw new Error(
+      `GITHUB_CAPTCHA_FORM_MISSING: ${page.url()} shows no octocaptcha form for the token`,
+    );
   await form.evaluate((f, tk) => {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    for (const input of f.querySelectorAll('input[name="octocaptcha-token"], input.js-octocaptcha-token')) {
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value',
+    ).set;
+    for (const input of f.querySelectorAll(
+      'input[name="octocaptcha-token"], input.js-octocaptcha-token',
+    )) {
       setter.call(input, tk);
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -111,7 +140,9 @@ try {
   await s.page.waitForFunction(
     `['#email', '#password', '#login'].every((field) => document.querySelector(field).classList.contains('is-autocheck-successful'))`,
   );
-  const seenBefore = new Set((await messagesTo(email, 'github.com')).map((mail) => mail.id));
+  const seenBefore = new Set(
+    (await messagesTo(email, 'github.com')).map((mail) => mail.id),
+  );
   const create = s.page.locator('button.js-octocaptcha-load-captcha').first();
   if (await create.isVisible()) await humanClickLocator(s.page, create);
   else
@@ -128,7 +159,12 @@ try {
   await frame.evaluate((f) => {
     const pending = f.getAttribute('data-src');
     if (pending && !f.getAttribute('src')) f.setAttribute('src', pending);
-    for (const message of [{ type: 'ack', acked: true }, 'ack', { event: 'ack' }, { type: 'octocaptcha:ack' }])
+    for (const message of [
+      { type: 'ack', acked: true },
+      'ack',
+      { event: 'ack' },
+      { type: 'octocaptcha:ack' },
+    ])
       f.contentWindow.postMessage(message, '*');
   });
   const captchaUrl = s.page.url();
@@ -136,18 +172,31 @@ try {
     advanced: async () => s.page.url() !== captchaUrl,
     refused: () => s.page.locator(ALERT).first().isVisible(),
   });
-  if (!solved && process.env.WELES_EXTERNAL_FUNCAPTCHA === '1') solved = await solveWithServices(s.page, arkose, captchaUrl);
+  if (!solved && process.env.WELES_EXTERNAL_FUNCAPTCHA === '1')
+    solved = await solveWithServices(s.page, arkose, captchaUrl);
   if (!solved) {
-    await s.saveAccount('github', { username: id.username, email, password: id.password, status: 'captcha_blocked' });
-    throw new Error(`GITHUB_SIGNUP_CAPTCHA_BLOCKED: GitHub kept ${id.username} at its puzzle on ${s.page.url()}; saved as captcha_blocked`);
+    await s.saveAccount('github', {
+      username: id.username,
+      email,
+      password: id.password,
+      status: 'captcha_blocked',
+    });
+    throw new Error(
+      `GITHUB_SIGNUP_CAPTCHA_BLOCKED: GitHub kept ${id.username} at its puzzle on ${s.page.url()}; saved as captcha_blocked`,
+    );
   }
 
   const codeField = s.page.locator(CODE_FIELD).filter({ visible: true });
   await codeField.first().waitFor({ state: 'visible' });
   const boxes = await codeField.count();
-  const length = boxes === Math.sign(boxes) ? Number(await codeField.first().getAttribute('maxlength')) : boxes;
+  const length =
+    boxes === Math.sign(boxes)
+      ? Number(await codeField.first().getAttribute('maxlength'))
+      : boxes;
   if (!Number.isSafeInteger(length) || !length)
-    throw new Error(`GITHUB_SIGNUP_CODE_LENGTH_UNKNOWN: the code field on ${s.page.url()} states no maxlength`);
+    throw new Error(
+      `GITHUB_SIGNUP_CODE_LENGTH_UNKNOWN: the code field on ${s.page.url()} states no maxlength`,
+    );
   const code = await mailedCode(email, seenBefore, length);
   const codeUrl = s.page.url();
   await humanClickLocator(s.page, codeField.first());
@@ -160,8 +209,12 @@ try {
     status: verified ? 'verified' : 'needs_verification',
   });
   if (!verified)
-    throw new Error(`GITHUB_SIGNUP_CODE_REFUSED: GitHub stayed on ${codeUrl} after the mailed code; saved as needs_verification`);
-  console.log(`[bind] ${JSON.stringify(await autoBindCharacter(id.username, 'github'))}`);
+    throw new Error(
+      `GITHUB_SIGNUP_CODE_REFUSED: GitHub stayed on ${codeUrl} after the mailed code; saved as needs_verification`,
+    );
+  console.log(
+    `[bind] ${JSON.stringify(await autoBindCharacter(id.username, 'github'))}`,
+  );
   console.log(`PASS: ${id.username} (verified)`);
 } catch (error) {
   console.error('FAIL:', error);

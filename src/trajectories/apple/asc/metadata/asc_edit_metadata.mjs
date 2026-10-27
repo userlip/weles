@@ -8,7 +8,10 @@ import { WSession } from '../../../../../dist/session/wsession.js';
 import { statedProxy, statedText } from '../../../_shared/inputs/stated.mjs';
 import { openAppStoreConnect } from '../../asc_session.mjs';
 
-const APP_ID = statedText(['APP_ID'], 'the numeric App Store Connect id of the app');
+const APP_ID = statedText(
+  ['APP_ID'],
+  'the numeric App Store Connect id of the app',
+);
 const fields = {
   description: process.env.DESCRIPTION,
   keywords: process.env.KEYWORDS,
@@ -17,7 +20,9 @@ const fields = {
 };
 const toUpdate = Object.entries(fields).filter(([, value]) => value);
 if (!toUpdate.length)
-  throw new Error('at least one of DESCRIPTION, KEYWORDS, PROMO_TEXT or WHATS_NEW must be set');
+  throw new Error(
+    'at least one of DESCRIPTION, KEYWORDS, PROMO_TEXT or WHATS_NEW must be set',
+  );
 
 const acct = await getSocialAccount('apple');
 if (!acct) throw new Error('ASC_ACCOUNT_ABSENT: no Apple account is stored');
@@ -33,21 +38,30 @@ try {
     field,
     value,
     textarea: s.page
-      .locator(`textarea[name="${field}"], textarea[data-test-id*="${field}"], textarea[aria-label*="${field}" i]`)
+      .locator(
+        `textarea[name="${field}"], textarea[data-test-id*="${field}"], textarea[aria-label*="${field}" i]`,
+      )
       .first(),
   }));
   const absent = [];
-  for (const editor of editors) if (!(await editor.textarea.isVisible())) absent.push(editor.field);
+  for (const editor of editors)
+    if (!(await editor.textarea.isVisible())) absent.push(editor.field);
   if (absent.length)
-    throw new Error(`ASC_METADATA_FIELD_ABSENT: app ${APP_ID}'s page shows no ${absent.join(', ')}; nothing was changed`);
+    throw new Error(
+      `ASC_METADATA_FIELD_ABSENT: app ${APP_ID}'s page shows no ${absent.join(', ')}; nothing was changed`,
+    );
   for (const { field, value, textarea } of editors) {
     await textarea.fill(value);
     console.log(`[asc-edit] ${field} set (${value.length} chars)`);
   }
   await pageSettled(s.page);
-  await s.page.locator('button:has-text("Save"), button[data-test-id="save"]').click();
+  await s.page
+    .locator('button:has-text("Save"), button[data-test-id="save"]')
+    .click();
   await pageSettled(s.page);
-  console.log(`PASS: updated ${editors.map((editor) => editor.field).join(', ')} for app ${APP_ID}`);
+  console.log(
+    `PASS: updated ${editors.map((editor) => editor.field).join(', ')} for app ${APP_ID}`,
+  );
 } finally {
   await s.close();
 }

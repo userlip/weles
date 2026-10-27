@@ -17,28 +17,47 @@ const CAPSOLVER = { name: 'capsolver', url: 'https://api.capsolver.com' };
 
 /** The reCAPTCHA sitekey the registration form declares. */
 async function formSitekey(page) {
-  const sitekey = await page.locator('[data-sitekey]').first().getAttribute('data-sitekey');
-  if (!sitekey) throw new Error(`TWOCAPTCHA_SITEKEY_UNREAD: the form at ${page.url()} declares no reCAPTCHA sitekey`);
+  const sitekey = await page
+    .locator('[data-sitekey]')
+    .first()
+    .getAttribute('data-sitekey');
+  if (!sitekey)
+    throw new Error(
+      `TWOCAPTCHA_SITEKEY_UNREAD: the form at ${page.url()} declares no reCAPTCHA sitekey`,
+    );
   return sitekey;
 }
 
 async function solveInvisibleRecaptcha(sitekey) {
   const key = process.env.CAPSOLVER_API_KEY;
-  if (!key) throw new Error('twocaptcha_register: CAPSOLVER_API_KEY is not configured');
+  if (!key)
+    throw new Error('twocaptcha_register: CAPSOLVER_API_KEY is not configured');
   const response = await fetch(`${CAPSOLVER.url}/createTask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       clientKey: key,
-      task: { type: 'ReCaptchaV2TaskProxyLess', websiteURL: REGISTER_URL, websiteKey: sitekey, isInvisible: true },
+      task: {
+        type: 'ReCaptchaV2TaskProxyLess',
+        websiteURL: REGISTER_URL,
+        websiteKey: sitekey,
+        isInvisible: true,
+      },
     }),
   });
   const created = await response.json();
-  if (!created.taskId) throw new Error(`twocaptcha_register: CapSolver refused the task: ${JSON.stringify(created)}`);
+  if (!created.taskId)
+    throw new Error(
+      `twocaptcha_register: CapSolver refused the task: ${JSON.stringify(created)}`,
+    );
   return solverTaskResult(CAPSOLVER, key, created.taskId);
 }
 
-const s = await WSession.start({ label: 'twocaptcha_register', browser: 'chromium', platform: 'twocaptcha' });
+const s = await WSession.start({
+  label: 'twocaptcha_register',
+  browser: 'chromium',
+  platform: 'twocaptcha',
+});
 try {
   const { email } = s.identity;
   const password = registrationPassword();
@@ -51,8 +70,12 @@ try {
 
   const token = await solveInvisibleRecaptcha(await formSitekey(s.page));
   await s.page.evaluate((t) => {
-    for (const field of document.querySelectorAll('textarea[name="g-recaptcha-response"]')) field.value = t;
-    if (typeof window.onRecaptchaSubmit === 'function') window.onRecaptchaSubmit(t);
+    for (const field of document.querySelectorAll(
+      'textarea[name="g-recaptcha-response"]',
+    ))
+      field.value = t;
+    if (typeof window.onRecaptchaSubmit === 'function')
+      window.onRecaptchaSubmit(t);
   }, token);
   console.log('[trajectory] reCAPTCHA token injected');
 
@@ -61,10 +84,15 @@ try {
   console.log(`[trajectory] post-register url=${s.page.url()}`);
   if (/\/register/.test(s.page.url())) {
     const body = await s.page.evaluate(() => document.body.innerText);
-    throw new Error(`TWOCAPTCHA_REGISTER_REFUSED: still on /register. Body: ${body.replace(/\n/g, ' | ')}`);
+    throw new Error(
+      `TWOCAPTCHA_REGISTER_REFUSED: still on /register. Body: ${body.replace(/\n/g, ' | ')}`,
+    );
   }
 
-  const item = writeServiceCredentials('2Captcha', { username: email, password });
+  const item = writeServiceCredentials('2Captcha', {
+    username: email,
+    password,
+  });
   console.log(`PASS: registered ${email}; credentials persisted to ${item}`);
 } catch (error) {
   console.log(`FAIL: ${error.message}`);

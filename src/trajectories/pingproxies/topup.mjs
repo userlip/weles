@@ -8,7 +8,6 @@ import {
   loadTopupCardEnv,
   topupOpts,
 } from '../_shared/services/topup_common.mjs';
-import { humanIdlePause } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
 import { confirmedFill } from '../_shared/page/confirmed-fill.mjs';
 import { exitStatusFor } from '../../../dist/cli/usage.js';
@@ -44,7 +43,7 @@ try {
     );
   s = await WSession.start({ label: 'pingproxies_topup', browser: 'chromium' });
   await s.goto('https://dashboard.byteful.com/login');
-  await humanIdlePause('deliberate');
+  await pageSettled(s.page);
   await s.page
     .locator(
       'button:has-text("Continue with Google"), button:has-text("Sign in with Google")',
@@ -55,7 +54,7 @@ try {
   const ok = await googleSso(s, login, { originHost: 'byteful.com' });
   if (!ok) throw new Error('Google SSO did not complete');
 
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   // The home dashboard Add-balance modal exposes "Show More Payment
   // Options" that may reveal the saved cards on file. The wallet variant of
   // the modal (entered from /billing/wallet) does NOT show them — only New
@@ -65,7 +64,7 @@ try {
   await s.page.goto('https://dashboard.byteful.com/', {
     waitUntil: 'domcontentloaded',
   });
-  await humanIdlePause('deliberate');
+  await pageSettled(s.page);
   const addBalanceBtns = s.page
     .locator('button:has-text("Add balance"), a:has-text("Add balance")')
     .filter({ visible: true });
@@ -83,7 +82,9 @@ try {
     .filter({ visible: true })
     .all();
   if (!dialog)
-    throw new Error('Add balance opened no visible dialog; nothing was charged');
+    throw new Error(
+      'Add balance opened no visible dialog; nothing was charged',
+    );
   if (otherDialogs.length)
     throw new Error(
       'Add balance opened multiple visible dialogs; payment controls are ambiguous',
@@ -124,9 +125,8 @@ try {
   if (await showMore.isVisible()) {
     await showMore.click();
     console.log('[trajectory] clicked "Show More Payment Options"');
-    await humanIdlePause('deliberate');
+    await pageSettled(s.page);
   }
-
 
   const ccTab = dialog
     .locator(
@@ -137,7 +137,7 @@ try {
   if (await ccTab.isVisible()) {
     await ccTab.click({ force: true });
     console.log('[trajectory] clicked Credit card tab');
-    await humanIdlePause('short');
+    await pageSettled(s.page);
   }
 
   const agreeBtn = dialog
@@ -147,7 +147,7 @@ try {
   if (await agreeBtn.isVisible()) {
     await agreeBtn.click({ force: true });
     console.log('[trajectory] clicked "Agree & Continue"');
-    await humanIdlePause('deliberate');
+    await pageSettled(s.page);
   }
   const matchingCards = await dialog
     .locator(
@@ -183,7 +183,6 @@ try {
       `saved card ending ${cardLast4} did not remain selected; nothing was charged`,
     );
   console.log(`[trajectory] selected saved card ending ${cardLast4}`);
-
 
   const confirmBtn = dialog
     .locator('button:has-text("Add store credit")')

@@ -26,6 +26,7 @@ const report = {
   host: hostname(),
   command: [process.execPath, join(root, 'src/worker/weles-api-launcher.mjs')],
   steps: [],
+  unparsed_lines: [],
   requests: [],
   status: 'blocked',
 };
@@ -141,7 +142,11 @@ await test('real worker startup retains operations and their actual outcomes', a
     let entry;
     try {
       entry = JSON.parse(line);
-    } catch {
+    } catch (error) {
+      // The launcher also prints plain lines; they are kept with why they
+      // are no step, so a step printed malformed is not lost unseen.
+      report.unparsed_lines.push({ line, cause: error.message });
+      save();
       return;
     }
     const step = entry?.startup_step;

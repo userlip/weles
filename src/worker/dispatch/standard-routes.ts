@@ -64,7 +64,6 @@ const DIRECT_MESSAGE_SCRIPTS: Record<string, string> = {
   twitter: 'src/trajectories/twitter/actions/engagement/dm.mjs',
 };
 
-
 export const STANDARD_ROUTES: Record<string, (p: string) => string | null> = {
   browser_task: (p) =>
     p === 'generic' ? 'src/trajectories/generic/browser_task.mjs' : null,

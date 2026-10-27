@@ -44,7 +44,9 @@ export class SmsNumberUnavailable extends Error {
     readonly country: string,
     readonly answers: string[],
   ) {
-    super(`sms_number_unavailable: no ${country} number for ${service}: ${answers.join('; ')}`);
+    super(
+      `sms_number_unavailable: no ${country} number for ${service}: ${answers.join('; ')}`,
+    );
   }
 }
 
@@ -52,26 +54,39 @@ export class SmsNumberUnavailable extends Error {
 function internationalPhone(raw: string, country: string): string {
   const written = raw.replace(/\D/g, '');
   const trunk = TRUNK_PREFIX[country];
-  const digits = trunk && written.startsWith(trunk) ? written.slice(trunk.length) : written;
+  const digits =
+    trunk && written.startsWith(trunk) ? written.slice(trunk.length) : written;
   const prefix = COUNTRY_PREFIX[country].replace(/\D/g, '');
-  if (digits.startsWith(prefix) && digits.length > prefix.length) return `+${digits}`;
+  if (digits.startsWith(prefix) && digits.length > prefix.length)
+    return `+${digits}`;
   return `+${prefix}${digits}`;
 }
 
 function providerOf(order: SmsNumber): SmsProvider {
-  const provider = PROVIDERS.find((candidate) => candidate.name === order.provider);
-  if (!provider) throw new Error(`sms_provider_unknown: order ${order.orderId} names ${order.provider}`);
+  const provider = PROVIDERS.find(
+    (candidate) => candidate.name === order.provider,
+  );
+  if (!provider)
+    throw new Error(
+      `sms_provider_unknown: order ${order.orderId} names ${order.provider}`,
+    );
   return provider;
 }
 
 /** Rent a number for `service` in `country` from the first configured provider that holds one. */
-export async function getNumber(service: string, country: string): Promise<SmsNumber> {
+export async function getNumber(
+  service: string,
+  country: string,
+): Promise<SmsNumber> {
   if (!Object.hasOwn(COUNTRY_PREFIX, country))
     throw new Error(
       `sms_country_unsupported: ${country} has no dialling prefix here; supported: ${Object.keys(COUNTRY_PREFIX).join(', ')}; no number was bought`,
     );
   const configured = PROVIDERS.filter((provider) => provider.configured());
-  if (!configured.length) throw new SmsNumberUnavailable(service, country, ['Skarbiec holds no SMS provider API key']);
+  if (!configured.length)
+    throw new SmsNumberUnavailable(service, country, [
+      'Skarbiec holds no SMS provider API key',
+    ]);
   const answers: string[] = [];
   for (const provider of configured) {
     let rented;
@@ -86,9 +101,12 @@ export async function getNumber(service: string, country: string): Promise<SmsNu
       answers.push(rented.unavailable);
       continue;
     }
-    for (const answer of answers) console.error(`[sms] before ${provider.name} rented a number: ${answer}`);
+    for (const answer of answers)
+      console.error(`[sms] before ${provider.name} rented a number: ${answer}`);
     const phone = internationalPhone(rented.phone, country);
-    console.log(`[sms] ${provider.name}: got ${phone} (order ${rented.orderId}, ${country})`);
+    console.log(
+      `[sms] ${provider.name}: got ${phone} (order ${rented.orderId}, ${country})`,
+    );
     costTracker.recordSms(provider.name, service);
     return { phone, orderId: rented.orderId, provider: provider.name, country };
   }

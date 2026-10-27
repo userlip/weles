@@ -1,6 +1,8 @@
 // Read-only qualification against a real deployed Weles service and CLI.
 // Run once with WELES_TEST_IDENTITY_STATE=refused and once with =ready on a
-// dedicated deployment whose identity is managed through Stado. This runner
+// dedicated deployment whose identity is managed through Stado, each with
+// WELES_TEST_RUNTIME_STATE (reported or probing) declaring what the one
+// status read must show of the browser runtime. This runner
 // never changes the deployment, restarts a process or launches a browser.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -22,7 +24,17 @@ function required(name) {
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const binary = realpathSync(required('WELES_BIN'));
+
+// One of `table`'s states, as the run declares it in `name`; a missing or
+// unknown value is refused naming the setting and the states it accepts.
+function declared(name, table) {
+  const value = required(name);
+  assert.ok(
+    Object.hasOwn(table, value),
+    `${name} must be one of ${Object.keys(table).join(', ')}; it is ${value}`,
+  );
+  return value;
+}
 // The identity states a qualification may expect, each with what the
 // answering service must then show.
 const EXPECTATIONS = {
@@ -65,24 +77,61 @@ const EXPECTATIONS = {
     );
   },
 };
-const expected = required('WELES_TEST_IDENTITY_STATE');
-assert.ok(
-  Object.hasOwn(EXPECTATIONS, expected),
-  `WELES_TEST_IDENTITY_STATE must be one of ${Object.keys(EXPECTATIONS).join(', ')}; it is ${expected}`,
-);
+// The browser runtime states a run may expect its one status read to show,
+// each with what the read must then carry. The runner never waits for a
+// probe: an encoder that hangs is the `probing` run.
+const RUNTIME_EXPECTATIONS = {
+  // A finished probe's report, with when it was probed.
+  reported(probe) {
+    assert.ok(
+      probe.report !== null,
+      `The run declares a finished runtime report, and the status has none: ${probe.said} (probingSince ${probe.probingSince})`,
+    );
+    assert.ok(typeof probe.probedAt === 'string', `A runtime report states no time it was probed: ${JSON.stringify(probe)}`);
+    const runtime = probe.report;
+    assert.ok(typeof runtime.ok === 'boolean', `The runtime report states no ok: ${JSON.stringify(runtime)}`);
+    // The inspector states a components list once it resolved the encoder,
+    // and only an error when it could not: a list that is absent is said as
+    // absent, never counted as no failing component.
+    const listed = Array.isArray(runtime.components);
+    const failing = listed ? runtime.components.filter((component) => component.ok !== true) : null;
+    if (runtime.ok) {
+      assert.ok(
+        listed && runtime.components.length && !failing.length,
+        `A ready browser runtime names no probed component, or one of them failed: ${JSON.stringify(runtime)}`,
+      );
+    } else if (!(typeof runtime.error === 'string' && runtime.error.trim())) {
+      assert.ok(listed, `A failing browser runtime states neither its resolution error nor its components: ${JSON.stringify(runtime)}`);
+      assert.ok(
+        failing.length &&
+          failing.every((component) => typeof component.error === 'string' && component.error.trim()),
+        `A failing browser runtime does not say why: ${JSON.stringify(runtime)}`,
+      );
+    }
+  },
+  // No report yet, and a probe running since a stated time.
+  probing(probe) {
+    assert.ok(
+      probe.report === null && typeof probe.probingSince === 'string',
+      `The run declares a probe still running with no report, and the status says otherwise: ${JSON.stringify(probe)}`,
+    );
+  },
+};
+// Every run keeps a report, a run refused for its own inputs among them, so
+// a refused invocation is retained with its cause like any other.
 const evidence = join(root, 'build', 'real-tests', 'worker-identity');
 mkdirSync(evidence, { recursive: true });
 const output = mkdtempSync(join(evidence, 'run-'));
 const report = {
   started_at: new Date().toISOString(),
-  binary,
-  binary_sha256: createHash('sha256')
-    .update(readFileSync(binary))
-    .digest('hex'),
-  expected,
+  binary: null,
+  binary_sha256: null,
+  expected: null,
+  runtime_expected: null,
   commands: [],
   verdict: 'blocked',
 };
+let binary;
 
 function command(program, args) {
   const result = spawnSync(program, args, { cwd: root, encoding: 'utf8' });
@@ -105,6 +154,11 @@ function command(program, args) {
 }
 
 try {
+  binary = realpathSync(required('WELES_BIN'));
+  report.binary = binary;
+  report.binary_sha256 = createHash('sha256').update(readFileSync(binary)).digest('hex');
+  report.expected = declared('WELES_TEST_IDENTITY_STATE', EXPECTATIONS);
+  report.runtime_expected = declared('WELES_TEST_RUNTIME_STATE', RUNTIME_EXPECTATIONS);
   report.revision = command('git', ['rev-parse', 'HEAD']).trim();
   report.checkout_status = command('git', ['status', '--porcelain']);
   const status = JSON.parse(command(binary, ['worker', 'status', '--json']));
@@ -149,7 +203,20 @@ try {
     worker && Object.hasOwn(worker, 'serviceIdentityFailure'),
     'The service does not expose deployment identity diagnostics',
   );
-  EXPECTATIONS[expected]({ worker, response, version, text });
+  // The browser runtime as the doctor's own inspector last reported it, from
+  // the second status read (observed_status, after the identity refresh); the
+  // first read may itself have started the probe, so the two can differ. A
+  // status read never waits on the probe and neither does this runner: it
+  // keeps that read in the report and holds it to the state the run declares
+  // (RUNTIME_EXPECTATIONS).
+  const probe = worker.browserRuntime;
+  report.browser_runtime_read = probe;
+  assert.ok(
+    probe && typeof probe.said === 'string' && probe.said.trim(),
+    'The worker status carries no browser runtime probe',
+  );
+  RUNTIME_EXPECTATIONS[report.runtime_expected](probe);
+  EXPECTATIONS[report.expected]({ worker, response, version, text });
   report.verdict = 'passed';
 } catch (error) {
   report.error = String(error.stack || error);

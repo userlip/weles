@@ -32,13 +32,11 @@ export async function appears(locator) {
 // { ok: true, shows } when the model answered the yes/no question about the
 // settled page, { ok: false, reason } (also logged) when it could not.
 export async function judged(page, question) {
-  try {
-    return { ok: true, shows: await pageShows(page, question) };
-  } catch (error) {
-    const reason = `the vision model could not judge "${question}" on ${page.url()}: ${error.message}`;
-    console.log(`[entra] ${reason}`);
-    return { ok: false, reason };
-  }
+  const [answer] = await Promise.allSettled([pageShows(page, question)]);
+  if (answer.status === 'fulfilled') return { ok: true, shows: answer.value };
+  const reason = `the vision model could not judge "${question}" on ${page.url()}: ${answer.reason.message}`;
+  console.log(`[entra] ${reason}`);
+  return { ok: false, reason };
 }
 
 // Declines Microsoft's "stay signed in" question when the page asks it.

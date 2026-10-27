@@ -14,7 +14,11 @@ import { recordingsDir } from './fingerprint_capture.js';
 const CREATED_STATUS = 'created';
 
 /** The profile address each platform shows an account at, for the platforms whose address the username alone gives. */
-function profileUrl(platform: string, username: string, name: string | undefined): Record<string, string> {
+function profileUrl(
+  platform: string,
+  username: string,
+  name: string | undefined,
+): Record<string, string> {
   const handle = name === undefined ? username : name;
   const urls: Record<string, string> = {
     reddit: `https://reddit.com/u/${username}`,
@@ -36,11 +40,16 @@ function profileUrl(platform: string, username: string, name: string | undefined
  * soon as each reading answers, until the mail arrives or the run is
  * cancelled; a mailbox that fails is refused with what it said.
  */
-export async function wsNewestMail(s: WSession, email: string, sender: string): Promise<string> {
+export async function wsNewestMail(
+  s: WSession,
+  email: string,
+  sender: string,
+): Promise<string> {
   const address = s.resolveEnv(email).toLowerCase();
   for (;;) {
     const [newest] = await messagesTo(address, sender.toLowerCase());
-    if (newest) return `From: ${newest.sender}\nSubject: ${newest.subject}\n\n${newest.body_text}`;
+    if (newest)
+      return `From: ${newest.sender}\nSubject: ${newest.subject}\n\n${newest.body_text}`;
   }
 }
 
@@ -54,7 +63,9 @@ async function jarRecord(s: WSession): Promise<Record<string, unknown>> {
     cookies_updated_at: mintedAt,
     cookies_minted_at: mintedAt,
     cookies_minted_proxy: proxySignature(s.proxyConfig),
-    cookies_minted_persona: s.personaConfig ? personaSignature(s.personaConfig) : null,
+    cookies_minted_persona: s.personaConfig
+      ? personaSignature(s.personaConfig)
+      : null,
   };
 }
 
@@ -83,7 +94,10 @@ export async function wsSaveAccount(
   const name = data.name ? s.resolveEnv(data.name) : undefined;
   const session: Captured = await jarRecord(s).then(
     (record) => ({ record, failure: null }),
-    (error: Error) => ({ record: { session_unreadable: error.message }, failure: error.message }),
+    (error: Error) => ({
+      record: { session_unreadable: error.message },
+      failure: error.message,
+    }),
   );
   const metadata = {
     email,
@@ -94,16 +108,25 @@ export async function wsSaveAccount(
     persona: s.personaConfig,
     ...profileUrl(platform, username, name),
   };
-  const item = putAccount({ platform, username, password, metadata, displayName: name });
+  const item = putAccount({
+    platform,
+    username,
+    password,
+    metadata,
+    displayName: name,
+  });
   writeFileSync(
     join(recordingsDir(s.label ? s.label : undefined), 'account.json'),
     JSON.stringify({ item, platform, username }, null, ' '),
   );
   // The account is saved either way; a session that was not captured and a
   // signup-success mark that failed are said in the step's answer.
-  const saved = session.failure ? `account saved: ${item}; session not captured: ${session.failure}` : `account saved: ${item}`;
+  const saved = session.failure
+    ? `account saved: ${item}; session not captured: ${session.failure}`
+    : `account saved: ${item}`;
   return markSignupSuccess(email, platform).then(
     () => saved,
-    (error: Error) => `${saved}; signup success not marked for ${email}: ${error.message}`,
+    (error: Error) =>
+      `${saved}; signup success not marked for ${email}: ${error.message}`,
   );
 }

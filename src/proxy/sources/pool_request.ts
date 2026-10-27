@@ -13,12 +13,16 @@ export interface PoolRequest {
   provider: string | undefined;
 }
 
-const REGION_NAMES = new Intl.DisplayNames(['en'], { type: 'region', fallback: 'none' });
+const REGION_NAMES = new Intl.DisplayNames(['en'], {
+  type: 'region',
+  fallback: 'none',
+});
 
 /** The region `word` names in Unicode's region registry, or undefined when it names none. */
 function region(word: string): string | undefined {
   if (!/^[a-z][a-z]$/i.test(word)) return undefined;
-  const canonical = new Intl.Locale('und', { region: word.toUpperCase() }).region;
+  const canonical = new Intl.Locale('und', { region: word.toUpperCase() })
+    .region;
   return canonical && REGION_NAMES.of(canonical) ? canonical : undefined;
 }
 

@@ -1,5 +1,4 @@
 import { normalize } from './plan.mjs';
-import { humanIdlePause } from '../../../../dist/human/mouse.js';
 import {
   pageSettled,
   responseAfterAction,
@@ -12,7 +11,7 @@ export async function gotoSafe(page, url, projectUrl) {
   if (url !== projectUrl && !url.startsWith(`${projectUrl}/`))
     throw new Error(`Navigation outside project: ${url}`);
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  await humanIdlePause('long');
+  await pageSettled(page);
   if (!page.url().startsWith(projectUrl))
     throw new Error(`Unexpected page: ${page.url()}`);
   await page.evaluate((pattern) => {
@@ -49,7 +48,7 @@ export async function openScope(page, scope, projectUrl) {
         .first(),
       scope.tab,
     );
-    await humanIdlePause('long');
+    await pageSettled(page);
   }
 }
 
@@ -97,16 +96,14 @@ export async function openRow(page, collection, row, projectUrl) {
   const texts = await candidates.evaluateAll((nodes) =>
     nodes.map((node) => node.innerText.replace(/\s+/g, ' ').trim()),
   ); // allow-raw-playwright: read-only row texts
-  const indexes = texts
-    .map((text, index) =>
-      text.includes(normalize(row.rowNeedle)) ? index : -1,
-    )
-    .filter((index) => index >= 0);
-  if (indexes.length !== 1)
+  const needle = normalize(row.rowNeedle);
+  const matching = texts.filter((text) => text.includes(needle));
+  const [only, ...others] = matching;
+  if (only === undefined || others.length)
     throw new Error(
-      `${collection.label}: row is not unique: ${row.rowNeedle} (matched ${indexes.length} of ${texts.length})`,
+      `${collection.label}: row is not unique: ${row.rowNeedle} (matched ${matching.length} of ${texts.length})`,
     );
-  const rows = candidates.nth(indexes[0]);
+  const rows = candidates.nth(texts.indexOf(only));
   await clickSafe(
     rows.locator('button[aria-label="overflow-options"]'),
     'row menu',
@@ -119,16 +116,15 @@ export async function openRow(page, collection, row, projectUrl) {
   );
   await page.waitForFunction(
     ({ suffix, expected, equals }) => {
+      // Only form controls carry a value to compare.
       const matches = Array.from(document.querySelectorAll('[name]')).filter(
         (element) =>
+          typeof element.value === 'string' &&
           element.name.endsWith(suffix) &&
           element.getClientRects().length &&
           getComputedStyle(element).visibility !== 'hidden',
       );
-      const norm = (value) =>
-        String(value || '')
-          .replace(/\s+/g, ' ')
-          .trim();
+      const norm = (value) => String(value).replace(/\s+/g, ' ').trim();
       return matches.some((element) =>
         equals
           ? norm(element.value) === norm(expected)
@@ -159,23 +155,29 @@ export async function save(
   const selector = collection
     ? '#collection-obj-form-save-btn'
     : '#section-form-save-btn';
-  const button = saveButton
-    ? page
-        .getByRole('button', { name: saveButton, exact: true })
-        .filter({ visible: true })
-    : page.locator(selector).filter({ visible: true });
+  // The save control and the name it is refused or reported by: the named
+  // button, or the form's own save button, whose label is Zapisz.
+  const { button, label } = saveButton
+    ? {
+        button: page
+          .getByRole('button', { name: saveButton, exact: true })
+          .filter({ visible: true }),
+        label: saveButton,
+      }
+    : { button: page.locator(selector).filter({ visible: true }), label: 'Zapisz' };
   const response = await responseAfterAction(
     page,
     (request) =>
       request.method() !== 'GET' && request.url().includes('/api/beneficiary/'),
-    () => clickSafe(button, saveButton || 'Zapisz'),
+    () => clickSafe(button, label),
   );
   const body = await response.text();
   if (!response.ok())
     throw new Error(`Save rejected: ${response.status()} ${body}`);
-  const sent = JSON.stringify(
-    JSON.parse(response.request().postData() || 'null'),
-  );
+  const posted = response.request().postData();
+  if (posted === null)
+    throw new Error(`Save request to ${response.url()} carried no body`);
+  const sent = JSON.stringify(JSON.parse(posted));
   const missing = expected.filter(
     (field) => !sent.includes(JSON.stringify(field.expected)),
   );

@@ -12,10 +12,8 @@
 
 import { WSession } from '../../../../dist/session/wsession.js';
 import { humanType } from '../../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../dist/human/mouse.js';
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 import { phoneForField } from '../../_shared/inputs/phone.mjs';
 import { mailedCode } from '../../_shared/inputs/mailed_code.mjs';
@@ -84,7 +82,12 @@ async function fillCodeBoxes(boxes, code, refusal) {
       .locator('select[name="countryCode"], select[id*="country" i]')
       .first();
     if (await country.count())
-      await country.selectOption(statedText(['APPLE_ID_COUNTRY'], 'the country the Apple ID is registered in, as Apple\'s country select values it'));
+      await country.selectOption(
+        statedText(
+          ['APPLE_ID_COUNTRY'],
+          "the country the Apple ID is registered in, as Apple's country select values it",
+        ),
+      );
 
     // 2. First / Last name
     const firstIn = frame
@@ -130,10 +133,16 @@ async function fillCodeBoxes(boxes, code, refusal) {
           await yearIn.selectOption(String(id.birthYear));
       } else {
         await humanClickLocator(s.page, monthIn);
-        await humanType(s.page, await toFieldWidth(monthIn, String(id.birthMonth)));
+        await humanType(
+          s.page,
+          await toFieldWidth(monthIn, String(id.birthMonth)),
+        );
         if (await dayIn.count()) {
           await humanClickLocator(s.page, dayIn);
-          await humanType(s.page, await toFieldWidth(dayIn, String(id.birthDay)));
+          await humanType(
+            s.page,
+            await toFieldWidth(dayIn, String(id.birthDay)),
+          );
         }
         if (await yearIn.count()) {
           await humanClickLocator(s.page, yearIn);
@@ -190,7 +199,7 @@ async function fillCodeBoxes(boxes, code, refusal) {
       .filter({ visible: true })
       .first();
     await humanClickLocator(s.page, submit);
-    await humanIdlePause('long');
+    await pageSettled(s.page);
 
     // 8. Email OTP: one digit per box, as many boxes as the code has digits.
     const emailBoxes = frame.locator(
@@ -198,13 +207,17 @@ async function fillCodeBoxes(boxes, code, refusal) {
     );
     await emailBoxes.first().waitFor({ state: 'visible' });
     const emailCodeBoxes = await emailBoxes.all();
-    const emailCode = await mailedCode(id.email, 'apple', emailCodeBoxes.length);
+    const emailCode = await mailedCode(
+      id.email,
+      'apple',
+      emailCodeBoxes.length,
+    );
     await fillCodeBoxes(
       emailCodeBoxes,
       emailCode,
       'apple_email_otp_unexpected_inputs',
     );
-    await humanIdlePause('deliberate');
+    await pageSettled(s.page);
 
     // 9. Phone OTP
     const smsCode = await s.textedCode();
@@ -214,7 +227,7 @@ async function fillCodeBoxes(boxes, code, refusal) {
       )
       .all();
     await fillCodeBoxes(smsBoxes, smsCode, 'apple_sms_otp_unexpected_inputs');
-    await humanIdlePause('long');
+    await pageSettled(s.page);
 
     // 10. Success lands on appleid.apple.com, or on idmsa's auth/done page.
     const landed = new URL(s.page.url());
@@ -225,7 +238,7 @@ async function fillCodeBoxes(boxes, code, refusal) {
         landed.pathname.includes('/auth/done')
       )
     ) {
-      await humanIdlePause('deliberate');
+      await pageSettled(s.page);
       const settled = s.page.url();
       if (new URL(settled).hostname !== 'appleid.apple.com')
         throw new Error(`apple_register_no_landing: ${settled}`);

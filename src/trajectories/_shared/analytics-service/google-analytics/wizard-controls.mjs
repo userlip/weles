@@ -7,7 +7,11 @@
 
 import { humanFill } from '../../../../../dist/human/keyboard.js';
 import { pageSettled } from '../../page/settled.mjs';
-import { clickDescribed, clickOffered, pageShows } from '../../page/judged/seen.mjs';
+import {
+  clickDescribed,
+  clickOffered,
+  pageShows,
+} from '../../page/judged/seen.mjs';
 import { input } from '../action-catalog.mjs';
 import {
   escapeRegExp,
@@ -32,15 +36,25 @@ async function selectedGaStep(page) {
       const visible = (node) => {
         const style = window.getComputedStyle(node);
         const box = node.getBoundingClientRect();
-        return style.visibility !== 'hidden' && style.display !== 'none' && box.width > 0 && box.height > 0;
+        return (
+          style.visibility !== 'hidden' &&
+          style.display !== 'none' &&
+          box.width > 0 &&
+          box.height > 0
+        );
       };
       const label = Array.from(
-        document.querySelectorAll('.mat-step-header[aria-selected="true"] .mat-step-text-label'),
+        document.querySelectorAll(
+          '.mat-step-header[aria-selected="true"] .mat-step-text-label',
+        ),
       ).find((node) => visible(node));
       return label ? label.textContent.replace(/\s+/g, ' ').trim() : null;
     });
   } catch (error) {
-    throw new Error(`GA wizard selected step could not be read from ${page.url()}: ${error.message}`, { cause: error });
+    throw new Error(
+      `GA wizard selected step could not be read from ${page.url()}: ${error.message}`,
+      { cause: error },
+    );
   }
 }
 
@@ -50,7 +64,9 @@ async function waitForGaStep(page, pattern, description) {
   await pageSettled(page);
   const step = await selectedGaStep(page);
   if (step !== null && pattern.test(step)) return;
-  throw new Error(`${description} did not advance; selected_step=${JSON.stringify(step)}`);
+  throw new Error(
+    `${description} did not advance; selected_step=${JSON.stringify(step)}`,
+  );
 }
 
 // Like waitForGaStep, for a step that may also leave the stepper: the wizard
@@ -59,8 +75,14 @@ async function waitForGaStep(page, pattern, description) {
 async function waitForGaStepOrShown(page, stepPattern, question, description) {
   await pageSettled(page);
   const step = await selectedGaStep(page);
-  if ((step !== null && stepPattern.test(step)) || (await pageShows(page, question))) return;
-  throw new Error(`${description} did not advance; selected_step=${JSON.stringify(step)}; url=${page.url()}`);
+  if (
+    (step !== null && stepPattern.test(step)) ||
+    (await pageShows(page, question))
+  )
+    return;
+  throw new Error(
+    `${description} did not advance; selected_step=${JSON.stringify(step)}; url=${page.url()}`,
+  );
 }
 
 async function dismissGoogleAnalyticsOverlays(page) {
@@ -72,21 +94,30 @@ async function dismissGoogleAnalyticsOverlays(page) {
     '.close-button',
   ])
     await clickAnyLocator(page, [page.locator(selector)]);
-  await clickOffered(page, 'a button that dismisses a promotional dialog or tip without accepting an offer');
+  await clickOffered(
+    page,
+    'a button that dismisses a promotional dialog or tip without accepting an offer',
+  );
 }
 
 /** Advance the wizard; with `expectedStepPattern`, the step it must reach. */
 async function clickGaNext(page, description, expectedStepPattern) {
   await dismissGoogleAnalyticsOverlays(page);
-  await clickDescribed(page, 'the enabled button that advances the setup wizard to its next step');
-  if (expectedStepPattern) await waitForGaStep(page, expectedStepPattern, description);
+  await clickDescribed(
+    page,
+    'the enabled button that advances the setup wizard to its next step',
+  );
+  if (expectedStepPattern)
+    await waitForGaStep(page, expectedStepPattern, description);
   else await pageSettled(page);
 }
 
 /** Type `value` into the open overlay's search, when it has one, and pick the option `option` matches. */
 async function pickOverlayOption(page, value, option, what) {
   const search = page
-    .locator('.cdk-overlay-container input:not([type="hidden"]), .cdk-overlay-container textarea')
+    .locator(
+      '.cdk-overlay-container input:not([type="hidden"]), .cdk-overlay-container textarea',
+    )
     .filter({ visible: true })
     .first();
   if (await search.isVisible()) {
@@ -106,8 +137,15 @@ async function pickOverlayOption(page, value, option, what) {
 async function setOptionalDropdown(page, description, value) {
   if (!value) return;
   if (!(await clickOffered(page, description)))
-    throw new Error(`GA wizard offers no ${description} for the stated ${JSON.stringify(value)}`);
-  await pickOverlayOption(page, value, new RegExp(escapeRegExp(value), 'i'), description);
+    throw new Error(
+      `GA wizard offers no ${description} for the stated ${JSON.stringify(value)}`,
+    );
+  await pickOverlayOption(
+    page,
+    value,
+    new RegExp(escapeRegExp(value), 'i'),
+    description,
+  );
 }
 
 /** The stated INDUSTRY_CATEGORY, picked from GA's industry menu; unstated, the menu is left as GA has it. */
@@ -122,9 +160,16 @@ async function setGoogleAnalyticsIndustry(page) {
       'industry-selector button[debug-id="menu-open-button"], searchable-select[required] button[debug-id="menu-open-button"]',
     );
   if (!(await clickDirectLocator(page, trigger)))
-    throw new Error(`GA business step offers no industry menu for the stated ${JSON.stringify(industry)}`);
+    throw new Error(
+      `GA business step offers no industry menu for the stated ${JSON.stringify(industry)}`,
+    );
   await pageSettled(page);
-  await pickOverlayOption(page, industry, new RegExp(`^${escapeRegExp(industry)}$`, 'i'), 'industry menu');
+  await pickOverlayOption(
+    page,
+    industry,
+    new RegExp(`^${escapeRegExp(industry)}$`, 'i'),
+    'industry menu',
+  );
 }
 
 /** The stated BUSINESS_SIZE: GA's size radio of that value, or the option the vision model finds by it. */
@@ -142,14 +187,18 @@ async function setGoogleAnalyticsBusinessSize(page) {
     if (await sizeRadio.isChecked()) return;
   }
   if (!(await clickOffered(page, `the business size option "${size}"`)))
-    throw new Error(`GA business step offers no business size option ${JSON.stringify(size)}`);
+    throw new Error(
+      `GA business step offers no business size option ${JSON.stringify(size)}`,
+    );
 }
 
 /** The stated BUSINESS_OBJECTIVE: the checkbox named for it, or the option the vision model finds by it. */
 async function setGoogleAnalyticsObjective(page) {
   const objective = input('BUSINESS_OBJECTIVE');
   const box = activeStepPanel(page)
-    .locator(`input[type="checkbox"][name*="${objective.replace(/"/g, '\\"')}"]`)
+    .locator(
+      `input[type="checkbox"][name*="${objective.replace(/"/g, '\\"')}"]`,
+    )
     .first();
   if (await box.count()) {
     await box.check({ force: true });
@@ -157,7 +206,9 @@ async function setGoogleAnalyticsObjective(page) {
     if (await box.isChecked()) return;
   }
   if (!(await clickOffered(page, `the business objective "${objective}"`)))
-    throw new Error(`GA objectives step offers no objective ${JSON.stringify(objective)}`);
+    throw new Error(
+      `GA objectives step offers no objective ${JSON.stringify(objective)}`,
+    );
 }
 
 async function clickGoogleAnalyticsCreateButton(page) {
@@ -165,11 +216,16 @@ async function clickGoogleAnalyticsCreateButton(page) {
   await pageSettled(page);
   if (
     await clickAnyLocator(page, [
-      panel.locator('button[aria-label="Create an account with a property"], button.create-button'),
+      panel.locator(
+        'button[aria-label="Create an account with a property"], button.create-button',
+      ),
     ])
   )
     return;
-  await clickDescribed(page, 'the enabled button that creates the account at the end of the business objectives step');
+  await clickDescribed(
+    page,
+    'the enabled button that creates the account at the end of the business objectives step',
+  );
 }
 
 export {

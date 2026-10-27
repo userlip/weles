@@ -48,7 +48,9 @@ export async function continueFromGoogleAdsAccountSelector(page) {
     .filter({ visible: true })
     .first();
   if (!(await account.isVisible())) return false;
-  console.log(`[google-ads-keyword-planner] selecting Google Ads account ${cid}`);
+  console.log(
+    `[google-ads-keyword-planner] selecting Google Ads account ${cid}`,
+  );
   await humanClickLocator(page, account);
   await pageSettled(page);
   return true;

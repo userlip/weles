@@ -28,14 +28,20 @@ export async function runLogin({ platform, banDetector, session, signIn }) {
   const code = platform.toUpperCase();
   const acct = await getSocialAccount(platform);
   if (!acct)
-    throw Object.assign(new Error(`no active ${platform} account in Skarbiec`), {
-      code: `${code}_ACCOUNT_UNAVAILABLE`,
-    });
+    throw Object.assign(
+      new Error(`no active ${platform} account in Skarbiec`),
+      {
+        code: `${code}_ACCOUNT_UNAVAILABLE`,
+      },
+    );
   const password = acct.metadata?.password;
   if (!password)
-    throw Object.assign(new Error(`${platform} account ${acct.username} has no password`), {
-      code: `${code}_PASSWORD_UNAVAILABLE`,
-    });
+    throw Object.assign(
+      new Error(`${platform} account ${acct.username} has no password`),
+      {
+        code: `${code}_PASSWORD_UNAVAILABLE`,
+      },
+    );
   const login = acct.metadata.email ? acct.metadata.email : acct.username;
   const { proxyUrl: pin, persona } = await resolveAccountSession(acct);
   const pinned = pin && !process.env.PROXY_URL?.trim();
@@ -45,7 +51,12 @@ export async function runLogin({ platform, banDetector, session, signIn }) {
   console.log(
     `[${label}] account ${acct.username} (${login}), ${pinned ? 'its pinned proxy' : `PROXY_URL "${proxyUrl}"`}`,
   );
-  const s = await WSession.start({ label, proxy: proxyUrl, persona, ...session });
+  const s = await WSession.start({
+    label,
+    proxy: proxyUrl,
+    persona,
+    ...session,
+  });
   let banSignal;
   let failure;
   try {

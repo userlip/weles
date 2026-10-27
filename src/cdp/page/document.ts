@@ -108,7 +108,8 @@ export function waitForMainFrameUrl(
     conn.off('Page.navigatedWithinDocument', onWithinDocument, sessionId);
     resolve();
   };
-  const onNavigated = (params: any) => settle(params.frame.id, params.frame.url);
+  const onNavigated = (params: any) =>
+    settle(params.frame.id, params.frame.url);
   const onWithinDocument = (params: any) => settle(params.frameId, params.url);
   conn.on('Page.frameNavigated', onNavigated, sessionId);
   conn.on('Page.navigatedWithinDocument', onWithinDocument, sessionId);

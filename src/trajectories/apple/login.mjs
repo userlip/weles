@@ -10,11 +10,14 @@ import { pageSettled } from '../_shared/page/settled.mjs';
 import { runGuarded } from './guarded/run.mjs';
 import { signInGuarded } from './guarded/sign_in.mjs';
 
-const LOGIN_URL = 'https://appstoreconnect.apple.com/login?targetUrl=%2Fapps&authResult=FAILED';
+const LOGIN_URL =
+  'https://appstoreconnect.apple.com/login?targetUrl=%2Fapps&authResult=FAILED';
 const DASHBOARD = new URL(LOGIN_URL);
 
 /** On App Store Connect, off its login route. */
-const onDashboard = (url) => url.hostname === DASHBOARD.hostname && !url.pathname.startsWith(DASHBOARD.pathname);
+const onDashboard = (url) =>
+  url.hostname === DASHBOARD.hostname &&
+  !url.pathname.startsWith(DASHBOARD.pathname);
 
 await runGuarded({
   label: 'apple_login',

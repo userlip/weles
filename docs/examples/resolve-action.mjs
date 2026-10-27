@@ -4,40 +4,44 @@
 // resolver the Stado runner and the HTTP API use (dist/worker/dispatch.js),
 // so what this prints is exactly what a real dispatch computes.
 //
-// Usage: node docs/examples/resolve-action.mjs [action] [declaration]
+// Usage: node docs/examples/resolve-action.mjs <action> [declaration]
 //   node docs/examples/resolve-action.mjs generic_saved_task twitter.like
 //   node docs/examples/resolve-action.mjs generic_keeper_task reddit.search
 // Runs offline; params below are synthetic.
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 
 const repo = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const { resolveTrajectory, paramsToEnv } = await import(`${repo}/dist/worker/dispatch.js`);
 const { declaredObservations } = await import(`${repo}/dist/worker/observations.js`);
 
-const action = process.argv[2] || 'generic_browser_task';
-const declaration = process.argv[3] || '';
-// A declared observation owns the origin and the dwell budget, so a
+const [action, declaration] = parseArgs({ allowPositionals: true }).positionals;
+if (action === undefined)
+  throw new Error('usage: node docs/examples/resolve-action.mjs <action> [declaration]');
+// A declared observation owns the origin and the screens it scrolls, so a
 // submission naming an observation must not also carry a url or an objective:
 // admission refuses that as two answers to what the run reads. What it does
 // name is the origin's placeholders, and exactly those — read here from the
 // declaration itself, which is what makes the example demonstrate the real
 // contract rather than a guess at it.
-const observing = action === 'generic_keeper_task' && declaration;
+const observing = action === 'generic_keeper_task' && declaration !== undefined;
 const sampleValues = { query: 'representation engineering', handle: 'wisent-ai', subreddit: 'MachineLearning' };
-const origin = observing ? declaredObservations().get(declaration)?.origin ?? '' : '';
+const declared = observing ? declaredObservations().get(declaration) : undefined;
+const placeholders = [];
+if (declared) placeholders.push(...declared.origin.matchAll(/\{([a-z_]+)\}/g));
 const sampleParams = observing
   ? {
     observation: declaration,
-    ...Object.fromEntries([...origin.matchAll(/\{([a-z_]+)\}/g)].map(([, name]) => [name, sampleValues[name]])),
+    ...Object.fromEntries(placeholders.map(([, name]) => [name, sampleValues[name]])),
   }
   : {
     url: 'https://example.com/',
     objective: 'Read the page heading and report it back.',
     flow_name: 'docs_example',
     headless: true,
-    ...(declaration ? { engagement: declaration } : {}),
+    ...(declaration === undefined ? {} : { engagement: declaration }),
   };
 
 console.log(`action: ${action}`);
@@ -51,7 +55,7 @@ if (!trajectory) {
   console.log(`trajectory: ${trajectory}`);
   console.log('env from paramsToEnv(sampleParams, action, trajectory):');
   try {
-    console.log(JSON.stringify(paramsToEnv(sampleParams, action, trajectory), null, 2));
+    console.log(JSON.stringify(paramsToEnv(sampleParams, action, trajectory), null, '\t'));
   } catch (error) {
     // Admission. paramsToEnv is where a submission is accepted or refused, so
     // an undeclared engagement or observation fails here — before a browser is

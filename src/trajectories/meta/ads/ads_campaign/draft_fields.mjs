@@ -85,7 +85,8 @@ async function fillCampaignFields(s) {
   const filled = [];
   for (const [index, fields] of steps.entries()) {
     if (index) await nextStep(s);
-    for (const [description, value] of fields) if (await fillStated(s, description, value)) filled.push(description);
+    for (const [description, value] of fields)
+      if (await fillStated(s, description, value)) filled.push(description);
   }
   if (await selectFacebookPage(s)) filled.push('the Facebook Page');
   return filled.length;
@@ -108,11 +109,27 @@ async function verifyConfiguredDraft(s) {
     .filter(([value]) => !text.includes(value))
     .map(([, label]) => label);
   if (missing.length)
-    throw new Error(`META_ADS_DRAFT_INCOMPLETE: the draft's review does not show its ${missing.join(', ')}`);
-  if (!(await pageShows(s.page, 'Does the page show this campaign as an unpublished draft?')))
-    throw new Error(`META_ADS_DRAFT_STATE_ABSENT: the review does not show the campaign as an unpublished draft (${s.page.url()})`);
-  if (!(await pageShows(s.page, 'Does the page say that all changes to the draft are saved?')))
-    throw new Error(`META_ADS_DRAFT_UNSAVED: the draft is configured but the page does not say its changes are saved (${s.page.url()})`);
+    throw new Error(
+      `META_ADS_DRAFT_INCOMPLETE: the draft's review does not show its ${missing.join(', ')}`,
+    );
+  if (
+    !(await pageShows(
+      s.page,
+      'Does the page show this campaign as an unpublished draft?',
+    ))
+  )
+    throw new Error(
+      `META_ADS_DRAFT_STATE_ABSENT: the review does not show the campaign as an unpublished draft (${s.page.url()})`,
+    );
+  if (
+    !(await pageShows(
+      s.page,
+      'Does the page say that all changes to the draft are saved?',
+    ))
+  )
+    throw new Error(
+      `META_ADS_DRAFT_UNSAVED: the draft is configured but the page does not say its changes are saved (${s.page.url()})`,
+    );
   return true;
 }
 

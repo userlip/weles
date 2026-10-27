@@ -3,7 +3,10 @@ import {
   ownListingHas,
   publicAboutStatus,
 } from './reddit_json.mjs';
-import { HTTP_NOT_FOUND, HTTP_OK } from '../../../../../worker/weles-api-server/routes/http-status.mjs';
+import {
+  HTTP_NOT_FOUND,
+  HTTP_OK,
+} from '../../../../../worker/weles-api-server/routes/http-status.mjs';
 
 /**
  * Whether the comment can be seen publicly right after submit. With its id,
@@ -28,7 +31,9 @@ export async function publiclyVisible(s, { thread, commentId, handle, body }) {
   const listing = `https://old.reddit.com/user/${encodeURIComponent(handle)}/comments/.json?sort=new`;
   const { status, body: text } = await contextRead(s, listing);
   if (status !== HTTP_OK)
-    throw new Error(`REDDIT_LISTING_UNREAD: ${listing} answered ${status}: ${text}`);
+    throw new Error(
+      `REDDIT_LISTING_UNREAD: ${listing} answered ${status}: ${text}`,
+    );
   return text.includes(body);
 }
 
@@ -50,7 +55,10 @@ export async function invisibleCommentSignal(s, { handle, body, afterSubmit }) {
     return {
       signal: 'shadowban_suspected',
       healthy: false,
-      details: { ...details, reason: 'the profile is hidden from signed-out readers' },
+      details: {
+        ...details,
+        reason: 'the profile is hidden from signed-out readers',
+      },
     };
   if (await ownListingHas(s.page, handle, body))
     return {
@@ -70,7 +78,8 @@ export async function invisibleCommentSignal(s, { handle, body, afterSubmit }) {
     healthy: false,
     details: {
       ...details,
-      reason: 'the comment is in neither the public view nor the account listing',
+      reason:
+        'the comment is in neither the public view nor the account listing',
     },
   };
 }

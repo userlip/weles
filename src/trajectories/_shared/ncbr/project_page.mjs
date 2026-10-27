@@ -6,7 +6,12 @@
 /** The open page of `projectUrl` in `browser`'s signed-in context. */
 export function projectPage(browser, projectUrl) {
   const [context] = browser.contexts();
-  const page = context?.pages().find((candidate) => candidate.url().startsWith(projectUrl));
-  if (!page) throw new Error(`NCBR_PROJECT_TAB_MISSING: no open browser page belongs to ${projectUrl}`);
+  const page = context
+    ?.pages()
+    .find((candidate) => candidate.url().startsWith(projectUrl));
+  if (!page)
+    throw new Error(
+      `NCBR_PROJECT_TAB_MISSING: no open browser page belongs to ${projectUrl}`,
+    );
   return page;
 }

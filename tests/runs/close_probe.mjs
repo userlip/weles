@@ -30,7 +30,12 @@ import { parseArgs } from 'node:util';
 const CLOSED = '[wsession] close()';
 const PROBE = 'fingerprint probe';
 
-const cli = process.env.WELES_CLI || 'dist/cli.js';
+// The Weles CLI this test drives: the one WELES_CLI names, else this
+// checkout's own build output, which `npm run build` writes.
+const cli =
+  typeof process.env.WELES_CLI === 'string' && process.env.WELES_CLI.trim()
+    ? process.env.WELES_CLI.trim()
+    : 'dist/cli.js';
 const stamp = `${new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, 'Z')}-${process.pid}`;
 const root = resolve('build', 'real-tests', 'runs', `close-probe-${stamp}`);
 mkdirSync(root, { recursive: true });
@@ -80,7 +85,12 @@ try {
     record && record.status !== 'running',
     `run ${values.run} has no finished record: ${JSON.stringify(record)}`,
   );
-  const output = String(record.stdout_tail ?? '');
+  assert.equal(
+    typeof record.stdout_tail,
+    'string',
+    `run ${values.run} kept no output tail: ${JSON.stringify(record)}`,
+  );
+  const output = record.stdout_tail;
   assert.ok(
     output.includes(CLOSED),
     `run ${values.run} closed no browser session in its kept output, so it says nothing about the close-time probe`,

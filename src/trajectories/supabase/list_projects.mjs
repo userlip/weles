@@ -11,7 +11,10 @@ import { signInToSupabase } from './sign_in.mjs';
 
 const PROJECTS_URL = 'https://supabase.com/dashboard/projects';
 
-const s = await WSession.start({ label: 'supabase_list_projects', browser: 'chromium' });
+const s = await WSession.start({
+  label: 'supabase_list_projects',
+  browser: 'chromium',
+});
 try {
   await signInToSupabase(s);
   await s.goto(PROJECTS_URL);
@@ -19,16 +22,23 @@ try {
   const projects = await s.page.evaluate(() => {
     const found = new Map();
     for (const link of document.querySelectorAll('a[href*="/project/"]')) {
-      const ref = new URL(link.href).pathname.match(/\/project\/(?<ref>[^/?#]+)/)?.groups.ref;
+      const ref = new URL(link.href).pathname.match(
+        /\/project\/(?<ref>[^/?#]+)/,
+      )?.groups.ref;
       if (!ref || found.has(ref)) continue;
       const heading = link.querySelector('h1, h2, h3, h4, [role="heading"]');
       const [firstLine] = link.innerText.trim().split('\n');
-      found.set(ref, { ref, name: heading ? heading.textContent.trim() : firstLine });
+      found.set(ref, {
+        ref,
+        name: heading ? heading.textContent.trim() : firstLine,
+      });
     }
     return Array.from(found.values());
   });
   if (!projects.length)
-    throw new Error(`SUPABASE_NO_PROJECTS: ${s.page.url()} links no project; it shows: ${await s.page.locator('body').innerText()}`);
+    throw new Error(
+      `SUPABASE_NO_PROJECTS: ${s.page.url()} links no project; it shows: ${await s.page.locator('body').innerText()}`,
+    );
   console.log(`PROJECTS_JSON ${JSON.stringify(projects)}`);
   console.log(`PASS: listed ${projects.length} Supabase project(s)`);
 } catch (error) {

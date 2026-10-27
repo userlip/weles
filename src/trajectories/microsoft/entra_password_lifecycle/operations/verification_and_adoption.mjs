@@ -75,7 +75,11 @@ export async function proveStagedCandidate(session, account, contract, plan) {
         : `the Entra password sign-in did not reach a password check (${verdict})`;
     return outcome(contract, {
       status: challenged ? 'needs_human_approval' : 'operation_failed',
-      code: challenged ? 'ADOPT_REQUIRES_HUMAN_APPROVAL' : rejected ? 'ADOPT_PASSWORD_REJECTED' : 'ENTRA_SIGN_IN_SURFACE_UNAVAILABLE',
+      code: challenged
+        ? 'ADOPT_REQUIRES_HUMAN_APPROVAL'
+        : rejected
+          ? 'ADOPT_PASSWORD_REJECTED'
+          : 'ENTRA_SIGN_IN_SURFACE_UNAVAILABLE',
       phase: challenged ? 'identity_verification' : 'fresh_login_verification',
       retryable: verdict === 'unavailable',
       providerEffect: 'none',

@@ -11,7 +11,9 @@ import { providerFromHost } from '../../../proxy/policy.js';
 import { costTracker } from '../../../utils/runtime/cost.js';
 import type { WSession } from '../../wsession.js';
 import { finalDump } from '../net_record.js';
+import { harPath, scrubHar } from '../har_scrub.js';
 import { recordingsDir, wsCaptureFingerprint } from './fingerprint_capture.js';
+import { loadSpecialAddresses } from '../../../proxy/quality/special-addresses.js';
 
 /** The proxy type whose bytes are priced as mobile traffic. */
 const MOBILE_PROXY_TYPE = 'mobile';
@@ -120,7 +122,14 @@ export async function wsClose(s: WSession): Promise<void> {
     );
   }
   // G18: capture a fingerprint + detection-vector report at close so failed
-  // runs carry an automatic diagnosis of why they may have been flagged.
+  // runs carry an automatic diagnosis of why they may have been flagged. The
+  // WebRTC routing rules judge addresses by IANA's registries; when they
+  // cannot be read, those rules report that they could not judge, with this cause.
+  await loadSpecialAddresses().catch((error: unknown) =>
+    console.error(
+      `[wsession] IANA special-purpose registries unread, WebRTC routing is not judged: ${error instanceof Error ? error.message : String(error)}`,
+    ),
+  );
   await wsCaptureFingerprint(s);
   const video = s.page.video?.();
   const dest = videoPath(s);
@@ -152,7 +161,14 @@ export async function wsClose(s: WSession): Promise<void> {
   }
   await s.ctx
     .close()
-    .catch((e: any) => console.log(`[wsession] ctx.close error: ${e.message}`));
+    .catch((error: unknown) =>
+      console.log(
+        `[wsession] ctx.close error: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
+  // Playwright has sealed the HAR the context recorded; its request bodies,
+  // which can carry a typed password, are taken out before it is published.
+  if (process.env.WELES_LABEL) scrubHar(harPath(process.env.WELES_LABEL));
   // G8: persist the per-run captcha event log (challenge_faced + the full
   // attempt/marker sequence) for storage backup + worker import. Always written
   // so a no-captcha run is recorded as {challenge_faced:false, events:[]},

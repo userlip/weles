@@ -11,11 +11,20 @@
 // analyze fails the run after the report is written.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { exitStatusFor } from '../../../dist/cli/usage.js';
-import { runId, runRecordingsDir } from '../../../dist/session/run-recordings.js';
+import {
+  runId,
+  runRecordingsDir,
+} from '../../../dist/session/run-recordings.js';
 import { projectPage } from '../_shared/ncbr/project_page.mjs';
 import { extractSection } from './audit/extract.mjs';
 import { selectedSections } from './audit/sections.mjs';
@@ -23,7 +32,11 @@ import { selectedSections } from './audit/sections.mjs';
 const RESULT_FILE = 'pangram_result.json';
 const VERDICT_FILE = 'ban_signal.json';
 
-const slug = (s) => s.normalize('NFKD').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
+const slug = (s) =>
+  s
+    .normalize('NFKD')
+    .replace(/[^\w.-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
 
 function stats(text) {
   const normalized = text.replace(/\s+/g, ' ').trim();
@@ -35,7 +48,8 @@ function stats(text) {
   };
 }
 
-const readJson = (path) => (existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null);
+const readJson = (path) =>
+  existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
 
 /** Run the Pangram analysis of one section's text as its own action of this run. */
 function runPangram(item, reportDir) {
@@ -44,17 +58,21 @@ function runPangram(item, reportDir) {
   const resultPath = join(actionDir, RESULT_FILE);
   const verdictPath = join(actionDir, VERDICT_FILE);
   for (const path of [resultPath, verdictPath]) rmSync(path, { force: true });
-  const res = spawnSync(process.execPath, ['src/trajectories/pangram/analyze_text.mjs'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      ACTION: action,
-      PANGRAM_TEXT_FILE: item.textFile,
-      PANGRAM_REQUIRE_ACCOUNT: '1',
-      WELES_CAPTURE_RESPONSE_BODIES: '1',
+  const res = spawnSync(
+    process.execPath,
+    ['src/trajectories/pangram/analyze_text.mjs'],
+    {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        ACTION: action,
+        PANGRAM_TEXT_FILE: item.textFile,
+        PANGRAM_REQUIRE_ACCOUNT: '1',
+        WELES_CAPTURE_RESPONSE_BODIES: '1',
+      },
+      encoding: 'utf8',
     },
-    encoding: 'utf8',
-  });
+  );
   const logPath = join(reportDir, `${slug(item.section_id)}.pangram.log`);
   writeFileSync(logPath, [res.stdout, res.stderr].filter(Boolean).join('\n'));
   return {
@@ -74,7 +92,10 @@ function runPangram(item, reportDir) {
 /** One section's Pangram reading, kept only when the run and its verdict prove it. */
 function summarize(p) {
   const trusted = Boolean(
-    p.analyzed && p.banSignal?.healthy === true && p.result?.source && p.result.source !== 'none',
+    p.analyzed &&
+      p.banSignal?.healthy === true &&
+      p.result?.source &&
+      p.result.source !== 'none',
   );
   const reading = trusted
     ? {
@@ -99,7 +120,9 @@ const settings = await import('#ncbr-settings');
 const browser = await chromium.connectOverCDP(settings.cdpEndpoint());
 try {
   const projectUrl = settings.projectUrl();
-  const sectionPattern = process.env.SECTION_PATTERN ? new RegExp(process.env.SECTION_PATTERN) : null;
+  const sectionPattern = process.env.SECTION_PATTERN
+    ? new RegExp(process.env.SECTION_PATTERN)
+    : null;
   const collectOnly = process.env.COLLECT_ONLY === '1';
   const includeRows = process.env.INCLUDE_ROWS === '1';
   const sections = selectedSections(settings, sectionPattern);
@@ -123,21 +146,56 @@ try {
       ...stats(data.text),
     });
   }
-  const header = { projectId: settings.projectId(), runId: runId(), collectOnly, includeRows, sectionPattern: process.env.SECTION_PATTERN };
+  const header = {
+    projectId: settings.projectId(),
+    runId: runId(),
+    collectOnly,
+    includeRows,
+    sectionPattern: process.env.SECTION_PATTERN,
+  };
   const manifestPath = join(reportDir, 'manifest.json');
-  writeFileSync(manifestPath, JSON.stringify({ ...header, extracted }, null, ' '));
+  writeFileSync(
+    manifestPath,
+    JSON.stringify({ ...header, extracted }, null, ' '),
+  );
 
   const pangram = [];
   if (!collectOnly)
     for (const item of extracted) {
-      console.error(`[ncbr-pangram] Pangram ${item.section_id} (${item.chars} chars)`);
+      console.error(
+        `[ncbr-pangram] Pangram ${item.section_id} (${item.chars} chars)`,
+      );
       pangram.push(runPangram(item, reportDir));
     }
   const summary = pangram.map(summarize);
   const reportPath = join(reportDir, 'report.json');
-  writeFileSync(reportPath, JSON.stringify({ ...header, manifestPath, extractedCount: extracted.length, pangram, summary }, null, ' '));
+  writeFileSync(
+    reportPath,
+    JSON.stringify(
+      {
+        ...header,
+        manifestPath,
+        extractedCount: extracted.length,
+        pangram,
+        summary,
+      },
+      null,
+      ' ',
+    ),
+  );
   console.log(
-    JSON.stringify({ ...header, reportDir, manifestPath, reportPath, extractedCount: extracted.length, summary }, null, ' '),
+    JSON.stringify(
+      {
+        ...header,
+        reportDir,
+        manifestPath,
+        reportPath,
+        extractedCount: extracted.length,
+        summary,
+      },
+      null,
+      ' ',
+    ),
   );
   const unanalyzed = pangram.filter((p) => !p.analyzed);
   if (unanalyzed.length)

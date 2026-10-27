@@ -10,15 +10,24 @@ import {
   ensureLinkedinSignupForm,
 } from '../../../_shared/linkedin/signup/register_guard.mjs';
 import { collectSubmitState, writeSubmitDiagnostics } from '../diagnostics.mjs';
-import { hasVisibleCaptchaChallenge, inspectCreateAccountChallenge } from '../refusal.mjs';
+import {
+  hasVisibleCaptchaChallenge,
+  inspectCreateAccountChallenge,
+} from '../refusal.mjs';
 import { recordSubmitFailure, submitObserved } from './submit_observed.mjs';
 
 const SIGNUP_API = /\/signup\/api\//;
 const CREATE_ACCOUNT_API = /\/signup\/api\/cors\/createAccount/;
 
-const messageOf = (value) => (value instanceof Error ? value.message : String(value));
+const messageOf = (value) =>
+  value instanceof Error ? value.message : String(value);
 
-export async function submitEmailAndPassword({ session, identity, recordStage, proxyWatch }) {
+export async function submitEmailAndPassword({
+  session,
+  identity,
+  recordStage,
+  proxyWatch,
+}) {
   const { emailLoc, pwdLoc } = await ensureLinkedinSignupForm(session);
   recordStage('signup_form_ready');
   // A person reads the signup form before typing into it.
@@ -40,13 +49,18 @@ export async function submitEmailAndPassword({ session, identity, recordStage, p
     { session, recordStage },
     {
       button: session.page
-        .locator('button#join-form-submit, button[data-tracking-control-name*="signup"]')
+        .locator(
+          'button#join-form-submit, button[data-tracking-control-name*="signup"]',
+        )
         .first(),
       pattern: SIGNUP_API,
       stage: 'email_password_submitted',
       afterStage: 'after_submit_email_password',
       label: 'submit1_diagnostics',
-      before: await collectSubmitState(session.page, 'before_submit_email_password'),
+      before: await collectSubmitState(
+        session.page,
+        'before_submit_email_password',
+      ),
     },
   );
   await writeSubmitDiagnostics('submit1_diagnostics', diagnostics);
@@ -59,18 +73,25 @@ export async function submitEmailAndPassword({ session, identity, recordStage, p
   const hasV2 = await hasVisibleCaptchaChallenge(session.page);
   recordStage('captcha_frame_probe', { has_visible_captcha_frame: hasV2 });
   if (hasV2)
-    throw new Error('DETECTION_TRIGGERED: visible CAPTCHA challenge after email/password submit');
+    throw new Error(
+      'DETECTION_TRIGGERED: visible CAPTCHA challenge after email/password submit',
+    );
 }
 
 // A createAccount challenge means the run is burned: solving it is not
 // attempted. The challenge page is classified and recorded, and the run fails
 // so the close-time fingerprint and detection report are written.
-async function refuseCreateAccountChallenge({ session, recordStage }, challengeUrl) {
+async function refuseCreateAccountChallenge(
+  { session, recordStage },
+  challengeUrl,
+) {
   let challenge;
   try {
     challenge = await inspectCreateAccountChallenge(session, challengeUrl);
   } catch (inspectError) {
-    recordStage('create_account_challenge_not_classified', { error: messageOf(inspectError) });
+    recordStage('create_account_challenge_not_classified', {
+      error: messageOf(inspectError),
+    });
     throw new Error(
       `DETECTION_TRIGGERED: createAccount challengeUrl detected, and the challenge page itself could not be read: ${messageOf(inspectError)}`,
       { cause: inspectError },
@@ -81,10 +102,17 @@ async function refuseCreateAccountChallenge({ session, recordStage }, challengeU
     challenge_title: challenge.title,
     challenge_url: challenge.challenge_url,
   });
-  throw new Error(`DETECTION_TRIGGERED: createAccount challengeUrl detected (kind=${challenge.kind})`);
+  throw new Error(
+    `DETECTION_TRIGGERED: createAccount challengeUrl detected (kind=${challenge.kind})`,
+  );
 }
 
-export async function submitNames({ session, identity, recordStage, proxyWatch }) {
+export async function submitNames({
+  session,
+  identity,
+  recordStage,
+  proxyWatch,
+}) {
   const firstLoc = session.page
     .locator('input[name="first-name"], input#first-name')
     .filter({ visible: true })
@@ -96,7 +124,11 @@ export async function submitNames({ session, identity, recordStage, proxyWatch }
   const hasFirst = Boolean(await firstLoc.count());
   const hasLast = Boolean(await lastLoc.count());
   if (!(hasFirst && hasLast)) {
-    recordStage('first_last_skipped', { has_first_input: hasFirst, has_last_input: hasLast, url: session.page.url() });
+    recordStage('first_last_skipped', {
+      has_first_input: hasFirst,
+      has_last_input: hasLast,
+      url: session.page.url(),
+    });
     return;
   }
   await humanFill(session.page, firstLoc, identity.first);
@@ -117,7 +149,9 @@ export async function submitNames({ session, identity, recordStage, proxyWatch }
   const { response, text, diagnostics } = await submitObserved(
     { session, recordStage },
     {
-      button: session.page.locator('button#join-form-submit, button[type="submit"]').first(),
+      button: session.page
+        .locator('button#join-form-submit, button[type="submit"]')
+        .first(),
       pattern: CREATE_ACCOUNT_API,
       stage: 'create_account_submitted',
       afterStage: 'after_create_account',
@@ -130,13 +164,16 @@ export async function submitNames({ session, identity, recordStage, proxyWatch }
   try {
     body = JSON.parse(text);
   } catch (cause) {
-    const error = Object.assign(new Error('LinkedIn createAccount response is not valid JSON', { cause }), {
-      code: 'LINKEDIN_CREATE_ACCOUNT_RESPONSE_INVALID',
-      requestMethod: response.request().method(),
-      requestUrl: response.url(),
-      status,
-      pageUrl: session.page.url(),
-    });
+    const error = Object.assign(
+      new Error('LinkedIn createAccount response is not valid JSON', { cause }),
+      {
+        code: 'LINKEDIN_CREATE_ACCOUNT_RESPONSE_INVALID',
+        requestMethod: response.request().method(),
+        requestUrl: response.url(),
+        status,
+        pageUrl: session.page.url(),
+      },
+    );
     await recordSubmitFailure('submit2_diagnostics', diagnostics, error);
     throw error;
   }
@@ -152,8 +189,12 @@ export async function submitNames({ session, identity, recordStage, proxyWatch }
   console.log(
     `[register] createAccount ${JSON.stringify({ status, submissionId: isObject ? body.submissionId : undefined, challengeUrl })}`,
   );
-  recordStage('create_account_response', { status, has_challenge_url: Boolean(challengeUrl) });
-  if (challengeUrl) await refuseCreateAccountChallenge({ session, recordStage }, challengeUrl);
+  recordStage('create_account_response', {
+    status,
+    has_challenge_url: Boolean(challengeUrl),
+  });
+  if (challengeUrl)
+    await refuseCreateAccountChallenge({ session, recordStage }, challengeUrl);
   await pageSettled(session.page);
   await assertNoLinkedinChallengePage(session, 'after_create_account');
   recordStage('no_challenge_after_create_account');

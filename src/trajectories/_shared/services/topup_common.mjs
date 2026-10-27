@@ -15,7 +15,11 @@ import { humanType } from '../../../../dist/human/keyboard.js';
  */
 export function topupOpts() {
   const usd = Number(process.env.TOPUP_USD);
-  if (!process.env.TOPUP_USD || !(usd >= Number.MIN_VALUE) || !Number.isFinite(usd))
+  if (
+    !process.env.TOPUP_USD ||
+    !(usd >= Number.MIN_VALUE) ||
+    !Number.isFinite(usd)
+  )
     throw new Error(
       `TOPUP_USD is ${process.env.TOPUP_USD ? `"${process.env.TOPUP_USD}", not an amount above zero` : 'not set'}: the US dollars this top-up charges; nothing is assumed`,
     );
@@ -27,7 +31,10 @@ export function topupOpts() {
 // The provider's pay button, found by the vision model in whatever words the
 // checkout uses; false when the page offers none.
 export async function findAndClickPayButton(page) {
-  const clicked = await clickOffered(page, 'the button that pays or checks out the top-up amount');
+  const clicked = await clickOffered(
+    page,
+    'the button that pays or checks out the top-up amount',
+  );
   if (clicked) console.log('[topup] clicked the pay button');
   return clicked;
 }
@@ -38,7 +45,11 @@ function cardValue(name) {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 }
 
-export const TOPUP_REQUIRED = ['TOPUP_CARD_NUMBER', 'TOPUP_CARD_EXP', 'TOPUP_CARD_CVC'];
+export const TOPUP_REQUIRED = [
+  'TOPUP_CARD_NUMBER',
+  'TOPUP_CARD_EXP',
+  'TOPUP_CARD_CVC',
+];
 
 /**
  * The workspace topup card from the environment its source set
@@ -99,17 +110,30 @@ export async function fillStripeElements(page, card) {
   // Stripe mounts its card frames once the checkout page has settled; each of
   // those frames then loads on its own, and the card input is read after both.
   await pageSettled(page);
-  await Promise.all(page.frames().filter(onStripe).map((frame) => frame.waitForLoadState('load')));
+  await Promise.all(
+    page
+      .frames()
+      .filter(onStripe)
+      .map((frame) => frame.waitForLoadState('load')),
+  );
   const cardEntry = await findInputByAutocomplete(page, 'cc-number');
   if (!cardEntry) return { ok: false, reason: 'cc-number_input_not_found' };
-  const values = { cardNumber: c.num, cardExpiry: c.exp, cardCvc: c.cvc, postalCode: c.zip };
+  const values = {
+    cardNumber: c.num,
+    cardExpiry: c.exp,
+    cardCvc: c.cvc,
+    postalCode: c.zip,
+  };
   const filled = {};
   for (const [field, autocomplete] of Object.entries(AUTOCOMPLETE_FIELD_MAP)) {
     if (!values[field]) {
       filled[field] = 'no_value';
       continue;
     }
-    const entry = field === 'cardNumber' ? cardEntry : await findInputByAutocomplete(page, autocomplete);
+    const entry =
+      field === 'cardNumber'
+        ? cardEntry
+        : await findInputByAutocomplete(page, autocomplete);
     if (!entry) {
       filled[field] = 'input_not_found';
       continue;
@@ -126,7 +150,10 @@ export async function fillStripeElements(page, card) {
       filled[field] = `err:${error.message}`;
     }
   }
-  const ok = filled.cardNumber === 'filled' && filled.cardExpiry === 'filled' && filled.cardCvc === 'filled';
+  const ok =
+    filled.cardNumber === 'filled' &&
+    filled.cardExpiry === 'filled' &&
+    filled.cardCvc === 'filled';
   return { ok, filled };
 }
 
@@ -141,17 +168,24 @@ export const TOPUP_ENV_FILES = [
 /** TOPUP_CARD_JSON's card, set into the environment; conflicting values refuse. */
 function loadCardJson(bundled) {
   if (!bundled.trim())
-    throw new Error('TOPUP_CARD_JSON was supplied empty; the purchase card was not selected');
+    throw new Error(
+      'TOPUP_CARD_JSON was supplied empty; the purchase card was not selected',
+    );
   let card;
   try {
     card = JSON.parse(bundled);
   } catch (error) {
-    throw new Error(`TOPUP_CARD_JSON is not valid JSON: ${error.message}; the purchase card was not selected`, {
-      cause: error,
-    });
+    throw new Error(
+      `TOPUP_CARD_JSON is not valid JSON: ${error.message}; the purchase card was not selected`,
+      {
+        cause: error,
+      },
+    );
   }
   if (!card || typeof card !== 'object' || Array.isArray(card))
-    throw new Error('TOPUP_CARD_JSON must be a card object; the purchase card was not selected');
+    throw new Error(
+      'TOPUP_CARD_JSON must be a card object; the purchase card was not selected',
+    );
   const mapping = {
     TOPUP_CARD_NUMBER: card.number,
     TOPUP_CARD_EXP: card.exp,
@@ -159,13 +193,19 @@ function loadCardJson(bundled) {
     TOPUP_CARD_ZIP: card.zip,
     TOPUP_CARD_NAME: card.name,
   };
-  const missing = TOPUP_REQUIRED.filter((key) => typeof mapping[key] !== 'string' || !mapping[key].trim());
+  const missing = TOPUP_REQUIRED.filter(
+    (key) => typeof mapping[key] !== 'string' || !mapping[key].trim(),
+  );
   if (missing.length)
-    throw new Error(`TOPUP_CARD_JSON has no ${missing.join(', ')}; the purchase card was not selected`);
+    throw new Error(
+      `TOPUP_CARD_JSON has no ${missing.join(', ')}; the purchase card was not selected`,
+    );
   for (const [key, value] of Object.entries(mapping)) {
     if (value === undefined || value === null || value === '') continue;
     if (process.env[key] && process.env[key] !== String(value))
-      throw new Error(`${key} conflicts with TOPUP_CARD_JSON; no card was selected`);
+      throw new Error(
+        `${key} conflicts with TOPUP_CARD_JSON; no card was selected`,
+      );
     process.env[key] = String(value);
   }
 }
@@ -177,7 +217,10 @@ function loadCardFile(path) {
     if (!line || line.startsWith('#') || !line.includes('=')) continue;
     const [name, ...rest] = line.split('=');
     const key = name.trim();
-    const value = rest.join('=').trim().replace(/^["']|["']$/g, '');
+    const value = rest
+      .join('=')
+      .trim()
+      .replace(/^["']|["']$/g, '');
     if (key && value && !process.env[key]) process.env[key] = value;
   }
 }
@@ -197,7 +240,8 @@ export function loadTopupCardEnv() {
     loadCardFile(file);
     return file;
   }
-  if (TOPUP_REQUIRED.every((name) => cardValue(name) !== null)) return 'environment';
+  if (TOPUP_REQUIRED.every((name) => cardValue(name) !== null))
+    return 'environment';
   throw new Error(
     `TOPUP_CARD_MISSING: no purchase card: TOPUP_CARD_JSON, a card file at ${TOPUP_ENV_FILES.join(' or ')}, or TOPUP_CARD_NUMBER/EXP/CVC in the environment is required`,
   );

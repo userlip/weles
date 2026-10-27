@@ -102,7 +102,10 @@ async function verifyTargetSite(s, cfg) {
   await s.goto(input('SITE_URL'));
   await pageSettled(s.page);
   if (action === 'umami_track_custom_event' && input('SELECTOR_OR_CODE_PATH')) {
-    await humanClickLocator(s.page, s.page.locator(input('SELECTOR_OR_CODE_PATH')).first());
+    await humanClickLocator(
+      s.page,
+      s.page.locator(input('SELECTOR_OR_CODE_PATH')).first(),
+    );
     await pageSettled(s.page);
   }
   const data = await s.page.evaluate(() => ({
@@ -192,4 +195,9 @@ async function captureEvidence(s, cfg, extra) {
   return evidence;
 }
 
-export { prepareWrite, performConfirmedWrite, verifyTargetSite, captureEvidence };
+export {
+  prepareWrite,
+  performConfirmedWrite,
+  verifyTargetSite,
+  captureEvidence,
+};

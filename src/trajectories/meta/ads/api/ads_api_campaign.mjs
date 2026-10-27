@@ -218,7 +218,8 @@ async function createStack() {
 }
 
 if (RESOURCE === 'stack') {
-  if (ACTION !== 'create') throw new Error('RESOURCE=stack supports ACTION=create only');
+  if (ACTION !== 'create')
+    throw new Error('RESOURCE=stack supports ACTION=create only');
   await createStack();
 } else {
   await ACTIONS[ACTION](RESOURCE);

@@ -16,7 +16,7 @@ import {
 } from '../../../../dist/utils/credentials.js';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
-import { humanIdlePause } from '../../../../dist/human/mouse.js';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 import { exitStatusFor } from '../../../../dist/cli/usage.js';
 
 const acct = await getSocialAccount('reddit');
@@ -33,28 +33,44 @@ const s = await WSession.start({
   targetHost: 'www.reddit.com',
 });
 
+// The page's text as a person sees it; a page that has no body yet says so.
+const bodyText = () =>
+  s.page.evaluate(() =>
+    document.body ? document.body.innerText : '(the page has no body yet)',
+  );
+
 try {
-  // Inject stored cookies so we're logged in
-  const stored = Array.isArray(acct.metadata?.cookies)
-    ? acct.metadata.cookies
-    : [];
-  const hasSession = stored.some((c) => /reddit_session/.test(c?.name ?? ''));
+  // The account's stored cookies log the page in. An account that stores no
+  // reddit_session cookie is inspected logged out, and the log says so.
+  const stored = acct.metadata?.cookies;
+  const hasSession =
+    Array.isArray(stored) &&
+    stored.some(
+      (c) => typeof c?.name === 'string' && /reddit_session/.test(c.name),
+    );
   if (hasSession) {
+    // A cookie stored without a path belongs to the whole site, as RFC 6265's
+    // default path for a root request is `/`.
     const prepared = stored
       .filter((c) => c?.name && c?.value && (c.domain || c.url))
-      .map((c) => ({ ...c, path: c.path || '/' }));
+      .map((c) => (c.path ? c : { ...c, path: '/' }));
     await s.ctx.addCookies(prepared);
     console.log(`[inspect] injected ${prepared.length} cookies`);
+  } else {
+    console.log(
+      '[inspect] the account stores no reddit_session cookie; inspecting logged out',
+    );
   }
 
   // Navigate to homepage first (this is where ban banners usually appear)
   await s.page.goto('https://www.reddit.com/', {
     waitUntil: 'domcontentloaded',
   });
-  // Reddit SPA needs time to hydrate — wait for content to appear
-  await humanIdlePause('long');
+  // Reddit's single-page app hydrates after load; the page is read once its
+  // DOM has settled, as the page itself reports it.
+  await pageSettled(s.page);
   const homeUrl = s.page.url();
-  const homeText = await s.page.evaluate(() => document.body?.innerText ?? '');
+  const homeText = await bodyText();
   await s.page.screenshot({
     path: `${runRecordingsDir('reddit_inspect_ban')}/homepage_logged_in.png`,
   });
@@ -78,9 +94,9 @@ try {
   // Now navigate to own profile
   const profileUrl = `https://www.reddit.com/user/${acct.username}/`;
   await s.page.goto(profileUrl, { waitUntil: 'domcontentloaded' });
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   const finalUrl = s.page.url();
-  const fullText = await s.page.evaluate(() => document.body?.innerText ?? '');
+  const fullText = await bodyText();
   await s.page.screenshot({
     path: `${runRecordingsDir('reddit_inspect_ban')}/profile_logged_in.png`,
   });
@@ -91,11 +107,9 @@ try {
   console.log('[inspect] --- checking logged-out view ---');
   await s.ctx.clearCookies();
   await s.page.goto(profileUrl, { waitUntil: 'domcontentloaded' });
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   const logoutUrl = s.page.url();
-  const logoutText = await s.page.evaluate(
-    () => document.body?.innerText ?? '',
-  );
+  const logoutText = await bodyText();
   console.log(`[inspect] logged-out url: ${logoutUrl}`);
   console.log(`[inspect] logged-out text:\n${logoutText}`);
   await about('logged out');

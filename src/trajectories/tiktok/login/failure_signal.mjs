@@ -17,7 +17,11 @@ export function refusedLogin(diag) {
 export function unpassedCaptcha(message) {
   return Object.assign(new Error(`captcha_challenge: ${message}`), {
     code: 'TIKTOK_CAPTCHA_UNPASSED',
-    banSignal: { signal: 'captcha_challenge', healthy: false, details: { reason: message } },
+    banSignal: {
+      signal: 'captcha_challenge',
+      healthy: false,
+      details: { reason: message },
+    },
   });
 }
 
@@ -42,7 +46,12 @@ export async function explainLoginFailure(error, s, diag) {
   writeFileSync(
     join(dir, 'login_diag.json'),
     JSON.stringify(
-      { ...diag, error: error.message, final_url: finalUrl, ts: new Date().toISOString() },
+      {
+        ...diag,
+        error: error.message,
+        final_url: finalUrl,
+        ts: new Date().toISOString(),
+      },
       null,
       INDENT,
     ),
@@ -55,7 +64,10 @@ export async function explainLoginFailure(error, s, diag) {
     return error;
   }
   if (!URL.canParse(finalUrl) || !finalUrl.startsWith('https:')) return error;
-  const stopped = STOPPED_AT.find((step) => step.path.test(new URL(finalUrl).pathname));
-  if (stopped) error.banSignal = { signal: stopped.signal, healthy: false, details };
+  const stopped = STOPPED_AT.find((step) =>
+    step.path.test(new URL(finalUrl).pathname),
+  );
+  if (stopped)
+    error.banSignal = { signal: stopped.signal, healthy: false, details };
   return error;
 }

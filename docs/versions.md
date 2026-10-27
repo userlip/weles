@@ -1,8 +1,8 @@
 # Versions
 
-The version gate (`weles release enforce-version`, run by
-`.github/workflows/version-check.yml`) judges a revision against two
-documents:
+The version gate (`weles release enforce`) judges a revision against two
+documents, at the release built over the accumulated commits rather than on
+each push:
 
 - `released-surface.json` — the surface of the release Stado serves, and its
   version;
@@ -33,7 +33,7 @@ It refuses, naming the cause:
   source revision: adopt once the rollout settles;
 - a failed fetch or extraction, with the command and its error;
 - a served version older than the recorded baseline, unless the baseline is
-  being corrected (`weles release adopt-baseline --correcting`).
+  being corrected (`weles release adopt --correcting`).
 
 `stado release status` also exits nonzero when a target cannot be shown to run
 the release it desires; that finding is about the rollout, not about what was

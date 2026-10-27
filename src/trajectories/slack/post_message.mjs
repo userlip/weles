@@ -119,7 +119,10 @@ try {
   for (const target of targets) {
     const mentionIds = await mentionIdsForTarget(target, loadMembers);
     try {
-      const post = await route.post(target, applyMentions(MESSAGE_BODY, mentionIds));
+      const post = await route.post(
+        target,
+        applyMentions(MESSAGE_BODY, mentionIds),
+      );
       console.log(`[${LABEL}] posted to ${target} ts=${post.ts}`);
     } catch (error) {
       refused.push(`${target}: ${error.message}`);

@@ -38,7 +38,9 @@ const REQUIREMENTS_FILE =
 const REQUIREMENTS_SCHEMA = 'wisent.trajectory-requirements.v1';
 
 function firstLine(error) {
-  const [line] = String(error instanceof Error ? error.message : error).split('\n');
+  const [line] = String(error instanceof Error ? error.message : error).split(
+    '\n',
+  );
   return line;
 }
 
@@ -62,7 +64,9 @@ function launchdSession() {
 // Whether the user's GUI domain exists, or why launchctl could not print it.
 function guiDomain(uid) {
   try {
-    execFileSync('/bin/launchctl', ['print', `gui/${uid}`], { stdio: 'ignore' });
+    execFileSync('/bin/launchctl', ['print', `gui/${uid}`], {
+      stdio: 'ignore',
+    });
     return { present: true, detail: `gui/${uid} present` };
   } catch (error) {
     return probeFailed(`gui/${uid} absent`, error);
@@ -114,7 +118,8 @@ function xdpyinfoAnswer(display) {
 // that answer's error is kept beside it.
 function measureXDisplay(display) {
   const answer = xdpyinfoAnswer(display);
-  if (answer.present) return { value: true, detail: answer.detail, remedy: LINUX_REMEDY };
+  if (answer.present)
+    return { value: true, detail: answer.detail, remedy: LINUX_REMEDY };
   const screen = display.match(/:(?<number>\d+)/)?.groups.number;
   const socket = screen ? `/tmp/.X11-unix/X${screen}` : null;
   const present = Boolean(socket) && existsSync(socket);
@@ -128,14 +133,22 @@ function measureXDisplay(display) {
 }
 
 function measureLinuxDisplay() {
-  const { DISPLAY: display, WAYLAND_DISPLAY: wayland, XDG_RUNTIME_DIR: runtimeDir } =
-    process.env;
+  const {
+    DISPLAY: display,
+    WAYLAND_DISPLAY: wayland,
+    XDG_RUNTIME_DIR: runtimeDir,
+  } = process.env;
   if (display) return measureXDisplay(display);
   let waylandSocket;
   if (wayland?.startsWith('/')) waylandSocket = wayland;
-  else if (wayland && runtimeDir) waylandSocket = path.join(runtimeDir, wayland);
+  else if (wayland && runtimeDir)
+    waylandSocket = path.join(runtimeDir, wayland);
   if (waylandSocket && existsSync(waylandSocket)) {
-    return { value: true, detail: `Wayland socket ${waylandSocket} present`, remedy: LINUX_REMEDY };
+    return {
+      value: true,
+      detail: `Wayland socket ${waylandSocket} present`,
+      remedy: LINUX_REMEDY,
+    };
   }
   return {
     value: false,

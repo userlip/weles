@@ -17,24 +17,51 @@ import { humanType } from '../../../../../dist/human/keyboard.js';
 import { pageSettled, urlMatching } from '../../../_shared/page/settled.mjs';
 import { docInput, openSignedInDocs, setDocTitle } from './document.mjs';
 
-const TITLE = docInput('--title', ['DOC_TITLE'], 'the title of the new document');
-const content = readFileSync(docInput('--content', ['DOC_CONTENT_PATH'], 'the file whose text becomes the body'), 'utf8');
+const TITLE = docInput(
+  '--title',
+  ['DOC_TITLE'],
+  'the title of the new document',
+);
+const content = readFileSync(
+  docInput(
+    '--content',
+    ['DOC_CONTENT_PATH'],
+    'the file whose text becomes the body',
+  ),
+  'utf8',
+);
 const log = (...a) => console.log('[drive_create_doc]', ...a);
 
 // /document/create makes a blank document and redirects to its /edit page.
-const s = await openSignedInDocs('drive_create_doc', 'https://docs.google.com/document/create');
+const s = await openSignedInDocs(
+  'drive_create_doc',
+  'https://docs.google.com/document/create',
+);
 try {
-  log('engine:', s._browserProvenance ? s._browserProvenance.browser : null, '| title:', TITLE, '| content_chars:', content.length);
+  log(
+    'engine:',
+    s._browserProvenance ? s._browserProvenance.browser : null,
+    '| title:',
+    TITLE,
+    '| content_chars:',
+    content.length,
+  );
   await urlMatching(s.page, /\/document\/d\/[\w-]+\/edit/);
   console.log(`URL: ${s.page.url()}`);
   await setDocTitle(s.page, TITLE);
   log(`title set: ${TITLE}`);
-  const body = s.page.locator('.kix-appview-editor, .docs-texteventtarget-iframe, [contenteditable="true"]').first();
+  const body = s.page
+    .locator(
+      '.kix-appview-editor, .docs-texteventtarget-iframe, [contenteditable="true"]',
+    )
+    .first();
   await body.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, body);
   await humanType(s.page, content);
   await pageSettled(s.page);
-  log(`PASS: doc available at ${s.page.url()} with ${content.length} chars typed`);
+  log(
+    `PASS: doc available at ${s.page.url()} with ${content.length} chars typed`,
+  );
 } finally {
   await s.close();
 }

@@ -29,9 +29,17 @@ export async function printSearchResult(page, open, log) {
       const sender = row.querySelector('.yW span[email], .yW span, .zF');
       const date = row.querySelector('.xW span[title], .xW span');
       return {
-        from: sender ? (sender.getAttribute('email') ? sender.getAttribute('email') : sender.textContent.trim()) : null,
+        from: sender
+          ? sender.getAttribute('email')
+            ? sender.getAttribute('email')
+            : sender.textContent.trim()
+          : null,
         subject: row.querySelector('.bog')?.textContent.trim(),
-        date: date ? (date.getAttribute('title') ? date.getAttribute('title') : date.textContent.trim()) : null,
+        date: date
+          ? date.getAttribute('title')
+            ? date.getAttribute('title')
+            : date.textContent.trim()
+          : null,
         snippet: row.querySelector('.y2')?.textContent.trim(),
       };
     }),
@@ -47,11 +55,16 @@ export async function printSearchResult(page, open, log) {
   console.log('================ THREAD BODIES ================');
   for (const index of Array(Math.min(open, rows.length)).keys()) {
     await humanClickLocator(page, page.locator('tr.zA').nth(index));
-    await page.locator('.a3s, div[role="listitem"] .ii').first().waitFor({ state: 'visible' });
+    await page
+      .locator('.a3s, div[role="listitem"] .ii')
+      .first()
+      .waitFor({ state: 'visible' });
     const body = await page.evaluate(() => ({
       // allow-raw-playwright: read-only DOM text scrape of an opened email body, no synthetic interaction
       subject: document.querySelector('h2.hP')?.textContent.trim(),
-      text: Array.from(document.querySelectorAll('.a3s'), (block) => block.innerText.trim())
+      text: Array.from(document.querySelectorAll('.a3s'), (block) =>
+        block.innerText.trim(),
+      )
         .filter(Boolean)
         .join('\n---\n'),
     }));

@@ -55,7 +55,9 @@ async function harvest() {
     label: SESSION_LABEL,
     proxy:
       proxyUrl ??
-      statedProxy('the Apple Ads report harvest, whose account names no proxy,'),
+      statedProxy(
+        'the Apple Ads report harvest, whose account names no proxy,',
+      ),
     persona: stableProfilePersona(USER_DATA_DIR),
     userDataDir: USER_DATA_DIR,
     record: false,
@@ -172,7 +174,10 @@ try {
 } catch (error) {
   console.error('FAIL:', String(error));
   try {
-    writeFileSync(OUT_PATH, JSON.stringify({ ok: false, error: String(error) }));
+    writeFileSync(
+      OUT_PATH,
+      JSON.stringify({ ok: false, error: String(error) }),
+    );
     console.error(`[apple-ads-report-harvest] json=${OUT_PATH}`);
   } catch (writeError) {
     console.error(

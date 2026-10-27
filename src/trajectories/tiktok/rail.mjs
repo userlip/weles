@@ -18,14 +18,19 @@ const onVideo = (url) => new URL(url).pathname.includes('/video/');
 export async function openVideo(s) {
   if (onVideo(s.page.url())) return;
   await pageSettled(s.page);
-  const firstVideo = s.page.locator('a[href*="/video/"]').filter({ visible: true }).first();
+  const firstVideo = s.page
+    .locator('a[href*="/video/"]')
+    .filter({ visible: true })
+    .first();
   if (!(await firstVideo.count())) {
     const firstAuthor = s.page.locator('a[href*="/@"]').first();
     if (!(await firstAuthor.count()))
       throw new Error(
         `TIKTOK_NO_VIDEO_SOURCE: ${s.page.url()} links no video and no author profile`,
       );
-    await s.goto(new URL(await firstAuthor.getAttribute('href'), TIKTOK_ORIGIN).href);
+    await s.goto(
+      new URL(await firstAuthor.getAttribute('href'), TIKTOK_ORIGIN).href,
+    );
     await pageSettled(s.page);
     if (!(await firstVideo.count()))
       throw new Error(
@@ -47,7 +52,9 @@ export async function videoPost(s) {
     .locator('[data-e2e="video-desc"], [data-e2e="browse-video-desc"]')
     .first();
   if (!(await caption.count()))
-    throw new Error(`TIKTOK_NO_CAPTION: ${s.page.url()} shows no video caption to answer`);
+    throw new Error(
+      `TIKTOK_NO_CAPTION: ${s.page.url()} shows no video caption to answer`,
+    );
   return { postTitle: await caption.innerText(), url: s.page.url() };
 }
 

@@ -24,7 +24,11 @@ async function umamiRegisterAccount(s) {
 
   const email = input('EMAIL');
   const password = input('PASSWORD');
-  await fillOffered(s.page, 'the name field of the sign-up form', input('DISPLAY_NAME'));
+  await fillOffered(
+    s.page,
+    'the name field of the sign-up form',
+    input('DISPLAY_NAME'),
+  );
   const emailInput = s.page
     .locator('input[type="email"], input[name="email"]')
     .filter({ visible: true })

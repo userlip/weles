@@ -78,7 +78,9 @@ function answerFor(step, login) {
 async function currentUrl(act) {
   const { url } = await act({ action: 'url' });
   if (typeof url !== 'string')
-    throw new Error('KEEPER_ANSWER_INCOMPLETE: the keeper answered no page address');
+    throw new Error(
+      'KEEPER_ANSWER_INCOMPLETE: the keeper answered no page address',
+    );
   return url;
 }
 

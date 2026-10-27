@@ -23,7 +23,10 @@
 //       CookieJarStaleError when the jar is empty, was not stamped by a
 //       verified login, or was minted under another proxy or persona.
 
-import { personaSignature, proxySignature } from '../../../../dist/session/cookie-jar/binding.js';
+import {
+  personaSignature,
+  proxySignature,
+} from '../../../../dist/session/cookie-jar/binding.js';
 import { updateAccountMetadata } from '../skarbiec/accounts.mjs';
 
 export class CookieJarStaleError extends Error {
@@ -41,7 +44,10 @@ function storedSignature(stamp, sign) {
 }
 
 function stale(code, message, details) {
-  return new CookieJarStaleError(`${code}: ${message} — login required`, details);
+  return new CookieJarStaleError(
+    `${code}: ${message} — login required`,
+    details,
+  );
 }
 
 /**
@@ -52,49 +58,78 @@ function stale(code, message, details) {
  * them with resolveAccountSession); skipBindingCheck is for a run that has no
  * session context of its own to compare (a probe).
  */
-export function loadFreshCookieJarOrFail(acct, { platform, label, currentProxyUrl, currentPersona, skipBindingCheck }) {
+export function loadFreshCookieJarOrFail(
+  acct,
+  { platform, label, currentProxyUrl, currentPersona, skipBindingCheck },
+) {
   const metadata = acct.metadata;
   const base = { platform, label, account_id: acct.id };
   const cookies = Array.isArray(metadata.cookies) ? metadata.cookies : [];
   if (!cookies.length)
-    throw stale('cookie_jar_empty', `no cookies stored for ${platform}/${acct.username}`, { ...base, reason: 'empty' });
+    throw stale(
+      'cookie_jar_empty',
+      `no cookies stored for ${platform}/${acct.username}`,
+      { ...base, reason: 'empty' },
+    );
   const mintedAt = metadata.cookies_minted_at;
   if (!mintedAt)
-    throw stale('cookie_jar_unstamped', 'no cookies_minted_at: no verified login minted this jar', {
-      ...base,
-      reason: 'no_minted_at',
-    });
+    throw stale(
+      'cookie_jar_unstamped',
+      'no cookies_minted_at: no verified login minted this jar',
+      {
+        ...base,
+        reason: 'no_minted_at',
+      },
+    );
   if (!Number.isFinite(Date.parse(mintedAt)))
-    throw stale('cookie_jar_bad_mint_ts', `cookies_minted_at=${mintedAt} is not a timestamp`, {
-      ...base,
-      reason: 'bad_minted_at',
-      mintedAtRaw: mintedAt,
-    });
+    throw stale(
+      'cookie_jar_bad_mint_ts',
+      `cookies_minted_at=${mintedAt} is not a timestamp`,
+      {
+        ...base,
+        reason: 'bad_minted_at',
+        mintedAtRaw: mintedAt,
+      },
+    );
   if (skipBindingCheck) return cookies;
   // A jar minted under another proxy or persona is refused by the platform's
   // own session binding (a signed-out shell, no redirect), so it is not
   // injected at all.
   if (metadata.cookies_minted_proxy && currentProxyUrl) {
-    const stored = storedSignature(metadata.cookies_minted_proxy, proxySignature);
+    const stored = storedSignature(
+      metadata.cookies_minted_proxy,
+      proxySignature,
+    );
     const current = proxySignature(currentProxyUrl);
     if (stored !== 'direct' && current !== 'direct' && stored !== current)
-      throw stale('cookie_jar_proxy_mismatch', `jar minted under proxy=${stored} but current proxy=${current} for ${platform}`, {
-        ...base,
-        reason: 'proxy_mismatch',
-        stored_proxy: stored,
-        current_proxy: current,
-      });
+      throw stale(
+        'cookie_jar_proxy_mismatch',
+        `jar minted under proxy=${stored} but current proxy=${current} for ${platform}`,
+        {
+          ...base,
+          reason: 'proxy_mismatch',
+          stored_proxy: stored,
+          current_proxy: current,
+        },
+      );
   }
   if (metadata.cookies_minted_persona && currentPersona) {
-    const stored = storedSignature(metadata.cookies_minted_persona, personaSignature);
+    const stored = storedSignature(
+      metadata.cookies_minted_persona,
+      personaSignature,
+    );
     const current = personaSignature(currentPersona);
     if (stored !== current)
-      throw stale('cookie_jar_persona_mismatch', `jar minted under persona=${stored} but current persona=${current} for ${platform}`, {
-        ...base,
-        reason: 'persona_mismatch',
-        stored_persona: stored,
-        current_persona: current,
-      });
+      throw stale(
+        'cookie_jar_persona_mismatch',
+        `jar minted under persona=${stored} but current persona=${current} for ${platform}`,
+        {
+          ...base,
+          reason: 'persona_mismatch',
+          stored_persona: stored,
+          current_persona: current,
+        },
+      );
   }
   return cookies;
 }
@@ -129,17 +164,28 @@ function proxyRecord(url) {
  */
 export async function persistFreshCookieJar(acct, cookies, binding) {
   if (!acct.id) return { ok: false, reason: 'no_skarbiec_account_id' };
-  const { currentProxyUrl, currentPersona, persistProxy } = binding ? binding : {};
+  const { currentProxyUrl, currentPersona, persistProxy } = binding
+    ? binding
+    : {};
   const now = new Date().toISOString();
   const nextMetadata = {
     ...acct.metadata,
     cookies,
     cookies_updated_at: now,
     cookies_minted_at: now,
-    cookies_minted_proxy: mintingStamp(currentProxyUrl, acct.metadata.proxy, proxySignature),
-    cookies_minted_persona: mintingStamp(currentPersona, acct.metadata.persona, personaSignature),
+    cookies_minted_proxy: mintingStamp(
+      currentProxyUrl,
+      acct.metadata.proxy,
+      proxySignature,
+    ),
+    cookies_minted_persona: mintingStamp(
+      currentPersona,
+      acct.metadata.persona,
+      personaSignature,
+    ),
   };
-  if (persistProxy && typeof currentProxyUrl === 'string') nextMetadata.proxy = proxyRecord(currentProxyUrl);
+  if (persistProxy && typeof currentProxyUrl === 'string')
+    nextMetadata.proxy = proxyRecord(currentProxyUrl);
   // Fresh cookies are no longer stale; the account selectors skip an account
   // whose stale mark is newer than its minted cookies.
   delete nextMetadata.cookies_stale_at;

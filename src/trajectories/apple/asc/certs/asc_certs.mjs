@@ -20,9 +20,13 @@ try {
     });
     console.log(`EXPIRED build ${id}`);
   } else if (process.env.ASC_PATH) {
-    console.log(JSON.stringify(await ascRequest(process.env.ASC_PATH), null, INDENT));
+    console.log(
+      JSON.stringify(await ascRequest(process.env.ASC_PATH), null, INDENT),
+    );
   } else if (process.env.REVOKE) {
-    await ascRequest(`/certificates/${process.env.REVOKE}`, { method: 'DELETE' });
+    await ascRequest(`/certificates/${process.env.REVOKE}`, {
+      method: 'DELETE',
+    });
     console.log(`REVOKED ${process.env.REVOKE}`);
   } else {
     const rows = (await ascAll('/certificates')).map((c) => ({
@@ -33,7 +37,8 @@ try {
     }));
     rows.sort((a, b) => a.type.localeCompare(b.type));
     console.log(`TOTAL ${rows.length} certificates`);
-    for (const row of rows) console.log(`${row.id}\t${row.type}\t${row.expiry}\t${row.name}`);
+    for (const row of rows)
+      console.log(`${row.id}\t${row.type}\t${row.expiry}\t${row.name}`);
   }
 } catch (error) {
   console.error(`FAIL: ${error.message}`);

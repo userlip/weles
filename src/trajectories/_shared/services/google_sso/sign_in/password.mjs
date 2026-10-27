@@ -5,7 +5,10 @@
 // the password. A page that leads to no password field, and a password
 // Google refuses, throw with what Google showed.
 import { humanFill } from '../../../../../../dist/human/keyboard.js';
-import { waitForGooglePassword, waitForGooglePasswordResult } from './credentials.mjs';
+import {
+  waitForGooglePassword,
+  waitForGooglePasswordResult,
+} from './credentials.mjs';
 
 export async function submitGooglePassword(page, creds) {
   const password = await waitForGooglePassword({

@@ -1,9 +1,9 @@
 import { confirmedFill } from '../../../_shared/page/confirmed-fill.mjs';
+import { humanClickLocator } from '../../../../../dist/human/mouse.js';
 import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../../dist/human/mouse.js';
-import { pageSettled, responseAfterAction } from '../../../_shared/page/settled.mjs';
+  pageSettled,
+  responseAfterAction,
+} from '../../../_shared/page/settled.mjs';
 import { fitsField } from '../../../_shared/page/fits.mjs';
 
 function introButton(page) {
@@ -20,7 +20,7 @@ export async function editIntro(s, character, targetName, targetHeadline) {
   await s.page.goto('https://www.linkedin.com/in/me/', {
     waitUntil: 'domcontentloaded',
   });
-  await humanIdlePause('deliberate');
+  await pageSettled(s.page);
   const editIntroBtn = introButton(s.page);
   if (await editIntroBtn.count()) {
     await humanClickLocator(s.page, editIntroBtn);
@@ -87,7 +87,7 @@ export async function editIntro(s, character, targetName, targetHeadline) {
     // value with the new one appended.
     await confirmedFill(s.page, el, target, `the LinkedIn ${label} field`);
     if (label === 'industry') {
-      await humanIdlePause('short');
+      await pageSettled(s.page);
       const sugg = s.page
         .locator('[role="option"], [role="listbox"] li, .typeahead-result')
         .filter({ visible: true })

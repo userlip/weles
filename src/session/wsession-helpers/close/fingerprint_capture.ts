@@ -1,6 +1,6 @@
 // The fingerprint a closing session records for itself: the probe script
 // run in the page, the network-side fingerprint, and the analysis against
-// the baseline the persona was drawn from. Split out of finalize.ts.
+// the baseline of the persona's own browser family. Split out of finalize.ts.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -11,12 +11,79 @@ import {
 import {
   analyze,
   pickBaseline,
+  summarize,
+  type FingerprintReport,
 } from '../../../diagnostics/fingerprint_analyzer.js';
 import type { WSession } from '../../wsession.js';
 import { runRecordingsDir, runRecordingsRoot } from '../../run-recordings.js';
 
+/** Recording files are written indented by one tab, readable by a person. */
+const JSON_INDENT = '\t';
+
+/** The network fingerprint fields compared between the early and the close-time capture. */
+type DriftField = 'ja4' | 'peetprint_hash' | 'akamaiH2';
+const DRIFT_FIELDS: Record<DriftField, true> = { ja4: true, peetprint_hash: true, akamaiH2: true };
+
+/**
+ * The TLS extension a resumed session adds after the target site was visited
+ * (RFC 8446, section 4.2.11: https://www.rfc-editor.org/rfc/rfc8446#section-4.2.11),
+ * as the network probe names it.
+ */
+const PSK_EXTENSION = 'pre_shared_key (41)';
+
+/** The findings a PSK-only drift explains: the early and close-time TLS fingerprints differ by resumption alone. */
+const PSK_EXPLAINED_FINDINGS: Record<string, true> = { tls_ja4_mismatch: true, tls_peetprint_mismatch: true };
+
 export function recordingsDir(label?: string): string {
   return label ? runRecordingsDir(label) : runRecordingsRoot();
+}
+
+function extensionsOf(network: any): Set<string> {
+  const listed = network?.extensions;
+  if (!Array.isArray(listed)) return new Set();
+  return new Set(listed.filter((extension: unknown): extension is string => typeof extension === 'string' && !extension.startsWith('TLS_GREASE')));
+}
+
+function fieldOf(network: any, field: DriftField): string | null {
+  const value = network?.[field];
+  if (typeof value === 'string' && value) return value;
+  return null;
+}
+
+/**
+ * Compares the early capture with the close-time one: the fields that changed
+ * are written to network_drift.json, and the drift is explained by PSK
+ * resumption when the only extension added is pre_shared_key and none was
+ * removed.
+ */
+function compareDrift(label: string, network: any): boolean {
+  const earlyPath = join(recordingsDir(label), 'early_fingerprint.json');
+  if (!existsSync(earlyPath)) return false;
+  const early = JSON.parse(readFileSync(earlyPath, 'utf-8'));
+  const earlyExtensions = extensionsOf(early?.network);
+  const finalExtensions = extensionsOf(network);
+  const added = [...finalExtensions].filter((extension) => !earlyExtensions.has(extension));
+  const removed = [...earlyExtensions].filter((extension) => !finalExtensions.has(extension));
+  const pskDrift = added.join(',') === PSK_EXTENSION && !removed.length;
+  const drift: Record<string, { early: string; final: string; pskExpected: boolean }> = {};
+  for (const field of Object.keys(DRIFT_FIELDS) as DriftField[]) {
+    const before = fieldOf(early?.network, field);
+    const after = fieldOf(network, field);
+    if (before && after && before !== after) drift[field] = { early: before, final: after, pskExpected: pskDrift };
+  }
+  const changed = Object.keys(drift);
+  if (changed.length) {
+    const driftPath = join(recordingsDir(label), 'network_drift.json');
+    writeFileSync(driftPath, JSON.stringify({ capturedAt: new Date().toISOString(), pskDrift, drift }, null, JSON_INDENT));
+    console.log(`[wsession] network drift detected: ${changed.join(', ')}${pskDrift ? ' (expected PSK resumption)' : ''} — saved ${driftPath}`);
+  }
+  return pskDrift;
+}
+
+/** The report without the TLS mismatches a PSK-only drift explains, counted again by the analyzer's own summary. */
+function withoutPskFindings(report: FingerprintReport): FingerprintReport {
+  const findings = report.findings.filter((finding) => !Object.hasOwn(PSK_EXPLAINED_FINDINGS, finding.id));
+  return { ...report, meta: { ...report.meta, pskDriftExplained: true }, findings, summary: summarize(findings) };
 }
 
 export async function wsCaptureFingerprint(s: WSession): Promise<void> {
@@ -31,18 +98,14 @@ export async function wsCaptureFingerprint(s: WSession): Promise<void> {
         console.log(`[wsession] fingerprint probe: ${section}`);
       })
       .catch((error: Error) =>
-        console.log(
-          `[wsession] fingerprint probe sections unannounced: ${error.message}`,
-        ),
+        console.log(`[wsession] fingerprint probe sections unannounced: ${error.message}`),
       );
     const js = await s.page.evaluate(FP_SCRIPT);
-    let network: any = null;
+    let network: any;
     try {
       console.log(`[wsession] fingerprint probe: network ${NETWORK_FP_URL}`);
       await s.page.goto(NETWORK_FP_URL, { waitUntil: 'domcontentloaded' });
-      const raw = await s.page.evaluate(
-        `document.body.innerText || document.body.textContent || ''`,
-      );
+      const raw = await s.page.evaluate(`document.body.innerText || document.body.textContent || ''`);
       network = parseNetworkFingerprint(raw);
     } catch (e: any) {
       network = { _err: String(e?.message ?? e) };
@@ -58,135 +121,34 @@ export async function wsCaptureFingerprint(s: WSession): Promise<void> {
       network,
     };
     const fpPath = join(recordingsDir(s.label), 'fingerprint.json');
-    writeFileSync(fpPath, JSON.stringify(payload, null, 2));
+    writeFileSync(fpPath, JSON.stringify(payload, null, JSON_INDENT));
     console.log(`[wsession] fingerprint saved ${fpPath}`);
 
-    const baselineDir =
-      process.env.WELES_BASELINE_DIR ||
-      join(process.cwd(), 'recordings', 'baselines');
-    if (existsSync(baselineDir)) {
-      const { path: baselinePath, data: baseline } = pickBaseline(
-        baselineDir,
-        payload,
-      );
-      let report = analyze(payload, baseline);
-      report.meta.subjectPath = fpPath;
-      report.meta.baselinePath = baselinePath;
-
-      // Detect network fingerprint drift between early (pre-action) and final
-      // (close-time) captures. If the only change is the appearance of the TLS
-      // 1.3 pre_shared_key extension after the target site was visited, the
-      // drift is expected session resumption — not a detection signal. The
-      // target saw the early JA4; the close-time JA4 is a measurement artifact.
-      const earlyPath = join(recordingsDir(s.label), 'early_fingerprint.json');
-      let pskDrift = false;
-      const driftFields: string[] = [];
-      if (existsSync(earlyPath)) {
-        try {
-          const early = JSON.parse(readFileSync(earlyPath, 'utf-8'));
-          const earlyExts = new Set(
-            (early?.network?.extensions || []) as string[],
-          );
-          const finalExts = new Set((network?.extensions || []) as string[]);
-          const isGrease = (x: string) => x.startsWith('TLS_GREASE');
-          const added = [...finalExts].filter(
-            (x) => !earlyExts.has(x) && !isGrease(x),
-          );
-          const removed = [...earlyExts].filter(
-            (x) => !finalExts.has(x) && !isGrease(x),
-          );
-          pskDrift =
-            added.length === 1 &&
-            added[0] === 'pre_shared_key (41)' &&
-            removed.length === 0;
-          for (const f of ['ja4', 'peetprint_hash', 'akamaiH2'] as const) {
-            const e = early?.network?.[f] ?? null;
-            const fin = network?.[f] ?? null;
-            if (e && fin && e !== fin) driftFields.push(f);
-          }
-          if (driftFields.length) {
-            const drift: Record<
-              string,
-              {
-                early: string | null;
-                final: string | null;
-                pskExpected?: boolean;
-              }
-            > = {};
-            for (const f of driftFields) {
-              drift[f] = {
-                early: early?.network?.[f] ?? null,
-                final: network?.[f] ?? null,
-                pskExpected: pskDrift,
-              };
-            }
-            const driftPath = join(
-              recordingsDir(s.label),
-              'network_drift.json',
-            );
-            writeFileSync(
-              driftPath,
-              JSON.stringify(
-                { capturedAt: new Date().toISOString(), pskDrift, drift },
-                null,
-                2,
-              ),
-            );
-            console.log(
-              `[wsession] network drift detected: ${driftFields.join(', ')}${pskDrift ? ' (expected PSK resumption)' : ''} — saved ${driftPath}`,
-            );
-          }
-        } catch (error) {
-          console.log(
-            `[wsession] network drift compare error: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
-
-      if (pskDrift) {
-        const pskFindingIds = new Set([
-          'tls_ja4_mismatch',
-          'tls_peetprint_mismatch',
-        ]);
-        const before = report.summary.riskScore;
-        report.findings = report.findings.filter(
-          (f) => !pskFindingIds.has(f.id),
-        );
-        // Recompute summary.
-        const counts = { critical: 0, warning: 0, info: 0 };
-        const byCategory: Record<string, number> = {};
-        const SEVERITY_WEIGHT: Record<string, number> = {
-          critical: 10,
-          warning: 5,
-          info: 2,
-        };
-        let riskScore = 0;
-        for (const f of report.findings) {
-          counts[f.severity]++;
-          riskScore += SEVERITY_WEIGHT[f.severity];
-          byCategory[f.category] = (byCategory[f.category] || 0) + 1;
-        }
-        report.summary = {
-          totalFindings: report.findings.length,
-          ...counts,
-          riskScore,
-          byCategory,
-        };
-        report.meta.pskDriftExplained = true;
-        console.log(
-          `[wsession] PSK drift explained: removed TLS mismatch findings, risk ${before} -> ${report.summary.riskScore}`,
-        );
-      }
-
-      const reportPath = join(recordingsDir(s.label), 'detection_report.json');
-      writeFileSync(reportPath, JSON.stringify(report, null, 2));
-      console.log(
-        `[wsession] detection report saved ${reportPath} risk=${report.summary.riskScore} critical=${report.summary.critical}`,
-      );
+    const baselineDir = process.env.WELES_BASELINE_DIR || join(process.cwd(), 'recordings', 'baselines');
+    if (!existsSync(baselineDir)) {
+      console.log(`[wsession] detection report not written: no baseline directory ${baselineDir} (WELES_BASELINE_DIR)`);
+      return;
     }
+    const { path: baselinePath, data: baseline } = pickBaseline(baselineDir, payload);
+    let report = analyze(payload, baseline);
+    report.meta.subjectPath = fpPath;
+    report.meta.baselinePath = baselinePath;
+    // A drift that cannot be compared is said, and the report keeps every finding.
+    let pskDrift = false;
+    try {
+      pskDrift = compareDrift(s.label, network);
+    } catch (error) {
+      console.log(`[wsession] network drift compare error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (pskDrift) {
+      const before = report.summary.totalFindings;
+      report = withoutPskFindings(report);
+      console.log(`[wsession] PSK drift explained: removed TLS mismatch findings, ${before} -> ${report.summary.totalFindings}`);
+    }
+    const reportPath = join(recordingsDir(s.label), 'detection_report.json');
+    writeFileSync(reportPath, JSON.stringify(report, null, JSON_INDENT));
+    console.log(`[wsession] detection report saved ${reportPath} critical=${report.summary.critical} warning=${report.summary.warning}`);
   } catch (error) {
-    console.log(
-      `[wsession] fingerprint capture error: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    console.log(`[wsession] fingerprint capture error: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

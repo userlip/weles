@@ -3,9 +3,15 @@
  *
  * WebRTC gathers ICE candidates from the host's own interfaces, which makes
  * it the one API that can see around a proxy. Two things can go wrong and
- * they are different failures: leaking an RFC1918 address at all, and
- * publishing a public candidate that is not the address the site actually
+ * they are different failures: leaking a local (non-public) address at all,
+ * and publishing a public candidate that is not the address the site actually
  * saw the request arrive from.
+ *
+ * Whether an address is public is IANA's reading (proxy/quality/
+ * special-addresses.ts), the same one the browser-evidence policy uses, for
+ * IPv4 and IPv6 alike, so a unique-local or link-local IPv6 candidate is a
+ * local leak, and an IPv6 egress is compared whole rather than cut at its
+ * first colon.
  *
  * These are filed with the network signals — not with the browser surface —
  * because the remedy is a proxy or interface change, and they are held apart
@@ -13,7 +19,41 @@
  * itself rather than against a baseline capture.
  */
 
+import { isIP } from 'node:net';
 import type { DetectionRule } from '../finding.js';
+import { specialBlockOf } from '../../../proxy/quality/special-addresses.js';
+
+/**
+ * Whether `address` is not public: it lies in an IANA special-purpose block
+ * not declared globally reachable. Unread registries are not a verdict: the
+ * error reaches the analyzer, which records that this rule could not judge.
+ */
+function isNonPublic(address: string): boolean {
+  const block = specialBlockOf(address);
+  return block !== null && !block.globallyReachable;
+}
+
+/** The candidate addresses the probe recorded, as text. */
+function candidateAddresses(subject: { js?: { webRTC?: { localIPs?: unknown } } } | undefined): string[] {
+  const ips = subject?.js?.webRTC?.localIPs;
+  if (!Array.isArray(ips)) return [];
+  return ips.filter((ip: unknown): ip is string => typeof ip === 'string');
+}
+
+/**
+ * The address part of the recorded egress: a bare address, an IPv4
+ * `address:port`, or a bracketed `[IPv6]:port`; null when it is none of these.
+ */
+function egressAddress(recorded: unknown): string | null {
+  if (typeof recorded !== 'string') return null;
+  const text = recorded.trim();
+  if (isIP(text)) return text;
+  const bracketed = text.match(/^\[(?<address>[^\]]+)\](?::\d+)?$/);
+  if (bracketed?.groups && isIP(bracketed.groups.address)) return bracketed.groups.address;
+  const withPort = text.match(/^(?<address>[^:]+):\d+$/);
+  if (withPort?.groups && isIP(withPort.groups.address)) return withPort.groups.address;
+  return null;
+}
 
 export const webrtcRoutingRules: DetectionRule[] = [
   // ---------------------------------------------------------------------------
@@ -25,17 +65,15 @@ export const webrtcRoutingRules: DetectionRule[] = [
     category: 'network',
     severity: 'warning',
     test(s) {
-      const ips = s?.js?.webRTC?.localIPs;
-      if (Array.isArray(ips) && ips.length > 0) {
-        return {
-          id: 'webrtc_local_ip_exposed',
-          category: 'network',
-          severity: 'warning',
-          message: `WebRTC leaked local IP(s): ${ips.join(', ')}. PerimeterX checks WebRTC for proxy/datacenter mismatches.`,
-          evidence: { localIPs: ips },
-        };
-      }
-      return null;
+      const local = candidateAddresses(s).filter((ip) => isIP(ip) && isNonPublic(ip));
+      if (!local.length) return null;
+      return {
+        id: 'webrtc_local_ip_exposed',
+        category: 'network',
+        severity: 'warning',
+        message: `WebRTC leaked local IP(s): ${local.join(', ')}. PerimeterX checks WebRTC for proxy/datacenter mismatches.`,
+        evidence: { localIPs: local },
+      };
     },
   },
   {
@@ -44,25 +82,18 @@ export const webrtcRoutingRules: DetectionRule[] = [
     category: 'network',
     severity: 'critical',
     test(s) {
-      const egressRaw = String(s?.network?.ip || '');
-      const egressIP = egressRaw.split(':')[0];
-      const rtcPublic = (s?.js?.webRTC?.localIPs || []).filter(
-        (ip: string) =>
-          !/^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|0\.0\.0\.0$|255\.)/.test(
-            ip,
-          ),
-      );
-      if (!egressIP || rtcPublic.length === 0) return null;
-      if (!rtcPublic.includes(egressIP)) {
-        return {
-          id: 'webrtc_public_ip_mismatch',
-          category: 'network',
-          severity: 'critical',
-          message: `Egress IP (${egressIP}) not seen in WebRTC candidates (${rtcPublic.join(', ')}). Proxy leak / inconsistent routing.`,
-          evidence: { egressIP, egressRaw, rtcPublicIPs: rtcPublic },
-        };
-      }
-      return null;
+      const egressRaw = s?.network?.ip;
+      const egressIP = egressAddress(egressRaw);
+      const rtcPublic = candidateAddresses(s).filter((ip) => isIP(ip) && !isNonPublic(ip));
+      if (!egressIP || !rtcPublic.length) return null;
+      if (rtcPublic.includes(egressIP)) return null;
+      return {
+        id: 'webrtc_public_ip_mismatch',
+        category: 'network',
+        severity: 'critical',
+        message: `Egress IP (${egressIP}) not seen in WebRTC candidates (${rtcPublic.join(', ')}). Proxy leak / inconsistent routing.`,
+        evidence: { egressIP, egressRaw, rtcPublicIPs: rtcPublic },
+      };
     },
   },
 ];

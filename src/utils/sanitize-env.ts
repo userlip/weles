@@ -1,13 +1,15 @@
-const SENSITIVE_ENV_KEY =
-  /(?:PASSWORD|PASSCODE|SECRET|TOKEN|CAPABILIT|PRIVATE_KEY|SERVICE_ROLE|API_KEY|AUTHORIZATION|COOKIE|SESSION_KEY|DATABASE_URL|DB_URL|PROXY_URL|APPLE_2FA_CODE$|(?:^|_)KEY$)/i;
-
-export function snapshotSanitizedEnvironment(
+/**
+ * The names of the environment variables a run had set, sorted, without their
+ * values. No reading of a variable's name tells a secret from a setting
+ * (AWS_ACCESS_KEY_ID passed every name pattern that was tried), and nothing
+ * reads a recorded value back: a run is reproduced from its declared request,
+ * not from its process environment. So the values never reach a recording.
+ */
+export function environmentNames(
   source: Record<string, string | undefined> = process.env,
-): Record<string, string> {
-  const snapshot: Record<string, string> = {};
-  for (const [key, value] of Object.entries(source)) {
-    if (typeof value !== 'string') continue;
-    snapshot[key] = SENSITIVE_ENV_KEY.test(key) ? '[REDACTED]' : value;
-  }
-  return snapshot;
+): string[] {
+  return Object.entries(source)
+    .filter(([, value]) => typeof value === 'string')
+    .map(([name]) => name)
+    .sort();
 }

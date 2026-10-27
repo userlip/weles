@@ -14,17 +14,34 @@
 //       GM_MAX    how many threads to open; required unless GM_OPEN=0
 import { launchRealChrome } from '../../browser/real_chrome.mjs';
 import { statedCount, statedText } from '../_shared/inputs/stated.mjs';
-import { gmailSearchUrl, printSearchResult, signedInGmail } from './search_result.mjs';
+import {
+  gmailSearchUrl,
+  printSearchResult,
+  signedInGmail,
+} from './search_result.mjs';
 
-const QUERY = statedText(['GM_QUERY'], 'the Gmail search query to read', 'GMAIL_QUERY_REQUIRED');
-const OPEN = process.env.GM_OPEN === '0' ? undefined : statedCount('GM_MAX', 'how many matching threads the search opens and reads');
+const QUERY = statedText(
+  ['GM_QUERY'],
+  'the Gmail search query to read',
+  'GMAIL_QUERY_REQUIRED',
+);
+const OPEN =
+  process.env.GM_OPEN === '0'
+    ? undefined
+    : statedCount(
+        'GM_MAX',
+        'how many matching threads the search opens and reads',
+      );
 
 const log = (...a) => console.log('[gmail_search]', ...a);
 
 const s = await launchRealChrome({ label: 'gmail_search' });
 try {
   log('query:', QUERY);
-  await s.page.goto(gmailSearchUrl('https://mail.google.com/mail/u/0/', QUERY), { waitUntil: 'domcontentloaded' });
+  await s.page.goto(
+    gmailSearchUrl('https://mail.google.com/mail/u/0/', QUERY),
+    { waitUntil: 'domcontentloaded' },
+  );
   if (!(await signedInGmail(s.page)))
     throw new Error(
       `GMAIL_SIGNED_OUT: the profile is not signed in to Gmail (url=${s.page.url()}); sign it in once with src/trajectories/_shared/services/setup_chrome_profile.mjs`,

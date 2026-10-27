@@ -5,11 +5,12 @@ import {
   googleSso,
   getScopedGoogleLogin,
 } from '../_shared/services/google_sso.mjs';
+import { humanClickLocator } from '../../../dist/human/mouse.js';
 import {
-  humanIdlePause,
-  humanClickLocator,
-} from '../../../dist/human/mouse.js';
-import { responseAfterAction, urlMatching } from '../_shared/page/settled.mjs';
+  pageSettled,
+  responseAfterAction,
+  urlMatching,
+} from '../_shared/page/settled.mjs';
 import { clickOffered } from '../_shared/page/judged/seen.mjs';
 import { humanType } from '../../../dist/human/keyboard.js';
 import {
@@ -64,7 +65,7 @@ const results = [];
 
 try {
   await s.goto('https://dashboard.oxylabs.io/');
-  await humanIdlePause('long');
+  await pageSettled(s.page);
 
   const gsiFrame = s.page.frames().find((f) => /gsi\/button/.test(f.url()));
   if (!gsiFrame) throw new Error('no GSI iframe');
@@ -94,7 +95,7 @@ try {
     console.log(`[reset] starting ${product}`);
     try {
       await s.page.goto(usersUrl, { waitUntil: 'domcontentloaded' });
-      await humanIdlePause('long');
+      await pageSettled(s.page);
 
       // The control that edits this proxy user, as the page offers it in the
       // user's row; a page without one is recorded, not guessed at.
@@ -107,7 +108,7 @@ try {
         results.push({ product, status: 'edit_button_not_found' });
         return;
       }
-      await humanIdlePause('long');
+      await pageSettled(s.page);
 
       // The dashboard renders the password field as either type="password" or
       // type="text" with name="password" (plaintext when showing the generated
@@ -128,7 +129,6 @@ try {
       const newPassword = generatePassword();
       await passInput.fill('');
       await passInput.fill(newPassword);
-      await humanIdlePause('short');
 
       // Submit the form the password field belongs to, and read Oxylabs'
       // own answer to the change it sends: the dashboard's first script call
@@ -164,7 +164,7 @@ try {
       results.push({ product, status });
       console.log(`[reset] ${product} done status=${status}`);
     } catch (e) {
-      console.log(`[reset] ${product} err: ${e.message || String(e)}`);
+      console.log(`[reset] ${product} err: ${e.message}`);
       results.push({ product, status: 'error', error: e.message });
     }
   }
@@ -200,7 +200,7 @@ try {
       `oxylabs_password_reset_incomplete: ${unset.map((r) => `${r.product}=${r.status}`).join(', ')}`,
     );
 } catch (e) {
-  console.log('FAIL:', e.message || String(e));
+  console.log('FAIL:', e.message);
   process.exitCode = exitStatusFor(e);
 } finally {
   await s.close();

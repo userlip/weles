@@ -19,7 +19,11 @@ export async function syncReactInputValue(locator, value) {
     else el.value = v;
     el._valueTracker?.setValue('');
     el.dispatchEvent(
-      new InputEvent('input', { bubbles: true, inputType: 'insertText', data: v }),
+      new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText',
+        data: v,
+      }),
     );
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }, value);
@@ -67,7 +71,8 @@ export function installNetworkLogger(s) {
   });
 }
 
-const USERNAME_FIELD = 'input[placeholder*="username" i], input[name*="username" i]';
+const USERNAME_FIELD =
+  'input[placeholder*="username" i], input[name*="username" i]';
 const USERNAME_PAGE = '/signup/create-username';
 
 /**
@@ -79,7 +84,9 @@ const USERNAME_PAGE = '/signup/create-username';
 export async function runUsernameStep(s, id) {
   const field = s.page.locator(USERNAME_FIELD).first();
   if (!(await field.count()))
-    throw new Error(`TIKTOK_USERNAME_FIELD_MISSING: ${s.page.url()} shows no username field`);
+    throw new Error(
+      `TIKTOK_USERNAME_FIELD_MISSING: ${s.page.url()} shows no username field`,
+    );
   await field.focus();
   await pageSettled(s.page);
   await s.page.keyboard.press('ControlOrMeta+A');
@@ -89,11 +96,18 @@ export async function runUsernameStep(s, id) {
 
   const kept = await field.inputValue();
   if (!kept)
-    throw new Error(`TIKTOK_USERNAME_NOT_KEPT: the username field is empty after typing ${id.username}`);
-  console.log(`[test] username typed=${JSON.stringify(id.username)} kept=${JSON.stringify(kept)}`);
+    throw new Error(
+      `TIKTOK_USERNAME_NOT_KEPT: the username field is empty after typing ${id.username}`,
+    );
+  console.log(
+    `[test] username typed=${JSON.stringify(id.username)} kept=${JSON.stringify(kept)}`,
+  );
 
   await clickDescribed(s.page, 'the button that submits the chosen username');
-  await urlMatching(s.page, (url) => !new URL(url).pathname.includes(USERNAME_PAGE));
+  await urlMatching(
+    s.page,
+    (url) => !new URL(url).pathname.includes(USERNAME_PAGE),
+  );
   console.log(`[test] left create-username: ${s.page.url()}`);
   return kept;
 }

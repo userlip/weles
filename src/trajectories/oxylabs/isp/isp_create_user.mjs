@@ -19,11 +19,12 @@ import {
   googleSso,
   getScopedGoogleLogin,
 } from '../../_shared/services/google_sso.mjs';
+import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import {
-  humanIdlePause,
-  humanClickLocator,
-} from '../../../../dist/human/mouse.js';
-import { pageCondition, urlMatching } from '../../_shared/page/settled.mjs';
+  pageCondition,
+  pageSettled,
+  urlMatching,
+} from '../../_shared/page/settled.mjs';
 import { clickOffered } from '../../_shared/page/judged/seen.mjs';
 import { humanType } from '../../../../dist/human/keyboard.js';
 import { statedText } from '../../_shared/inputs/stated.mjs';
@@ -78,7 +79,7 @@ try {
   await s.page.goto('https://dashboard.oxylabs.io/', {
     waitUntil: 'domcontentloaded',
   });
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   const gsiFrame = s.page.frames().find((f) => /gsi\/button/.test(f.url()));
   if (!gsiFrame) {
     await shot(s, 'no_gsi');
@@ -102,7 +103,7 @@ try {
   await s.page.goto('https://dashboard.oxylabs.io/en/overview/ISP', {
     waitUntil: 'domcontentloaded',
   });
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   await shot(s, 'overview_isp');
 
   const dismissed = await clickOffered(
@@ -163,7 +164,6 @@ try {
   await passIn.click({ force: true });
   await passIn.fill('');
   await humanType(s.page, ISP_PASSWORD);
-  await humanIdlePause('short');
 
   const createUserBtn = s.page
     .locator('button:has-text("Create user"), button[type="submit"]')
@@ -174,7 +174,7 @@ try {
       `oxylabs_isp_submit_unavailable: no "Create user" control on ${s.page.url()}`,
     );
   await createUserBtn.click({ force: true });
-  await humanIdlePause('long');
+  await pageSettled(s.page);
 
   // Oxylabs appends a suffix to the requested name, so the created name is
   // read back: storing the requested one would save a credential the proxy

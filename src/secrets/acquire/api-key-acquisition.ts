@@ -22,10 +22,15 @@ import type { SecretDefinition } from './catalog.js';
 import { paramsFor, queueAction } from './queued-job.js';
 
 /** The Skarbiec item the assembled constraints say the credential is written to. */
-function constrainedItem(params: Record<string, unknown>, secret: string): string {
+function constrainedItem(
+  params: Record<string, unknown>,
+  secret: string,
+): string {
   const constraints = params.constraints;
   const item =
-    constraints && typeof constraints === 'object' && !Array.isArray(constraints)
+    constraints &&
+    typeof constraints === 'object' &&
+    !Array.isArray(constraints)
       ? (constraints as Record<string, unknown>).vault_item_id
       : undefined;
   if (typeof item !== 'string' || item === '')
@@ -56,7 +61,10 @@ export async function queueAcquisition(
   }
 
   const missing: string[] = [];
-  const writerProblem = welesAcquiredSecretWriterProblem(def.secret, request.tenantId);
+  const writerProblem = welesAcquiredSecretWriterProblem(
+    def.secret,
+    request.tenantId,
+  );
   if (writerProblem !== null) missing.push(writerProblem);
   const buildId = request.requestId;
   if (!isRequestId(buildId))

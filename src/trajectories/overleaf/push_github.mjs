@@ -17,19 +17,36 @@ import { pageSettled } from '../_shared/page/settled.mjs';
 import { REPO_SLUG } from './github_sync/target.mjs';
 import { runGithubSync, syncedBy } from './github_sync/run.mjs';
 
-const COMMIT_MESSAGE = statedText(['OVERLEAF_COMMIT_MESSAGE'], 'the commit message the GitHub repository records for this sync');
+const COMMIT_MESSAGE = statedText(
+  ['OVERLEAF_COMMIT_MESSAGE'],
+  'the commit message the GitHub repository records for this sync',
+);
 
 await runGithubSync({
   label: 'overleaf_push_github',
   act: async (s, project) => {
-    await clickDescribed(s.page, 'the button that pushes Overleaf changes to GitHub');
+    await clickDescribed(
+      s.page,
+      'the button that pushes Overleaf changes to GitHub',
+    );
     await pageSettled(s.page);
-    const message = s.page.locator('.modal-dialog textarea').filter({ visible: true }).first();
+    const message = s.page
+      .locator('.modal-dialog textarea')
+      .filter({ visible: true })
+      .first();
     await message.waitFor({ state: 'visible' });
     await humanFill(s.page, message, COMMIT_MESSAGE);
     const held = await message.inputValue();
-    if (held !== COMMIT_MESSAGE) throw new Error(`OVERLEAF_COMMIT_MESSAGE_MISMATCH: the message field holds ${JSON.stringify(held)}`);
-    await syncedBy(s.page, 'push', () => clickDescribed(s.page, 'the button that syncs the commit message to GitHub'));
+    if (held !== COMMIT_MESSAGE)
+      throw new Error(
+        `OVERLEAF_COMMIT_MESSAGE_MISMATCH: the message field holds ${JSON.stringify(held)}`,
+      );
+    await syncedBy(s.page, 'push', () =>
+      clickDescribed(
+        s.page,
+        'the button that syncs the commit message to GitHub',
+      ),
+    );
     return `pushed ${project.id} to GitHub (${REPO_SLUG})`;
   },
 });

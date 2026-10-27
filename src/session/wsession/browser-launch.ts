@@ -102,12 +102,11 @@ export async function openSessionBrowser(
   enforceWelesServicePlacement('WSession.start');
   const label = opts.label ?? UNLABELLED;
   const secureCredentialTask = isSkarbiecCredentialTask();
-  // G9: one per-run human-timing seed, generated at session start and routed
-  // into the shared seeded PRNG so every human mouse/typing jitter draw this
-  // run is reproducible from the recorded seed. Code paths that never read the
-  // seed keep drawing from Math.random, so this only makes behavior
-  // reproducible — it does not change the statistical distribution. Recorded
-  // into session_meta as a required non-null number (result.run.timing_seed).
+  // One per-run human-timing seed, generated at session start and routed into
+  // the shared seeded stream (utils/motion/timing.ts) every pointer-trace
+  // segment, target point and typing choice draws from, so the run is
+  // reproducible from the recorded seed; a draw before the seed is refused.
+  // Recorded into session_meta as a required number (result.run.timing_seed).
   const timingSeed = randomBytes(Uint32Array.BYTES_PER_ELEMENT).readUInt32BE();
   seedHumanTiming(timingSeed);
   const operatorCdp = opts.operatorCdp ? loadOperatorCdpConfig() : null;

@@ -80,9 +80,10 @@ export async function loggedOutRead(
   let session: WSession | null = null;
   try {
     session = await WSession.start({ label, proxy });
+    // Certificates are verified: a proxy that intercepts TLS could otherwise
+    // answer any body as Reddit's, and the read's verdict would be its word.
     const resp = await session.page.context().request.get(url, {
       headers: { Accept: 'application/json' },
-      ignoreHTTPSErrors: true,
     });
     const status = resp.status();
     let body: string;

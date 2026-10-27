@@ -37,7 +37,10 @@ async function googleChallengeState(page, terminalOnly = false) {
     ).innerText.replace(/\s+/g, ' ');
     return observed;
   };
-  const arg = { waitForTerminal: terminalOnly, googleHost: GOOGLE_ACCOUNTS_HOST };
+  const arg = {
+    waitForTerminal: terminalOnly,
+    googleHost: GOOGLE_ACCOUNTS_HOST,
+  };
   if (terminalOnly) return pageCondition(page, read, arg);
   return navEval(
     page,

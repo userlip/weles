@@ -78,7 +78,9 @@ async function authorizeLink(page, appId) {
     ...new Set(
       Array.from(document.querySelectorAll('a[href]'))
         .map((a) => a.href)
-        .filter((href) => new URL(href).pathname.endsWith('/oauth/v2/authorize')),
+        .filter((href) =>
+          new URL(href).pathname.endsWith('/oauth/v2/authorize'),
+        ),
     ),
   ]);
   const [link, ...others] = links;
@@ -103,7 +105,9 @@ async function grantConsent(page, shot) {
     return { action: f.action, body: body.toString() };
   });
   if (!form)
-    throw new Error(`SLACK_CONSENT_FORM: ${page.url()} renders no OAuth consent form`);
+    throw new Error(
+      `SLACK_CONSENT_FORM: ${page.url()} renders no OAuth consent form`,
+    );
   const allowed = await page.context().request.post(form.action, {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     data: form.body,
@@ -126,7 +130,9 @@ export async function appToken(page, appId, prefix) {
       .map((i) => i.value)
       .find((value) => value.startsWith(`${start}-`));
     if (field) return field;
-    return document.body.innerText.match(new RegExp(`${start}-[\\w-]+`))?.shift();
+    return document.body.innerText
+      .match(new RegExp(`${start}-[\\w-]+`))
+      ?.shift();
   }, prefix);
   if (!token)
     throw new Error(
@@ -139,9 +145,20 @@ export async function appToken(page, appId, prefix) {
  * Create the app `manifest` describes with `xoxc`, install it to the
  * workspace, and resolve its id.
  */
-export async function installManifestApp({ page, xoxc, manifest, label, shot }) {
+export async function installManifestApp({
+  page,
+  xoxc,
+  manifest,
+  label,
+  shot,
+}) {
   await manifestCall(page, 'apps.manifest.validate', xoxc, manifest);
-  const created = await manifestCall(page, 'apps.manifest.create', xoxc, manifest);
+  const created = await manifestCall(
+    page,
+    'apps.manifest.create',
+    xoxc,
+    manifest,
+  );
   // The answer carries the new app's credentials (client secret, signing
   // secret, verification token), so only the fields it holds are named.
   if (!created.app_id)
@@ -160,7 +177,9 @@ export async function installManifestApp({ page, xoxc, manifest, label, shot }) 
 
 /** The delete form's CSRF crumb on app `appId`'s settings page, or undefined. */
 async function deleteCrumb(page, appId) {
-  await page.goto(`${APPS}/${appId}/general`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${APPS}/${appId}/general`, {
+    waitUntil: 'domcontentloaded',
+  });
   await pageSettled(page);
   return page.evaluate(
     () =>
@@ -183,12 +202,10 @@ export async function deleteApp(page, appId) {
     );
   const body = new URLSearchParams(DELETE_REQUEST);
   body.set('crumb', crumb);
-  const answer = await page
-    .context()
-    .request.post(`${APPS}/${appId}/general`, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      data: body.toString(),
-    });
+  const answer = await page.context().request.post(`${APPS}/${appId}/general`, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    data: body.toString(),
+  });
   if (!answer.ok() || !flagged(answer.url(), DELETED))
     throw new Error(
       `SLACK_APP_DELETE_REFUSED: deleting app ${appId} ended ${answer.status()} at ${answer.url()}`,

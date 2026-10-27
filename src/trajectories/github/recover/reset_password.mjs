@@ -22,7 +22,10 @@ import {
   updateAccountMetadata,
   updateAccountPassword,
 } from '../../_shared/skarbiec/accounts.mjs';
-import { keepVerdict, verdictAfterFailure } from '../../_shared/action/verdict.mjs';
+import {
+  keepVerdict,
+  verdictAfterFailure,
+} from '../../_shared/action/verdict.mjs';
 import { banSignalOf } from '../../_shared/auth/ban-signal.mjs';
 import { statedProxy } from '../../_shared/inputs/stated.mjs';
 import { pageSettled, submitAnswered } from '../../_shared/page/settled.mjs';
@@ -33,12 +36,20 @@ const RESET_ROUTE = '/password_reset';
 const RESET_LINK = /https:\/\/github\.com\/password_reset\/[\w-]+/;
 
 const acct = await getSocialAccount('github');
-if (!acct) throw new Error('GITHUB_ACCOUNT_UNAVAILABLE: no active GitHub account in Skarbiec');
+if (!acct)
+  throw new Error(
+    'GITHUB_ACCOUNT_UNAVAILABLE: no active GitHub account in Skarbiec',
+  );
 const email = acct.metadata?.email;
-if (!email) throw new Error(`GITHUB_EMAIL_UNAVAILABLE: GitHub account ${acct.username} has no email to reset through`);
+if (!email)
+  throw new Error(
+    `GITHUB_EMAIL_UNAVAILABLE: GitHub account ${acct.username} has no email to reset through`,
+  );
 const vaultAccount = findAccount('github', acct.username);
 if (!vaultAccount)
-  throw new Error(`GITHUB_ACCOUNT_UNRECORDED: ${acct.username} has no Skarbiec item to store the new password in`);
+  throw new Error(
+    `GITHUB_ACCOUNT_UNRECORDED: ${acct.username} has no Skarbiec item to store the new password in`,
+  );
 const accountSession = await resolveAccountSession(acct);
 const pinned = accountSession.proxyUrl && !process.env.PROXY_URL?.trim();
 const proxyUrl = pinned
@@ -55,22 +66,34 @@ async function resetLinkSince(since) {
     .find(Boolean);
 }
 
-const s = await WSession.start({ label: LABEL, proxy: proxyUrl, persona: accountSession.persona });
+const s = await WSession.start({
+  label: LABEL,
+  proxy: proxyUrl,
+  persona: accountSession.persona,
+});
 let banSignal;
 let failure;
 try {
-  let resetUrl = await resetLinkSince(vaultAccount.metadata?.reset_requested_at);
+  let resetUrl = await resetLinkSince(
+    vaultAccount.metadata?.reset_requested_at,
+  );
   if (!resetUrl) {
     const requestedAt = new Date().toISOString();
     await s.goto(`https://github.com${RESET_ROUTE}`);
     await pageSettled(s.page);
-    const field = s.page.locator('input#email_field, input[name="email"]').first();
+    const field = s.page
+      .locator('input#email_field, input[name="email"]')
+      .first();
     if (!(await field.count()))
-      throw new Error(`GITHUB_RESET_FORM_MISSING: ${s.page.url()} shows no email field`);
+      throw new Error(
+        `GITHUB_RESET_FORM_MISSING: ${s.page.url()} shows no email field`,
+      );
     await humanFill(s.page, field, email);
     // The submit stays disabled until GitHub's own check of the form clears.
     const submit = s.page
-      .locator('form[action*="password_reset"] input[type="submit"]:not([disabled]), form[action*="password_reset"] button[type="submit"]:not([disabled])')
+      .locator(
+        'form[action*="password_reset"] input[type="submit"]:not([disabled]), form[action*="password_reset"] button[type="submit"]:not([disabled])',
+      )
       .first();
     await submit.waitFor({ state: 'visible' });
     await humanClickLocator(s.page, submit);
@@ -93,9 +116,22 @@ try {
     );
   await humanFill(s.page, password, newPassword);
   await humanFill(s.page, confirmation, newPassword);
-  await humanClickLocator(s.page, password.locator('xpath=ancestor::form[1]').locator('button[type="submit"], input[type="submit"]').first());
-  const banner = s.page.locator('.flash-error, [role="alert"]').filter({ hasText: /\S/ }).first();
-  await submitAnswered(s.page, (url) => new URL(url).pathname.startsWith(`${RESET_ROUTE}/`), banner);
+  await humanClickLocator(
+    s.page,
+    password
+      .locator('xpath=ancestor::form[1]')
+      .locator('button[type="submit"], input[type="submit"]')
+      .first(),
+  );
+  const banner = s.page
+    .locator('.flash-error, [role="alert"]')
+    .filter({ hasText: /\S/ })
+    .first();
+  await submitAnswered(
+    s.page,
+    (url) => new URL(url).pathname.startsWith(`${RESET_ROUTE}/`),
+    banner,
+  );
   // Still on the reset form means GitHub did not take the password: storing
   // it would replace a working password in Skarbiec with one GitHub never set.
   if (new URL(s.page.url()).pathname.startsWith(`${RESET_ROUTE}/`))
@@ -111,14 +147,22 @@ try {
   console.log(`PASS: password reset for ${acct.username}`);
 } catch (error) {
   failure = error;
-  banSignal = await verdictAfterFailure(s, { banDetector: detectGitHubBanSignals }, error, banSignal);
+  banSignal = await verdictAfterFailure(
+    s,
+    { banDetector: detectGitHubBanSignals },
+    error,
+    banSignal,
+  );
   console.log(`[ban-signal] ${banSignal.signal}  FAIL: ${error.message}`);
 } finally {
   try {
     await keepVerdict(LABEL, acct, banSignal);
   } catch (keepError) {
     failure = failure
-      ? new AggregateError([failure, keepError], `${failure.message}; and its verdict was not kept: ${keepError.message}`)
+      ? new AggregateError(
+          [failure, keepError],
+          `${failure.message}; and its verdict was not kept: ${keepError.message}`,
+        )
       : keepError;
   }
   await s.close();

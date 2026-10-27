@@ -217,7 +217,9 @@ export async function assertAuthed(platform, s, opts) {
     for (const sel of probe.presenceSelectors) {
       const n = await s.page.locator(sel).count();
       if (n) {
-        console.log(`[${label}] authed: ${platform} matched ${sel} (presence-only, count=${n})`);
+        console.log(
+          `[${label}] authed: ${platform} matched ${sel} (presence-only, count=${n})`,
+        );
         return sel;
       }
     }
@@ -229,14 +231,20 @@ export async function assertAuthed(platform, s, opts) {
   if (probe.loggedOutMarkers)
     for (const sel of probe.loggedOutMarkers) {
       try {
-        if (await s.page.locator(sel).first().isVisible()) foundLoggedOut.push(sel);
+        if (await s.page.locator(sel).first().isVisible())
+          foundLoggedOut.push(sel);
       } catch (error) {
         unread.push(`${sel}: ${error.message}`);
       }
     }
   throw new AuthProbeError(
     `${platform} session not authenticated — no authed UI found${foundLoggedOut.length ? ` (logged-out markers: ${foundLoggedOut.join(', ')})` : ''}${unread.length ? ` (unread: ${unread.join('; ')})` : ''}`,
-    { platform, final_url: s.page.url(), logged_out_markers: foundLoggedOut, unread },
+    {
+      platform,
+      final_url: s.page.url(),
+      logged_out_markers: foundLoggedOut,
+      unread,
+    },
   );
 }
 

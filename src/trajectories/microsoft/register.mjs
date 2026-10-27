@@ -11,10 +11,8 @@
 
 import { WSession } from '../../../dist/session/wsession.js';
 import { humanType } from '../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../dist/human/mouse.js';
+import { humanClickLocator } from '../../../dist/human/mouse.js';
+import { pageSettled } from '../_shared/page/settled.mjs';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
 import { phoneForField } from '../_shared/inputs/phone.mjs';
 
@@ -39,7 +37,7 @@ const landed = (url) => LANDINGS.some((route) => url.includes(route));
     console.log(`[ms] identity: ${id.username} <${id.username}@outlook.com>`);
 
     await s.goto(SIGNUP_URL);
-    await humanIdlePause('deliberate');
+    await pageSettled(s.page);
 
     // 1. The first step asks "Create account" — there's a prefix-suffix combo.
     // The default suffix is @outlook.com; we just type the local part.
@@ -58,7 +56,7 @@ const landed = (url) => LANDINGS.some((route) => url.includes(route));
         .filter({ visible: true })
         .first(),
     );
-    await humanIdlePause('deliberate');
+    await pageSettled(s.page);
 
     // 2. Password
     const pwIn = s.page
@@ -77,7 +75,7 @@ const landed = (url) => LANDINGS.some((route) => url.includes(route));
         .filter({ visible: true })
         .first(),
     );
-    await humanIdlePause('deliberate');
+    await pageSettled(s.page);
 
     // 3. Name (first / last)
     const firstIn = s.page
@@ -106,7 +104,7 @@ const landed = (url) => LANDINGS.some((route) => url.includes(route));
           .filter({ visible: true })
           .first(),
       );
-      await humanIdlePause('deliberate');
+      await pageSettled(s.page);
     }
 
     // 4. DOB. The country select keeps the country Microsoft set for the
@@ -134,7 +132,7 @@ const landed = (url) => LANDINGS.some((route) => url.includes(route));
         .filter({ visible: true })
         .first(),
     );
-    await humanIdlePause('long');
+    await pageSettled(s.page);
 
     // 5. Arkose / "Press and Hold" captcha, through the session's solver; a
     // challenge it does not solve fails the signup with the solver's answer.
@@ -148,7 +146,7 @@ const landed = (url) => LANDINGS.some((route) => url.includes(route));
       const solved = await s.solveCaptcha();
       if (solved !== 'captcha solved')
         throw new Error(`microsoft_arkose_unsolved: ${solved}`);
-      await humanIdlePause('deliberate');
+      await pageSettled(s.page);
     }
 
     // 6. Phone verification, rented in the country the phone field is set to
@@ -170,7 +168,7 @@ const landed = (url) => LANDINGS.some((route) => url.includes(route));
           .filter({ visible: true })
           .first(),
       );
-      await humanIdlePause('deliberate');
+      await pageSettled(s.page);
       // The code Microsoft texted to the rented number goes into its code
       // field; a code field that does not show fails the signup.
       const smsCode = await s.textedCode();
@@ -185,15 +183,18 @@ const landed = (url) => LANDINGS.some((route) => url.includes(route));
       await humanType(s.page, smsCode);
       await humanClickLocator(
         s.page,
-        s.page.locator('input[type="submit"], button[type="submit"]').filter({ visible: true }).first(),
+        s.page
+          .locator('input[type="submit"], button[type="submit"]')
+          .filter({ visible: true })
+          .first(),
       );
-      await humanIdlePause('long');
+      await pageSettled(s.page);
     }
 
     // 7. Land on one of LANDINGS; a "save your login" interstitial may stand
     // in front of it until the page settles.
     if (!landed(s.page.url())) {
-      await humanIdlePause('deliberate');
+      await pageSettled(s.page);
       if (!landed(s.page.url()))
         throw new Error(`microsoft_register_no_landing: ${s.page.url()}`);
     }

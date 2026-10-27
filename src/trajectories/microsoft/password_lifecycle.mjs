@@ -35,7 +35,11 @@ import { writeCredentialOperation } from '../../../dist/secrets/operation/answer
 function needsApproval(reason, page) {
   writeFileSync(
     join(runRecordingsDir(), 'pending_review.json'),
-    JSON.stringify({ status: 'needs_human_approval', reason, url: page.url() }, null, ' '),
+    JSON.stringify(
+      { status: 'needs_human_approval', reason, url: page.url() },
+      null,
+      ' ',
+    ),
   );
   return writeCredentialOperation({
     status: 'operation_failed',
@@ -68,7 +72,11 @@ async function contractAccount(contract) {
 
 /** The managed password Skarbiec holds for the contract, or null when it holds none; a read Skarbiec refuses raises with its cause. */
 function managedPassword(contract) {
-  const password = readWelesManagedCredential(contract.credentialId, PASSWORD_FIELD, contract.tenantId);
+  const password = readWelesManagedCredential(
+    contract.credentialId,
+    PASSWORD_FIELD,
+    contract.tenantId,
+  );
   return password ? password : null;
 }
 

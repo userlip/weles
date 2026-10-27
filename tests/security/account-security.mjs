@@ -1,9 +1,20 @@
-// Exercises the managed executor and the real CLI. No local browser or provider substitute.
+// Exercises the managed executor and the real CLI (`weles security`). No local
+// browser or provider substitute.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { STATUS_CODES } from 'node:http';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { evidenceFor } from './evidence.mjs';
+
+// The HTTP status RFC 9110 gives `reason`, read from Node's own table.
+function statusOf(reason) {
+  const code = Object.keys(STATUS_CODES).find(
+    (candidate) => STATUS_CODES[candidate] === reason,
+  );
+  assert.ok(code, `Node's HTTP table names no status "${reason}"`);
+  return Number(code);
+}
 
 const evidence = await evidenceFor('account-security');
 const { report, request, command } = evidence;
@@ -20,13 +31,15 @@ try {
     'provide exactly one of --login-role or --admission-report',
   );
   report.source_diff = command('git', ['diff', '--', 'src', 'tests/security']);
-  const binary = process.env.WELES_REAL_BIN || 'weles';
+  const binary = process.env.WELES_REAL_BIN;
+  assert.ok(binary, 'WELES_REAL_BIN names the weles binary under test; none is assumed');
   report.cli_version = command(binary, ['version']);
   await evidence.connect();
   const health = await request('/healthz');
-  assert.equal(health.status, 200);
+  assert.equal(health.status, statusOf('OK'));
+  const { sourceRevision, publicTask } = health.value;
   report.worker_revision =
-    health.value.sourceRevision ?? health.value.publicTask?.sourceRevision;
+    sourceRevision === undefined ? publicTask?.sourceRevision : sourceRevision;
   assert.equal(
     report.worker_revision,
     report.source_revision,
@@ -59,13 +72,13 @@ try {
       },
       null,
     );
-    assert.equal(denied.status, 401);
+    assert.equal(denied.status, statusOf('Unauthorized'));
     const mutation = await request('/run', {
       action: 'google_mfa_status',
       params: { login_role: report.login_role, enable: true },
       detached: true,
     });
-    assert.equal(mutation.status, 400);
+    assert.equal(mutation.status, statusOf('Bad Request'));
     assert.equal(
       mutation.value.detached_run,
       undefined,
@@ -73,7 +86,7 @@ try {
     );
     run = JSON.parse(
       command(binary, [
-        'account-security',
+        'security',
         '--provider',
         'google',
         '--login-role',
@@ -95,7 +108,7 @@ try {
   const persisted = await request(
     `/diagnostics/${encodeURIComponent(run.id)}/file?path=run-result.json`,
   );
-  assert.equal(persisted.status, 200);
+  assert.equal(persisted.status, statusOf('OK'));
   assert.equal(persisted.value.action, run.action);
   assert.equal(persisted.value.params.login_role, report.login_role);
   assert.equal(persisted.value.params.login_item, run.params.login_item);
@@ -105,38 +118,36 @@ try {
 
   if (persisted.value.status === 'running') {
     report.status = 'awaiting_observation';
-    report.error = {
-      message:
-        'Admission and persisted identity agree; the provider observation is not finished. Resume with --admission-report.',
-    };
-    process.exitCode = 1;
-  } else {
-    assert.equal(persisted.value.status, 'finished');
-    assert.equal(persisted.value.ok, true);
-    const observed = persisted.value.result;
-    assert.equal(observed.schema, 'weles.account-security.v1');
-    assert.equal(observed.login_item, run.params.login_item);
-    assert.equal(observed.source_revision, report.worker_revision);
-    assert.equal(observed.ok, true);
-    assert.equal(typeof observed.two_factor_enabled, 'boolean');
-    assert.ok(observed.account);
-    assert.ok(observed.account_evidence);
-    assert.ok(observed.status_evidence);
-    assert.ok(Number.isFinite(Date.parse(observed.checked_at)));
-    const readBack = JSON.parse(
-      command(binary, ['account-security', '--run', run.id, '--json']),
+    // Not a pass: the run ends unfinished and says how to resume.
+    throw new Error(
+      'Admission and persisted identity agree; the provider observation is not finished. Resume with --admission-report.',
     );
-    assert.deepEqual(readBack.result, observed);
-    report.status = 'passed';
   }
+  assert.equal(persisted.value.status, 'finished');
+  assert.equal(persisted.value.ok, true);
+  const observed = persisted.value.result;
+  assert.equal(observed.schema, 'weles.account-security.v1');
+  assert.equal(observed.login_item, run.params.login_item);
+  assert.equal(observed.source_revision, report.worker_revision);
+  assert.equal(observed.ok, true);
+  assert.equal(typeof observed.two_factor_enabled, 'boolean');
+  assert.ok(observed.account);
+  assert.ok(observed.account_evidence);
+  assert.ok(observed.status_evidence);
+  assert.ok(Number.isFinite(Date.parse(observed.checked_at)));
+  const readBack = JSON.parse(
+    command(binary, ['security', '--run', run.id, '--json']),
+  );
+  assert.deepEqual(readBack.result, observed);
+  report.status = 'passed';
 } catch (error) {
-  report.status = 'failed';
+  if (report.status !== 'awaiting_observation') report.status = 'failed';
   report.error = {
     name: error.name,
     message: error.message,
     stack: error.stack,
   };
-  process.exitCode = 1;
+  throw error;
 } finally {
   await evidence.finish();
 }

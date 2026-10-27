@@ -1,20 +1,22 @@
-// Create a Slack bot app in a workspace and hand back its bot (xoxb) token.
+// Create a Slack bot app in a workspace and store its bot (xoxb) token in
+// Skarbiec.
 //
 // Env:
-//   SLACK_WORKSPACE_URL        required: the workspace, https://<name>.slack.com
-//   SLACK_BOT_APP_NAME         required: the name the workspace lists the app under
-//   SLACK_BOT_SCOPES           required: the bot scopes it is granted (comma or
-//                              space separated)
-//   WELES_SECRET_RESULT_FILE   required: JSON path the raw token is written to;
-//                              stdout carries only its type and length
-//   PROXY_URL                  required: the proxy the browser goes through, or 'direct'
-//   SLACK_EMAIL, SLACK_PASS    sign in through the workspace's Google SSO; unset,
-//                              the browser must already hold the workspace's session
+//   SLACK_WORKSPACE_URL          required: the workspace, https://<name>.slack.com
+//   SLACK_BOT_APP_NAME           required: the name the workspace lists the app under
+//   SLACK_BOT_SCOPES             required: the bot scopes it is granted (comma or
+//                                space separated)
+//   WELES_CREDENTIAL_CONSTRAINTS required: the Skarbiec item the token is stored in
+//                                (the worker passes a run's `constraints`); the
+//                                token is captured from the app's OAuth page by the
+//                                session's credential store and never leaves it
+//                                as text
+//   PROXY_URL                    required: the proxy the browser goes through, or 'direct'
+//   SLACK_EMAIL, SLACK_PASS      sign in through the workspace's Google SSO; unset,
+//                                the browser must already hold the workspace's session
 //
-// What happens to the token is the caller's: nothing here writes it into a
-// settings file, an MCP configuration or a vault.
+// Stdout carries only the token's type and length and what the store answered.
 
-import { writeFileSync } from 'node:fs';
 import { statedText } from '../_shared/inputs/stated.mjs';
 import { botManifest, createBotApp } from './steps/create_bot_app.mjs';
 import {
@@ -29,9 +31,11 @@ import {
 const LABEL = 'slack-create';
 const workspace = slackWorkspace();
 const manifest = botManifest();
-const RESULT_FILE = statedText(
-  ['WELES_SECRET_RESULT_FILE'],
-  'the JSON file the raw bot token is written to',
+// The token goes only to the Skarbiec item a run names, so a run that names
+// none is refused before the browser starts.
+statedText(
+  ['WELES_CREDENTIAL_CONSTRAINTS'],
+  'the Skarbiec item the bot token is stored in (a run\'s constraints, passed by the worker)',
 );
 const login = statedSlackLogin();
 
@@ -56,26 +60,11 @@ try {
     throw new Error(
       `SLACK_TOKEN_REFUSED: auth.test refused the xoxb token of app ${appId}: ${auth.error}`,
     );
-  writeFileSync(
-    RESULT_FILE,
-    JSON.stringify(
-      {
-        ok: true,
-        token,
-        app_id: appId,
-        team: auth.team,
-        team_id: auth.team_id,
-        user: auth.user,
-        user_id: auth.user_id,
-        bot_id: auth.bot_id,
-        url: auth.url,
-      },
-      null,
-      '  ',
-    ),
-  );
+  // createBotApp read the token from the app's OAuth page, where the browser
+  // still is, so the store captures it there.
+  const stored = await s.storeCredential('Bot User OAuth Token', 'token');
   console.log(
-    `[${LABEL}] bot ready ${JSON.stringify({ type: token.split('-').shift(), length: token.length, app_id: appId, team: auth.team, bot_id: auth.bot_id, result: RESULT_FILE })}`,
+    `[${LABEL}] bot ready ${JSON.stringify({ type: token.split('-').shift(), length: token.length, app_id: appId, team: auth.team, team_id: auth.team_id, bot_id: auth.bot_id, stored })}`,
   );
 } finally {
   await s.close();

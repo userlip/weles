@@ -10,12 +10,32 @@ import {
   attachProtocolHandlerWatcher,
   readDiagnosticScript,
 } from './support.js';
-import type { ContextLaunchInput } from './support.js';
+import type { ContextLaunchInput, RuntimeFingerprintConfig } from './support.js';
 import {
   WEBAUTHN_REJECT_SCRIPT,
   ARKOSE_OBSERVER_SCRIPT_STOCK,
   FETCH_REGISTER_INTERCEPT_SCRIPT,
 } from './init_scripts.js';
+
+/**
+ * The fingerprint hooks shim with the GPU strings this launch presents.
+ * Gecko sanitizes the standard GL_VENDOR/GL_RENDERER parameters into strings
+ * that leak the host GPU, so the shim answers them with the fingerprint's
+ * unmasked vendor and renderer; a fingerprint without them is refused.
+ */
+function fingerprintHooks(fpConfig: RuntimeFingerprintConfig): string {
+  const { unmaskedVendor, unmaskedRenderer } = fpConfig.webgl;
+  if (
+    typeof unmaskedVendor !== 'string' ||
+    typeof unmaskedRenderer !== 'string'
+  )
+    throw new Error(
+      `WELES_FIREFOX_GL_UNSTATED: the fingerprint states no unmasked WebGL vendor or renderer (vendor ${JSON.stringify(unmaskedVendor)}, renderer ${JSON.stringify(unmaskedRenderer)}), so fingerprint_hooks.js has no GPU to report`,
+    );
+  return readDiagnosticScript('fingerprint_hooks.js')
+    .replace(/__WELES_GL_VENDOR__/g, unmaskedVendor)
+    .replace(/__WELES_GL_RENDERER__/g, unmaskedRenderer);
+}
 
 export async function launchFirefoxContext(
   input: ContextLaunchInput,
@@ -29,8 +49,7 @@ export async function launchFirefoxContext(
     browserType,
   } = input;
   const persona = options.persona;
-  const nav = fpConfig.navigator ?? {};
-  const isChromium = false;
+  const nav = fpConfig.navigator;
   const realizedFingerprint = fpConfig;
   const initScript = buildInitScript(fpConfig, options.excludeScripts);
   // The only non-Chromium branch is the verified Weles Firefox release.
@@ -60,33 +79,31 @@ export async function launchFirefoxContext(
       source: 'weles-firefox-release',
       executablePath: firefoxPath,
       pid: null,
-      customBinary: true,
-      stockOverride: false,
-      version: (() => {
-        try {
-          return pwBrowser.version();
-        } catch {
-          return null;
-        }
-      })(),
+      version: pwBrowser.version(),
+      launchArgs: launchOpts.args,
     });
-    // The same single statement as the Chromium launcher: Playwright's own
-    // thirty seconds, cleared once here instead of in every flow.
+    // The same single statement as the Chromium launcher: Playwright imposes
+    // thirty seconds on every navigation and locator action unless a context
+    // says otherwise. Zero is Playwright's own value for no limit:
+    // https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-navigation-timeout
     context.setDefaultNavigationTimeout(0);
+    // https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-timeout
     context.setDefaultTimeout(0);
 
-    // Strip Accept-Language on TikTok same-origin sub-requests (Chrome 147 default-on ReduceAcceptLanguage omits it; weles emits unconditionally; webmssdk signs into x-mssdk-info). EXCEPTION: passport/web/* CORS preflight needs it.
+    // Chrome's reduced Accept-Language leaves the header off a page's
+    // same-origin subresource requests, which Firefox sends on every request;
+    // a site that signs the header set (TikTok's webmssdk into x-mssdk-info)
+    // sees the difference. The header is dropped where the request's origin
+    // is the requesting frame's and the request is not a navigation, so a
+    // cross-origin request, its CORS preflight included, keeps it.
     await context.route('**/*', async (route) => {
       const req = route.request();
-      const url = req.url();
-      if (/passport\/web\//.test(url)) {
-        await route.continue();
-        return;
-      }
-      if (
-        /tiktok\.com|tiktokv\.us|tiktokcdn|byteoversea|mssdk\./.test(url) &&
-        req.isNavigationRequest() === false
-      ) {
+      const frameUrl = req.serviceWorker() ? undefined : req.frame().url();
+      const sameOrigin =
+        frameUrl !== undefined &&
+        URL.canParse(frameUrl) &&
+        new URL(frameUrl).origin === new URL(req.url()).origin;
+      if (sameOrigin && !req.isNavigationRequest()) {
         const headers = { ...req.headers() };
         delete headers['accept-language'];
         await route.continue({ headers });
@@ -100,38 +117,15 @@ export async function launchFirefoxContext(
       await context.addInitScript(WEBAUTHN_REJECT_SCRIPT);
       await context.addInitScript(ARKOSE_OBSERVER_SCRIPT_STOCK);
       await context.addInitScript(FETCH_REGISTER_INTERCEPT_SCRIPT);
-      // Diagnostic shims — engine-agnostic (pure DOM/JS), were Chromium-custom-binary-only before this; now on stock path too so Firefox sessions also dump navigator-access traces.
-      for (const f of ['property_trap.js', 'input_recorder.js']) {
-        try {
-          await context.addInitScript(readDiagnosticScript(f));
-          console.log(`[async_api] ${f.split('.')[0]} installed`);
-        } catch (e) {
-          console.log(
-            `[async_api] ${f} install failed: ${(e as Error).message}`,
-          );
-        }
+      // Diagnostic shims are engine-agnostic (pure DOM/JS), so Firefox
+      // sessions dump navigator-access traces too. A shim that cannot be read
+      // fails the launch: diagnostics that were asked for are not skipped.
+      for (const shim of ['property_trap.js', 'input_recorder.js']) {
+        await context.addInitScript(readDiagnosticScript(shim));
+        console.log(`[async_api] ${shim} installed`);
       }
-      try {
-        let _fh = readDiagnosticScript('fingerprint_hooks.js');
-        if (persona && !isChromium) {
-          const gl = fpConfig.webgl ?? {};
-          _fh = _fh
-            .replace(
-              /__WELES_GL_VENDOR__/g,
-              gl.unmaskedVendor || gl.vendor || 'Mozilla',
-            )
-            .replace(
-              /__WELES_GL_RENDERER__/g,
-              gl.unmaskedRenderer || gl.renderer || '',
-            );
-        }
-        await context.addInitScript(_fh);
-        console.log('[async_api] fingerprint_hooks installed');
-      } catch (e) {
-        console.log(
-          `[async_api] fingerprint_hooks install failed: ${(e as Error).message}`,
-        );
-      }
+      await context.addInitScript(fingerprintHooks(fpConfig));
+      console.log('[async_api] fingerprint_hooks installed');
     }
     attachProtocolHandlerWatcher(context);
 

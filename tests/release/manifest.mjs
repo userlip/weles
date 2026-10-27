@@ -80,7 +80,7 @@ await test('release CLI accepts canonical artifacts and preserves named refusals
     const validate = (path) =>
       execute(binary, [
         'release',
-        'validate-manifest',
+        'validate',
         '--manifest',
         path,
         '--source-revision',

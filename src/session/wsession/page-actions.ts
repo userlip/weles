@@ -8,6 +8,8 @@
  */
 
 import { humanClickLocator } from '../../human/mouse.js';
+import { humanType } from '../../human/keyboard.js';
+import { selectOption } from '../../human/select.js';
 import type { WSession } from '../wsession.js';
 import { assertNonCredentialInput } from '../../utils/capability.js';
 import { describeInputTarget } from '../observation/controls.js';
@@ -118,5 +120,34 @@ export async function wsScroll(
       { up: direction === 'up', stated: amount },
     );
     return `scrolled ${direction} ${moved}`;
+  });
+}
+
+/** Type `value` into the focused field, which must be one a literal may go into. */
+export async function wsType(s: WSession, value: string): Promise<string> {
+  const literal = assertNonCredentialInput(value);
+  return s.runStep('type', async () => {
+    await assertFocusedLiteralInput(s, literal);
+    await humanType(s.page, literal);
+    return 'typed';
+  });
+}
+
+export async function wsPress(s: WSession, key: string): Promise<string> {
+  return s.runStep(`press_${key}`, async () => {
+    await s.page.keyboard.press(key);
+    return `pressed ${key}`;
+  });
+}
+
+/** Choose `value` in the combobox named `target`; a step that cannot is refused with what the page offered. */
+export async function wsSelect(
+  s: WSession,
+  target: string,
+  value: string,
+): Promise<string> {
+  return s.runStep(`select_${target}_${value}`, async () => {
+    const chosen = await selectOption(s.page, target, s.resolveEnv(value));
+    return `selected: ${chosen}`;
   });
 }

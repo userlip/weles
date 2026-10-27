@@ -61,7 +61,10 @@ import {
   openCampaignCreation,
   stagedDraftWithoutFields,
 } from './ads_campaign/campaign_draft.mjs';
-import { fillCampaignFields, verifyConfiguredDraft } from './ads_campaign/draft_fields.mjs';
+import {
+  fillCampaignFields,
+  verifyConfiguredDraft,
+} from './ads_campaign/draft_fields.mjs';
 
 const INDENT = '  ';
 
@@ -77,8 +80,16 @@ async function runCampaign(s) {
     return `PASS: Meta Ads account ${accountId} verified (${JSON.stringify(visible.label)})`;
   }
   await closeObstructingPanels(s);
-  if (await pageShows(s.page, 'Is a Meta advertising policy dialog open that asks to be accepted before continuing?'))
-    await clickDescribed(s.page, 'the button that accepts the open advertising policy dialog');
+  if (
+    await pageShows(
+      s.page,
+      'Is a Meta advertising policy dialog open that asks to be accepted before continuing?',
+    )
+  )
+    await clickDescribed(
+      s.page,
+      'the button that accepts the open advertising policy dialog',
+    );
 
   await openCampaignCreation(s);
   await chooseObjectiveAndContinue(s);
@@ -93,8 +104,15 @@ async function runCampaign(s) {
     s.page,
     'the enabled button that publishes the campaign (or confirms its publication in an open dialog)',
   );
-  if (!(await pageShows(s.page, 'Does the page say the campaign was published, is processing, or is in review?')))
-    throw new Error(`META_ADS_PUBLISH_UNCONFIRMED: Ads Manager did not confirm publishing "${CAMPAIGN_NAME}" at ${s.page.url()}`);
+  if (
+    !(await pageShows(
+      s.page,
+      'Does the page say the campaign was published, is processing, or is in review?',
+    ))
+  )
+    throw new Error(
+      `META_ADS_PUBLISH_UNCONFIRMED: Ads Manager did not confirm publishing "${CAMPAIGN_NAME}" at ${s.page.url()}`,
+    );
   return `PASS: Meta ads campaign "${CAMPAIGN_NAME}" published`;
 }
 
@@ -103,14 +121,18 @@ else {
   guardUnsupportedParams();
   requireCampaignTarget();
   if (!VERIFY_ACCOUNT_ONLY) requireCampaignInputs();
-  console.log(`[meta-ads] profile=${USER_DATA_DIR} viewport=${process.env.WELES_VIEWPORT}`);
+  console.log(
+    `[meta-ads] profile=${USER_DATA_DIR} viewport=${process.env.WELES_VIEWPORT}`,
+  );
   const s = await WSession.start({
     label: 'meta_ads_campaign',
     browser: 'chromium',
     proxy:
       session.proxyUrl && !process.env.PROXY_URL?.trim()
         ? session.proxyUrl
-        : statedProxy('the campaign draft, whose account session names no proxy,'),
+        : statedProxy(
+            'the campaign draft, whose account session names no proxy,',
+          ),
     persona: profilePersona,
     userDataDir: USER_DATA_DIR,
     pageDiagnostics: process.env.WELES_PAGE_DIAGNOSTICS === '1',

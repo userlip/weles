@@ -26,11 +26,18 @@ import { googleSso } from '../../../_shared/services/google_sso.mjs';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
 import { clickDescribed } from '../../../_shared/page/judged/seen.mjs';
 import { readScopedLogin } from '../../../../_shared/scoped-secrets.mjs';
-import { googleSignInUrl, onGoogleSignIn } from '../../../_shared/profile/google_session.mjs';
+import {
+  googleSignInUrl,
+  onGoogleSignIn,
+} from '../../../_shared/profile/google_session.mjs';
 
-const { values: ARGS } = parseArgs({ options: { archive: { type: 'string' }, out: { type: 'string' } } });
+const { values: ARGS } = parseArgs({
+  options: { archive: { type: 'string' }, out: { type: 'string' } },
+});
 if (!ARGS.archive || !ARGS.out)
-  throw new Error('DRIVE_EVIDENCE_ARGUMENTS_MISSING: --archive <drive_preserve output dir> and --out <manifest.json path> are required');
+  throw new Error(
+    'DRIVE_EVIDENCE_ARGUMENTS_MISSING: --archive <drive_preserve output dir> and --out <manifest.json path> are required',
+  );
 const ARCHIVE = ARGS.archive;
 const OUT_PATH = ARGS.out;
 const LABEL = 'drive_version_history';
@@ -45,11 +52,18 @@ class SignedOutMidRun extends Error {}
 
 const log = (...parts) => console.error(`[${LABEL}]`, ...parts);
 const nowIso = () => new Date().toISOString();
-const sha256File = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+const sha256File = (path) =>
+  createHash('sha256').update(readFileSync(path)).digest('hex');
 
-const rootMeta = JSON.parse(readFileSync(join(ARCHIVE, 'folder_metadata.json'), 'utf8')).root;
+const rootMeta = JSON.parse(
+  readFileSync(join(ARCHIVE, 'folder_metadata.json'), 'utf8'),
+).root;
 const metas = readdirSync(join(ARCHIVE, 'files'))
-  .map((id) => JSON.parse(readFileSync(join(ARCHIVE, 'files', id, 'metadata.json'), 'utf8')))
+  .map((id) =>
+    JSON.parse(
+      readFileSync(join(ARCHIVE, 'files', id, 'metadata.json'), 'utf8'),
+    ),
+  )
   .sort((a, b) => a.name.localeCompare(b.name));
 
 const creds = readScopedLogin('googleDrive');
@@ -59,7 +73,13 @@ const errors = [];
 
 async function shot(tag) {
   const path = await s.screenshot(tag);
-  const entry = { tag, path, url: s.page.url(), captured_at: nowIso(), sha256: sha256File(path) };
+  const entry = {
+    tag,
+    path,
+    url: s.page.url(),
+    captured_at: nowIso(),
+    sha256: sha256File(path),
+  };
   shots.push(entry);
   return entry;
 }
@@ -75,7 +95,10 @@ function scrollNear(anchor) {
     for (let level = start; level; level = level.parentElement) {
       const overflowing = [level, ...level.querySelectorAll('*')]
         .filter((node) => node.scrollHeight > node.clientHeight)
-        .sort((a, b) => b.clientHeight * b.clientWidth - a.clientHeight * a.clientWidth);
+        .sort(
+          (a, b) =>
+            b.clientHeight * b.clientWidth - a.clientHeight * a.clientWidth,
+        );
       for (const area of overflowing) {
         const before = area.scrollTop;
         area.scrollBy({ top: area.clientHeight });
@@ -105,7 +128,9 @@ async function scrollSeries(tag, anchor) {
 async function isSignedOut() {
   return Boolean(
     await s.page
-      .locator('a[href*="ServiceLogin"], a[href*="accounts.google.com/signin"], a[href*="accounts.google.com/v3/signin"]')
+      .locator(
+        'a[href*="ServiceLogin"], a[href*="accounts.google.com/signin"], a[href*="accounts.google.com/v3/signin"]',
+      )
       .filter({ visible: true })
       .count(),
   );
@@ -123,38 +148,65 @@ async function ensureLoggedIn(url) {
     await pageSettled(s.page);
   }
   log('signed out; signing in as', creds.email);
-  if (!(await googleSso(s, creds))) throw new Error(`DRIVE_EVIDENCE_SIGN_IN_FAILED: Google SSO did not complete at ${s.page.url()}`);
+  if (!(await googleSso(s, creds)))
+    throw new Error(
+      `DRIVE_EVIDENCE_SIGN_IN_FAILED: Google SSO did not complete at ${s.page.url()}`,
+    );
   await s.page.goto(url, { waitUntil: 'domcontentloaded' });
   await pageSettled(s.page);
-  if (await isSignedOut()) throw new Error(`DRIVE_EVIDENCE_SIGN_IN_FAILED: still signed out after Google SSO at ${s.page.url()}`);
+  if (await isSignedOut())
+    throw new Error(
+      `DRIVE_EVIDENCE_SIGN_IN_FAILED: still signed out after Google SSO at ${s.page.url()}`,
+    );
 }
 
 async function captureVersionPanel(meta) {
   // The File menu, not the keyboard chord: Docs binds the chord by the
   // persona's OS and needs editor focus; the menu needs neither.
   await clickDescribed(s.page, "the editor's File menu in its menu bar");
-  await clickDescribed(s.page, 'the Version history item in the open File menu');
-  await clickDescribed(s.page, 'the See version history item in the open submenu');
+  await clickDescribed(
+    s.page,
+    'the Version history item in the open File menu',
+  );
+  await clickDescribed(
+    s.page,
+    'the See version history item in the open submenu',
+  );
   const title = s.page.getByText('Version history', { exact: false }).first();
   await title.waitFor({ state: 'visible' });
-  log('  version panel frames:', await scrollSeries(`versions_${meta.id}`, title));
+  log(
+    '  version panel frames:',
+    await scrollSeries(`versions_${meta.id}`, title),
+  );
 }
 
 try {
   log('folder:', rootMeta.name, '| files:', metas.length);
   await ensureLoggedIn(rootMeta.webViewLink);
-  log('folder listing frames:', await scrollSeries('folder_listing', s.page.locator('body')));
+  log(
+    'folder listing frames:',
+    await scrollSeries('folder_listing', s.page.locator('body')),
+  );
   for (const meta of metas) {
     log(meta.name);
     try {
       await s.page.goto(meta.webViewLink, { waitUntil: 'domcontentloaded' });
       await pageSettled(s.page);
-      if (await isSignedOut()) throw new SignedOutMidRun(`DRIVE_EVIDENCE_SIGNED_OUT: signed out at ${meta.webViewLink}`);
+      if (await isSignedOut())
+        throw new SignedOutMidRun(
+          `DRIVE_EVIDENCE_SIGNED_OUT: signed out at ${meta.webViewLink}`,
+        );
       await shot(`file_${meta.id}`);
       if (EDITOR_MIMES.has(meta.mimeType)) await captureVersionPanel(meta);
     } catch (error) {
       if (error instanceof SignedOutMidRun) throw error;
-      errors.push({ file: meta.id, name: meta.name, at: nowIso(), step: 'capture', error: String(error) });
+      errors.push({
+        file: meta.id,
+        name: meta.name,
+        at: nowIso(),
+        step: 'capture',
+        error: String(error),
+      });
       log('  ERROR:', String(error));
     }
   }
@@ -170,11 +222,21 @@ try {
     errors,
   };
   writeFileSync(OUT_PATH, JSON.stringify(manifest, null, INDENT));
-  log('manifest written:', OUT_PATH, '| shots:', shots.length, '| errors:', errors.length);
+  log(
+    'manifest written:',
+    OUT_PATH,
+    '| shots:',
+    shots.length,
+    '| errors:',
+    errors.length,
+  );
   await s.close();
 }
 
 if (errors.length) {
   process.exitCode = exitStatusFor(new Error('DRIVE_EVIDENCE_PARTIAL'));
-  console.error(`PARTIAL: ${shots.length} shots, ${errors.length} files failed (see ${OUT_PATH})`);
-} else console.log(`OK: ${shots.length} shots captured, manifest at ${OUT_PATH}`);
+  console.error(
+    `PARTIAL: ${shots.length} shots, ${errors.length} files failed (see ${OUT_PATH})`,
+  );
+} else
+  console.log(`OK: ${shots.length} shots captured, manifest at ${OUT_PATH}`);

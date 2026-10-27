@@ -14,8 +14,13 @@ export async function resolveAndOpenProject(s) {
     return target;
   }
   const wanted = target.toLowerCase();
-  const match = (await dashboardProjects(s.page)).find(({ name }) => name.toLowerCase().includes(wanted));
-  if (!match) throw new Error(`OVERLEAF_PROJECT_NOT_FOUND: no dashboard project title contains "${target}"`);
+  const match = (await dashboardProjects(s.page)).find(({ name }) =>
+    name.toLowerCase().includes(wanted),
+  );
+  if (!match)
+    throw new Error(
+      `OVERLEAF_PROJECT_NOT_FOUND: no dashboard project title contains "${target}"`,
+    );
   await s.goto(`https://www.overleaf.com/project/${match.id}`);
   await pageSettled(s.page);
   return match.id;
@@ -23,7 +28,10 @@ export async function resolveAndOpenProject(s) {
 
 /** Opens the project's version history; the vision model finds its control in whatever language Overleaf renders. */
 export async function openHistoryUi(s) {
-  await clickDescribed(s.page, "the control that shows the project's version history (a History button, or the menu entry for it)");
+  await clickDescribed(
+    s.page,
+    "the control that shows the project's version history (a History button, or the menu entry for it)",
+  );
   await pageSettled(s.page);
   return 'described';
 }

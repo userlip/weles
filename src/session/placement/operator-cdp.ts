@@ -1,3 +1,6 @@
+import { loopbackHost } from '../../utils/runtime/service-origin.js';
+import { optionalSetting, requiredSetting, secretSetting } from '../../utils/runtime/settings.js';
+
 export interface OperatorCdpConfig {
   endpoint: string;
   token: string;
@@ -11,49 +14,32 @@ const TOKEN_SIBLINGS = [
   'TRADING_TOOLS_INGEST_TOKEN',
 ] as const;
 
-function isLoopback(hostname: string): boolean {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname === '[::1]'
-  );
-}
-
 export function loadOperatorCdpConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): OperatorCdpConfig {
-  const rawEndpoint = String(env.WELES_OPERATOR_CDP_URL ?? '').trim();
-  const token = String(env.WELES_OPERATOR_CDP_TOKEN ?? '').trim();
-  if (!rawEndpoint)
-    throw new Error('operator CDP mode requires WELES_OPERATOR_CDP_URL');
-  if (Buffer.byteLength(token) < 32) {
-    throw new Error(
-      'operator CDP mode requires WELES_OPERATOR_CDP_TOKEN with at least 32 bytes',
-    );
-  }
+  const rawEndpoint = requiredSetting(env, 'WELES_OPERATOR_CDP_URL');
+  const token = secretSetting(env, 'WELES_OPERATOR_CDP_TOKEN');
   for (const siblingName of TOKEN_SIBLINGS) {
-    const sibling = String(env[siblingName] ?? '').trim();
-    if (sibling && sibling === token) {
+    if (optionalSetting(env, siblingName) === token) {
       throw new Error(
         `WELES_OPERATOR_CDP_TOKEN must be distinct from ${siblingName}`,
       );
     }
   }
 
-  let endpoint: URL;
-  try {
-    endpoint = new URL(rawEndpoint);
-  } catch {
-    throw new Error('WELES_OPERATOR_CDP_URL must be a valid URL');
+  if (!URL.canParse(rawEndpoint)) {
+    throw new Error(
+      `WELES_OPERATOR_CDP_URL is not a URL: ${JSON.stringify(rawEndpoint)}`,
+    );
   }
+  const endpoint = new URL(rawEndpoint);
   const tls = endpoint.protocol === 'https:' || endpoint.protocol === 'wss:';
   const authenticatedLoopback =
-    isLoopback(endpoint.hostname) &&
+    loopbackHost(endpoint.hostname) &&
     (endpoint.protocol === 'http:' || endpoint.protocol === 'ws:');
   if (!tls && !authenticatedLoopback) {
     throw new Error(
-      'WELES_OPERATOR_CDP_URL must use TLS, except for authenticated loopback',
+      `WELES_OPERATOR_CDP_URL must use TLS, except for authenticated loopback (localhost or an address of one of this machine's internal network interfaces): ${endpoint.protocol}//${endpoint.hostname}`,
     );
   }
   if (

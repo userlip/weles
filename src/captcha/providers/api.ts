@@ -13,9 +13,40 @@ export interface CaptchaCredentials {
   nopecha?: string;
 }
 
-// Creates the task and reads its result once. The providers have no push or
-// blocking answer, so a task still being solved is reported by name with its
-// task id and answered as null, like any other unsolved task.
+// The answer a provider gives once it stops solving a task. The providers have
+// no push or blocking answer, and no interval between reads is ours to invent:
+// each read follows the provider's previous answer, so its own response time
+// paces them. Reading once answered every task as unsolved, because the
+// providers take longer to solve than one round trip.
+export async function readUntilSolved<T>(
+  read: () => Promise<T>,
+  solving: (answer: T) => boolean,
+): Promise<T> {
+  for (;;) {
+    const answer = await read();
+    if (!solving(answer)) return answer;
+  }
+}
+
+// A provider's answer as JSON, or an error naming the call, its HTTP status
+// and the body that is not JSON, so an unparseable answer is never read as a
+// refusal without its body.
+export async function providerJson(
+  response: Response,
+  call: string,
+): Promise<any> {
+  const body = await response.text();
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    throw new Error(
+      `${call} answered HTTP ${response.status} with a body that is not JSON (${error instanceof Error ? error.message : String(error)}): ${body}`,
+      { cause: error },
+    );
+  }
+}
+
+// Creates the task and reads its result until the provider stops solving it.
 export async function apiSolve(
   apiUrl: string,
   clientKey: string,
@@ -25,13 +56,14 @@ export async function apiSolve(
   console.log(
     `[captcha:api] ${svc} createTask type=${task.type} enterprise=${task.isEnterprise} proxy=${!!task.proxyAddress}`,
   );
-  const createRes = (await (
+  const createRes = await providerJson(
     await fetch(apiUrl + '/createTask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientKey, task }),
-    })
-  ).json()) as any;
+    }),
+    `${svc} createTask`,
+  );
   if (createRes.errorId) {
     console.log(
       `[captcha:api] ${svc} createTask error: ${createRes.errorCode} ${createRes.errorDescription}`,
@@ -44,13 +76,18 @@ export async function apiSolve(
     return null;
   }
   console.log(`[captcha:api] ${svc} taskId=${taskId}`);
-  const res = (await (
-    await fetch(apiUrl + '/getTaskResult', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientKey, taskId }),
-    })
-  ).json()) as any;
+  const res = await readUntilSolved(
+    async () =>
+      providerJson(
+        await fetch(apiUrl + '/getTaskResult', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientKey, taskId }),
+        }),
+        `${svc} getTaskResult for task ${taskId}`,
+      ),
+    (answer) => !answer.errorId && answer.status === 'processing',
+  );
   if (res.errorId) {
     console.log(
       `[captcha:api] ${svc} result error: ${res.errorCode} ${res.errorDescription}`,
@@ -59,7 +96,7 @@ export async function apiSolve(
   }
   if (res.status !== 'ready') {
     console.log(
-      `[captcha:api] captcha_${svc}_processing: task ${taskId} has no result yet (status ${res.status})`,
+      `[captcha:api] ${svc} task ${taskId} answered status ${res.status}, neither processing nor ready: ${JSON.stringify(res)}`,
     );
     return null;
   }
@@ -74,6 +111,44 @@ export async function apiSolve(
   }
   console.log(`[captcha:api] ${svc} solved, token_chars=${t.length}`);
   return t;
+}
+
+// 2captcha's in.php/res.php pair: creates the task with `params` (which carry
+// `key` and json=1) and reads res.php until 2captcha stops answering
+// CAPCHA_NOT_READY. `what` names the captcha in the log lines.
+export async function twoCaptchaSolve(
+  key: string,
+  params: URLSearchParams,
+  what: string,
+): Promise<string | null> {
+  console.log(`[captcha:api] 2captcha ${what} create`);
+  const cr = await providerJson(
+    await fetch('https://2captcha.com/in.php?' + params.toString()),
+    `2captcha in.php (${what})`,
+  );
+  if (!cr.status || !cr.request) {
+    console.log(
+      `[captcha:api] 2captcha ${what} create error: ${cr.request ?? cr.error_text ?? JSON.stringify(cr)}`,
+    );
+    return null;
+  }
+  const tid = cr.request;
+  console.log(`[captcha:api] 2captcha ${what} taskId=${tid}`);
+  const read = new URLSearchParams({ key, action: 'get', id: tid, json: '1' });
+  const res = await readUntilSolved(
+    async () =>
+      providerJson(
+        await fetch('https://2captcha.com/res.php?' + read.toString()),
+        `2captcha res.php for task ${tid}`,
+      ),
+    (answer) => !answer.status && answer.request === 'CAPCHA_NOT_READY',
+  );
+  if (res.status) {
+    console.log(`[captcha:api] 2captcha ${what} solved`);
+    return res.request;
+  }
+  console.log(`[captcha:api] 2captcha ${what} error: ${res.request}`);
+  return null;
 }
 
 export type ProxyCredentials = {

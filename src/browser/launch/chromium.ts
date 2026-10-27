@@ -10,6 +10,7 @@ import {
 import { toCppConfig } from '../../fingerprint.js';
 import { runRecordingsDir } from '../../session/run-recordings.js';
 import { buildChromiumSupplementScripts } from '../../page-init/loader.js';
+import { watchPageInitFailures } from '../../page-init/failures.js';
 import {
   browserProvenance,
   chromiumNetlogConfig,
@@ -51,24 +52,22 @@ export async function launchChromiumContext(
   const recordVideo = Boolean(ctxOpts.recordVideo);
   const { width: viewW, height: viewH } = ctxOpts.viewport;
   const dpr = ctxOpts.deviceScaleFactor;
-  const userDataDir =
-    options.userDataDir ?? process.env.WELES_USER_DATA_DIR ?? '';
   let realizedFingerprint: unknown = fpConfig;
   launchOpts.executablePath = chromiumPath;
   const cppConfig = toCppConfig(fpConfig, targetOs, { chromiumPath });
-  // Honest OS version: replace toCppConfig's default platformVersion with the
-  // real host's (Phase 1 reports OS version truthfully). Explicit audit pins
-  // still win so the Chrome-vs-Weles harness can compare equal surfaces.
-  const _hh = fpConfig._honestHost;
+  // Honest host: the client hints are the ones this host's own Chromium
+  // answered (platform version, architecture, bitness), not toCppConfig's
+  // per-system values. Explicit audit pins still win so the Chrome-vs-Weles
+  // harness can compare equal surfaces.
+  const measuredHints = fpConfig._honestHost?.clientHints;
   const pinnedPlatformVersion =
     process.env.WELES_CLIENT_HINTS_PLATFORM_VERSION ||
     process.env.WELES_MAC_PLATFORM_VERSION;
   const pinnedArchitecture = process.env.WELES_CLIENT_HINTS_ARCHITECTURE;
   if (cppConfig.clientHints) {
+    if (measuredHints) Object.assign(cppConfig.clientHints, measuredHints);
     if (pinnedPlatformVersion)
       cppConfig.clientHints.platformVersion = pinnedPlatformVersion;
-    else if (_hh?.platformVersion)
-      cppConfig.clientHints.platformVersion = _hh.platformVersion;
     if (pinnedArchitecture)
       cppConfig.clientHints.architecture = pinnedArchitecture;
   }
@@ -88,7 +87,10 @@ export async function launchChromiumContext(
   const netlog = chromiumNetlogConfig();
   let netLogPath = '';
   if (netlog.enabled) {
-    const diagDir = runRecordingsDir(process.env.WELES_LABEL || 'unnamed'); // G17: recordings/<run_uuid>/<label>/
+    // G17: recordings/<run_uuid>/<label>/ for a labelled run, the run's own
+    // directory for one that names no label.
+    const label = process.env.WELES_LABEL;
+    const diagDir = label ? runRecordingsDir(label) : runRecordingsDir();
     mkdirSync(diagDir, { recursive: true });
     netLogPath = join(diagDir, 'netlog.json');
     args.push(`--log-net-log=${netLogPath}`);
@@ -125,7 +127,9 @@ export async function launchChromiumContext(
   console.log(`[async_api] fingerprint config: ${fpFile}`);
   if (netLogPath)
     console.log(`[async_api] netlog: ${netLogPath} mode=${netlog.mode}`);
-  const persistentProfile = userDataDir.trim();
+  const persistentProfile = (
+    options.userDataDir ?? process.env.WELES_USER_DATA_DIR
+  )?.trim();
   if (persistentProfile) mkdirSync(persistentProfile, { recursive: true });
   const pwBrowser = persistentProfile
     ? null
@@ -175,10 +179,7 @@ export async function launchChromiumContext(
     viewport: { width: viewW, height: viewH },
     deviceScaleFactor: dpr,
   };
-  if (ctxOpts.proxy) {
-    customCtxOpts.proxy = ctxOpts.proxy;
-    customCtxOpts.ignoreHTTPSErrors = true;
-  }
+  if (ctxOpts.proxy) customCtxOpts.proxy = ctxOpts.proxy;
   if (ctxOpts.recordVideo) customCtxOpts.recordVideo = ctxOpts.recordVideo;
   if (ctxOpts.extraHTTPHeaders)
     customCtxOpts.extraHTTPHeaders = ctxOpts.extraHTTPHeaders;
@@ -206,6 +207,7 @@ export async function launchChromiumContext(
     // G1 fix: the custom-Chromium branch returns before the shared attach point
     // below, so attach the realized fingerprint here too — otherwise the
     // production path silently drops result.session.realized_fingerprint.
+    const launched = pwBrowser ?? context.browser();
     const provenance = browserProvenance({
       browserType,
       source: persistentProfile
@@ -213,15 +215,7 @@ export async function launchChromiumContext(
         : 'custom-chromium',
       executablePath: chromiumPath,
       pid,
-      customBinary: true,
-      stockOverride: false,
-      version: (() => {
-        try {
-          return (pwBrowser ?? context.browser())?.version() ?? null;
-        } catch {
-          return null;
-        }
-      })(),
+      version: launched ? launched.version() : null,
       launchArgs: args,
     });
     if (persistentProfile)
@@ -233,14 +227,20 @@ export async function launchChromiumContext(
     // Playwright imposes thirty seconds on every navigation and every locator
     // action unless a context says otherwise. This is the one place that says
     // otherwise, so no flow repeats it and no flow carries a number of its
-    // own: a page that is still loading is still loading.
+    // own: a page that is still loading is still loading. Zero is Playwright's
+    // own value for no limit:
+    // https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-navigation-timeout
     context.setDefaultNavigationTimeout(0);
+    // https://playwright.dev/docs/api/class-browsercontext#browser-context-set-default-timeout
     context.setDefaultTimeout(0);
     console.log(`[async_api] Context created`);
     closeWithProfileCleanup(context, pwBrowser, fpDir);
     // Init-script injections. Chrome 147 stubs are fingerprint-parity shims;
     // page diagnostics are disabled for sensitive flows such as LinkedIn
     // register because wrappers/traps are visible to page JavaScript.
+    // Read before the first page runs them, so a patch that fails on the
+    // first document is kept too.
+    watchPageInitFailures(context);
     for (const script of initScripts) await context.addInitScript(script);
     const injectDiagnostic = async (name: string) => {
       try {
@@ -274,7 +274,7 @@ export async function launchChromiumContext(
     rmSync(fpDir, { recursive: true, force: true });
     if (error instanceof Error)
       Object.assign(error, {
-        browser_started: Boolean(created || pwBrowser) || null,
+        browser_started: Boolean(created || pwBrowser),
       });
     throw error;
   }

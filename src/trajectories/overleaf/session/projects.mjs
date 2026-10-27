@@ -10,14 +10,19 @@ export async function dashboardProjects(page) {
   const anchors = page.locator('a[href*="/project/"]');
   await anchors.first().waitFor({ state: 'visible' });
   let previous;
-  for (let count = await anchors.count(); count !== previous; count = await anchors.count()) {
+  for (
+    let count = await anchors.count();
+    count !== previous;
+    count = await anchors.count()
+  ) {
     previous = count;
     await anchors.last().scrollIntoViewIfNeeded();
     await pageSettled(page);
   }
   const byId = new Map();
   for (const anchor of await anchors.all()) {
-    const id = (await anchor.getAttribute('href')).match(PROJECT_HREF)?.groups.id;
+    const id = (await anchor.getAttribute('href')).match(PROJECT_HREF)?.groups
+      .id;
     if (id && !byId.has(id)) byId.set(id, (await anchor.textContent()).trim());
   }
   return [...byId].map(([id, name]) => ({ id, name }));

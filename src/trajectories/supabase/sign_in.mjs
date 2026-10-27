@@ -12,7 +12,11 @@ const ALERT = '[role="alert"], [data-error="true"], p[class*="error" i]';
 /** Whether `url` is a dashboard page the sign-in route hands over to. */
 export function signedIn(url) {
   const at = new URL(url);
-  return at.origin === SIGNIN.origin && at.pathname.startsWith('/dashboard/') && !at.pathname.startsWith(SIGNIN.pathname);
+  return (
+    at.origin === SIGNIN.origin &&
+    at.pathname.startsWith('/dashboard/') &&
+    !at.pathname.startsWith(SIGNIN.pathname)
+  );
 }
 
 /** Signs `s` in to the Supabase dashboard; answers the dashboard address it landed on. */
@@ -25,15 +29,30 @@ export async function signInToSupabase(s) {
   const field = (selector, what) => {
     const found = s.page.locator(selector).filter({ visible: true }).first();
     return found.isVisible().then((shown) => {
-      if (!shown) throw new Error(`SUPABASE_SIGN_IN_FORM: the sign-in page shows no ${what} field (the account may sign in through GitHub only)`);
+      if (!shown)
+        throw new Error(
+          `SUPABASE_SIGN_IN_FORM: the sign-in page shows no ${what} field (the account may sign in through GitHub only)`,
+        );
       return found;
     });
   };
-  await humanFill(s.page, await field('input[name="email"], input[type="email"]', 'email'), login.email);
-  await humanFill(s.page, await field('input[name="password"], input[type="password"]', 'password'), login.password);
+  await humanFill(
+    s.page,
+    await field('input[name="email"], input[type="email"]', 'email'),
+    login.email,
+  );
+  await humanFill(
+    s.page,
+    await field('input[name="password"], input[type="password"]', 'password'),
+    login.password,
+  );
   await s.page.keyboard.press('Enter');
   const alert = s.page.locator(ALERT).filter({ hasText: /\S/ }).first();
-  await submitAnswered(s.page, (url) => new URL(url).pathname.startsWith(SIGNIN.pathname), alert);
+  await submitAnswered(
+    s.page,
+    (url) => new URL(url).pathname.startsWith(SIGNIN.pathname),
+    alert,
+  );
   if (!signedIn(s.page.url()))
     throw new Error(
       `SUPABASE_SIGN_IN_REFUSED: still at ${s.page.url()}${(await alert.count()) ? `: ${(await alert.innerText()).trim()}` : ''}`,

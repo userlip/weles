@@ -5,7 +5,10 @@ import { getScopedGoogleLogin } from '../_shared/services/google_sso.mjs';
 import { googleSignIn } from '../_shared/services/balance/run.mjs';
 
 const login = await getScopedGoogleLogin('brightdataDashboard');
-if (!login) throw new Error('BRIGHTDATA_LOGIN_UNAVAILABLE: the scoped Bright Data dashboard login cannot be read');
+if (!login)
+  throw new Error(
+    'BRIGHTDATA_LOGIN_UNAVAILABLE: the scoped Bright Data dashboard login cannot be read',
+  );
 
 export const BRIGHTDATA_GOOGLE = {
   login,

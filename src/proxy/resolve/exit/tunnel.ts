@@ -1,10 +1,12 @@
 // One authenticated CONNECT through a proxy, answered by the proxy's own
 // status line or the socket's own error, and the exit address read through
 // such a tunnel from the declared public-address service.
-import { connect, isIP, type Socket } from 'node:net';
+import { connect, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
+import { describeError } from '../../../_shared/error-chain/index.cjs';
 import {
-  PUBLIC_ADDRESS_SERVICE,
+  parsePublicAddress,
+  publicAddressService,
 } from '../../../utils/runtime/public-address.js';
 
 // RFC 9110 section 4.2.2, https://www.rfc-editor.org/rfc/rfc9110#section-4.2.2:
@@ -44,6 +46,7 @@ function statusOf(statusLine: string): number | undefined {
 export function openTunnel(
   proxy: ProxyEndpoint,
   target: string,
+  port = HTTPS_PORT,
 ): Promise<TunnelAnswer> {
   const authorization = Buffer.from(
     `${proxy.username}:${proxy.password}`,
@@ -51,23 +54,30 @@ export function openTunnel(
   const { promise, resolve } = Promise.withResolvers<TunnelAnswer>();
   const socket = connect({ host: proxy.host, port: proxy.port }, () =>
     socket.write(
-      `CONNECT ${target}:${HTTPS_PORT} HTTP/1.1\r\nHost: ${target}:${HTTPS_PORT}\r\nProxy-Authorization: Basic ${authorization}\r\n\r\n`,
+      `CONNECT ${target}:${port} HTTP/1.1\r\nHost: ${target}:${port}\r\nProxy-Authorization: Basic ${authorization}\r\n\r\n`,
     ),
   );
+  let head = '';
   const onError = (error: Error) =>
-    resolve({ failure: `the proxy connection failed: ${error.message}` });
+    resolve({ failure: `CONNECT ${target}:${port} through ${proxy.host}:${proxy.port} failed: ${describeError(error)}` });
   const onClose = () =>
-    resolve({ failure: 'the proxy closed the connection without answering' });
+    resolve({ failure: `the proxy closed before completing its CONNECT response: ${JSON.stringify(head)}` });
   socket.once('error', onError);
   socket.once('close', onClose);
-  // The proxy's status line, its error or its close is the answer; no timer
-  // decides for it.
-  socket.once('data', (chunk: Buffer) => {
-    socket.off('error', onError);
+  // RFC 9112 section 2.1: headers end at an empty line, not a TCP packet.
+  // https://www.rfc-editor.org/rfc/rfc9112#section-2.1
+  const onData = (chunk: Buffer) => {
+    head += chunk.toString('latin1');
+    if (!head.includes('\r\n\r\n')) return;
+    socket.pause();
+    socket.off('data', onData);
     socket.off('close', onClose);
-    const [statusLine] = chunk.toString('latin1').split('\r\n');
+    const [statusLine] = head.split('\r\n');
+    const remainder = head.slice(head.indexOf('\r\n\r\n') + '\r\n\r\n'.length);
+    if (remainder) socket.unshift(Buffer.from(remainder, 'latin1'));
     resolve({ statusLine, status: statusOf(statusLine), socket });
-  });
+  };
+  socket.on('data', onData);
   return promise;
 }
 
@@ -76,9 +86,12 @@ export function openTunnel(
  * declared public-address service, so the proxy's credentials never leave
  * this process. Refused with the step that failed.
  */
-export async function readExitAddress(proxy: ProxyEndpoint): Promise<string> {
-  const service = PUBLIC_ADDRESS_SERVICE.hostname;
-  const tunnel = await openTunnel(proxy, service);
+export async function readExitAddress(
+  proxy: ProxyEndpoint,
+  endpoint = publicAddressService(),
+): Promise<string> {
+  const service = endpoint.hostname;
+  const tunnel = await openTunnel(proxy, service, endpoint.port ? Number(endpoint.port) : undefined);
   if ('failure' in tunnel)
     throw new Error(`CONNECT ${service}: ${tunnel.failure}`);
   if (tunnel.status !== HTTP_OK) {
@@ -91,21 +104,23 @@ export async function readExitAddress(proxy: ProxyEndpoint): Promise<string> {
   secure.on('data', (chunk: Buffer) => chunks.push(chunk));
   secure.once('end', () => resolve());
   secure.once('error', reject);
+  secure.resume();
   // HTTP/1.0 asks for an unchunked body that ends with the connection.
   secure.write(
-    `GET ${PUBLIC_ADDRESS_SERVICE.pathname} HTTP/1.0\r\nHost: ${service}\r\n\r\n`,
+    `GET ${endpoint.pathname}${endpoint.search} HTTP/1.0\r\nHost: ${endpoint.host}\r\n\r\n`,
   );
-  await promise;
+  try {
+    await promise;
+  } catch (cause) {
+    secure.destroy();
+    throw new Error(`TLS/GET ${endpoint} through ${proxy.host}:${proxy.port} failed`, { cause });
+  }
   const [head, ...body] = Buffer.concat(chunks)
     .toString('utf8')
     .split('\r\n\r\n');
   const [statusLine] = head.split('\r\n');
-  const address = body.join('\r\n\r\n').trim();
+  const bodyText = body.join('\r\n\r\n');
   if (statusOf(statusLine) !== HTTP_OK)
-    throw new Error(`${service} answered ${statusLine}: ${address}`);
-  if (!isIP(address))
-    throw new Error(
-      `${service} answered no address: ${JSON.stringify(address)}`,
-    );
-  return address;
+    throw new Error(`${endpoint} answered ${statusLine}: ${bodyText}`);
+  return parsePublicAddress(bodyText, endpoint);
 }

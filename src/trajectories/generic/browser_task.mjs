@@ -11,20 +11,30 @@ import { WSession } from '../../../dist/session/wsession.js';
 import { execute, AgentFailure } from '../../../dist/agent/index.js';
 import { runRecordingsDir } from '../../../dist/session/run-recordings.js';
 import { writeWelesTrajectoryDraft } from '../../../dist/trajectories/writer.js';
-import { envString, normalizedReplay, requireHttpUrl, safeStringMap } from './browser_task/inputs.mjs';
+import {
+  envString,
+  normalizedReplay,
+  requireHttpUrl,
+  safeStringMap,
+} from './browser_task/inputs.mjs';
 import {
   identityInstructions,
   identityPlatformFromConstraints,
   sessionPlatformFromConstraints,
 } from './browser_task/identity.mjs';
-import { ensureFigmaSession, ensureSupabaseSession } from './browser_task/sso_sessions.mjs';
+import {
+  ensureFigmaSession,
+  ensureSupabaseSession,
+} from './browser_task/sso_sessions.mjs';
 import { captureRequiredBrowserEvidence } from './browser_task/evidence.mjs';
 import { applyCredentialPrefill } from './browser_task/credentials/prefill.mjs';
 import { parseJsonEnv, statedProxy } from '../_shared/inputs/stated.mjs';
 import { keepVerdict } from '../_shared/action/verdict.mjs';
 
 // The run records under the caller's session label, or under this action.
-const label = envString('GENERIC_TASK_LABEL') ? envString('GENERIC_TASK_LABEL') : 'generic_browser_task';
+const label = envString('GENERIC_TASK_LABEL')
+  ? envString('GENERIC_TASK_LABEL')
+  : 'generic_browser_task';
 const INDENT = '  ';
 const EVIDENCE_POLICY = 'spis-browser-evidence.1';
 // The agent's own reason code for a step only a person may approve.
@@ -40,11 +50,20 @@ const url = requireHttpUrl(envString('GENERIC_TASK_URL'));
 const objective = envString('GENERIC_TASK_OBJECTIVE');
 if (!objective?.trim()) throw new Error('GENERIC_TASK_OBJECTIVE is required');
 const constraints = parseJsonEnv('GENERIC_TASK_CONSTRAINTS', {});
-const browserEvidencePolicy = parseJsonEnv('WELES_BROWSER_EVIDENCE_POLICY_JSON');
-const browserEvidencePolicyActive = envString('WELES_BROWSER_EVIDENCE_POLICY') === EVIDENCE_POLICY;
-if (browserEvidencePolicyActive && browserEvidencePolicy?.version !== EVIDENCE_POLICY)
-  throw new Error('Spis browser-evidence policy document is missing or inconsistent');
-const storesCredentialInSkarbiec = constraints.store_secret_target === 'skarbiec';
+const browserEvidencePolicy = parseJsonEnv(
+  'WELES_BROWSER_EVIDENCE_POLICY_JSON',
+);
+const browserEvidencePolicyActive =
+  envString('WELES_BROWSER_EVIDENCE_POLICY') === EVIDENCE_POLICY;
+if (
+  browserEvidencePolicyActive &&
+  browserEvidencePolicy?.version !== EVIDENCE_POLICY
+)
+  throw new Error(
+    'Spis browser-evidence policy document is missing or inconsistent',
+  );
+const storesCredentialInSkarbiec =
+  constraints.store_secret_target === 'skarbiec';
 if (storesCredentialInSkarbiec) {
   process.env.WELES_SECURE_CREDENTIAL_TASK = '1';
   process.env.WELES_NO_INSTRUMENT = '1';
@@ -52,7 +71,9 @@ if (storesCredentialInSkarbiec) {
   process.env.WELES_PAGE_DIAGNOSTICS = '0';
 }
 if (browserEvidencePolicyActive && storesCredentialInSkarbiec)
-  throw new Error('Spis browser-evidence tasks cannot acquire or store credentials');
+  throw new Error(
+    'Spis browser-evidence tasks cannot acquire or store credentials',
+  );
 const envHints = safeStringMap(parseJsonEnv('GENERIC_TASK_ENV'));
 for (const [key, value] of Object.entries(envHints)) process.env[key] = value;
 
@@ -64,7 +85,9 @@ const keeperFirst = envString('GENERIC_TASK_KEEPER_FIRST') === '1';
 const replay = normalizedReplay(parseJsonEnv('GENERIC_TASK_REPLAY'));
 const replayOnly = envString('GENERIC_TASK_REPLAY_ONLY') === '1';
 const skipSavedFlowReplay =
-  keeperFirst || envString('GENERIC_TASK_SKIP_SAVED_FLOW_REPLAY') === '1' || Boolean(replay);
+  keeperFirst ||
+  envString('GENERIC_TASK_SKIP_SAVED_FLOW_REPLAY') === '1' ||
+  Boolean(replay);
 
 /** The draft the agent starts from: a saved replay, a keeper-first discovery, or a written draft. */
 async function initialDraft() {
@@ -146,8 +169,16 @@ try {
     platform: sessionPlatformFromConstraints(constraints),
     pageDiagnostics: keeperFirst ? false : undefined,
   });
-  initialHistory.push({ tool: 'navigate', args: { url }, result: await session.goto(url) });
-  const completedPrefills = await applyCredentialPrefill(session, constraints, initialHistory);
+  initialHistory.push({
+    tool: 'navigate',
+    args: { url },
+    result: await session.goto(url),
+  });
+  const completedPrefills = await applyCredentialPrefill(
+    session,
+    constraints,
+    initialHistory,
+  );
   await ensureSupabaseSession(session, constraints);
   await ensureFigmaSession(session, constraints);
   result = await execute(session, goalFor(trajectoryDraft, completedPrefills), {
@@ -157,16 +188,24 @@ try {
     replay,
     replayOnly,
     skipSavedFlowReplay,
-    disableFlowPersistence: browserEvidencePolicyActive || Boolean(completedPrefills.length),
+    disableFlowPersistence:
+      browserEvidencePolicyActive || Boolean(completedPrefills.length),
     disableArtifacts: browserEvidencePolicyActive,
   });
   const history = result.history.slice(initialHistory.length);
-  if (browserEvidencePolicyActive) await captureRequiredBrowserEvidence(session);
+  if (browserEvidencePolicyActive)
+    await captureRequiredBrowserEvidence(session);
   const finalUrl = session.page.url();
   writeJson(
     'generic_task_result.json',
     browserEvidencePolicyActive
-      ? { ok: true, url, final_url: finalUrl, step_count: history.length, completed_at: new Date().toISOString() }
+      ? {
+          ok: true,
+          url,
+          final_url: finalUrl,
+          step_count: history.length,
+          completed_at: new Date().toISOString(),
+        }
       : {
           ok: true,
           url,
@@ -178,20 +217,38 @@ try {
           completed_at: new Date().toISOString(),
         },
   );
-  verdict = { signal: 'healthy', healthy: true, details: { final_url: finalUrl, steps: history.length } };
+  verdict = {
+    signal: 'healthy',
+    healthy: true,
+    details: { final_url: finalUrl, steps: history.length },
+  };
   console.log(`PASS: ${label}`);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
-  const steps = error instanceof AgentFailure ? error.history : result ? result.history : [];
+  const steps =
+    error instanceof AgentFailure
+      ? error.history
+      : result
+        ? result.history
+        : [];
   const history = steps.slice(initialHistory.length);
   const finalUrl = session ? session.page.url() : null;
   const needsHumanApproval =
     message.includes(APPROVAL_REASON) ||
-    history.some((step) => String(step?.args?.reason).includes(APPROVAL_REASON));
+    history.some((step) =>
+      String(step?.args?.reason).includes(APPROVAL_REASON),
+    );
   writeJson(
     'generic_task_result.json',
     browserEvidencePolicyActive
-      ? { ok: false, url, final_url: finalUrl, error: message, history_steps: history.length, completed_at: new Date().toISOString() }
+      ? {
+          ok: false,
+          url,
+          final_url: finalUrl,
+          error: message,
+          history_steps: history.length,
+          completed_at: new Date().toISOString(),
+        }
       : {
           ok: false,
           url,
@@ -225,7 +282,10 @@ try {
   await keepVerdict(label, null, verdict);
 } catch (keepError) {
   failure = failure
-    ? new AggregateError([failure, keepError], `${failure.message}; and its verdict was not kept: ${keepError.message}`)
+    ? new AggregateError(
+        [failure, keepError],
+        `${failure.message}; and its verdict was not kept: ${keepError.message}`,
+      )
     : keepError;
 }
 if (failure) throw failure;

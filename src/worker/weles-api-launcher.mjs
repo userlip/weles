@@ -24,9 +24,11 @@ import { refuse, runAsync, runCommand } from './weles-api-launcher/running.mjs';
 import { startup } from './weles-api-launcher/startup.mjs';
 import { retirePredecessors } from './weles-api-launcher/predecessors.mjs';
 
-process.env.PATH = `${PATH_PREFIX}:${process.env.PATH ?? ''}`;
-const releaseVersion = process.env.WELES_WORKER_RELEASE_VERSION ?? '';
-const releaseSha256 = process.env.WELES_WORKER_RELEASE_SHA256 ?? '';
+// The unit's PATH, led by the product's own tools; a unit started without one gets just those.
+process.env.PATH = process.env.PATH ? `${PATH_PREFIX}:${process.env.PATH}` : PATH_PREFIX;
+// The release identity the unit was started with outranks any env file's; it is kept only when both halves are set.
+const releaseVersion = process.env.WELES_WORKER_RELEASE_VERSION;
+const releaseSha256 = process.env.WELES_WORKER_RELEASE_SHA256;
 for (const path of ENV_FILES) loadEnvFile(path);
 if (releaseVersion && releaseSha256) {
   process.env.WELES_WORKER_RELEASE_VERSION = releaseVersion;
@@ -68,7 +70,8 @@ const served = runCommand(
   ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'],
   'inspect API listener ownership',
 );
-if (served.status === 0 && served.stdout.trim()) {
+// lsof exits successfully only when it found a listener on the port.
+if (!served.status && served.stdout.trim()) {
   const holder = portHolder(served.stdout);
   const health = await runAsync('inspect existing API listener health', () =>
     holderHealth(port),

@@ -40,7 +40,9 @@ function arkose(page) {
     publicKey: src.pathname
       .split('/')
       .find((segment) => segment.includes('-') && /^[\dA-F-]+$/i.test(segment)),
-    blob: [src.searchParams, hashParams].map((params) => params.get('data')).find(Boolean),
+    blob: [src.searchParams, hashParams]
+      .map((params) => params.get('data'))
+      .find(Boolean),
     subdomain: src.origin,
   };
 }
@@ -190,7 +192,11 @@ async function signup(s) {
       // The code X texted to the rented number, once it arrives.
       code = await s.textedCode();
     } else {
-      code = await mailedCode(id.email, 'x.com', await fieldCodeLength(codeField));
+      code = await mailedCode(
+        id.email,
+        'x.com',
+        await fieldCodeLength(codeField),
+      );
     }
     console.log(`[tw] ${contact} verification code received`);
     await s.fill('code', code);
@@ -237,7 +243,8 @@ async function signup(s) {
   // Success is the session's auth cookies (the session token and its CSRF
   // pair), not what the page says.
   const cookies = await s.ctx.cookies();
-  const onX = (c) => c.domain.includes('x.com') || c.domain.includes('twitter.com');
+  const onX = (c) =>
+    c.domain.includes('x.com') || c.domain.includes('twitter.com');
   const authToken = cookies.find((c) => onX(c) && c.name === 'auth_token');
   const csrf = cookies.find((c) => onX(c) && c.name === 'ct0');
   if (!authToken || !csrf)

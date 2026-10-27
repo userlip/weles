@@ -189,7 +189,11 @@ export class CDPPage {
     path,
     fullPage,
     format = 'png',
-  }: { path?: string; fullPage?: boolean; format?: string } = {}): Promise<Buffer> {
+  }: {
+    path?: string;
+    fullPage?: boolean;
+    format?: string;
+  } = {}): Promise<Buffer> {
     const options = { path, fullPage, format };
     return captureScreenshot(this._conn, this._sessionId, options);
   }
@@ -232,14 +236,24 @@ export class CDPPage {
   async addInitScript(script: string): Promise<void> {
     this._initScripts.push(script);
     const params = { source: script, worldName: '' };
-    await this._conn.send('Page.addScriptToEvaluateOnNewDocument', params, this._sessionId);
+    await this._conn.send(
+      'Page.addScriptToEvaluateOnNewDocument',
+      params,
+      this._sessionId,
+    );
   }
 
-  async setProxyAuth(credentials: { username: string; password: string }): Promise<void> {
+  async setProxyAuth(credentials: {
+    username: string;
+    password: string;
+  }): Promise<void> {
     await this._fetch.setProxyAuth(credentials);
   }
 
-  async route(pattern: string, handler: (route: CDPRoute) => Promise<void>): Promise<void> {
+  async route(
+    pattern: string,
+    handler: (route: CDPRoute) => Promise<void>,
+  ): Promise<void> {
     await this._fetch.route(pattern, handler);
   }
 
@@ -252,7 +266,11 @@ export class CDPPage {
 
   off(event: string, handler: EventHandler): void {
     const list = this._handlers.get(event);
-    if (list) this._handlers.set(event, list.filter((h) => h !== handler));
+    if (list)
+      this._handlers.set(
+        event,
+        list.filter((h) => h !== handler),
+      );
     this._conn.off(event, handler, this._sessionId);
   }
 
@@ -269,7 +287,10 @@ export class CDPPage {
       .send('Target.closeTarget', { targetId: this._targetId })
       .then(undefined, (e) => failures.push(e));
     if (failures.length)
-      throw new AggregateError(failures, `page ${this._targetId} did not close cleanly`);
+      throw new AggregateError(
+        failures,
+        `page ${this._targetId} did not close cleanly`,
+      );
   }
 
   private _frame(): CDPFrame {

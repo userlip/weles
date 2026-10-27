@@ -20,15 +20,25 @@ import { screenshotIfPossible } from '../_shared/runner/evidence.mjs';
 import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 import { solveTiktokRotateCaptcha } from './login/rotate_captcha.mjs';
 import { seedRegionCookies, mockRegionEndpoint } from './login/region.mjs';
-import { completeNewDeviceVerification, verifyDialogPresent } from './login/new_device_verify.mjs';
+import {
+  completeNewDeviceVerification,
+  verifyDialogPresent,
+} from './login/new_device_verify.mjs';
 import { waitForSignedIn } from './login/session_wait.mjs';
-import { explainLoginFailure, refusedLogin, unpassedCaptcha } from './login/failure_signal.mjs';
+import {
+  explainLoginFailure,
+  refusedLogin,
+  unpassedCaptcha,
+} from './login/failure_signal.mjs';
 
-const PASSWORD_URL = 'https://www.tiktok.com/login/phone-or-email/email?lang=en';
-const CAPTCHA_MODAL = '.captcha-verify-container, .captcha_verify_container, [class*="captcha-"]';
+const PASSWORD_URL =
+  'https://www.tiktok.com/login/phone-or-email/email?lang=en';
+const CAPTCHA_MODAL =
+  '.captcha-verify-container, .captcha_verify_container, [class*="captcha-"]';
 const SUBMIT = 'button[data-e2e="login-button"], button[type="submit"]';
 /** TikTok's own passport sign-in calls. */
-const PASSPORT_LOGIN = /\/passport\/web\/(login|login_with_email|account_check)\/?$/;
+const PASSPORT_LOGIN =
+  /\/passport\/web\/(login|login_with_email|account_check)\/?$/;
 
 /**
  * Record the passport login answers with their bodies, and every failed
@@ -64,7 +74,11 @@ function observeLoginTraffic(page, diag) {
       diag.refusal = { url: res.url(), status: entry.status, answer };
   });
   page.on('requestfailed', (req) =>
-    diag.failedRequests.push({ url: req.url(), failure: req.failure()?.errorText, method: req.method() }),
+    diag.failedRequests.push({
+      url: req.url(),
+      failure: req.failure()?.errorText,
+      method: req.method(),
+    }),
   );
 }
 
@@ -80,19 +94,29 @@ async function passCaptcha(s, diag) {
     if (attempt) {
       // A new puzzle, through the widget's own refresh control: how a person
       // clears a puzzle they cannot solve.
-      await clickDescribed(s.page, 'the control in the captcha that loads a new puzzle');
+      await clickDescribed(
+        s.page,
+        'the control in the captcha that loads a new puzzle',
+      );
       await pageSettled(s.page);
     }
     diag.captcha.solved = await solveTiktokRotateCaptcha(s.page);
-    console.log(`[tiktok_login] captcha attempt after ${attempt} earlier: solved=${diag.captcha.solved}`);
+    console.log(
+      `[tiktok_login] captcha attempt after ${attempt} earlier: solved=${diag.captcha.solved}`,
+    );
     if (diag.captcha.solved) break;
   }
   if (!diag.captcha.solved) {
     await screenshotIfPossible(s, 'captcha_solve_failed');
-    throw unpassedCaptcha(`SadCaptcha did not solve the puzzle within ${budget} attempts (TIKTOK_CAPTCHA_SOLVE_BUDGET)`);
+    throw unpassedCaptcha(
+      `SadCaptcha did not solve the puzzle within ${budget} attempts (TIKTOK_CAPTCHA_SOLVE_BUDGET)`,
+    );
   }
   // TikTok does not submit the form again once its captcha closes.
-  await humanClickLocator(s.page, s.page.locator(SUBMIT).filter({ visible: true }).first());
+  await humanClickLocator(
+    s.page,
+    s.page.locator(SUBMIT).filter({ visible: true }).first(),
+  );
   await pageSettled(s.page);
   if (diag.refusal) throw refusedLogin(diag);
 }
@@ -115,24 +139,37 @@ await runLogin({
       await seedRegionCookies(s.ctx);
       await s.goto(PASSWORD_URL);
       await pageSettled(s.page);
-      const address = s.page.locator('input[name="username"], input[type="email"]').filter({ visible: true }).first();
-      const secret = s.page.locator('input[type="password"]').filter({ visible: true }).first();
+      const address = s.page
+        .locator('input[name="username"], input[type="email"]')
+        .filter({ visible: true })
+        .first();
+      const secret = s.page
+        .locator('input[type="password"]')
+        .filter({ visible: true })
+        .first();
       if (!(await address.count()) || !(await secret.count()))
-        throw new Error(`TIKTOK_LOGIN_FORM_MISSING: ${s.page.url()} shows no email login form`);
+        throw new Error(
+          `TIKTOK_LOGIN_FORM_MISSING: ${s.page.url()} shows no email login form`,
+        );
       await humanClickLocator(s.page, address);
       await humanType(s.page, login);
       await humanClickLocator(s.page, secret);
       await humanType(s.page, password);
       observeLoginTraffic(s.page, diag);
       await mockRegionEndpoint(s.page);
-      await humanClickLocator(s.page, s.page.locator(SUBMIT).filter({ visible: true }).first());
+      await humanClickLocator(
+        s.page,
+        s.page.locator(SUBMIT).filter({ visible: true }).first(),
+      );
       await pageSettled(s.page);
       // The "verify it's really you" dialog shares the captcha class prefix
       // but is the new-device flow, handled after the captcha.
       diag.captcha.present =
-        !(await verifyDialogPresent(s.page)) && Boolean(await s.page.locator(CAPTCHA_MODAL).count());
+        !(await verifyDialogPresent(s.page)) &&
+        Boolean(await s.page.locator(CAPTCHA_MODAL).count());
       if (diag.captcha.present) await passCaptcha(s, diag);
-      if (await verifyDialogPresent(s.page)) await completeNewDeviceVerification(s, acct);
+      if (await verifyDialogPresent(s.page))
+        await completeNewDeviceVerification(s, acct);
       await waitForSignedIn(s, diag);
     } catch (error) {
       failure = await explainLoginFailure(error, s, diag);

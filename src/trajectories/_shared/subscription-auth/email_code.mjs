@@ -14,7 +14,9 @@ import { AuthenticationFailure } from './oauth.mjs';
 export async function emailCodeSignIn(session, login, sender, mark) {
   const page = session.page;
   const email = page
-    .locator('input[type="email"],input[autocomplete="email"],input[name="email"]')
+    .locator(
+      'input[type="email"],input[autocomplete="email"],input[name="email"]',
+    )
     .filter({ visible: true })
     .first();
   await email.waitFor({ state: 'visible' });
@@ -22,7 +24,9 @@ export async function emailCodeSignIn(session, login, sender, mark) {
   await session.press('Enter');
   mark('email_code_requested');
   const box = page
-    .locator('input[autocomplete="one-time-code"],input[name="code"],input[inputmode="numeric"],input[id*="code" i]')
+    .locator(
+      'input[autocomplete="one-time-code"],input[name="code"],input[inputmode="numeric"],input[id*="code" i]',
+    )
     .filter({ visible: true })
     .first();
   await box.waitFor({ state: 'visible' });
@@ -46,5 +50,8 @@ export async function emailCodeSignIn(session, login, sender, mark) {
 /** Grant the authorization the provider's consent page asks for. */
 export async function grantConsent(page, mark) {
   mark('oauth_consent');
-  await clickDescribed(page, 'the button that grants the authorization the page asks for');
+  await clickDescribed(
+    page,
+    'the button that grants the authorization the page asks for',
+  );
 }

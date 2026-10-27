@@ -2,9 +2,16 @@
 // is dismissed and a download cancelled, each kept in the ledger, and a
 // dismissal or cancellation that failed is kept beside it by name.
 import type { BrowserContext, Page } from 'playwright';
-import { describeEdgeFailure, recordEdge, safeText } from './withheld-ledger.js';
+import {
+  describeEdgeFailure,
+  recordEdge,
+  safeText,
+} from './withheld-ledger.js';
 
-export function attachPageEdgeGuards(context: BrowserContext, label: string): void {
+export function attachPageEdgeGuards(
+  context: BrowserContext,
+  label: string,
+): void {
   const attach = (page: Page) => {
     page.on('dialog', async (dialog) => {
       recordEdge(label, {

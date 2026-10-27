@@ -6,12 +6,14 @@ const SCRIPT_DIR = __dirname;
 
 // Shared across browsers. automation.js = navigator.webdriver scrub;
 // navigator/core.js = Navigator.prototype overrides (has its own Chrome-branching
-// guards); webgl.js = vendor/renderer overrides.
+// guards); navigator/webrtc.js = the WebRTC leak guard; webgl.js =
+// vendor/renderer overrides.
 const SHARED_SCRIPTS = [
   'automation.js',
   'navigator/core.js',
   'navigator/environment.js',
   'navigator/surface.js',
+  'navigator/webrtc.js',
   'webgl.js',
 ];
 // Chromium-only. Injects window.Sanitizer + AnimationTrigger + TimelineTrigger*
@@ -86,6 +88,7 @@ export function buildChromiumSupplementScripts(
   return [
     ...CHROMIUM_ONLY_SCRIPTS.map(readPageInitScript),
     screenPatch,
+    readPageInitScript('navigator/webrtc.js'),
     navScript,
   ];
 }

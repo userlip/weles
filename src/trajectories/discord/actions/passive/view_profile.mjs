@@ -17,8 +17,14 @@ import { statedText } from '../../../_shared/inputs/stated.mjs';
 import { pageSettled } from '../../../_shared/page/settled.mjs';
 
 const INDENT = '  ';
-const TARGET_ID = statedText(['DISCORD_TARGET_USER_ID'], 'the numeric id of the Discord user whose profile is viewed');
-if (!/^\d+$/.test(TARGET_ID)) throw new Error(`DISCORD_TARGET_USER_ID "${TARGET_ID}" is not a numeric Discord user id`);
+const TARGET_ID = statedText(
+  ['DISCORD_TARGET_USER_ID'],
+  'the numeric id of the Discord user whose profile is viewed',
+);
+if (!/^\d+$/.test(TARGET_ID))
+  throw new Error(
+    `DISCORD_TARGET_USER_ID "${TARGET_ID}" is not a numeric Discord user id`,
+  );
 
 await runDiscordAction({
   action: 'view_profile',
@@ -27,15 +33,26 @@ await runDiscordAction({
   act: async (s, acct) => {
     await s.goto(`https://discord.com/users/${TARGET_ID}`);
     await pageSettled(s.page);
-    const { user, connected_accounts: connected } = await readDiscordApi(s.page, `/users/${TARGET_ID}/profile`, 'DISCORD_PROFILE');
+    const { user, connected_accounts: connected } = await readDiscordApi(
+      s.page,
+      `/users/${TARGET_ID}/profile`,
+      'DISCORD_PROFILE',
+    );
     const profile = {
       id: TARGET_ID,
       display: user.global_name,
       username: user.username,
       bio: user.bio,
-      avatar: user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png` : null,
-      banner: user.banner ? `https://cdn.discordapp.com/banners/${user.id}/${user.banner}.png` : null,
-      connected: connected.map((account) => ({ type: account.type, name: account.name })),
+      avatar: user.avatar
+        ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`
+        : null,
+      banner: user.banner
+        ? `https://cdn.discordapp.com/banners/${user.id}/${user.banner}.png`
+        : null,
+      connected: connected.map((account) => ({
+        type: account.type,
+        name: account.name,
+      })),
       fetched_at: new Date().toISOString(),
       fetched_by: acct.username,
     };

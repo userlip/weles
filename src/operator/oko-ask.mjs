@@ -24,14 +24,39 @@ const OKO_CHANNEL = 'oko-asks';
  * whose `oko` is not on PATH names it here. */
 const OKO_BINARY_VARIABLE = 'WELES_OKO_BIN';
 
-function okoBinary() {
-  return String(process.env[OKO_BINARY_VARIABLE] || '').trim() || 'oko';
+/** The `oko` program: the one `WELES_OKO_BIN` names, or, when it is unset or
+ * empty, the `oko` on PATH. */
+export function okoBinary() {
+  const named = process.env[OKO_BINARY_VARIABLE];
+  if (typeof named === 'string' && named.trim()) return named.trim();
+  return 'oko';
 }
 
-/** The Weles run waiting on a request, when a worker started it. */
+/** Everything a failed `oko` call left to say why: its exit status, the
+ * spawn error, and what it wrote on stderr and stdout. */
+function refusalDetail(result) {
+  const parts = [`exit ${result.status}`];
+  if (result.error) parts.push(result.error.message);
+  if (typeof result.stderr === 'string' && result.stderr.trim()) {
+    parts.push(`stderr: ${result.stderr.trim()}`);
+  }
+  if (typeof result.stdout === 'string' && result.stdout.trim()) {
+    parts.push(`stdout: ${result.stdout.trim()}`);
+  }
+  return parts.join('; ');
+}
+
+/** The page attempt recorded when the question did not reach Oko, with why. */
+function notAsked(at, detail) {
+  return { at, ok: false, channel: OKO_CHANNEL, detail: flatten(detail) };
+}
+
+/** The Weles run waiting on a request, when a worker started it; `null` when
+ * none did. */
 function firstRun(request) {
-  const [first] = Array.isArray(request.run_ids) ? request.run_ids : [];
-  return first || null;
+  if (!Array.isArray(request.run_ids)) return null;
+  const [first] = request.run_ids;
+  return first === undefined ? null : first;
 }
 
 /**
@@ -87,46 +112,47 @@ export function askThroughOko(request) {
     };
   }
   if (result.error || result.status) {
-    const detail =
-      result.error?.message ||
-      result.stderr ||
-      result.stdout ||
-      `exit ${result.status}`;
-    return {
-      at,
-      ok: false,
-      channel: OKO_CHANNEL,
-      detail: flatten(`oko asks ask refused: ${detail}`),
-    };
+    return notAsked(at, `oko asks ask refused: ${refusalDetail(result)}`);
   }
   let asked;
   try {
     asked = JSON.parse(result.stdout);
   } catch (error) {
+    return notAsked(at, `oko asks ask answered unreadable JSON: ${error.message}`);
+  }
+  const askId = asked.ask?.id;
+  if (!askId) {
+    return notAsked(
+      at,
+      `oko asks ask answered without an ask id, so the ask cannot be followed or withdrawn: ${result.stdout}`,
+    );
+  }
+  if (!Array.isArray(asked.deliveries)) {
     return {
       at,
-      ok: false,
+      ok: true,
       channel: OKO_CHANNEL,
+      ask_id: askId,
       detail: flatten(
-        `oko asks ask answered unreadable JSON: ${error.message}`,
+        `ask ${askId} recorded in Oko, whose answer listed no deliveries; they are recorded as they happen: oko asks show ${askId}`,
       ),
     };
   }
-  const delivered = (asked.deliveries || []).filter(
+  const delivered = asked.deliveries.filter(
     (attempt) => attempt.outcome === 'delivered',
   );
   return {
     at,
     ok: true,
     channel: OKO_CHANNEL,
-    ask_id: asked.ask?.id,
+    ask_id: askId,
     detail: flatten(
-      `ask ${asked.ask?.id} recorded in Oko; ${
+      `ask ${askId} recorded in Oko; ${
         delivered.length
           ? delivered
               .map((attempt) => `${attempt.channel}: ${attempt.detail}`)
               .join('; ')
-          : `its deliveries are recorded as they happen: oko asks show ${asked.ask?.id}`
+          : `its deliveries are recorded as they happen: oko asks show ${askId}`
       }`,
     ),
   };
@@ -136,7 +162,9 @@ export function askThroughOko(request) {
  * asking for something the run no longer waits on. The outcome is kept as a
  * note on the request. */
 export function withdrawOkoAsk(request) {
-  const asked = (request.pages || []).find(
+  // A request that was never paged holds no Oko ask to withdraw.
+  if (!Array.isArray(request.pages)) return;
+  const asked = request.pages.find(
     (attempt) => attempt.channel === OKO_CHANNEL && attempt.ask_id,
   );
   if (!asked) return;
@@ -147,7 +175,7 @@ export function withdrawOkoAsk(request) {
   const note =
     result.error || result.status
       ? flatten(
-          `Oko ask ${asked.ask_id} not withdrawn: ${result.error?.message || result.stderr || `exit ${result.status}`}`,
+          `Oko ask ${asked.ask_id} not withdrawn: ${refusalDetail(result)}`,
         )
       : `Oko ask ${asked.ask_id} withdrawn`;
   request.notes = [

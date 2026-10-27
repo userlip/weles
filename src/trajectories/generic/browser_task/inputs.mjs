@@ -11,7 +11,9 @@ export function envString(name) {
 /** The task URL, which has to be an absolute http(s) URL. */
 export function requireHttpUrl(raw) {
   if (!raw || !URL.canParse(raw))
-    throw new Error(`GENERIC_TASK_URL must be a valid URL, not ${JSON.stringify(raw)}`);
+    throw new Error(
+      `GENERIC_TASK_URL must be a valid URL, not ${JSON.stringify(raw)}`,
+    );
   const parsed = new URL(raw);
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
     throw new Error(`GENERIC_TASK_URL must be http(s), not ${parsed.protocol}`);
@@ -26,13 +28,19 @@ export function requireHttpUrl(raw) {
 export function safeStringMap(value) {
   if (value === undefined) return {};
   if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error('GENERIC_TASK_ENV must be a JSON object of UPPER_SNAKE keys');
+    throw new Error(
+      'GENERIC_TASK_ENV must be a JSON object of UPPER_SNAKE keys',
+    );
   return Object.fromEntries(
     Object.entries(value).map(([key, raw]) => {
       if (!/^[A-Z_][A-Z\d_]*$/.test(key))
-        throw new Error(`GENERIC_TASK_ENV key ${JSON.stringify(key)} is not UPPER_SNAKE`);
+        throw new Error(
+          `GENERIC_TASK_ENV key ${JSON.stringify(key)} is not UPPER_SNAKE`,
+        );
       if (raw === null || typeof raw === 'object')
-        throw new Error(`GENERIC_TASK_ENV ${key} holds a null, an object or a list, not a scalar`);
+        throw new Error(
+          `GENERIC_TASK_ENV ${key} holds a null, an object or a list, not a scalar`,
+        );
       return [key, String(raw)];
     }),
   );
@@ -47,10 +55,21 @@ export function normalizedReplay(value) {
   if (!Array.isArray(value) || !value.length)
     throw new Error('GENERIC_TASK_REPLAY must be a non-empty list of steps');
   return value.map((raw, position) => {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || typeof raw.tool !== 'string' || !raw.tool)
+    if (
+      !raw ||
+      typeof raw !== 'object' ||
+      Array.isArray(raw) ||
+      typeof raw.tool !== 'string' ||
+      !raw.tool
+    )
       throw new Error(`GENERIC_TASK_REPLAY step ${position} names no tool`);
-    if (raw.args !== undefined && (!raw.args || typeof raw.args !== 'object' || Array.isArray(raw.args)))
-      throw new Error(`GENERIC_TASK_REPLAY step ${position} has args that are not an object`);
+    if (
+      raw.args !== undefined &&
+      (!raw.args || typeof raw.args !== 'object' || Array.isArray(raw.args))
+    )
+      throw new Error(
+        `GENERIC_TASK_REPLAY step ${position} has args that are not an object`,
+      );
     const step = { tool: raw.tool, args: raw.args ? raw.args : {} };
     if (typeof raw.result === 'string') step.result = raw.result;
     return step;

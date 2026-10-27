@@ -22,13 +22,19 @@ function collectorInputs(needsCredential) {
   if (needsCredential) options['service-credential-id'] = { type: 'string' };
   const { values } = parseArgs({ options });
   const session = values.session ? values.session : process.env.SESSION;
-  const account = values.account ? values.account : process.env.SUBSCRIPTION_ACCOUNT;
+  const account = values.account
+    ? values.account
+    : process.env.SUBSCRIPTION_ACCOUNT;
   if (!session) throw new Error('missing --session or SESSION');
   if (!account || !account.trim())
-    throw new Error('missing --account or SUBSCRIPTION_ACCOUNT: the account the subscription is billed to');
+    throw new Error(
+      'missing --account or SUBSCRIPTION_ACCOUNT: the account the subscription is billed to',
+    );
   const credential = values['service-credential-id'];
   if (needsCredential && (!credential || !credential.trim()))
-    throw new Error('missing --service-credential-id: the credential for this subscription account');
+    throw new Error(
+      'missing --service-credential-id: the credential for this subscription account',
+    );
   return { session, account, credential };
 }
 
@@ -37,14 +43,22 @@ function keeperPage(session) {
   const ask = async (command) => {
     const answer = await keeperRequest(keeperSocket(session), command);
     if (!answer.ok)
-      throw new Error(`KEEPER_ACTION_REFUSED: ${command.action} answered ${answer.error ? answer.error : JSON.stringify(answer)}`);
+      throw new Error(
+        `KEEPER_ACTION_REFUSED: ${command.action} answered ${answer.error ? answer.error : JSON.stringify(answer)}`,
+      );
     return answer;
   };
   return {
     /** The page's visible text. */
     async text() {
-      const answer = await ask({ action: 'eval', js: 'document.body.innerText' });
-      if (typeof answer.result !== 'string') throw new Error(`KEEPER_PAGE_UNREAD: the page's text read as ${JSON.stringify(answer.result)}`);
+      const answer = await ask({
+        action: 'eval',
+        js: 'document.body.innerText',
+      });
+      if (typeof answer.result !== 'string')
+        throw new Error(
+          `KEEPER_PAGE_UNREAD: the page's text read as ${JSON.stringify(answer.result)}`,
+        );
       return answer.result;
     },
     async open(url) {
@@ -66,8 +80,15 @@ function keeperPage(session) {
           return null;
         })()`,
       });
-      if (!target.result) throw new Error(`KEEPER_CONTROL_MISSING: the page shows no control labelled "${label}"`);
-      await ask({ action: 'humanclick', x: target.result.x, y: target.result.y });
+      if (!target.result)
+        throw new Error(
+          `KEEPER_CONTROL_MISSING: the page shows no control labelled "${label}"`,
+        );
+      await ask({
+        action: 'humanclick',
+        x: target.result.x,
+        y: target.result.y,
+      });
       await ask({ action: 'settle' });
     },
   };
@@ -87,7 +108,9 @@ export async function runKeeperCollector(collector) {
     const row = {
       ...collected,
       account_identifier: inputs.account,
-      ...(collector.needsCredential ? { service_credential_id: inputs.credential } : {}),
+      ...(collector.needsCredential
+        ? { service_credential_id: inputs.credential }
+        : {}),
       last_verified_at: new Date().toISOString(),
     };
     const saved = await upsertSubscription(row);
@@ -111,7 +134,9 @@ export async function runKeeperCollector(collector) {
 
 /** The sum of `amounts` (US dollars, at least one), to the cent. */
 export function centsTotal(amounts) {
-  const cents = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).resolvedOptions()
-    .maximumFractionDigits;
+  const cents = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  }).resolvedOptions().maximumFractionDigits;
   return Number(amounts.reduce((sum, amount) => sum + amount).toFixed(cents));
 }

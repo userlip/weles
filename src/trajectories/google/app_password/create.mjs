@@ -8,7 +8,7 @@
 // passwords page in a signed-in browser. This trajectory signs the login in
 // (password and authenticator seed from Skarbiec), creates a password named
 // Skrzynka, reads it from the one dialog that shows it, and pipes it to
-// `skrzynka account app-password --provider gmail --email <address>`, which proves it with an
+// `skrzynka account password --provider gmail --email <address>`, which proves it with an
 // IMAP login, stores it in Skarbiec and declares the mailbox. The password is
 // never written to a file, a log or this run's result.
 //
@@ -24,9 +24,21 @@ import { runOutputPath } from '#run-output';
 import { WSession } from '../../../../dist/session/wsession.js';
 import { exitStatusFor } from '../../../../dist/cli/usage.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
-import { accountProfileDir, loginMaterial, signIn } from '../../_shared/services/google_sso/sign_in/account.mjs';
-import { createAppPassword, openAppPasswords, redactAppPasswords } from './page.mjs';
-import { APP_NAME, SKRZYNKA_BIN_VARIABLE, SKRZYNKA_DEFAULT_BIN } from './constants.mjs';
+import {
+  accountProfileDir,
+  loginMaterial,
+  signIn,
+} from '../../_shared/services/google_sso/sign_in/account.mjs';
+import {
+  createAppPassword,
+  openAppPasswords,
+  redactAppPasswords,
+} from './page.mjs';
+import {
+  APP_NAME,
+  SKRZYNKA_BIN_VARIABLE,
+  SKRZYNKA_DEFAULT_BIN,
+} from './constants.mjs';
 
 const RUN = 'google-app-password';
 const RESULT_DIR = runOutputPath(RUN);
@@ -58,7 +70,9 @@ async function issue(page, wait, login) {
   const asked = new Set();
   for (;;) {
     const opened = await openAppPasswords(page, wait);
-    const step = opened.ok ? await createAppPassword(page, wait, APP_NAME) : opened;
+    const step = opened.ok
+      ? await createAppPassword(page, wait, APP_NAME)
+      : opened;
     if (step.ok || step.blocked !== 'google_sign_in_required') return step;
     const at = page.url();
     if (asked.has(at)) return step;
@@ -74,10 +88,24 @@ function giveToSkrzynka(organization, email, password) {
   const binary = stated ? stated : SKRZYNKA_DEFAULT_BIN;
   const result = spawnSync(
     binary,
-    ['--organization', organization, 'account', 'app-password', '--provider', 'gmail', '--email', email],
+    [
+      '--organization',
+      organization,
+      'account',
+      'password',
+      '--provider',
+      'gmail',
+      '--email',
+      email,
+    ],
     { input: password, encoding: 'utf8' },
   );
-  if (result.error) return { ok: false, blocked: 'skrzynka_unavailable', detail: `${binary}: ${result.error.message}` };
+  if (result.error)
+    return {
+      ok: false,
+      blocked: 'skrzynka_unavailable',
+      detail: `${binary}: ${result.error.message}`,
+    };
   // spawnSync with an encoding answers both streams as text.
   const output = redactAppPasswords(`${result.stdout}${result.stderr}`);
   if (result.signal || result.status)
@@ -94,23 +122,35 @@ function giveToSkrzynka(organization, email, password) {
 async function main() {
   const loginItem = process.env.WELES_LOGIN_ITEM?.trim();
   if (!loginItem)
-    return refuse({ blocked: 'login_item_required', detail: 'WELES_LOGIN_ITEM must name the Skarbiec Google login' });
+    return refuse({
+      blocked: 'login_item_required',
+      detail: 'WELES_LOGIN_ITEM must name the Skarbiec Google login',
+    });
   const organization = process.env.SKRZYNKA_ORGANIZATION?.trim();
   if (!organization)
     return refuse({
       blocked: 'organization_required',
-      detail: 'SKRZYNKA_ORGANIZATION must name the Skrzynka organization the mailbox is declared in',
+      detail:
+        'SKRZYNKA_ORGANIZATION must name the Skrzynka organization the mailbox is declared in',
     });
   const expectedAccount = process.env.WELES_EXPECTED_ACCOUNT?.trim();
   if (!expectedAccount)
-    return refuse({ blocked: 'expected_account_required', detail: 'WELES_EXPECTED_ACCOUNT must name the requested mailbox account' });
+    return refuse({
+      blocked: 'expected_account_required',
+      detail: 'WELES_EXPECTED_ACCOUNT must name the requested mailbox account',
+    });
   const login = loginMaterial(loginItem);
-  const named = { login_item: loginItem, expected_account: expectedAccount, email: login.email };
+  const named = {
+    login_item: loginItem,
+    expected_account: expectedAccount,
+    email: login.email,
+  };
   if (login.email.trim().toLowerCase() !== expectedAccount.toLowerCase())
     return refuse({
       blocked: 'expected_account_mismatch',
       ...named,
-      detail: 'The selected login does not belong to the requested mailbox account',
+      detail:
+        'The selected login does not belong to the requested mailbox account',
     });
   const session = await WSession.start({
     label: `${RUN}-${loginItem}`,
@@ -132,7 +172,18 @@ async function main() {
         params: { login_item: loginItem, expected_account: expectedAccount },
         detached: true,
       });
-      const resume = ['weles', 'app-password', '--provider', 'google', '--login-item', loginItem, '--organization', organization, '--account', expectedAccount]
+      const resume = [
+        'weles',
+        'password',
+        '--provider',
+        'google',
+        '--login-item',
+        loginItem,
+        '--organization',
+        organization,
+        '--account',
+        expectedAccount,
+      ]
         .map((argument) => `'${argument.replaceAll("'", "'\\''")}'`)
         .join(' ');
       next.next_action = `POST /run ${enrollment} on this executor, then ${resume}`;
@@ -140,12 +191,22 @@ async function main() {
     return refuse({ ...named, ...issued, ...next });
   }
   const handed = giveToSkrzynka(organization, login.email, issued.password);
-  if (!handed.ok) return refuse({ ...named, app_password_created: true, ...handed });
-  report({ ok: true, ...named, organization, app_name: APP_NAME, skrzynka: handed.skrzynka });
+  if (!handed.ok)
+    return refuse({ ...named, app_password_created: true, ...handed });
+  report({
+    ok: true,
+    ...named,
+    organization,
+    app_name: APP_NAME,
+    skrzynka: handed.skrzynka,
+  });
 }
 
 try {
   await main();
 } catch (error) {
-  refuse({ blocked: 'google_app_password_error', error: error instanceof Error ? error.message : String(error) });
+  refuse({
+    blocked: 'google_app_password_error',
+    error: error instanceof Error ? error.message : String(error),
+  });
 }

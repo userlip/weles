@@ -27,16 +27,25 @@ export async function openVast(label) {
   await pageSettled(ws.page);
   if (!(await signedIn(ws))) {
     const login = readScopedLogin('vastDashboard');
-    console.log(`[vast] not signed in; signing in through Google as ${login.email}`);
+    console.log(
+      `[vast] not signed in; signing in through Google as ${login.email}`,
+    );
     await clickDescribed(ws.page, "Vast's log-in button");
     const popup = ws.ctx.waitForEvent('page');
     await clickDescribed(ws.page, 'the button that continues with Google');
     const googlePage = await popup;
     await googlePage.waitForLoadState('domcontentloaded');
-    const completed = await googleSso(ws, login, { page: googlePage, originHost: 'cloud.vast.ai' });
+    const completed = await googleSso(ws, login, {
+      page: googlePage,
+      originHost: 'cloud.vast.ai',
+    });
     if (!completed || !(await signedIn(ws)))
-      throw new Error(`VAST_SIGN_IN_FAILED: Google sign-in left no Vast session (${CURRENT_USER} still refuses this browser)`);
-    console.log(`[vast] kept ${(await store.capturePlaywright(ws.ctx, label)).length} cookies`);
+      throw new Error(
+        `VAST_SIGN_IN_FAILED: Google sign-in left no Vast session (${CURRENT_USER} still refuses this browser)`,
+      );
+    console.log(
+      `[vast] kept ${(await store.capturePlaywright(ws.ctx, label)).length} cookies`,
+    );
   }
   await switchToTeam(ws.page, team);
   return { ws, team, origin: ORIGIN };

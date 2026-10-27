@@ -57,7 +57,11 @@ function parseReport(
   organizationId: string,
   targetHost: string,
 ): WelesImportReport {
-  if (!isObject(value) || !Array.isArray(value.items) || !value.items.every(isItem))
+  if (
+    !isObject(value) ||
+    !Array.isArray(value.items) ||
+    !value.items.every(isItem)
+  )
     throw new Error(
       `Weles returned an invalid import result: ${JSON.stringify(value)}`,
     );
@@ -126,7 +130,9 @@ export async function importWelesTrajectoryDocument(
       isObject(body) && typeof body.error === 'string'
         ? body.error
         : JSON.stringify(body);
-    throw new Error(`Weles import failed with HTTP ${response.status}: ${said}`);
+    throw new Error(
+      `Weles import failed with HTTP ${response.status}: ${said}`,
+    );
   }
   return parseReport(body, connection.organizationId, host);
 }

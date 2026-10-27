@@ -32,7 +32,10 @@ const LAYOUTS: Record<string, BrowserLayout> = {
     // Stado publishes every platform archive of a release as release.tar.gz
     // under the product's coordinate.
     asset: 'release.tar.gz',
-    appSubpath: process.platform === 'darwin' ? 'Chromium.app/Contents/MacOS/Chromium' : 'chromium/chrome',
+    appSubpath:
+      process.platform === 'darwin'
+        ? 'Chromium.app/Contents/MacOS/Chromium'
+        : 'chromium/chrome',
   },
   firefox: {
     envDir: 'WELES_FIREFOX_DIR',
@@ -41,7 +44,10 @@ const LAYOUTS: Record<string, BrowserLayout> = {
     installDirName: 'weles-firefox',
     product: 'weles-firefox',
     asset: 'release.tar.gz',
-    appSubpath: process.platform === 'darwin' ? 'Firefox.app/Contents/MacOS/firefox' : 'firefox/firefox',
+    appSubpath:
+      process.platform === 'darwin'
+        ? 'Firefox.app/Contents/MacOS/firefox'
+        : 'firefox/firefox',
   },
 };
 
@@ -59,9 +65,12 @@ const SELECTION_FILE = 'selected';
 type Located = { binary: string } | { refusal: string };
 
 function releasePlatform(): string | undefined {
-  if (process.platform === 'darwin' && process.arch === 'arm64') return 'darwin-arm64';
-  if (process.platform === 'darwin' && process.arch === 'x64') return 'darwin-amd64';
-  if (process.platform === 'linux' && process.arch === 'x64') return 'linux-amd64';
+  if (process.platform === 'darwin' && process.arch === 'arm64')
+    return 'darwin-arm64';
+  if (process.platform === 'darwin' && process.arch === 'x64')
+    return 'darwin-amd64';
+  if (process.platform === 'linux' && process.arch === 'x64')
+    return 'linux-amd64';
   return undefined;
 }
 
@@ -74,12 +83,17 @@ function installRoot(layout: BrowserLayout): string | { refusal: string } {
 }
 
 /** The selected release: the deployment's pin when it sets both values, else the host's selection record. */
-function selection(layout: BrowserLayout, root: string): { version: string; digest: string } | { refusal: string } {
+function selection(
+  layout: BrowserLayout,
+  root: string,
+): { version: string; digest: string } | { refusal: string } {
   const version = process.env[layout.envVersion]?.trim();
   const digest = process.env[layout.envSha256]?.trim().toLowerCase();
   if (version && digest) return { version, digest };
   if (version || digest)
-    return { refusal: `the deployment pins only one of ${layout.envVersion} and ${layout.envSha256}` };
+    return {
+      refusal: `the deployment pins only one of ${layout.envVersion} and ${layout.envSha256}`,
+    };
   const record = join(root, SELECTION_FILE);
   if (!existsSync(record))
     return {
@@ -94,9 +108,14 @@ function selection(layout: BrowserLayout, root: string): { version: string; dige
         return [key, value.join('=')] as const;
       }),
   );
-  const recorded = { version: fields.get('version'), digest: fields.get('sha256') };
+  const recorded = {
+    version: fields.get('version'),
+    digest: fields.get('sha256'),
+  };
   if (!recorded.version || !recorded.digest)
-    return { refusal: `${record} names no version and sha256 (it reads ${JSON.stringify(Object.fromEntries(fields))})` };
+    return {
+      refusal: `${record} names no version and sha256 (it reads ${JSON.stringify(Object.fromEntries(fields))})`,
+    };
   return { version: recorded.version, digest: recorded.digest.toLowerCase() };
 }
 
@@ -115,21 +134,33 @@ function locateBrowser(browser: string): Located {
   const layout = LAYOUTS[browser];
   if (!layout) return { refusal: `unknown browser family "${browser}"` };
   const platform = releasePlatform();
-  if (!platform) return { refusal: `unsupported browser release platform ${process.platform}-${process.arch}` };
+  if (!platform)
+    return {
+      refusal: `unsupported browser release platform ${process.platform}-${process.arch}`,
+    };
   const root = installRoot(layout);
   if (typeof root !== 'string') return root;
   const selected = selection(layout, root);
   if ('refusal' in selected) return selected;
   if (!SHA256_PATTERN.test(selected.digest))
-    return { refusal: `the selected ${layout.product} release names ${selected.digest}, not a SHA-256 digest` };
+    return {
+      refusal: `the selected ${layout.product} release names ${selected.digest}, not a SHA-256 digest`,
+    };
   const installDir = join(root, selected.version);
   const binary = join(installDir, layout.appSubpath);
   const receiptPath = join(installDir, '.weles-release');
   const releaseUri = `stado://releases/${layout.product}/${selected.version}/${platform}/${layout.asset}`;
   const expectedReceipt = `release_uri=${releaseUri}\narchive_sha256=${selected.digest}\nplatform=${platform}\n`;
-  if (!existsSync(binary)) return { refusal: `the selected ${layout.product} release has no executable at ${binary}` };
-  if (!statSync(binary).isFile()) return { refusal: `browser executable is not a file: ${binary}` };
-  if (!existsSync(receiptPath)) return { refusal: `the selected ${layout.product} release has no receipt at ${receiptPath}` };
+  if (!existsSync(binary))
+    return {
+      refusal: `the selected ${layout.product} release has no executable at ${binary}`,
+    };
+  if (!statSync(binary).isFile())
+    return { refusal: `browser executable is not a file: ${binary}` };
+  if (!existsSync(receiptPath))
+    return {
+      refusal: `the selected ${layout.product} release has no receipt at ${receiptPath}`,
+    };
   const receipt = readFileSync(receiptPath, 'utf8');
   if (receipt !== expectedReceipt)
     return {
@@ -151,7 +182,8 @@ export function findCustomBrowser(browser: string): string | undefined {
 /** The selected browser's executable, or why none can be used and how to install it. */
 export function customBrowserSearchHint(browser: string): string {
   const located = locateBrowser(browser);
-  if ('binary' in located) return `verified browser executable: ${located.binary}`;
+  if ('binary' in located)
+    return `verified browser executable: ${located.binary}`;
   return `${located.refusal}; install the selected browser release through Stado`;
 }
 

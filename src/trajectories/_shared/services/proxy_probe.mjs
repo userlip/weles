@@ -12,56 +12,46 @@
 // so the daily cron makes auto-topup decisions on the balance that can be
 // used.
 
-import { STATUS_CODES } from 'node:http';
-import net from 'node:net';
+import http from 'node:http';
+import https from 'node:https';
+import { constants as http2 } from 'node:http2';
+import echo from '../network/egress-echo.json' with { type: 'json' };
 import {
   findProxyByDisplayName,
   persistProxyContext,
 } from '../skarbiec/proxies.mjs';
 
-/** The status a proxy answers a CONNECT it accepts with, by its RFC 9110 name. */
-const ACCEPTED = Number(
-  Object.keys(STATUS_CODES).find((status) => STATUS_CODES[status] === 'OK'),
-);
-
-// CONNECT a known endpoint (api.ipify.org:443) through the proxy and report
-// the proxy's answer: its HTTP status and reason, or the connection error
-// when no status line came back.
+// CONNECT the declared egress echo's host on the HTTPS port through the proxy
+// with Node's own CONNECT client, and report the proxy's answer: its HTTP
+// status and reason, or the socket's error when no status line came back.
+// Both are events; no clock decides it.
 export async function probeProxyAuth({ host, port, username, password }) {
-  return new Promise((resolve) => {
-    // The proxy answers the CONNECT, or the socket errors. Both are events;
-    // a ten-second cap on top of them reported a working proxy on a slow
-    // route as dead.
-    const sock = net.connect({ host, port });
-    let done = false;
-    const finish = (result) => {
-      if (done) return;
-      done = true;
-      sock.destroy();
-      resolve(result);
-    };
-    sock.on('error', (e) =>
-      finish({ ok: false, error: `connect: ${e.code ?? e.message}` }),
-    );
-    sock.on('connect', () => {
-      const auth = Buffer.from(`${username}:${password}`).toString('base64');
-      const req = `CONNECT api.ipify.org:443 HTTP/1.1\r\nHost: api.ipify.org:443\r\nProxy-Authorization: Basic ${auth}\r\n\r\n`;
-      sock.write(req);
-    });
-    let buf = '';
-    sock.on('data', (chunk) => {
-      buf += chunk.toString('latin1');
-      if (!buf.includes('\r\n\r\n')) return;
-      const line = buf.match(/^HTTP\/\d\.\d (?<status>\d+) (?<reason>.*)\r\n/);
-      if (!line) return;
-      const statusCode = Number(line.groups.status);
-      finish({
-        ok: statusCode === ACCEPTED,
-        statusCode,
-        reason: line.groups.reason.trim(),
-      });
+  const { promise, resolve } = Promise.withResolvers();
+  const request = http.request({
+    host,
+    port,
+    method: 'CONNECT',
+    path: `${new URL(echo.url).hostname}:${https.globalAgent.defaultPort}`,
+    headers: {
+      'Proxy-Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
+    },
+  });
+  request.once('connect', (answer, socket) => {
+    socket.destroy();
+    resolve({
+      ok: answer.statusCode === http2.HTTP_STATUS_OK,
+      statusCode: answer.statusCode,
+      reason: answer.statusMessage,
     });
   });
+  request.once('error', (error) =>
+    resolve({
+      ok: false,
+      error: `connect: ${error.code ? `${error.code} ` : ''}${error.message}`,
+    }),
+  );
+  request.end();
+  return promise;
 }
 
 // Resolve upstream proxy credentials and endpoint from its exact Skarbiec item.

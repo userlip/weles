@@ -13,8 +13,13 @@ await runBalanceCheck({
   balanceUrl: 'https://nopecha.com/manage',
   readBalance: async (s) => {
     if (await pageShows(s.page, 'Does the page say no active keys were found?'))
-      throw new Error(`NOPECHA_NO_ACTIVE_KEYS: NopeCHA lists no active key at ${s.page.url()}`);
-    const credits = await shownText(s.page, 'number of remaining available credits (the first number of "remaining / total")');
+      throw new Error(
+        `NOPECHA_NO_ACTIVE_KEYS: NopeCHA lists no active key at ${s.page.url()}`,
+      );
+    const credits = await shownText(
+      s.page,
+      'number of remaining available credits (the first number of "remaining / total")',
+    );
     const number = credits?.replace(/,/g, '').match(/\d+/)?.shift();
     return number === undefined ? null : Number(number);
   },

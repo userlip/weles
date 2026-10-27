@@ -47,9 +47,13 @@ export async function runTopupOrchestrator(provider, usd) {
         process.env[key.trim()] = value;
     }
   }
-  const cardLast4 = topupCard().num.match(/(\d\d\d\d)$/)?.pop();
+  const cardLast4 = topupCard()
+    .num.match(/(\d\d\d\d)$/)
+    ?.pop();
   if (!cardLast4)
-    throw new Error(`purchase card from ${cardSource} has no usable last four digits`);
+    throw new Error(
+      `purchase card from ${cardSource} has no usable last four digits`,
+    );
   const trajectory = join(trajectories, provider, 'topup.mjs');
   console.log(
     `[orchestrator] provider=${provider} usd=$${dollars} card=****${cardLast4} source=${cardSource}`,
@@ -64,7 +68,9 @@ export async function runTopupOrchestrator(provider, usd) {
       if (code === null)
         reject(new Error(`${provider} top-up exited by signal ${signal}`));
       else {
-        console.log(`[orchestrator] ${provider} top-up exited with code ${code}`);
+        console.log(
+          `[orchestrator] ${provider} top-up exited with code ${code}`,
+        );
         resolve(code);
       }
     });

@@ -1,210 +1,145 @@
-import { humanIdlePause } from '../../../../dist/human/mouse.js';
+import { humanMove } from '../../../../dist/human/mouse.js';
+import { humanRandom } from '../../../../dist/utils/motion/timing.js';
 import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
 
 const MODAL =
   '.captcha-verify-container, .captcha_verify_container, [class*="captcha-"]';
+/** The draggable handle, by the classes TikTok's captcha SDK gives it. */
+const HANDLE =
+  '.secsdk-captcha-drag-icon, [class*="drag-icon"], [class*="slide-button"]';
 
-/** Resolves once the captcha modal shows at least two loaded images, checked in the page every frame. */
+/**
+ * Resolves once the captcha modal shows its two puzzle images, loaded and
+ * drawn, checked in the page every frame.
+ */
 async function waitForPuzzleImages(page) {
   await pageCondition(
     page,
     (modalSelector) => {
       const m = document.querySelector(modalSelector);
       if (!m) return false;
-      const imgs = Array.from(m.querySelectorAll('img')).filter((i) => {
+      const drawn = Array.from(m.querySelectorAll('img')).filter((i) => {
         const r = i.getBoundingClientRect();
-        return (
-          r.width > 50 && r.height > 50 && i.src && i.src.startsWith('data:')
-        );
+        return i.complete && r.width && r.height && i.src.startsWith('data:');
       });
-      return imgs.length >= 2;
+      const [, inner] = drawn;
+      return inner !== undefined;
     },
     MODAL,
   );
 }
 
-/** Extract the two puzzle images, the slider button and its track from the modal. */
-function probePuzzle(page) {
-  return page
-    .evaluate((modalSelector) => {
+/**
+ * The two puzzle images (the larger is the outer ring), the slider handle and
+ * the track it slides along, as the modal lays them out. A modal without
+ * one of them is refused naming what it lacks.
+ */
+async function probePuzzle(page) {
+  const probe = await page.evaluate(
+    ({ modalSelector, handleSelector }) => {
+      const box = (element) => {
+        const r = element.getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height };
+      };
       const modal = document.querySelector(modalSelector);
-      if (!modal) return null;
-      const imgs = Array.from(modal.querySelectorAll('img'))
-        .map((i) => {
-          const r = i.getBoundingClientRect();
-          return {
-            src: i.src,
-            w: Math.round(r.width),
-            h: Math.round(r.height),
-            x: Math.round(r.x),
-            y: Math.round(r.y),
-            alt: i.alt,
-          };
-        })
-        .filter((m) => m.w > 0 && m.h > 0);
-      if (imgs.length < 2) return { reason: 'fewer than 2 images', imgs };
-      // Outer = larger, inner = smaller
-      imgs.sort((a, b) => b.w - a.w);
-      const outer = imgs[0];
-      const inner = imgs[1];
-      // Slider button (the draggable handle, usually has secsdk-captcha-drag-icon class
-      // or is a button inside the modal at the bottom).
-      const sliderBtn = modal.querySelector(
-        '.secsdk-captcha-drag-icon, [class*="drag-icon"], [class*="slide-button"]',
-      );
-      let sliderInfo = null;
-      if (sliderBtn) {
-        const r = sliderBtn.getBoundingClientRect();
-        sliderInfo = {
-          x: Math.round(r.x),
-          y: Math.round(r.y),
-          w: Math.round(r.width),
-          h: Math.round(r.height),
-        };
-      } else {
-        // Without a recognisable handle, the lowest button inside the modal is the handle.
-        const buttons = Array.from(modal.querySelectorAll('button')).filter(
-          (b) => {
-            const r = b.getBoundingClientRect();
-            return r.width > 20 && r.height > 20;
-          },
-        );
-        buttons.sort(
-          (a, b) => b.getBoundingClientRect().y - a.getBoundingClientRect().y,
-        );
-        const cand = buttons[0];
-        if (cand) {
-          const r = cand.getBoundingClientRect();
-          sliderInfo = {
-            x: Math.round(r.x),
-            y: Math.round(r.y),
-            w: Math.round(r.width),
-            h: Math.round(r.height),
-          };
+      if (!modal) return { missing: 'the captcha modal' };
+      const [outer, inner] = Array.from(modal.querySelectorAll('img'))
+        .filter((i) => i.src.startsWith('data:'))
+        .map((i) => ({ src: i.src, ...box(i) }))
+        .sort((a, b) => b.w - a.w);
+      if (inner === undefined) return { missing: 'two puzzle images' };
+      const handle = modal.querySelector(handleSelector);
+      if (!handle) return { missing: `a slider handle (${handleSelector})` };
+      const slider = box(handle);
+      // The track is the handle's nearest ancestor wider than the handle:
+      // the strip the handle slides along.
+      let track = null;
+      for (let p = handle.parentElement; p && p !== modal; p = p.parentElement) {
+        if (box(p).w > slider.w) {
+          track = box(p);
+          break;
         }
       }
-      // Slider track — walk up parents until we find one significantly wider
-      // than the button (the visual track typically spans the captcha modal
-      // width: ~280px on standard TikTok rotate).
-      let trackInfo = null;
-      if (sliderBtn) {
-        let p = sliderBtn.parentElement;
-        while (p && p !== modal) {
-          const r = p.getBoundingClientRect();
-          if (r.width >= sliderInfo.w * 2 && r.height < 80) {
-            trackInfo = {
-              x: Math.round(r.x),
-              y: Math.round(r.y),
-              w: Math.round(r.width),
-              h: Math.round(r.height),
-            };
-            break;
-          }
-          p = p.parentElement;
-        }
-      }
-      return { outer, inner, sliderInfo, trackInfo };
-    }, MODAL)
-    .catch((e) => ({ err: e.message }));
+      if (!track) return { missing: 'a slider track wider than its handle' };
+      // Degrees in one full turn, as CSS converts a turn to degrees.
+      const turnDegrees = CSSNumericValue.parse('1turn').to('deg').value;
+      return { outer, inner, slider, track, turnDegrees };
+    },
+    { modalSelector: MODAL, handleSelector: HANDLE },
+  );
+  if (probe.missing)
+    throw new Error(`tiktok_captcha_unreadable: the captcha shows no ${probe.missing}`);
+  return probe;
 }
 
-/** Ask SadCaptcha for the rotation angle of the two puzzle images; 0 when it gave none. */
+/** The rotation SadCaptcha reads from the two puzzle images, in degrees; a failed or empty answer is refused with its cause. */
 async function rotationAngle(apiKey, probe) {
-  // Strip the data:image/...;base64, prefix from the image URLs.
+  // The images go without their data:image/...;base64, prefix.
   const stripPrefix = (u) => u.replace(/^data:[^,]+,/, '');
-  try {
-    const resp = await fetch(
-      `https://www.sadcaptcha.com/api/v1/rotate?licenseKey=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          outerImageB64: stripPrefix(probe.outer.src),
-          innerImageB64: stripPrefix(probe.inner.src),
-        }),
-      },
+  const resp = await fetch(
+    `https://www.sadcaptcha.com/api/v1/rotate?licenseKey=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        outerImageB64: stripPrefix(probe.outer.src),
+        innerImageB64: stripPrefix(probe.inner.src),
+      }),
+    },
+  );
+  const text = await resp.text();
+  if (!resp.ok)
+    throw new Error(
+      `tiktok_captcha_solver_refused: SadCaptcha rotate answered HTTP ${resp.status}: ${text}`,
     );
-    if (!resp.ok) {
-      const txt = await resp.text();
-      console.log(
-        `[tt-captcha] sadcaptcha api status=${resp.status} body=${txt}`,
-      );
-      return 0;
-    }
-    const j = await resp.json();
-    const angle = Number(j?.angle ?? 0);
-    console.log(`[tt-captcha] sadcaptcha returned angle=${angle}`);
-    return angle;
-  } catch (e) {
-    console.log(`[tt-captcha] sadcaptcha api error: ${e.message}`);
-    return 0;
-  }
+  const answer = JSON.parse(text);
+  if (typeof answer?.angle !== 'number' || !Number.isFinite(answer.angle))
+    throw new Error(
+      `tiktok_captcha_solver_unreadable: SadCaptcha rotate answered no angle: ${text}`,
+    );
+  console.log(`[tt-captcha] sadcaptcha returned angle=${answer.angle}`);
+  return answer.angle;
 }
 
-/** Drag the slider button by dragX pixels in eased, jittered steps. */
-async function dragSlider(page, sliderInfo, dragX) {
-  const startX = sliderInfo.x + Math.floor(sliderInfo.w / 2);
-  const startY = sliderInfo.y + Math.floor(sliderInfo.h / 2);
-  await page.mouse.move(startX, startY, { steps: 5 });
-  await humanIdlePause('short');
+/**
+ * Drag the slider handle `dragX` pixels along its track: press at a point on
+ * the handle (drawn from the run's seeded timing source, as a hand lands
+ * anywhere on it), move along the shared human pointer path, release.
+ */
+async function dragSlider(page, slider, dragX) {
+  const startX = slider.x + slider.w * humanRandom();
+  const startY = slider.y + slider.h * humanRandom();
+  await humanMove(page, startX, startY);
   await page.mouse.down();
-  // Move in 30 small steps over ~1.5s, with slight Y jitter.
-  const steps = 30;
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps;
-    // Ease-out: most movement early, slight tail
-    const ease = 1 - Math.pow(1 - t, 2);
-    const x = startX + Math.round(dragX * ease);
-    const y =
-      startY + (Math.random() < 0.3 ? (Math.random() < 0.5 ? -1 : 1) : 0);
-    await page.mouse.move(x, y);
-    await humanIdlePause();
-  }
-  await humanIdlePause('short');
+  await humanMove(page, startX + dragX, startY, startX, startY);
   await page.mouse.up();
 }
 
 /**
  * Solve TikTok rotate captcha via SadCaptcha API.
- * Returns true if captcha solved + dismissed, false otherwise.
+ * Returns true if the captcha was solved and dismissed, false when the modal
+ * stays after the drag; a captcha or an answer that cannot be read is
+ * refused with its cause.
  */
 export async function solveTiktokRotateCaptcha(page) {
   const apiKey = process.env.SADCAPTCHA_API_KEY;
-  if (!apiKey) {
-    console.log('[tt-captcha] SADCAPTCHA_API_KEY missing — cannot solve');
-    return false;
-  }
+  if (!apiKey)
+    throw new Error(
+      'tiktok_captcha_solver_unconfigured: SADCAPTCHA_API_KEY is not set, so the rotate captcha cannot be solved',
+    );
   await waitForPuzzleImages(page);
   const probe = await probePuzzle(page);
-  if (
-    !probe ||
-    probe.err ||
-    !probe.outer ||
-    !probe.inner ||
-    !probe.sliderInfo
-  ) {
-    console.log(`[tt-captcha] probe failed: ${JSON.stringify(probe)}`);
-    return false;
-  }
   console.log(
-    `[tt-captcha] outer=${probe.outer.w}x${probe.outer.h} inner=${probe.inner.w}x${probe.inner.h} slider=${probe.sliderInfo.w}x${probe.sliderInfo.h} track=${probe.trackInfo?.w}x${probe.trackInfo?.h}`,
+    `[tt-captcha] outer=${probe.outer.w}x${probe.outer.h} inner=${probe.inner.w}x${probe.inner.h} slider=${probe.slider.w}x${probe.slider.h} track=${probe.track.w}x${probe.track.h}`,
   );
   const angle = await rotationAngle(apiKey, probe);
-  if (!angle || isNaN(angle)) {
-    console.log('[tt-captcha] zero/NaN angle');
-    return false;
-  }
-  // Calculate slider drag distance.
-  // GitHub docs formula: result = ((slide_bar_width - slide_button_width) * angle) / 360
-  // The track width in TikTok web rotate is the inner image width (~280px on
-  // mobile, varies on desktop). Use the parent container width as approx.
-  const trackWidth = probe.trackInfo?.w ?? 280;
-  const buttonWidth = probe.sliderInfo.w;
-  const dragX = Math.round(((trackWidth - buttonWidth) * angle) / 360);
+  // SadCaptcha's rotate formula: the handle travels the track's free length
+  // in proportion to the angle's share of a full turn.
+  const dragX = ((probe.track.w - probe.slider.w) * angle) / probe.turnDegrees;
   console.log(
-    `[tt-captcha] dragging slider by ${dragX}px (trackW=${trackWidth} btnW=${buttonWidth})`,
+    `[tt-captcha] dragging slider by ${dragX}px (trackW=${probe.track.w} btnW=${probe.slider.w})`,
   );
-  await dragSlider(page, probe.sliderInfo, dragX);
+  await dragSlider(page, probe.slider, dragX);
   // The verdict is the modal being removed (solved) or TikTok answering the
   // verify request with a failure; the modal's state once the page has settled
   // after the drag says which.

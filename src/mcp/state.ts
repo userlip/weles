@@ -48,8 +48,12 @@ export function addPage(browserId: string, page: Page): string {
   // one is recorded as stating none.
   page.on('requestfailed', (request) => {
     const failure = request.failure();
-    const reason = failure ? failure.errorText : 'no reason stated by the browser';
-    events.failedRequests.push(`${request.method()} ${request.url()} — ${reason}`);
+    const reason = failure
+      ? failure.errorText
+      : 'no reason stated by the browser';
+    events.failedRequests.push(
+      `${request.method()} ${request.url()} — ${reason}`,
+    );
   });
   page.on('response', (response) => {
     events.responses.push({
@@ -86,7 +90,11 @@ export function asOptionalNumber(
 ): number | undefined {
   if (value === undefined) return undefined;
   // The smallest positive number a double holds bounds the positive ones.
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < Number.MIN_VALUE)
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    value < Number.MIN_VALUE
+  )
     throw new Error(`${name} must be a positive number`);
   return value;
 }
@@ -118,7 +126,9 @@ export function textResult(value: unknown) {
       {
         type: 'text',
         text:
-          typeof value === 'string' ? value : JSON.stringify(value, null, INDENT),
+          typeof value === 'string'
+            ? value
+            : JSON.stringify(value, null, INDENT),
       },
     ],
   };

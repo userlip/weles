@@ -11,9 +11,15 @@ import { runAction } from '../../_shared/action-runner.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
 import { takeOnce } from '../../_shared/page/controls/toggle.mjs';
 
-const TARGET_URL = statedText(['TARGET_URL'], 'the Instagram post to like', 'INSTAGRAM_LIKE_TARGET_REQUIRED');
+const TARGET_URL = statedText(
+  ['TARGET_URL'],
+  'the Instagram post to like',
+  'INSTAGRAM_LIKE_TARGET_REQUIRED',
+);
 if (!/^\/(?:p|reel)\/[^/]+/.test(new URL(TARGET_URL).pathname))
-  throw new Error(`INSTAGRAM_LIKE_TARGET_NOT_A_POST: ${TARGET_URL} is not an Instagram post address (/p/… or /reel/…)`);
+  throw new Error(
+    `INSTAGRAM_LIKE_TARGET_NOT_A_POST: ${TARGET_URL} is not an Instagram post address (/p/… or /reel/…)`,
+  );
 
 await runAction({
   platform: 'instagram',
@@ -22,8 +28,16 @@ await runAction({
   act: async (s) => {
     const liked = await takeOnce(
       s.page,
-      s.page.locator('div[role="button"]:has(svg[aria-label="Like"]), svg[aria-label="Like"]').filter({ visible: true }).first(),
-      s.page.locator('svg[aria-label="Unlike"]').filter({ visible: true }).first(),
+      s.page
+        .locator(
+          'div[role="button"]:has(svg[aria-label="Like"]), svg[aria-label="Like"]',
+        )
+        .filter({ visible: true })
+        .first(),
+      s.page
+        .locator('svg[aria-label="Unlike"]')
+        .filter({ visible: true })
+        .first(),
       'like',
     );
     return liked ? `${TARGET_URL} is already liked` : `liked ${TARGET_URL}`;

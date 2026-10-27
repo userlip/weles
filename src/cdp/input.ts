@@ -1,180 +1,161 @@
+/**
+ * Raw DevTools-protocol input for a CDPPage. The pointer travels along a
+ * segment of the operator's harvested pointer trace (src/human/trace.ts),
+ * carried onto the wanted start and end, with no invented curve or jitter; a
+ * press counts the presses made since the pointer last moved, as the OS
+ * counts them. Keys are described by the US layout Playwright declares
+ * (./input/keyboard-layout.ts).
+ */
+
 import { CDPConnection } from './connection.js';
-import { bezierPath as _bezierPath } from '../utils/motion/bezier.js';
+import { recordedApproach, replayedPath } from '../human/trace.js';
+import type { Point } from '../human/pointer/trace-file.js';
+import {
+  KEYPAD_LOCATION,
+  MODIFIERS,
+  keyDescription,
+  modifiersMask,
+  onLayout,
+} from './input/keyboard-layout.js';
 
-function _instantMode(): boolean {
+/** The protocol's mouse buttons a press can name. */
+export type MouseButton = 'left' | 'middle' | 'right';
+
+/** Whether the run asked for single-event moves (WELES_INSTANT_INPUT=1). */
+function instantMode(): boolean {
   return process.env.WELES_INSTANT_INPUT === '1';
-}
-
-const KEY_DEFS: Record<string, [number, string, string]> = {
-  Enter: [13, 'Enter', 'Enter'],
-  Tab: [9, 'Tab', 'Tab'],
-  Backspace: [8, 'Backspace', 'Backspace'],
-  Delete: [46, 'Delete', 'Delete'],
-  Escape: [27, 'Escape', 'Escape'],
-  ArrowUp: [38, 'ArrowUp', 'ArrowUp'],
-  ArrowDown: [40, 'ArrowDown', 'ArrowDown'],
-  ArrowLeft: [37, 'ArrowLeft', 'ArrowLeft'],
-  ArrowRight: [39, 'ArrowRight', 'ArrowRight'],
-  Home: [36, 'Home', 'Home'],
-  End: [35, 'End', 'End'],
-  PageUp: [33, 'PageUp', 'PageUp'],
-  PageDown: [34, 'PageDown', 'PageDown'],
-  Space: [32, 'Space', ' '],
-  Shift: [16, 'ShiftLeft', 'Shift'],
-  Control: [17, 'ControlLeft', 'Control'],
-  Alt: [18, 'AltLeft', 'Alt'],
-  Meta: [91, 'MetaLeft', 'Meta'],
-  F1: [112, 'F1', 'F1'],
-  F2: [113, 'F2', 'F2'],
-  F3: [114, 'F3', 'F3'],
-  F4: [115, 'F4', 'F4'],
-  F5: [116, 'F5', 'F5'],
-  F6: [117, 'F6', 'F6'],
-  F7: [118, 'F7', 'F7'],
-  F8: [119, 'F8', 'F8'],
-  F9: [120, 'F9', 'F9'],
-  F10: [121, 'F10', 'F10'],
-  F11: [122, 'F11', 'F11'],
-  F12: [123, 'F12', 'F12'],
-  a: [65, 'KeyA', 'a'],
-  b: [66, 'KeyB', 'b'],
-  c: [67, 'KeyC', 'c'],
-  v: [86, 'KeyV', 'v'],
-  x: [88, 'KeyX', 'x'],
-  z: [90, 'KeyZ', 'z'],
-};
-
-function resolveKey(key: string): [number, string, string] {
-  if (key in KEY_DEFS) return KEY_DEFS[key];
-  if (key.length === 1) {
-    const code = /[a-zA-Z]/.test(key)
-      ? `Key${key.toUpperCase()}`
-      : /\d/.test(key)
-        ? `Digit${key}`
-        : '';
-    return [key.toUpperCase().charCodeAt(0), code, key];
-  }
-  return [0, '', key];
 }
 
 export class CDPMouse {
   private _conn: CDPConnection;
   private _sessionId: string;
-  private _x = 0;
-  private _y = 0;
+  private _at: Point | undefined;
+  // The buttons pressed since the pointer last moved; a press's click count.
+  private _presses: MouseButton[] = [];
 
   constructor(connection: CDPConnection, sessionId: string) {
     this._conn = connection;
     this._sessionId = sessionId;
   }
 
-  async move(
-    x: number,
-    y: number,
-    options?: { steps?: number; instant?: boolean },
-  ): Promise<void> {
-    const instant = options?.instant ?? _instantMode();
-    if (instant) {
-      await this._conn.send(
-        'Input.dispatchMouseEvent',
-        {
-          type: 'mouseMoved',
-          x,
-          y,
-        },
-        this._sessionId,
-      );
-      this._x = x;
-      this._y = y;
-      return;
+  private _where(what: string): Point {
+    if (!this._at)
+      throw new Error(`a mouse ${what} needs the pointer moved onto the page first`);
+    return this._at;
+  }
+
+  private async _moved(at: Point): Promise<void> {
+    await this._conn.send(
+      'Input.dispatchMouseEvent',
+      { type: 'mouseMoved', x: at.x, y: at.y },
+      this._sessionId,
+    );
+  }
+
+  /** Move to (x, y) along a recorded segment, or in one event when instant. */
+  async move(x: number, y: number, options?: { instant?: boolean }): Promise<void> {
+    const to = { x, y };
+    const instant = options?.instant ?? instantMode();
+    if (instant) await this._moved(to);
+    else {
+      const from = this._at ? this._at : recordedApproach(to);
+      for (const at of replayedPath(from, to)) await this._moved(at);
     }
-    const path = _bezierPath([this._x, this._y], [x, y], options?.steps);
-    for (const [ix, iy] of path) {
-      await this._conn.send(
-        'Input.dispatchMouseEvent',
-        {
-          type: 'mouseMoved',
-          x: ix,
-          y: iy,
-        },
-        this._sessionId,
-      );
-    }
-    this._x = x;
-    this._y = y;
+    this._at = to;
+    this._presses = [];
+  }
+
+  async down(button: MouseButton): Promise<void> {
+    const at = this._where('press');
+    this._presses.push(button);
+    await this._conn.send(
+      'Input.dispatchMouseEvent',
+      {
+        type: 'mousePressed',
+        button,
+        x: at.x,
+        y: at.y,
+        clickCount: this._presses.length,
+      },
+      this._sessionId,
+    );
+  }
+
+  async up(button: MouseButton): Promise<void> {
+    const at = this._where('release');
+    await this._conn.send(
+      'Input.dispatchMouseEvent',
+      {
+        type: 'mouseReleased',
+        button,
+        x: at.x,
+        y: at.y,
+        clickCount: this._presses.length,
+      },
+      this._sessionId,
+    );
   }
 
   async click(
     x: number,
     y: number,
-    options?: { button?: string; clickCount?: number; instant?: boolean },
+    button: MouseButton,
+    options?: { instant?: boolean },
   ): Promise<void> {
-    const button = options?.button ?? 'left';
-    const clickCount = options?.clickCount ?? 1;
-    const instant = options?.instant ?? _instantMode();
-    // Jitter for human-like targeting
-    const jx = x + (Math.random() * 3 - 1.5);
-    const jy = y + (Math.random() * 3 - 1.5);
-    await this.move(jx, jy, { instant });
-    await this.down({ button, clickCount });
-    await this.up({ button, clickCount });
+    await this.move(x, y, options);
+    await this.down(button);
+    await this.up(button);
   }
 
-  async down(options?: {
-    button?: string;
-    clickCount?: number;
-  }): Promise<void> {
+  /** Two presses at (x, y) without moving between them: counts one, then two. */
+  async dblclick(x: number, y: number, button: MouseButton): Promise<void> {
+    await this.click(x, y, button);
+    await this.down(button);
+    await this.up(button);
+  }
+
+  async wheel(deltaX: number, deltaY: number): Promise<void> {
+    const at = this._where('wheel');
     await this._conn.send(
       'Input.dispatchMouseEvent',
-      {
-        type: 'mousePressed',
-        button: options?.button ?? 'left',
-        x: this._x,
-        y: this._y,
-        clickCount: options?.clickCount ?? 1,
-      },
+      { type: 'mouseWheel', x: at.x, y: at.y, deltaX, deltaY },
       this._sessionId,
     );
   }
+}
 
-  async up(options?: { button?: string; clickCount?: number }): Promise<void> {
-    await this._conn.send(
-      'Input.dispatchMouseEvent',
-      {
-        type: 'mouseReleased',
-        button: options?.button ?? 'left',
-        x: this._x,
-        y: this._y,
-        clickCount: options?.clickCount ?? 1,
-      },
-      this._sessionId,
-    );
-  }
+/** Modifiers that leave a key's text as typed. */
+const TEXT_KEEPING: ReadonlySet<string> = new Set(['Shift']);
 
-  async wheel(deltaX = 0, deltaY = 0): Promise<void> {
-    await this._conn.send(
-      'Input.dispatchMouseEvent',
-      {
-        type: 'mouseWheel',
-        x: this._x,
-        y: this._y,
-        deltaX,
-        deltaY,
-      },
-      this._sessionId,
-    );
-  }
+/** Playwright's alias for the platform's primary shortcut modifier. */
+const CONTROL_OR_META = 'ControlOrMeta';
 
-  async dblclick(x: number, y: number): Promise<void> {
-    await this.click(x, y, { clickCount: 1 });
-    await this.click(x, y, { clickCount: 2 });
+/** What Chromium's own user agent names a macOS host by. */
+const MAC_USER_AGENT = 'Macintosh';
+
+/**
+ * The keys of a chord, split on `+` the way Playwright splits them: a `+`
+ * that starts a token is the key itself, so `Shift++` is Shift then `+`.
+ */
+function chord(keys: string): string[] {
+  const parts: string[] = [];
+  let part = '';
+  for (const char of keys) {
+    if (char === '+' && part) {
+      parts.push(part);
+      part = '';
+    } else part += char;
   }
+  parts.push(part);
+  return parts;
 }
 
 export class CDPKeyboard {
   private _conn: CDPConnection;
   private _sessionId: string;
-  private _modifiers = 0;
+  private readonly _held = new Set<string>();
+  /** Whether the driven browser runs on macOS, asked once. */
+  private _mac?: Promise<boolean>;
 
   constructor(connection: CDPConnection, sessionId: string) {
     this._conn = connection;
@@ -182,57 +163,83 @@ export class CDPKeyboard {
   }
 
   async down(key: string): Promise<void> {
-    const [keyCode, code, keyVal] = resolveKey(key);
-    if (key === 'Shift') this._modifiers |= 8;
-    else if (key === 'Control') this._modifiers |= 4;
-    else if (key === 'Alt') this._modifiers |= 2;
-    else if (key === 'Meta') this._modifiers |= 1;
+    const described = keyDescription(key);
+    const pressed =
+      this._held.has('Shift') && described.shifted
+        ? described.shifted
+        : described;
+    const typed = [...this._held].every((held) => TEXT_KEEPING.has(held))
+      ? pressed.text
+      : undefined;
+    if (MODIFIERS.has(pressed.key)) this._held.add(pressed.key);
     await this._conn.send(
       'Input.dispatchKeyEvent',
       {
-        type: 'keyDown',
-        key: keyVal,
-        code,
-        windowsVirtualKeyCode: keyCode,
-        nativeVirtualKeyCode: keyCode,
-        modifiers: this._modifiers,
+        type: typed ? 'keyDown' : 'rawKeyDown',
+        modifiers: modifiersMask(this._held),
+        windowsVirtualKeyCode: pressed.windowsVirtualKeyCode,
+        code: pressed.code,
+        key: pressed.key,
+        text: typed,
+        unmodifiedText: typed,
+        location: pressed.location,
+        isKeypad: pressed.location === KEYPAD_LOCATION,
       },
       this._sessionId,
     );
   }
 
   async up(key: string): Promise<void> {
-    const [keyCode, code, keyVal] = resolveKey(key);
-    if (key === 'Shift') this._modifiers &= ~8;
-    else if (key === 'Control') this._modifiers &= ~4;
-    else if (key === 'Alt') this._modifiers &= ~2;
-    else if (key === 'Meta') this._modifiers &= ~1;
+    const released = keyDescription(key);
+    this._held.delete(released.key);
     await this._conn.send(
       'Input.dispatchKeyEvent',
       {
         type: 'keyUp',
-        key: keyVal,
-        code,
-        windowsVirtualKeyCode: keyCode,
-        nativeVirtualKeyCode: keyCode,
-        modifiers: this._modifiers,
+        modifiers: modifiersMask(this._held),
+        key: released.key,
+        windowsVirtualKeyCode: released.windowsVirtualKeyCode,
+        code: released.code,
+        location: released.location,
       },
       this._sessionId,
     );
   }
 
+  /**
+   * Press `key`, or a chord written as Playwright writes it (`Control+A`,
+   * `ControlOrMeta+K`, `Shift++`): each modifier goes down in order, the
+   * last key is pressed, and the keys come up in reverse. Every key is
+   * described before any event is sent, so an unknown key refuses the whole
+   * chord. A modifier the caller already holds stays held afterwards.
+   * `ControlOrMeta` is Meta when the driven browser runs on macOS.
+   */
   async press(key: string): Promise<void> {
-    await this.down(key);
-    await this.up(key);
+    const keys = await Promise.all(chord(key).map((part) => this._resolve(part)));
+    for (const part of keys) keyDescription(part);
+    const pressed: string[] = [];
+    for (const part of keys) {
+      const described = keyDescription(part);
+      if (MODIFIERS.has(described.key) && this._held.has(described.key)) continue;
+      await this.down(part);
+      pressed.push(part);
+    }
+    for (const part of pressed.reverse()) await this.up(part);
   }
 
+  private _resolve(key: string): Promise<string> {
+    if (key !== CONTROL_OR_META) return Promise.resolve(key);
+    this._mac ??= this._conn
+      .send('Browser.getVersion', {})
+      .then((version: { userAgent: string }) => version.userAgent.includes(MAC_USER_AGENT));
+    return this._mac.then((mac) => (mac ? 'Meta' : 'Control'));
+  }
+
+  /** Each character on the layout is pressed; any other is inserted as text. */
   async type(text: string): Promise<void> {
     for (const char of text) {
-      if (char in KEY_DEFS) {
-        await this.press(char);
-      } else {
-        await this.insertText(char);
-      }
+      if (onLayout(char)) await this.press(char);
+      else await this.insertText(char);
     }
   }
 
@@ -240,5 +247,3 @@ export class CDPKeyboard {
     await this._conn.send('Input.insertText', { text }, this._sessionId);
   }
 }
-
-export { _bezierPath as bezierPath, _instantMode as instantMode };

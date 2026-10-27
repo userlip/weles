@@ -12,11 +12,19 @@ import { humanFill } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { clickOffered, pageShows } from '../../_shared/page/judged/seen.mjs';
-import { expectMail, fieldCodeLength } from '../../_shared/inputs/mailed_code.mjs';
-import { answerStaySignedIn, IDENTITY_CHALLENGE, visible } from '../entra_password_lifecycle/sign_in/surfaces.mjs';
+import {
+  expectMail,
+  fieldCodeLength,
+} from '../../_shared/inputs/mailed_code.mjs';
+import {
+  answerStaySignedIn,
+  IDENTITY_CHALLENGE,
+  visible,
+} from '../entra_password_lifecycle/sign_in/surfaces.mjs';
 import { LOGIN_HOSTS } from './constants.mjs';
 
-const CODE_INPUT = 'input[autocomplete="one-time-code"], input[name*="otc" i], input[name*="code" i]';
+const CODE_INPUT =
+  'input[autocomplete="one-time-code"], input[name*="otc" i], input[name*="code" i]';
 // Microsoft's account-protection mail comes from a microsoft.com sender.
 const MICROSOFT_SENDER = 'microsoft';
 
@@ -41,13 +49,22 @@ export function configuredUrl(page, keys) {
  * control.
  */
 export async function leavePasskeyPrompt(page) {
-  if (!(await pageShows(page, 'Does the page ask to sign in with a passkey (face, fingerprint, PIN or security key)?'))) return;
+  if (
+    !(await pageShows(
+      page,
+      'Does the page ask to sign in with a passkey (face, fingerprint, PIN or security key)?',
+    ))
+  )
+    return;
   await page.keyboard.press('Escape');
   await pageSettled(page);
   const resume = await configuredUrl(page, ['urlCancel', 'urlResume']);
   if (resume) {
     const target = new URL(resume, page.url());
-    if (!LOGIN_HOSTS.includes(target.hostname)) throw new Error(`Microsoft passkey resume URL ${target.origin} escaped the login origin`);
+    if (!LOGIN_HOSTS.includes(target.hostname))
+      throw new Error(
+        `Microsoft passkey resume URL ${target.origin} escaped the login origin`,
+      );
     await page.goto(target.href, { waitUntil: 'domcontentloaded' });
     await pageSettled(page);
     return;
@@ -61,7 +78,8 @@ export async function leavePasskeyPrompt(page) {
 
 /** Open the page's other ways to sign in when it offers them. */
 export async function showOtherWays(page) {
-  if (await clickOffered(page, 'the control that shows other ways to sign in')) await pageSettled(page);
+  if (await clickOffered(page, 'the control that shows other ways to sign in'))
+    await pageSettled(page);
 }
 
 /** Whether Microsoft asks the person to prove who they are, as the vision model reads the page in its language. */
@@ -76,11 +94,18 @@ export function hasIdentityChallenge(page) {
  */
 async function passwordFormPage(page) {
   await pageSettled(page);
-  for (const candidate of page.context().pages().filter((open) => !open.isClosed()).reverse()) {
+  for (const candidate of page
+    .context()
+    .pages()
+    .filter((open) => !open.isClosed())
+    .reverse()) {
     const asked = await answerStaySignedIn(candidate);
     if (!asked.ok) throw new Error(`MICROSOFT_PAGE_UNJUDGED: ${asked.reason}`);
     // The new-password form is the page that shows a second password field.
-    const [, second] = await candidate.locator('input[type="password"]').filter({ visible: true }).all();
+    const [, second] = await candidate
+      .locator('input[type="password"]')
+      .filter({ visible: true })
+      .all();
     if (second) return candidate;
   }
   return null;
@@ -126,15 +151,23 @@ async function keepChallengeState(page, passwordReady) {
  */
 export async function completeEmailIdentityChallenge(page, email) {
   const emailOption = `the option to send a verification code to the email address ${email} (possibly shown partly masked)`;
-  if (!(await pageShows(page, `Does the page show ${emailOption}?`))) await showOtherWays(page);
+  if (!(await pageShows(page, `Does the page show ${emailOption}?`)))
+    await showOtherWays(page);
   if (!(await clickOffered(page, emailOption))) return null;
   const mail = await expectMail(email, MICROSOFT_SENDER);
   await clickOffered(page, 'the button that sends the verification code');
   await pageSettled(page);
-  const addressField = page.locator('input:not([type="hidden"]):not([type="submit"]):not([type="button"])').first();
+  const addressField = page
+    .locator(
+      'input:not([type="hidden"]):not([type="submit"]):not([type="button"])',
+    )
+    .first();
   if (
     (await visible(addressField)) &&
-    (await pageShows(page, 'Does the page ask to type the full email address to confirm it before the code is sent?'))
+    (await pageShows(
+      page,
+      'Does the page ask to type the full email address to confirm it before the code is sent?',
+    ))
   ) {
     await fill(page, addressField, email);
     await addressField.press('Enter');
@@ -142,12 +175,29 @@ export async function completeEmailIdentityChallenge(page, email) {
   }
   const codeField = page.locator(CODE_INPUT).first();
   if (!(await visible(codeField)))
-    throw new Error(`MICROSOFT_CODE_FIELD_MISSING: ${page.url()} shows no field for the mailed code`);
-  await fill(page, codeField, await mail.code(await fieldCodeLength(codeField)));
+    throw new Error(
+      `MICROSOFT_CODE_FIELD_MISSING: ${page.url()} shows no field for the mailed code`,
+    );
+  await fill(
+    page,
+    codeField,
+    await mail.code(await fieldCodeLength(codeField)),
+  );
   await codeField.press('Enter');
   const passwordPage = await passwordFormPage(page);
-  await keepChallengeState(passwordPage ? passwordPage : page, Boolean(passwordPage));
-  if (!passwordPage && (await pageShows(page, 'Does the page say the verification code is wrong, invalid or expired?')))
-    throw new Error('MICROSOFT_CODE_REFUSED: Microsoft refused the mailed verification code');
+  await keepChallengeState(
+    passwordPage ? passwordPage : page,
+    Boolean(passwordPage),
+  );
+  if (
+    !passwordPage &&
+    (await pageShows(
+      page,
+      'Does the page say the verification code is wrong, invalid or expired?',
+    ))
+  )
+    throw new Error(
+      'MICROSOFT_CODE_REFUSED: Microsoft refused the mailed verification code',
+    );
   return passwordPage;
 }

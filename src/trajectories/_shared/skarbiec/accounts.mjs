@@ -44,7 +44,7 @@ export function updateWelesRecord(id, contextPatch, fieldPatch) {
     ...contextPatch,
   };
   document.fields = { ...objectMember(id, document, 'fields'), ...fieldPatch };
-  run(['set-json', requireItem(id)], JSON.stringify(document));
+  run(['set', requireItem(id)], JSON.stringify(document));
   return true;
 }
 

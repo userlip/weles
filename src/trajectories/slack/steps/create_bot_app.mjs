@@ -3,7 +3,11 @@
 // signed-in web client's own token, installed to the workspace, and the bot
 // token read from the app's OAuth page (`./manifest_app.mjs`).
 
-import { appToken, installManifestApp, statedManifest } from './manifest_app.mjs';
+import {
+  appToken,
+  installManifestApp,
+  statedManifest,
+} from './manifest_app.mjs';
 
 /** The manifest the bot app is created from, refused by name when unstated. */
 export function botManifest() {

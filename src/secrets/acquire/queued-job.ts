@@ -33,7 +33,10 @@ function lowerCase(value: string | null | undefined): string | undefined {
 /** One directory coordinate; a directory job without it cannot be built. */
 function coordinate(value: string | null | undefined, what: string): string {
   const exact = lowerCase(value);
-  if (!exact) throw new Error(`an Entra directory job needs ${what}; the request carries none`);
+  if (!exact)
+    throw new Error(
+      `an Entra directory job needs ${what}; the request carries none`,
+    );
   return exact;
 }
 
@@ -42,7 +45,10 @@ function coordinate(value: string | null | undefined, what: string): string {
  * pins for a registered item, else the signup origin declared for a generic
  * one. A job with neither carries an empty origin, which the bridge refuses.
  */
-function captureOrigin(contractOrigin: string | null, def: SecretDefinition): string {
+function captureOrigin(
+  contractOrigin: string | null,
+  def: SecretDefinition,
+): string {
   if (contractOrigin) return contractOrigin;
   if (def.sourceOrigin) return def.sourceOrigin;
   return '';
@@ -66,7 +72,8 @@ export function paramsFor(
     flow_name: def.flowName,
     execution_mode: 'keeper_first',
     proxy: request.proxy ? request.proxy : NO_PROXY,
-    headless: typeof request.headless === 'boolean' ? request.headless : def.headless,
+    headless:
+      typeof request.headless === 'boolean' ? request.headless : def.headless,
     auto_promote_trajectory: request.autoPromoteTrajectory !== false,
     constraints: {
       secret: def.secret,
@@ -83,7 +90,8 @@ export function paramsFor(
       secret_source_origin: captureOrigin(contract.sourceOrigin, def),
       // For microsoft_entra the directory block below is the only source of the
       // identity, so the flat binding tenant stays empty for that provider.
-      tenant_id: directory || request.tenantId === null ? undefined : request.tenantId,
+      tenant_id:
+        directory || request.tenantId === null ? undefined : request.tenantId,
       ...(directory
         ? {
             // The directory identity is the item's own write-once contract, not a
@@ -93,7 +101,10 @@ export function paramsFor(
             directory: {
               provider: ENTRA_PROVIDER,
               tenant_id: coordinate(request.tenantId, 'its tenant id'),
-              principal_object_id: coordinate(request.principalObjectId, 'its principal object id'),
+              principal_object_id: coordinate(
+                request.principalObjectId,
+                'its principal object id',
+              ),
               account_upn: coordinate(request.accountUpn, 'its account UPN'),
             },
             weles_tenant_id: null,

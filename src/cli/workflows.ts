@@ -20,9 +20,7 @@ function verbHandler(
   if (verb === undefined)
     throw new UsageError(`weles ${command} needs an action: ${known}`);
   if (!Object.hasOwn(verbs, verb))
-    throw new UsageError(
-      `weles ${command} takes ${known}, not ${verb}`,
-    );
+    throw new UsageError(`weles ${command} takes ${known}, not ${verb}`);
   return verbs[verb];
 }
 
@@ -117,7 +115,10 @@ async function onboardingImport(parsed: ParsedCli): Promise<void> {
     importReport: report,
     ...scope,
   });
-  printAnswer({ import: report, onboarding: view }, parsed.options.json === true);
+  printAnswer(
+    { import: report, onboarding: view },
+    parsed.options.json === true,
+  );
 }
 
 /** An onboarding verb that takes no path: it reads the journey, or verifies a receipt. */
@@ -201,7 +202,7 @@ const RELEASE_ACTIONS: Record<string, Handler> = {
       `${JSON.stringify(await release.surface(optionalOption(parsed, 'root')), null, 2)}\n`,
     );
   },
-  'enforce-version': async (parsed) => {
+  enforce: async (parsed) => {
     const release = await import('../release/index.mjs');
     const inputs = await release.readVersionInputs({
       decision: requiredOption(parsed, 'decision'),
@@ -211,7 +212,7 @@ const RELEASE_ACTIONS: Record<string, Handler> = {
     });
     printAnswer(release.enforceVersion(inputs), parsed.options.json === true);
   },
-  'validate-manifest': async (parsed) => {
+  validate: async (parsed) => {
     const release = await import('../release/index.mjs');
     const verdict = await release.validateCandidateManifest({
       manifestPath: requiredOption(parsed, 'manifest'),
@@ -220,7 +221,7 @@ const RELEASE_ACTIONS: Record<string, Handler> = {
     });
     printAnswer(verdict, parsed.options.json === true);
   },
-  'adopt-baseline': async (parsed) => {
+  adopt: async (parsed) => {
     const baseline = await import('../release/baseline.mjs');
     const written = await baseline.adoptBaseline({
       publishedSurfacePath: requiredOption(parsed, 'published-surface'),
@@ -235,7 +236,7 @@ const RELEASE_ACTIONS: Record<string, Handler> = {
 };
 
 /**
- * `weles release <surface|enforce-version|validate-manifest|adopt-baseline>` —
+ * `weles release <surface|enforce|validate|adopt>` —
  * the judgements the release pipeline asks this product to make about itself,
  * and the write-back that keeps the documents those judgements read truthful.
  */
@@ -245,12 +246,12 @@ export async function runRelease(parsed: ParsedCli): Promise<void> {
 }
 
 /**
- * `weles design export-assets --provider figma --request <file>` exports
+ * `weles design export --provider figma --request <file>` exports
  * the inventory named in that request to its existing checkout. The request
  * also names the Git remote, branch and scoped credential acquisition inputs.
  * No organization, account, checkout or SSH key is selected by this command.
  *
- * `weles design parse-document --provider figma <document.json[.gz]>
+ * `weles design parse --provider figma <document.json[.gz]>
  * <summary.json> <nodes.json> [<vocabulary.json>]` — the exporter's one parse
  * of a document, on its own, for a committed document whose export predates
  * its vocabulary. It reads no credential and reaches no network.
@@ -263,23 +264,23 @@ const DESIGN_PROVIDER = 'figma';
 // The provider modules are ES modules and this CLI compiles to CommonJS,
 // which cannot static-import ESM.
 const DESIGN_ACTIONS: Record<string, Handler> = {
-  'export-assets': async (parsed) => {
+  export: async (parsed) => {
     const [, ...paths] = parsed.positional;
     const request = optionalOption(parsed, 'request');
     if (paths.length || !request) {
       throw new UsageError(
-        'design export-assets requires --provider figma --request <export-request.json> and no positional paths',
+        'design export requires --provider figma --request <export-request.json> and no positional paths',
       );
     }
     const exporter = await import('../figma/export-design-assets.mjs');
     await exporter.exportDesignAssets(request);
   },
-  'parse-document': async (parsed) => {
+  parse: async (parsed) => {
     const [, ...paths] = parsed.positional;
     const parser = await import('../figma/document/parse-figma-document.mjs');
     if (paths.length < parser.REQUIRED_PATHS) {
       throw new UsageError(
-        'weles design parse-document takes --provider figma <document.json[.gz]> <summary.json> <nodes.json> [<vocabulary.json>]',
+        'weles design parse takes --provider figma <document.json[.gz]> <summary.json> <nodes.json> [<vocabulary.json>]',
       );
     }
     const [source, summaryPath, nodesPath, vocabularyPath] = paths;

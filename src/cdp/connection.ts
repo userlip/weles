@@ -147,7 +147,8 @@ export class CDPConnection {
     }
 
     if (msg.method) {
-      if (msg.sessionId) this._fireEvent(`${msg.sessionId}:${msg.method}`, msg.params);
+      if (msg.sessionId)
+        this._fireEvent(`${msg.sessionId}:${msg.method}`, msg.params);
       this._fireEvent(msg.method, msg.params);
     }
   }
@@ -167,7 +168,10 @@ export class CDPConnection {
     }
     if (failures.length)
       this._fail(
-        new AggregateError(failures, `a listener of the DevTools event ${key} threw`),
+        new AggregateError(
+          failures,
+          `a listener of the DevTools event ${key} threw`,
+        ),
       );
   }
 

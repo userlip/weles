@@ -27,8 +27,10 @@ export function osFromUA(ua: string): string | null {
   return null;
 }
 
+/** The OS a `navigator.platform` string names; the caller reads the signal
+ * only when the capture holds it as a string. */
 export function platformFromNav(platform: string): string | null {
-  const p = String(platform || '').toLowerCase();
+  const p = platform.toLowerCase();
   if (p.includes('mac') || p.includes('darwin')) return 'macos';
   if (p.includes('win')) return 'windows';
   if (p.includes('linux')) return 'linux';

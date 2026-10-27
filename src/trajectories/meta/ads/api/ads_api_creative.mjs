@@ -127,8 +127,16 @@ const RESOURCES = {
   },
 };
 
-const resource = statedChoice(['RESOURCE'], RESOURCES, 'the creative object acted on');
+const resource = statedChoice(
+  ['RESOURCE'],
+  RESOURCES,
+  'the creative object acted on',
+);
 const actions = RESOURCES[resource];
-const action = statedChoice(['ACTION_KIND', 'META_ACTION'], actions, `what is done with the ${resource}`);
+const action = statedChoice(
+  ['ACTION_KIND', 'META_ACTION'],
+  actions,
+  `what is done with the ${resource}`,
+);
 await actions[action]();
 console.log(`PASS: Meta creative API ${action} ${resource} completed`);

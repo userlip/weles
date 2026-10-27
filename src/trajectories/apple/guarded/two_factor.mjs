@@ -12,17 +12,25 @@ export const TWO_FACTOR_FIELD =
 
 /** Types the code into the field Apple shows; refused when the field cannot take it. */
 async function typeCode(scope, page, code) {
-  if (!/^\d+$/.test(code)) throw new Error('APPLE_2FA_CODE_INVALID: the relayed code is not digits');
-  const boxes = await scope.locator(TWO_FACTOR_FIELD).filter({ visible: true }).all();
+  if (!/^\d+$/.test(code))
+    throw new Error('APPLE_2FA_CODE_INVALID: the relayed code is not digits');
+  const boxes = await scope
+    .locator(TWO_FACTOR_FIELD)
+    .filter({ visible: true })
+    .all();
   const [only, ...rest] = boxes;
-  if (!only) throw new Error('APPLE_2FA_FIELD_MISSING: Apple shows no code field');
+  if (!only)
+    throw new Error('APPLE_2FA_FIELD_MISSING: Apple shows no code field');
   if (!rest.length) {
     await humanFill(page, only, code);
     return 'one field';
   }
   if (boxes.length !== code.length)
-    throw new Error(`APPLE_2FA_FIELD_MISMATCH: Apple shows ${boxes.length} code boxes for a ${code.length}-digit code`);
-  for (const [index, box] of boxes.entries()) await humanFill(page, box, code.charAt(index));
+    throw new Error(
+      `APPLE_2FA_FIELD_MISMATCH: Apple shows ${boxes.length} code boxes for a ${code.length}-digit code`,
+    );
+  for (const [index, box] of boxes.entries())
+    await humanFill(page, box, code.charAt(index));
   return 'one box per digit';
 }
 
@@ -31,10 +39,18 @@ async function typeCode(scope, page, code) {
  * capability. Answers how the code was entered and whether Apple's offer to
  * trust the browser was taken.
  */
-export async function completeAppleTwoFactorChallenge(page, frame, withCode, logPrefix) {
+export async function completeAppleTwoFactorChallenge(
+  page,
+  frame,
+  withCode,
+  logPrefix,
+) {
   const entered = await withCode((code) => typeCode(frame, page, code));
   await pageSettled(page);
-  const trusted = await clickOffered(page, 'the button that trusts this browser after the verification code');
+  const trusted = await clickOffered(
+    page,
+    'the button that trusts this browser after the verification code',
+  );
   if (trusted) console.log(`${logPrefix} trusted the browser`);
   return { source: 'capability', entered, trusted };
 }

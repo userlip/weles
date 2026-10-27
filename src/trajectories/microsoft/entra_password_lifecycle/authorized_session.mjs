@@ -48,9 +48,12 @@ async function fillVerified(page, locator, value) {
   await fill(page, locator, value);
   await pageSettled(page);
   await locator.inputValue().catch((error) => {
-    throw new Error(`a typed sign-in value could not be verified: the control value could not be read back: ${error.message}`, {
-      cause: error,
-    });
+    throw new Error(
+      `a typed sign-in value could not be verified: the control value could not be read back: ${error.message}`,
+      {
+        cause: error,
+      },
+    );
   });
 }
 
@@ -78,7 +81,11 @@ const answer = (verdict, reason) => ({ verdict, reason });
 async function challengeOr(page, absent) {
   const challenged = await judged(page, IDENTITY_CHALLENGE);
   if (!challenged.ok) return answer('unavailable', challenged.reason);
-  if (challenged.shows) return answer('identity_challenge', `Microsoft asks to verify identity at ${page.url()}`);
+  if (challenged.shows)
+    return answer(
+      'identity_challenge',
+      `Microsoft asks to verify identity at ${page.url()}`,
+    );
   return answer('unavailable', absent);
 }
 
@@ -101,36 +108,66 @@ export async function signIn(session, contract, password) {
   await session.ctx.clearCookies();
   await page.goto(AUTHORIZED_CONTEXT_URL, { waitUntil: 'domcontentloaded' });
   await pageSettled(page);
-  const emailInput = page.locator('input[name="loginfmt"], input#i0116, input[type="email"]').first();
+  const emailInput = page
+    .locator('input[name="loginfmt"], input#i0116, input[type="email"]')
+    .first();
   if (!(await appears(emailInput)) || !(await visible(emailInput)))
-    return answer('unavailable', `the sign-in page at ${page.url()} shows no email field`);
+    return answer(
+      'unavailable',
+      `the sign-in page at ${page.url()} shows no email field`,
+    );
   // fillVerified proves the field holds the whole UPN before it is sent, so
   // Microsoft's "isn't in our system" answer is about the account, not a
   // truncated submit, and resubmitting the same value cannot change it.
   await fillVerified(page, emailInput, contract.accountUpn);
   await humanClickLocator(page, page.locator(SUBMIT).first());
   await pageSettled(page);
-  const unknown = await judged(page, 'Does the page say this account does not exist or could not be found?');
+  const unknown = await judged(
+    page,
+    'Does the page say this account does not exist or could not be found?',
+  );
   if (!unknown.ok) return answer('unavailable', unknown.reason);
-  if (unknown.shows) return answer('account_unknown', `Microsoft says ${contract.accountUpn} does not exist`);
+  if (unknown.shows)
+    return answer(
+      'account_unknown',
+      `Microsoft says ${contract.accountUpn} does not exist`,
+    );
   await choosePasswordSignIn(page);
-  const passwordInput = page.locator('input[name="passwd"], input#i0118, input[type="password"]').first();
+  const passwordInput = page
+    .locator('input[name="passwd"], input#i0118, input[type="password"]')
+    .first();
   if (!(await appears(passwordInput)) || !(await visible(passwordInput)))
-    return challengeOr(page, `the sign-in page at ${page.url()} offers no password field`);
+    return challengeOr(
+      page,
+      `the sign-in page at ${page.url()} offers no password field`,
+    );
   await fillVerified(page, passwordInput, password);
   await humanClickLocator(page, page.locator(SUBMIT).first());
   await pageSettled(page);
   // A refused password leaves Microsoft's password field on screen.
   if (await visible(page.locator('input[name="passwd"], input#i0118')))
-    return answer('rejected', 'Microsoft kept the password field on screen after the password was sent');
+    return answer(
+      'rejected',
+      'Microsoft kept the password field on screen after the password was sent',
+    );
   const staySignedIn = await answerStaySignedIn(page);
   if (!staySignedIn.ok) return answer('unavailable', staySignedIn.reason);
   const challenged = await judged(page, IDENTITY_CHALLENGE);
   if (!challenged.ok) return answer('unavailable', challenged.reason);
-  if (challenged.shows) return answer('identity_challenge', `Microsoft asks to verify identity at ${page.url()}`);
+  if (challenged.shows)
+    return answer(
+      'identity_challenge',
+      `Microsoft asks to verify identity at ${page.url()}`,
+    );
   await pageSettled(page);
-  if (!AUTHORIZED_CONTEXT_URL_PATTERN.test(page.url()) || !AUTHORIZED_CONTEXT_HOST.test(new URL(page.url()).hostname))
-    return challengeOr(page, `the sign-in ended at ${page.url()}, outside the authorized context`);
+  if (
+    !AUTHORIZED_CONTEXT_URL_PATTERN.test(page.url()) ||
+    !AUTHORIZED_CONTEXT_HOST.test(new URL(page.url()).hostname)
+  )
+    return challengeOr(
+      page,
+      `the sign-in ended at ${page.url()}, outside the authorized context`,
+    );
   return answer('authenticated', `signed in at ${page.url()}`);
 }
 
@@ -138,7 +175,8 @@ export async function signIn(session, contract, password) {
 // assertion, then the Skarbiec commit. Never commits an unasserted identity. A
 // commit that failed answers committed: false with the cause in commitFailure.
 export async function commitAfterFreshLogin(session, account, contract, plan) {
-  const { password, writeOperation, sink, proxyUrl, providerEffect, evidence } = plan;
+  const { password, writeOperation, sink, proxyUrl, providerEffect, evidence } =
+    plan;
   const signedIn = await signIn(session, contract, password);
   evidence.push(`fresh_login_verification:${signedIn.verdict}`);
   if (signedIn.verdict !== 'authenticated') {
@@ -147,8 +185,12 @@ export async function commitAfterFreshLogin(session, account, contract, plan) {
       committed: false,
       answer: outcome(contract, {
         status: challenged ? 'needs_human_approval' : 'operation_failed',
-        code: challenged ? 'ENTRA_FRESH_LOGIN_REQUIRES_HUMAN_APPROVAL' : 'ENTRA_FRESH_LOGIN_FAILED',
-        phase: challenged ? 'identity_verification' : 'fresh_login_verification',
+        code: challenged
+          ? 'ENTRA_FRESH_LOGIN_REQUIRES_HUMAN_APPROVAL'
+          : 'ENTRA_FRESH_LOGIN_FAILED',
+        phase: challenged
+          ? 'identity_verification'
+          : 'fresh_login_verification',
         retryable: signedIn.verdict !== 'rejected',
         providerEffect,
         reason: challenged
@@ -172,7 +214,12 @@ export async function commitAfterFreshLogin(session, account, contract, plan) {
     };
   }
   evidence.push('identity_verification:confirmed');
-  const commitFailure = await skarbiecCommit(account, contract, password, writeOperation);
+  const commitFailure = await skarbiecCommit(
+    account,
+    contract,
+    password,
+    writeOperation,
+  );
   if (commitFailure) return { committed: false, answer: null, commitFailure };
   evidence.push(`skarbiec_commit:${writeOperation}`);
   const cookies = await session.ctx.cookies();

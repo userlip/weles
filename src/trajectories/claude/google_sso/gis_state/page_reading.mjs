@@ -36,7 +36,8 @@ export const readGisState = (arg) => {
       el.getAttribute('disabled') !== null
     );
   const label = (el) => el.innerText.replace(/\s+/g, ' ').trim();
-  const mean = (...values) => values.reduce((sum, value) => sum + value) / values.length;
+  const mean = (...values) =>
+    values.reduce((sum, value) => sum + value) / values.length;
   // Tag the element the state machine will act on, so the click re-finds exactly
   // this element (after scrolling it into view) instead of trusting a coordinate
   // read one poll earlier. Tags from the previous poll are cleared first.
@@ -204,7 +205,8 @@ export async function clickGisTarget(page, kind) {
       el.scrollIntoView({ block: 'center', inline: 'center' });
       const r = el.getBoundingClientRect();
       if (!(r.width && r.height)) return null;
-      const mean = (...values) => values.reduce((sum, value) => sum + value) / values.length;
+      const mean = (...values) =>
+        values.reduce((sum, value) => sum + value) / values.length;
       const x = mean(r.left, r.right);
       const y = mean(r.top, r.bottom);
       const hit = document.elementFromPoint(x, y);
@@ -230,5 +232,8 @@ export async function clickGisTarget(page, kind) {
 // Read one live page through that probe. A navigation mid-read means "not ready,
 // look again", which navEval already turns into the null default.
 export async function observeGisPage(p, email) {
-  return navEval(p, readGisState, null, { email, googleHost: GOOGLE_ACCOUNTS_HOST });
+  return navEval(p, readGisState, null, {
+    email,
+    googleHost: GOOGLE_ACCOUNTS_HOST,
+  });
 }

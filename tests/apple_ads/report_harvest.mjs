@@ -45,9 +45,7 @@ async function run(runParams) {
 function observedAmount(value) {
   const raw =
     value !== null && typeof value === 'object' ? value.amount : value;
-  return raw === undefined || raw === null || raw === ''
-    ? null
-    : Number(raw);
+  return raw === undefined || raw === null || raw === '' ? null : Number(raw);
 }
 
 try {
@@ -65,7 +63,11 @@ try {
   }
   process.env.ACCOUNT_ID = accountId;
   const account = await getSocialAccount('apple');
-  assert.equal(account?.id, accountId, 'the requested Apple account must exist');
+  assert.equal(
+    account?.id,
+    accountId,
+    'the requested Apple account must exist',
+  );
   assert.equal(
     account.metadata.weles_real_test_fixture,
     true,
@@ -103,7 +105,11 @@ try {
     apple_ads_exact_ranges: rejectedRange,
   });
   assert.equal(refused.ok, false, JSON.stringify(refused));
-  const refusal = [refused.error, refused.stderr_tail, refused.stdout_tail].join('\n');
+  const refusal = [
+    refused.error,
+    refused.stderr_tail,
+    refused.stdout_tail,
+  ].join('\n');
   const rejectedLabel = rejectedRange.split('=').shift().trim();
   assert.ok(refusal.includes(`range ${rejectedLabel} (`), refusal);
   assert.match(refusal, /answered HTTP \d+; GraphQL errors:/);
@@ -119,8 +125,14 @@ try {
     .map((range) => range.split('=').shift().trim());
   const summaries = harvest.summary.exactReports;
   const rawReports = harvest.exactReports;
-  assert.deepEqual(summaries.map((range) => range.label), expectedLabels);
-  assert.deepEqual(rawReports.map((range) => range.label), expectedLabels);
+  assert.deepEqual(
+    summaries.map((range) => range.label),
+    expectedLabels,
+  );
+  assert.deepEqual(
+    rawReports.map((range) => range.label),
+    expectedLabels,
+  );
   for (const [index, summary] of summaries.entries()) {
     const raw = rawReports[index];
     assert.equal(raw.ok, true, JSON.stringify(raw));
@@ -143,7 +155,11 @@ try {
 } catch (error) {
   failure = error;
   report.status = connected ? 'failed' : 'blocked';
-  report.error = { name: error.name, message: error.message, stack: error.stack };
+  report.error = {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+  };
 } finally {
   await evidence.finish();
 }

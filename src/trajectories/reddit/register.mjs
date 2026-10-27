@@ -42,7 +42,11 @@ console.log(`[register] identity: ${id.username} ${id.email}`);
 async function wander() {
   const viewport = s.page.viewportSize();
   if (!viewport) return;
-  await humanMove(s.page, Math.random() * viewport.width, Math.random() * viewport.height);
+  await humanMove(
+    s.page,
+    Math.random() * viewport.width,
+    Math.random() * viewport.height,
+  );
 }
 
 /** The first visible field of `selector`, once the page shows it. */
@@ -63,7 +67,9 @@ async function typeInto(field, text) {
 
 /** Submits the email; Reddit's answer to its verify-initialize call says whether the code was sent. */
 async function submitEmail() {
-  const email = await shownField('input[type="email"], input[name="email"], input[autocomplete="email"]');
+  const email = await shownField(
+    'input[type="email"], input[name="email"], input[autocomplete="email"]',
+  );
   await typeInto(email, id.email);
   // Each step is submitted by its own form, from the field just typed into.
   const answer = await responseAfterAction(
@@ -80,8 +86,14 @@ async function submitEmail() {
 }
 
 async function submitCode() {
-  const field = await shownField('input[autocomplete="one-time-code"], input[name="code"]');
-  const code = await mailedCode(id.email, 'reddit', await fieldCodeLength(field));
+  const field = await shownField(
+    'input[autocomplete="one-time-code"], input[name="code"]',
+  );
+  const code = await mailedCode(
+    id.email,
+    'reddit',
+    await fieldCodeLength(field),
+  );
   await typeInto(field, code);
   await s.page.keyboard.press('Enter');
   console.log('[register] submitted code');
@@ -95,19 +107,26 @@ async function submitCode() {
  * typed, and a field that then holds anything else is refused.
  */
 async function submitUsernameAndPassword() {
-  const username = await shownField('input[name="username"], input[autocomplete="username"]');
+  const username = await shownField(
+    'input[name="username"], input[autocomplete="username"]',
+  );
   const suggested = await username.inputValue();
-  if (suggested) console.log(`[register] clearing suggested username "${suggested}"`);
+  if (suggested)
+    console.log(`[register] clearing suggested username "${suggested}"`);
   await humanClickLocator(s.page, username);
   await username.fill(''); // lint-allow: bare-fill
   await pageSettled(s.page);
   await humanType(s.page, id.username);
   const typed = await username.inputValue();
   if (typed !== id.username)
-    throw new Error(`REDDIT_USERNAME_NOT_SET: the field holds "${typed}" instead of "${id.username}"`);
+    throw new Error(
+      `REDDIT_USERNAME_NOT_SET: the field holds "${typed}" instead of "${id.username}"`,
+    );
   await pageSettled(s.page);
   await wander();
-  const password = await shownField('input[type="password"], input[autocomplete="new-password"]');
+  const password = await shownField(
+    'input[type="password"], input[autocomplete="new-password"]',
+  );
   await typeInto(password, id.password);
   await s.page.keyboard.press('Enter');
   console.log('[register] submitted username and password');
@@ -118,12 +137,26 @@ async function submitUsernameAndPassword() {
 /** Records the account and binds its character, then proves the record holds Reddit's session. */
 async function recordAccount() {
   console.log(`[register] ${await s.saveAccount('reddit', id)}`);
-  console.log(`[bind] ${JSON.stringify(await autoBindCharacter(id.username, 'reddit'))}`);
+  console.log(
+    `[bind] ${JSON.stringify(await autoBindCharacter(id.username, 'reddit'))}`,
+  );
   const saved = findAccount('reddit', id.username);
-  if (!saved) throw new Error(`REDDIT_ACCOUNT_NOT_RECORDED: no Skarbiec item for ${id.username} after saving it`);
-  const cookies = Array.isArray(saved.metadata?.cookies) ? saved.metadata.cookies : [];
-  if (!cookies.some((c) => typeof c?.name === 'string' && Object.hasOwn(REDDIT_SESSION, c.name)))
-    throw new Error(`REDDIT_NOT_SIGNED_IN: item ${saved.id} holds no Reddit session cookie, so the signup did not authenticate`);
+  if (!saved)
+    throw new Error(
+      `REDDIT_ACCOUNT_NOT_RECORDED: no Skarbiec item for ${id.username} after saving it`,
+    );
+  const cookies = Array.isArray(saved.metadata?.cookies)
+    ? saved.metadata.cookies
+    : [];
+  if (
+    !cookies.some(
+      (c) =>
+        typeof c?.name === 'string' && Object.hasOwn(REDDIT_SESSION, c.name),
+    )
+  )
+    throw new Error(
+      `REDDIT_NOT_SIGNED_IN: item ${saved.id} holds no Reddit session cookie, so the signup did not authenticate`,
+    );
   return saved;
 }
 

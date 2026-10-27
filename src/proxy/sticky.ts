@@ -1,17 +1,22 @@
 /**
  * Stored sticky-session refresh. resolveAccountSession persists a per-account
  * proxy config in social_accounts.metadata.proxy. Sticky session IDs expire
- * after the provider's TTL (PacketStream ~30min, Oxylabs ~10min sometimes),
- * after which CONNECT returns 502/407 and Chromium reports
- * ERR_TUNNEL_CONNECTION_FAILED. Pre-flight the stored sticky; if dead, rotate
- * the session id in-place keeping host/port/country stable.
+ * after the provider's TTL, after which CONNECT is refused and Chromium
+ * reports ERR_TUNNEL_CONNECTION_FAILED. Pre-flight the stored sticky; if dead,
+ * rotate the session id in place keeping host, port and country stable.
  */
-import type { ProxyConfig } from './config.js';
+import http from 'node:http';
+import https from 'node:https';
+import { constants as http2 } from 'node:http2';
 
+import type { ProxyConfig } from './config.js';
+import echo from '../trajectories/_shared/network/egress-echo.json' with { type: 'json' };
+
+/** How each provider spells the session id inside its credentials. */
 const SESSION_PATTERNS: {
   user?: RegExp;
   pass?: RegExp;
-  build: (cfg: ProxyConfig, sid: number) => ProxyConfig;
+  build: (cfg: ProxyConfig, sid: string) => ProxyConfig;
 }[] = [
   {
     pass: /_session-\d+/,
@@ -43,39 +48,62 @@ const SESSION_PATTERNS: {
   },
 ];
 
-// The proxy answers the CONNECT, refuses the socket, or closes it; each of
-// those ends the check. No clock decides it.
+/**
+ * Whether the proxy opens a tunnel to `host` on the HTTPS port: Node's own
+ * CONNECT client sends the request, and the proxy's answer (its status line)
+ * or the socket's own error ends the check, each said with what it was. A
+ * proxy with credentials is asked with them; one without, without. No clock
+ * decides it.
+ */
 async function preflight(cfg: ProxyConfig, host: string): Promise<boolean> {
   if (!cfg.host || !cfg.port) return false;
-  const auth = Buffer.from(
-    `${cfg.username ?? ''}:${cfg.password ?? ''}`,
-  ).toString('base64');
-  const net = await import('node:net');
+  const headers: Record<string, string> = {};
+  if (cfg.username !== undefined && cfg.password !== undefined) {
+    headers['Proxy-Authorization'] =
+      `Basic ${Buffer.from(`${cfg.username}:${cfg.password}`).toString('base64')}`;
+  }
   const { promise, resolve } = Promise.withResolvers<boolean>();
-  const sock = net.connect({ host: cfg.host, port: Number(cfg.port) }, () => {
-    sock.write(
-      `CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\nProxy-Authorization: Basic ${auth}\r\n\r\n`,
+  // Node's HTTPS agent carries the protocol's port as `defaultPort`; its
+  // type declarations leave the field out, so it is read checked.
+  const agent: object = https.globalAgent;
+  if (!('defaultPort' in agent) || typeof agent.defaultPort !== 'number') {
+    throw new Error(
+      "Node's HTTPS agent names no default port, so the tunnel has no port to ask the proxy for",
     );
+  }
+  const httpsPort = agent.defaultPort;
+  const request = http.request({
+    host: cfg.host,
+    port: Number(cfg.port),
+    method: 'CONNECT',
+    path: `${host}:${httpsPort}`,
+    headers,
   });
-  sock.once('data', (d) => {
-    sock.destroy();
-    const status = d.toString().split('\r\n')[0];
-    if (!/^HTTP\/1\.[01] 200/.test(status))
-      console.log(`[sticky] proxy_connect_refused on ${cfg.host}: ${status}`);
-    resolve(/^HTTP\/1\.[01] 200/.test(status));
+  request.once('connect', (answer, socket) => {
+    socket.destroy();
+    const opened = answer.statusCode === http2.HTTP_STATUS_OK;
+    if (!opened)
+      console.log(
+        `[sticky] proxy_connect_refused on ${cfg.host}: ${answer.statusCode} ${answer.statusMessage}`,
+      );
+    resolve(opened);
   });
-  sock.once('error', (error: NodeJS.ErrnoException) => {
+  request.once('error', (error: NodeJS.ErrnoException) => {
     console.log(
-      `[sticky] proxy_connect_failed on ${cfg.host}: ${error.code ?? error.message}`,
+      `[sticky] proxy_connect_failed on ${cfg.host}: ${error.code ? `${error.code} ` : ''}${error.message}`,
     );
     resolve(false);
   });
-  sock.once('close', () => resolve(false));
+  request.end();
   return promise;
 }
 
+/**
+ * The same credentials under a fresh session id: the high-resolution clock's
+ * reading, which no earlier session of this process had.
+ */
 function rotate(cfg: ProxyConfig): ProxyConfig | null {
-  const sid = Math.floor(Math.random() * 9000000 + 1000000);
+  const sid = process.hrtime.bigint().toString();
   for (const pat of SESSION_PATTERNS) {
     if (pat.user && cfg.username && pat.user.test(cfg.username))
       return pat.build(cfg, sid);
@@ -85,12 +113,19 @@ function rotate(cfg: ProxyConfig): ProxyConfig | null {
   return null;
 }
 
+/**
+ * The stored sticky when it still opens a tunnel to `targetHost` (the
+ * platform's own host; the declared egress echo's host for a platform that
+ * declares none), a rotated one when only its session expired, none when the
+ * proxy refuses a fresh session too.
+ */
 export async function refreshStickyIfDead(
   cfg: ProxyConfig,
-  targetHost = 'api.ipify.org',
+  targetHost: string | undefined,
 ): Promise<ProxyConfig | null> {
+  const host = targetHost === undefined ? new URL(echo.url).hostname : targetHost;
   if (process.env.PROXY_SKIP_PREFLIGHT === '1') return cfg;
-  if (await preflight(cfg, targetHost)) return cfg;
+  if (await preflight(cfg, host)) return cfg;
   // One fresh session id: an expired sticky is the case this repairs; a proxy
   // that refuses a new session too is broken, not expired.
   const rotated = rotate(cfg);
@@ -100,7 +135,7 @@ export async function refreshStickyIfDead(
     );
     return null;
   }
-  if (await preflight(rotated, targetHost)) {
+  if (await preflight(rotated, host)) {
     console.log(
       `[sticky] rotated dead session on ${cfg.host} -> new sticky working`,
     );

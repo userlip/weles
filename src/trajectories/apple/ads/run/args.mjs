@@ -8,11 +8,16 @@ import { statedText } from '../../../_shared/inputs/stated.mjs';
 
 // `asc` on PATH unless ASC_BIN names the binary.
 export const ASC_BIN = process.env.ASC_BIN ? process.env.ASC_BIN : 'asc';
-export const action = statedText(['APPLE_ADS_ACTION'], 'the Apple Ads verb the run performs (the action name after apple_)');
+export const action = statedText(
+  ['APPLE_ADS_ACTION'],
+  'the Apple Ads verb the run performs (the action name after apple_)',
+);
 export const org = process.env.ASC_ADS_ORG_ID;
 export const adsProfile = process.env.APPLE_ADS_PROFILE_NAME;
 export const confirmed =
-  process.env.APPLE_ADS_CONFIRM === '1' || process.env.WRITE_CONFIRM === '1' || process.env.SUBMIT === '1';
+  process.env.APPLE_ADS_CONFIRM === '1' ||
+  process.env.WRITE_CONFIRM === '1' ||
+  process.env.SUBMIT === '1';
 
 /** The input `name`, or undefined when it is unset or empty. */
 export function value(name) {
@@ -43,7 +48,12 @@ const PROFILE_COMMANDS = { login: true, logout: true, switch: true };
 export function withOutput(args) {
   if (process.env.APPLE_ADS_NO_OUTPUT === '1') return args;
   const [tool, area, verb] = args;
-  if (tool === 'ads' && area === 'auth' && Object.hasOwn(PROFILE_COMMANDS, verb)) return args;
+  if (
+    tool === 'ads' &&
+    area === 'auth' &&
+    Object.hasOwn(PROFILE_COMMANDS, verb)
+  )
+    return args;
   return args.includes('--output') ? args : [...args, '--output', 'json'];
 }
 
@@ -86,7 +96,10 @@ export function splitArgs(s) {
       if (ch === quote) quote = null;
       else if (ch === '\\') {
         const escaped = chars.next();
-        if (escaped.done) throw new Error('APPLE_ADS_CLI_ARGS ends in an escape with nothing after it');
+        if (escaped.done)
+          throw new Error(
+            'APPLE_ADS_CLI_ARGS ends in an escape with nothing after it',
+          );
         cur += escaped.value;
       } else cur += ch;
     } else if (ch === '"' || ch === "'") quote = ch;

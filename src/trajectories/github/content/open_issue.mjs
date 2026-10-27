@@ -67,7 +67,9 @@ await runAction({
     );
     const finalUrl = s.page.url();
     if (!/\/issues\/\d+$/.test(new URL(finalUrl).pathname))
-      throw new Error(`issue_not_submitted: GitHub left the browser at ${finalUrl}`);
+      throw new Error(
+        `issue_not_submitted: GitHub left the browser at ${finalUrl}`,
+      );
     return `opened ${finalUrl}`;
   },
 });

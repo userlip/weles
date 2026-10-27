@@ -10,7 +10,10 @@
 // on /home.
 import { humanFill } from '../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { deactivateAccount, deactivationClause } from '../../../dist/account/state.js';
+import {
+  deactivateAccount,
+  deactivationClause,
+} from '../../../dist/account/state.js';
 import { detectTwitterBanSignals } from '../../../dist/platforms/twitter/ban_signals.js';
 import { runLogin } from '../_shared/action/login.mjs';
 import { pageCondition, pageSettled } from '../_shared/page/settled.mjs';
@@ -19,7 +22,8 @@ const LOGIN_URL = 'https://x.com/i/flow/login';
 const HOME_ROUTE = '/home';
 const SUSPENDED_ROUTES = ['/account/access'];
 const ADDRESS = 'input[autocomplete="username"]';
-const PASSWORD = 'input[autocomplete="current-password"], input[name="password"]';
+const PASSWORD =
+  'input[autocomplete="current-password"], input[name="password"]';
 // X's challenge step: a free-text input that is neither the address nor
 // the password field.
 const CHALLENGE = '[data-testid="ocfEnterTextTextInput"]';
@@ -46,16 +50,42 @@ function flowAnswer(page, expected) {
 async function refuseAnswer(s, acct, answer) {
   const url = s.page.url();
   if (answer === 'alert')
-    throw new Error(`TWITTER_LOGIN_REFUSED: ${(await s.page.locator('[role="alert"]').first().innerText()).trim()}`);
+    throw new Error(
+      `TWITTER_LOGIN_REFUSED: ${(await s.page.locator('[role="alert"]').first().innerText()).trim()}`,
+    );
   if (answer === 'challenge')
-    throw Object.assign(new Error(`TWITTER_CHALLENGE: X asks ${acct.username} to confirm the login at ${url}`), {
-      banSignal: { signal: 'checkpoint', healthy: false, details: { final_url: url } },
-    });
-  if (SUSPENDED_ROUTES.some((route) => new URL(url).pathname.startsWith(route))) {
-    const outcome = await deactivateAccount(acct.id, acct.metadata, 'TWITTER_SUSPENDED');
-    throw Object.assign(new Error(`TWITTER_SUSPENDED: ${url}; ${deactivationClause(outcome, acct.username)}`), {
-      banSignal: { signal: 'suspended', healthy: false, details: { final_url: url } },
-    });
+    throw Object.assign(
+      new Error(
+        `TWITTER_CHALLENGE: X asks ${acct.username} to confirm the login at ${url}`,
+      ),
+      {
+        banSignal: {
+          signal: 'checkpoint',
+          healthy: false,
+          details: { final_url: url },
+        },
+      },
+    );
+  if (
+    SUSPENDED_ROUTES.some((route) => new URL(url).pathname.startsWith(route))
+  ) {
+    const outcome = await deactivateAccount(
+      acct.id,
+      acct.metadata,
+      'TWITTER_SUSPENDED',
+    );
+    throw Object.assign(
+      new Error(
+        `TWITTER_SUSPENDED: ${url}; ${deactivationClause(outcome, acct.username)}`,
+      ),
+      {
+        banSignal: {
+          signal: 'suspended',
+          healthy: false,
+          details: { final_url: url },
+        },
+      },
+    );
   }
 }
 
@@ -73,15 +103,22 @@ await runLogin({
     const afterAddress = await flowAnswer(s.page, PASSWORD);
     if (afterAddress !== 'expected') {
       await refuseAnswer(s, acct, afterAddress);
-      throw new Error(`TWITTER_LOGIN_UNEXPECTED: X left the login flow before the password, at ${s.page.url()}`);
+      throw new Error(
+        `TWITTER_LOGIN_UNEXPECTED: X left the login flow before the password, at ${s.page.url()}`,
+      );
     }
     const secret = s.page.locator(PASSWORD).first();
     await humanFill(s.page, secret, password);
-    await humanClickLocator(s.page, s.page.locator('[data-testid="LoginForm_Login_Button"]').first());
+    await humanClickLocator(
+      s.page,
+      s.page.locator('[data-testid="LoginForm_Login_Button"]').first(),
+    );
     const afterPassword = await flowAnswer(s.page);
     await pageSettled(s.page);
     await refuseAnswer(s, acct, afterPassword);
     if (!new URL(s.page.url()).pathname.startsWith(HOME_ROUTE))
-      throw new Error(`TWITTER_LOGIN_UNCONFIRMED: X left the login flow for ${s.page.url()}, not ${HOME_ROUTE}`);
+      throw new Error(
+        `TWITTER_LOGIN_UNCONFIRMED: X left the login flow for ${s.page.url()}, not ${HOME_ROUTE}`,
+      );
   },
 });

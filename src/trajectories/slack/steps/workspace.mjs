@@ -66,7 +66,10 @@ export async function holdsSlackSession(ctx, workspace) {
 export function statedSlackLogin() {
   if (!process.env.SLACK_EMAIL) return null;
   return {
-    email: statedText(['SLACK_EMAIL'], 'the Google account the workspace admits'),
+    email: statedText(
+      ['SLACK_EMAIL'],
+      'the Google account the workspace admits',
+    ),
     password: statedText(
       ['SLACK_PASS'],
       'the password of the Google account in SLACK_EMAIL',
@@ -110,7 +113,9 @@ export async function signInThroughGoogle(s, workspace, login, label) {
  * for this workspace (api.slack.com signs in per workspace).
  */
 export async function seatApiSession(page, workspace) {
-  await page.goto(`${workspace}/apps/manage`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${workspace}/apps/manage`, {
+    waitUntil: 'domcontentloaded',
+  });
   await pageSettled(page);
 }
 
@@ -125,7 +130,12 @@ export async function readClientToken(page, workspace) {
     if (window.boot_data && window.boot_data.api_token)
       return window.boot_data.api_token;
     return Object.keys(localStorage)
-      .map((key) => localStorage.getItem(key).match(/xoxc-[\w-]+/)?.shift())
+      .map((key) =>
+        localStorage
+          .getItem(key)
+          .match(/xoxc-[\w-]+/)
+          ?.shift(),
+      )
       .find(Boolean);
   });
   if (!token)

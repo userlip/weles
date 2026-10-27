@@ -42,6 +42,7 @@ const CREDENTIAL_STORING_RUNS = [
   '/microsoft/entra/adopt_password.mjs',
   '/microsoft/entra/reset_password.mjs',
   '/microsoft/entra/verify_password.mjs',
+  '/slack/create_app.mjs',
   '/slack/provision_user_token.mjs',
 ];
 
@@ -168,8 +169,7 @@ export function applyAccountAndTaskAdmission(
       env.GM_CREDENTIAL_SERVICE = credentialService;
     const max = countText(params.max);
     if (max !== undefined) env.GM_MAX = max;
-    if (params.open === false || String(params.open) === '0')
-      env.GM_OPEN = '0';
+    if (params.open === false || String(params.open) === '0') env.GM_OPEN = '0';
     else env.GM_OPEN = '1';
   }
   applyDeclaredEnv(params, trajPath, env);

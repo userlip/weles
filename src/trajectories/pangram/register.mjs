@@ -12,10 +12,22 @@
 // used only when PANGRAM_REGISTRATION_PROXY_URL names one.
 import { exitStatusFor } from '../../../dist/cli/usage.js';
 import { WSession } from '../../../dist/session/wsession.js';
-import { fieldCodeLength, mailedCode, mailedLink } from '../_shared/inputs/mailed_code.mjs';
+import {
+  fieldCodeLength,
+  mailedCode,
+  mailedLink,
+} from '../_shared/inputs/mailed_code.mjs';
 import { clickDescribed, clickOffered } from '../_shared/page/judged/seen.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
-import { FIELDS, dismissCookies, fillEvery, fillField, signedIn, signInWithPassword, visible } from './register/page.mjs';
+import {
+  FIELDS,
+  dismissCookies,
+  fillEvery,
+  fillField,
+  signedIn,
+  signInWithPassword,
+  visible,
+} from './register/page.mjs';
 
 const SIGNUP_URL = 'https://www.pangram.com/signup';
 const PANGRAM_HOST = 'pangram.com';
@@ -26,9 +38,14 @@ async function fillSignupForm(page, id) {
   await fillField(page, 'email', FIELDS.email, id.email);
   // The form may ask for the password twice; each password field takes it.
   await fillEvery(page, 'password', FIELDS.password, id.password);
-  if (await visible(page, FIELDS.firstName).count()) await fillField(page, 'first name', FIELDS.firstName, id.firstName);
-  if (await visible(page, FIELDS.lastName).count()) await fillField(page, 'last name', FIELDS.lastName, id.lastName);
-  const termsAccepted = await clickOffered(page, 'the unchecked checkbox that accepts the terms of service or privacy policy');
+  if (await visible(page, FIELDS.firstName).count())
+    await fillField(page, 'first name', FIELDS.firstName, id.firstName);
+  if (await visible(page, FIELDS.lastName).count())
+    await fillField(page, 'last name', FIELDS.lastName, id.lastName);
+  const termsAccepted = await clickOffered(
+    page,
+    'the unchecked checkbox that accepts the terms of service or privacy policy',
+  );
   console.log(`[pangram_register] terms_checked=${termsAccepted}`);
 }
 
@@ -36,11 +53,17 @@ async function fillSignupForm(page, id) {
 async function verifyThroughMail(page, id) {
   const codeField = visible(page, FIELDS.code).first();
   if (await codeField.count()) {
-    const code = await mailedCode(id.email, PANGRAM_SENDER, await fieldCodeLength(codeField));
+    const code = await mailedCode(
+      id.email,
+      PANGRAM_SENDER,
+      await fieldCodeLength(codeField),
+    );
     await fillField(page, 'code', FIELDS.code, code);
     await page.keyboard.press('Enter');
   } else {
-    await page.goto(await mailedLink(id.email, PANGRAM_SENDER, PANGRAM_HOST), { waitUntil: 'domcontentloaded' });
+    await page.goto(await mailedLink(id.email, PANGRAM_SENDER, PANGRAM_HOST), {
+      waitUntil: 'domcontentloaded',
+    });
   }
   await pageSettled(page);
   if (!(await signedIn(page)) && (await visible(page, FIELDS.password).count()))
@@ -66,8 +89,15 @@ try {
   await pageSettled(s.page);
   if (!(await signedIn(s.page))) await verifyThroughMail(s.page, id);
   if (!(await signedIn(s.page)))
-    throw new Error(`PANGRAM_NOT_SIGNED_IN: Pangram answers that ${id.email} is not signed in after the signup, at ${s.page.url()}`);
-  const saved = await s.saveAccount('pangram', { username: id.email, email: id.email, password: id.password, status: 'created' });
+    throw new Error(
+      `PANGRAM_NOT_SIGNED_IN: Pangram answers that ${id.email} is not signed in after the signup, at ${s.page.url()}`,
+    );
+  const saved = await s.saveAccount('pangram', {
+    username: id.email,
+    email: id.email,
+    password: id.password,
+    status: 'created',
+  });
   console.log(`[pangram_register] saveAccount=${saved}`);
   console.log(`PASS: pangram account ready ${id.email}`);
 } catch (error) {

@@ -13,14 +13,22 @@ import { pageSettled } from '../../_shared/page/settled.mjs';
 import { editProfileToCharacter } from '../../_shared/profile/edit.mjs';
 
 async function openEditor(page) {
-  const edit = page.locator('a[data-testid="editProfileButton"], button[data-testid="editProfileButton"], a[href="/settings/profile"]').filter({ visible: true }).first();
+  const edit = page
+    .locator(
+      'a[data-testid="editProfileButton"], button[data-testid="editProfileButton"], a[href="/settings/profile"]',
+    )
+    .filter({ visible: true })
+    .first();
   await edit.waitFor({ state: 'visible' });
   await humanClickLocator(page, edit);
   await pageSettled(page);
 }
 
 async function save(page) {
-  await clickDescribed(page, 'the button that saves the profile (or completes its set-up)');
+  await clickDescribed(
+    page,
+    'the button that saves the profile (or completes its set-up)',
+  );
   await pageSettled(page);
 }
 
@@ -34,34 +42,63 @@ await runAction({
     await openEditor(s.page);
     return editProfileToCharacter(s, acct, 'twitter', {
       fields: (page) => ({
-        name: page.locator('input[name="displayName"]').filter({ visible: true }).first(),
-        bio: page.locator('textarea[name="description"]').filter({ visible: true }).first(),
+        name: page
+          .locator('input[name="displayName"]')
+          .filter({ visible: true })
+          .first(),
+        bio: page
+          .locator('textarea[name="description"]')
+          .filter({ visible: true })
+          .first(),
       }),
       save,
       kept: async (page) => {
         await page.goto(profile, { waitUntil: 'domcontentloaded' });
         await pageSettled(page);
         // The name block also shows the handle on its own line.
-        const [name] = (await page.locator('[data-testid="UserName"]').first().innerText()).split('\n');
-        return { name, bio: await page.locator('[data-testid="UserDescription"]').first().innerText() };
+        const [name] = (
+          await page.locator('[data-testid="UserName"]').first().innerText()
+        ).split('\n');
+        return {
+          name,
+          bio: await page
+            .locator('[data-testid="UserDescription"]')
+            .first()
+            .innerText(),
+        };
       },
       uploadAvatar: async (page, file) => {
         await page.goto(profile, { waitUntil: 'domcontentloaded' });
         await pageSettled(page);
-        const avatar = page.locator(`a[href="/${acct.username}/photo"] img`).first();
-        const before = (await avatar.count()) ? await avatar.getAttribute('src') : null;
+        const avatar = page
+          .locator(`a[href="/${acct.username}/photo"] img`)
+          .first();
+        const before = (await avatar.count())
+          ? await avatar.getAttribute('src')
+          : null;
         await openEditor(page);
         const input = page.locator('input[data-testid="fileInput"]').first();
-        if (!(await input.count())) throw new Error('TWITTER_AVATAR_INPUT_MISSING: the profile editor has no avatar file input');
+        if (!(await input.count()))
+          throw new Error(
+            'TWITTER_AVATAR_INPUT_MISSING: the profile editor has no avatar file input',
+          );
         await input.setInputFiles(file);
-        const apply = page.locator('button[data-testid="applyButton"]').filter({ visible: true }).first();
+        const apply = page
+          .locator('button[data-testid="applyButton"]')
+          .filter({ visible: true })
+          .first();
         await apply.waitFor({ state: 'visible' });
         await humanClickLocator(page, apply);
         await save(page);
         await page.goto(profile, { waitUntil: 'domcontentloaded' });
         await pageSettled(page);
-        const after = (await avatar.count()) ? await avatar.getAttribute('src') : null;
-        if (!after || after === before) throw new Error('TWITTER_AVATAR_UNCHANGED: the profile shows the same photo after saving the new one');
+        const after = (await avatar.count())
+          ? await avatar.getAttribute('src')
+          : null;
+        if (!after || after === before)
+          throw new Error(
+            'TWITTER_AVATAR_UNCHANGED: the profile shows the same photo after saving the new one',
+          );
       },
       profileUrl: (username) => `https://x.com/${username}`,
     });

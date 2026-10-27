@@ -39,13 +39,42 @@ const PLACEHOLDERS: Record<keyof Identity, string> = {
 };
 
 /** The value of `identity` a field of the named kind takes. */
-export function identityValue(identity: Identity, field: IdentityField): string {
+export function identityValue(
+  identity: Identity,
+  field: IdentityField,
+): string {
   return identity[FIELD_KEYS[field]];
 }
 
 /** Put each value of `identity` into `env` as $<PLATFORM>_NEW_<FIELD>. */
-export function keepIdentity(env: Record<string, string>, platform: string, identity: Identity): void {
+export function keepIdentity(
+  env: Record<string, string>,
+  platform: string,
+  identity: Identity,
+): void {
   const prefix = platform.toUpperCase();
-  for (const [key, suffix] of Object.entries(PLACEHOLDERS) as [keyof Identity, string][])
+  for (const [key, suffix] of Object.entries(PLACEHOLDERS) as [
+    keyof Identity,
+    string,
+  ][])
     env[`${prefix}_NEW_${suffix}`] = identity[key];
+}
+
+/**
+ * `v` with each $NAME or ${NAME} the session generated (`env`), or the
+ * process environment holds, put in; a name neither holds stays as written,
+ * except a generated-identity placeholder, which is refused unresolved.
+ */
+export function resolvedPlaceholders(
+  env: Record<string, string>,
+  v: string,
+): string {
+  const out = v.replace(/\$\{?([A-Z_][A-Z\d_]*)\}?/g, (written, k) => {
+    if (Object.hasOwn(env, k)) return env[k];
+    const declared = process.env[k];
+    return declared === undefined ? written : declared;
+  });
+  if (/\$\{?[A-Z_][A-Z\d_]*_NEW_[A-Z\d_]*\}?/.test(out))
+    throw new Error('unresolved generated identity placeholder');
+  return out;
 }

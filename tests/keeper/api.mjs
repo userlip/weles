@@ -109,12 +109,14 @@ await test('authenticated API observes and stops its real keeper owner', async (
     {
       variable: 'WELES_CHROMIUM_RELEASE_VERSION',
       value: undefined,
-      cause: 'the deployment pins only one of WELES_CHROMIUM_RELEASE_VERSION and WELES_CHROMIUM_RELEASE_SHA256',
+      cause:
+        'the deployment pins only one of WELES_CHROMIUM_RELEASE_VERSION and WELES_CHROMIUM_RELEASE_SHA256',
     },
     {
       variable: 'WELES_CHROMIUM_RELEASE_SHA256',
       value: undefined,
-      cause: 'the deployment pins only one of WELES_CHROMIUM_RELEASE_VERSION and WELES_CHROMIUM_RELEASE_SHA256',
+      cause:
+        'the deployment pins only one of WELES_CHROMIUM_RELEASE_VERSION and WELES_CHROMIUM_RELEASE_SHA256',
     },
     {
       variable: 'WELES_CHROMIUM_RELEASE_SHA256',

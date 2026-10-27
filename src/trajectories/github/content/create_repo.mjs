@@ -71,7 +71,9 @@ await runAction({
       decodeURIComponent(owner) !== acct.username ||
       decodeURIComponent(name) !== REPO_NAME
     )
-      throw new Error(`repo_not_created: GitHub left the browser at ${createdUrl}`);
+      throw new Error(
+        `repo_not_created: GitHub left the browser at ${createdUrl}`,
+      );
     return `created ${acct.username}/${REPO_NAME}`;
   },
 });

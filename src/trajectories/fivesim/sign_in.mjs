@@ -10,8 +10,11 @@ export const fivesimSignIn = async () =>
   googleSignIn({
     login: await getGoogleSsoCreds(),
     loginUrl: `https://${FIVESIM_HOST}/login`,
-    googleControl: 'button:has-text("Sign in with Google"), a:has-text("Sign in with Google")',
+    googleControl:
+      'button:has-text("Sign in with Google"), a:has-text("Sign in with Google")',
     originHost: FIVESIM_HOST,
     popup: true,
-    signedInUrl: (url) => new URL(url).hostname.endsWith(FIVESIM_HOST) && !new URL(url).pathname.startsWith('/login'),
+    signedInUrl: (url) =>
+      new URL(url).hostname.endsWith(FIVESIM_HOST) &&
+      !new URL(url).pathname.startsWith('/login'),
   });

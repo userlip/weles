@@ -103,6 +103,7 @@ export function parseJsonEnv(name, absent) {
   } catch (error) {
     malformed = error;
   }
-  if (malformed) throw new Error(`${name} must be valid JSON: ${malformed.message}`);
+  if (malformed)
+    throw new Error(`${name} must be valid JSON: ${malformed.message}`);
   return parsed;
 }

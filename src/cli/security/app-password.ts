@@ -1,6 +1,6 @@
 import type { ParsedCli } from '../../cli.js';
 import { appPasswordRun } from '../../runtime/api/app-password.js';
-import { printAnswer, UsageError } from '../usage.js';
+import { FAILURE_STATUS, printAnswer, UsageError } from '../usage.js';
 
 // The command is named for what it issues; the identity provider whose
 // account receives the app password is an argument, and google is the one
@@ -22,7 +22,7 @@ export async function runAppPassword(parsed: ParsedCli): Promise<void> {
     )
   ) {
     throw new UsageError(
-      'app-password accepts --provider with --login-role or --login-item, --organization and --account, or --run, and --json',
+      'password accepts --provider with --login-role or --login-item, --organization and --account, or --run, and --json',
     );
   }
   const loginRole = parsed.options['login-role'];
@@ -30,11 +30,12 @@ export async function runAppPassword(parsed: ParsedCli): Promise<void> {
   const runId = parsed.options.run;
   const organization = parsed.options.organization;
   const expectedAccount = parsed.options.account;
+  const [chosen, ...others] = [loginRole, loginItem, runId].filter(
+    (selector) => selector !== undefined,
+  );
   if (
-    Number(loginRole !== undefined) +
-      Number(loginItem !== undefined) +
-      Number(runId !== undefined) !==
-      1 ||
+    chosen === undefined ||
+    others.length ||
     (loginRole !== undefined &&
       (typeof loginRole !== 'string' || !loginRole.trim())) ||
     (loginItem !== undefined &&
@@ -65,7 +66,7 @@ export async function runAppPassword(parsed: ParsedCli): Promise<void> {
   }
   if (runId === undefined && parsed.options.provider !== PROVIDER) {
     throw new UsageError(
-      `app-password needs --provider naming the identity provider that issues it; Weles issues through ${PROVIDER}`,
+      `password needs --provider naming the identity provider that issues it; Weles issues through ${PROVIDER}`,
     );
   }
   if (
@@ -92,5 +93,5 @@ export async function runAppPassword(parsed: ParsedCli): Promise<void> {
         : { runId: runId as string };
   const row = await appPasswordRun(input);
   printAnswer(row, parsed.options.json === true);
-  if (row.ok === false || row.error) process.exitCode = 1;
+  if (row.ok === false || row.error) process.exitCode = FAILURE_STATUS;
 }

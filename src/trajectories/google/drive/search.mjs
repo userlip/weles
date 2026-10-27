@@ -26,11 +26,16 @@ const { values: args } = parseArgs({
   strict: false,
 });
 const QUERY = args.q || process.env.GD_QUERY;
-const LIMIT = statedCount('GD_LIMIT', 'how many Drive results the search returns');
+const LIMIT = statedCount(
+  'GD_LIMIT',
+  'how many Drive results the search returns',
+);
 const LABEL = 'drive_search';
 
 if (!QUERY) {
-  throw new Error('DRIVE_SEARCH_QUERY_REQUIRED: --q (or GD_QUERY) names the search');
+  throw new Error(
+    'DRIVE_SEARCH_QUERY_REQUIRED: --q (or GD_QUERY) names the search',
+  );
 }
 
 function log(...a) {

@@ -1,7 +1,14 @@
 // Journey storage in memory; the Weles CLI keeps its journey on disk with
-// FileJourneyStorage (src/onboarding/journey-storage.ts).
+// FileJourneyStorage (src/onboarding/journey-storage.ts). An entry never
+// stored is answered null, as the JourneyStorage contract declares.
 import type { JourneyBundle, JourneyProgress } from '../types';
 import type { JourneyRuntimeEvent, JourneyStorage } from './contracts';
+
+/** The stored entry under `key`; null when none was stored. */
+function stored<T>(entries: Map<string, T>, key: string): T | null {
+  if (!entries.has(key)) return null;
+  return entries.get(key) as T;
+}
 
 export class MemoryJourneyStorage implements JourneyStorage {
   readonly #bundles = new Map<string, JourneyBundle>();
@@ -9,7 +16,7 @@ export class MemoryJourneyStorage implements JourneyStorage {
   readonly #events = new Map<string, JourneyRuntimeEvent>();
 
   async loadBundle(productId: string, journeyId: string) {
-    return this.#bundles.get(`${productId}\0${journeyId}`) ?? null;
+    return stored(this.#bundles, `${productId}\0${journeyId}`);
   }
 
   async saveBundle(bundle: JourneyBundle) {
@@ -24,9 +31,7 @@ export class MemoryJourneyStorage implements JourneyStorage {
     journeyId: string,
     subjectHash: string,
   ) {
-    return (
-      this.#progress.get(`${productId}\0${journeyId}\0${subjectHash}`) ?? null
-    );
+    return stored(this.#progress, `${productId}\0${journeyId}\0${subjectHash}`);
   }
 
   async commitProgress(

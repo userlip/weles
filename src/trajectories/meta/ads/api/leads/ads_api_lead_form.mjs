@@ -75,6 +75,10 @@ async function update() {
 // What each ACTION does; `list` is a read without a form id.
 const ACTIONS = { create, read, list: read, update };
 
-const action = statedChoice(['ACTION_KIND', 'META_ACTION'], ACTIONS, 'what is done with the lead form');
+const action = statedChoice(
+  ['ACTION_KIND', 'META_ACTION'],
+  ACTIONS,
+  'what is done with the lead form',
+);
 await ACTIONS[action]();
 console.log(`PASS: Meta lead form API ${action} completed`);

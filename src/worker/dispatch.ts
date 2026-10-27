@@ -3,7 +3,10 @@
 // engagements, observations and analytics services are resolved separately.
 // An unknown action returns null and cannot start a trajectory.
 
-import { ANALYTICS_SERVICE_PATH, analyticsCatalogActions } from './params/analytics-actions.js';
+import {
+  ANALYTICS_SERVICE_PATH,
+  analyticsCatalogActions,
+} from './params/analytics-actions.js';
 import { STANDARD_ROUTES } from './dispatch/standard-routes.js';
 import { PAID_ROUTES } from './dispatch/paid-routes.js';
 
@@ -18,7 +21,8 @@ export const ACTION_NAME = /^(?<plat>[^_]+)_(?<verb>.+)$/;
 export function resolveTrajectory(action: string): string | null {
   const named = ACTION_NAME.exec(action);
   if (!named) return null;
-  if (Object.hasOwn(analyticsCatalogActions(), action)) return ANALYTICS_SERVICE_PATH;
+  if (Object.hasOwn(analyticsCatalogActions(), action))
+    return ANALYTICS_SERVICE_PATH;
   const { plat, verb } = named.groups as { plat: string; verb: string };
   // Cross-login: collapse every login_via_<provider> verb onto a single
   // parametric runner. The provider is parsed out in paramsToEnv into PROVIDER.

@@ -1,102 +1,71 @@
+// The captcha solver's one route to a vision model: Stado's model router,
+// reached at STADO_MODEL_ROUTER_URL with WELES_STADO_MODEL_ROUTER_TOKEN.
+import { serviceOrigin } from '../../../../dist/utils/runtime/service-origin.js';
+import {
+  optionalSetting,
+  requiredSetting,
+  secretSetting,
+} from '../../../../dist/utils/runtime/settings.js';
+
 const ROUTER_PATH = '/v1/chat/completions';
 const MULTIMODAL_SELECTOR = 'any-vision-capable';
-for (const providerCredentialName of [
-  'GEMINI_API_KEY',
-  'GOOGLE_API_KEY',
-  'GOOGLE_GENERATIVE_AI_API_KEY',
-  'VERTEX_API_KEY',
-  'GOOGLE_APPLICATION_CREDENTIALS',
-  'WELES_GEMINI_MODEL',
-]) {
-  delete process.env[providerCredentialName];
-}
+
+/** Credentials of other Weles services, which the router token may not repeat. */
+const SIBLING_CREDENTIALS = [
+  'WELES_STADO_OBJECT_API_TOKEN',
+  'WELES_ARTIFACT_DELIVERY_TOKEN',
+  'WELES_ARTIFACT_SIGNING_SECRET',
+];
 
 let routerConfig = null;
 
-function requiredEnv(name) {
-  const value = String(process.env[name] || '').trim();
-  if (!value) throw new Error(`missing required ${name}`);
-  return value;
-}
-
 export function requireStadoModelRouterConfig() {
   if (routerConfig) return routerConfig;
-  const rawUrl = requiredEnv('STADO_MODEL_ROUTER_URL');
-  const token = requiredEnv('WELES_STADO_MODEL_ROUTER_TOKEN');
-  if (Buffer.byteLength(token) < 32) {
-    throw new Error(
-      'WELES_STADO_MODEL_ROUTER_TOKEN must contain at least 32 bytes',
-    );
-  }
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error('STADO_MODEL_ROUTER_URL must be a valid URL');
-  }
-  if (
-    parsed.username ||
-    parsed.password ||
-    parsed.search ||
-    parsed.hash ||
-    (parsed.pathname !== '/' && parsed.pathname !== '')
-  ) {
-    throw new Error(
-      'STADO_MODEL_ROUTER_URL must be an origin without credentials, path, query, or fragment',
-    );
-  }
-  const loopback =
-    parsed.hostname === 'localhost' ||
-    parsed.hostname === '127.0.0.1' ||
-    parsed.hostname === '::1' ||
-    parsed.hostname === '[::1]';
-  if (
-    parsed.protocol !== 'https:' &&
-    !(parsed.protocol === 'http:' && loopback)
-  ) {
-    throw new Error(
-      'STADO_MODEL_ROUTER_URL must use HTTPS, except for loopback HTTP',
-    );
-  }
-  for (const siblingName of [
-    'WELES_STADO_OBJECT_API_TOKEN',
-    'WELES_ARTIFACT_DELIVERY_TOKEN',
-    'WELES_ARTIFACT_SIGNING_SECRET',
-  ]) {
-    const sibling = String(process.env[siblingName] || '').trim();
-    if (sibling && sibling === token) {
+  const env = process.env;
+  const baseUrl = serviceOrigin(
+    'STADO_MODEL_ROUTER_URL',
+    requiredSetting(env, 'STADO_MODEL_ROUTER_URL'),
+  );
+  const token = secretSetting(env, 'WELES_STADO_MODEL_ROUTER_TOKEN');
+  for (const siblingName of SIBLING_CREDENTIALS) {
+    if (optionalSetting(env, siblingName) === token) {
       throw new Error(
         `WELES_STADO_MODEL_ROUTER_TOKEN must be distinct from ${siblingName}`,
       );
     }
   }
-  routerConfig = { baseUrl: parsed.origin, token };
+  routerConfig = { baseUrl, token };
   return routerConfig;
 }
 
+/** The text of a completion's content, refused when a part carries no text. */
 function completionText(content) {
   if (typeof content === 'string') return content.trim();
-  if (!Array.isArray(content)) return '';
+  if (!Array.isArray(content)) {
+    throw new Error(
+      `Stado model-router answered message content that is neither text nor a list of parts: ${JSON.stringify(content)}`,
+    );
+  }
   return content
-    .map((part) =>
-      typeof part === 'string'
-        ? part
-        : typeof part?.text === 'string'
-          ? part.text
-          : '',
-    )
+    .map((part) => {
+      if (typeof part === 'string') return part;
+      if (typeof part?.text === 'string') return part.text;
+      throw new Error(
+        `Stado model-router answered a content part without text: ${JSON.stringify(part)}`,
+      );
+    })
     .join('')
     .trim();
 }
 
-// No max_tokens is sent: the model's own output limit applies, and a
-// provider refusal comes back as its error.
+// No max_tokens and no temperature are sent: the model's own output limit
+// and sampling apply. The media type is the capture's own; a type the model
+// cannot read comes back as the provider's refusal, in its words.
 export async function completeMultimodal({ base64, mimeType, prompt }) {
-  if (!/^(?:audio|image)\/[a-z\d.+-]+$/i.test(String(mimeType || ''))) {
+  if (typeof mimeType !== 'string' || !mimeType)
     throw new Error(
-      `unsupported Stado model-router media type: ${mimeType || 'missing'}`,
+      `Stado model-router media type is ${JSON.stringify(mimeType)}, not a media type`,
     );
-  }
   if (typeof base64 !== 'string' || !base64)
     throw new Error('Stado model-router media payload is empty');
   if (typeof prompt !== 'string' || !prompt.trim())
@@ -111,7 +80,6 @@ export async function completeMultimodal({ base64, mimeType, prompt }) {
     },
     body: JSON.stringify({
       model: MULTIMODAL_SELECTOR,
-      temperature: 0,
       messages: [
         {
           role: 'user',
@@ -130,9 +98,9 @@ export async function completeMultimodal({ base64, mimeType, prompt }) {
   let payload;
   try {
     payload = JSON.parse(responseText);
-  } catch {
+  } catch (error) {
     throw new Error(
-      `Stado model-router returned invalid JSON (HTTP ${response.status})`,
+      `Stado model-router returned invalid JSON (HTTP ${response.status}): ${error.message}: ${responseText}`,
     );
   }
   if (!response.ok) {
@@ -140,15 +108,21 @@ export async function completeMultimodal({ base64, mimeType, prompt }) {
       typeof payload?.error?.message === 'string'
         ? payload.error.message
         : responseText;
+    throw new Error(`Stado model-router HTTP ${response.status}: ${detail}`);
+  }
+  const [choice] = Array.isArray(payload?.choices) ? payload.choices : [];
+  if (!choice?.message) {
     throw new Error(
-      `Stado model-router HTTP ${response.status}: ${String(detail)}`,
+      `Stado model-router answered no choice with a message: ${responseText}`,
     );
   }
-  const text = completionText(payload?.choices?.at(0)?.message?.content);
+  const text = completionText(choice.message.content);
   if (!text) throw new Error('Stado model-router returned an empty completion');
   return {
     text,
     model:
-      typeof payload.model === 'string' ? payload.model : MULTIMODAL_SELECTOR,
+      typeof payload.model === 'string'
+        ? payload.model
+        : `the model the router did not name (asked for ${MULTIMODAL_SELECTOR})`,
   };
 }

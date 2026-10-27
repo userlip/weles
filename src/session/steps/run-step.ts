@@ -23,7 +23,11 @@ function describePage(page: any): string {
   return `url=${page.url()} closed=${page.isClosed()} viewport=${size}`;
 }
 
-export async function runSessionStep<T>(s: WSession, name: string, fn: () => Promise<T>): Promise<T> {
+export async function runSessionStep<T>(
+  s: WSession,
+  name: string,
+  fn: () => Promise<T>,
+): Promise<T> {
   const state = s as unknown as StepState;
   // Files of a step are named by its number, which is short and unique; the
   // log line pairs that number with the whole step name, so no name is cut

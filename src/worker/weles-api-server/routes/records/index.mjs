@@ -10,6 +10,8 @@
 //   POST /records/accounts/update  { account_id, patch: { metadata?, active? } } -> { account }
 //   POST /records/settings/get     { keys: [...] }                   -> { settings: [{ key, value }] }
 //   POST /records/settings/set     { key, value }                    -> { key }
+//   POST /records/services/list    { category }                      -> { services }
+//                                  (each service's balance, last probe and top-up policy as its record states them; no credential)
 //
 // The data owner is src/state/skarbiec-records.ts (handed in by the entry
 // point); these routes add transport, validation and refusals, nothing else.
@@ -33,6 +35,7 @@ import {
   accountInput,
   accountPatch,
   platformFilter,
+  serviceCategory,
   RecordRequestRefused,
   settingInput,
   settingKeys,
@@ -62,9 +65,30 @@ function existing(records, id) {
   return record;
 }
 
+/**
+ * What a product may read of a service record: the balance its trajectory
+ * last wrote, the probe of its upstream, and the top-up policy the operator
+ * stated on it. Each is null when the record does not state it.
+ */
+function publicService(record) {
+  const stated = (key) => (Object.hasOwn(record, key) ? record[key] : null);
+  return {
+    id: record.id,
+    display_name: stated('display_name'),
+    category: record.category,
+    balance_usd: typeof record.balance_usd === 'number' ? record.balance_usd : null,
+    last_balance_check: stated('last_balance_check'),
+    last_probe: stated('last_probe'),
+    topup: stated('topup'),
+  };
+}
+
 const ROUTES = {
   '/records/accounts/list': (records, body) => ({
     accounts: records.listAccounts(platformFilter(body)).map(publicAccount),
+  }),
+  '/records/services/list': (records, body) => ({
+    services: records.listServiceMetadata(serviceCategory(body)).map(publicService),
   }),
   '/records/accounts/get': (records, body) => ({
     account: publicAccount(existing(records, accountId(body))),

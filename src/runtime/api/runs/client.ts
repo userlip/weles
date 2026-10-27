@@ -55,7 +55,9 @@ function parseRunning(value: unknown): RunningRun {
 function parseRecord(value: unknown): Record<string, unknown> | null {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'object' || Array.isArray(value))
-    throw new Error(`Weles returned a run record that is not an object: ${JSON.stringify(value)}`);
+    throw new Error(
+      `Weles returned a run record that is not an object: ${JSON.stringify(value)}`,
+    );
   return value as Record<string, unknown>;
 }
 

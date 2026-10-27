@@ -17,15 +17,33 @@ import { runGithubSync, syncedBy } from './github_sync/run.mjs';
 await runGithubSync({
   label: 'overleaf_pull_github',
   act: async (s, project) => {
-    if (await pageShows(s.page, 'Does the GitHub sync dialog wait for confirmation that changes were merged manually?')) {
+    if (
+      await pageShows(
+        s.page,
+        'Does the GitHub sync dialog wait for confirmation that changes were merged manually?',
+      )
+    ) {
       await syncedBy(s.page, 'manual-merge continuation', () =>
-        clickDescribed(s.page, 'the button confirming the changes were merged manually and continuing'),
+        clickDescribed(
+          s.page,
+          'the button confirming the changes were merged manually and continuing',
+        ),
       );
       return `continued the manual merge of ${REPO_SLUG} into ${project.id}`;
     }
-    if (await pageShows(s.page, 'Does the GitHub sync dialog say there are no new GitHub commits since the last merge?'))
+    if (
+      await pageShows(
+        s.page,
+        'Does the GitHub sync dialog say there are no new GitHub commits since the last merge?',
+      )
+    )
       return `${REPO_SLUG} has nothing new for ${project.id}`;
-    await syncedBy(s.page, 'pull', () => clickDescribed(s.page, 'the button that pulls GitHub changes into Overleaf'));
+    await syncedBy(s.page, 'pull', () =>
+      clickDescribed(
+        s.page,
+        'the button that pulls GitHub changes into Overleaf',
+      ),
+    );
     return `pulled GitHub changes from ${REPO_SLUG} into ${project.id}`;
   },
 });

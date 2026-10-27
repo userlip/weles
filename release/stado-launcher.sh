@@ -8,15 +8,23 @@ else
   root="$script_dir"
 fi
 payload="$root/payload/weles-worker.tar.gz"
-node_bin="${NODE_BIN:-/opt/homebrew/bin/node}"
+# The Node runtime Stado runs on its darwin-arm64 hosts, the one its host
+# executable allowlist declares (stado-rs deploy/host_exec/allowlist/programs.rs,
+# NODE_RUNTIME); this release is built for that platform only.
+node_bin=/opt/homebrew/bin/node
+
+# Print why the launch cannot go on and stop it: `false` under `set -e` ends
+# the script with the shell's own failure status, so no status is written here.
+refuse() {
+  printf '%s\n' "$*" >&2
+  false
+}
 
 if [ ! -f "$payload" ] || [ -L "$payload" ]; then
-  printf 'missing regular Weles runtime payload: %s\n' "$payload" >&2
-  exit 1
+  refuse "missing regular Weles runtime payload: $payload"
 fi
 if [ ! -x "$node_bin" ]; then
-  printf 'required Node runtime is unavailable: %s\n' "$node_bin" >&2
-  exit 1
+  refuse "required Node runtime is unavailable: $node_bin"
 fi
 payload_sha256="$(/usr/bin/shasum -a 256 "$payload")"
 payload_sha256="${payload_sha256%% *}"
@@ -40,6 +48,8 @@ runtime_required=(
   src/worker/weles-api-launcher/predecessors.mjs
   src/_shared/skarbiec-runtime.mjs
   src/worker/deploy/acquire/skarbiec-acquire.mjs
+  src/worker/deploy/acquire/proof.mjs
+  src/worker/deploy/acquire/transport.mjs
   src/worker/deploy/acquire/skarbiec-acquisition-scopes.conf
   src/worker/deploy/weles-capability-routes.json
   src/worker/deploy/weles-action-allowlist.txt
@@ -76,26 +86,28 @@ runtime_required=(
 )
 
 # The first required entry missing from the tree at $1, or nothing when the
-# tree carries all of them.
+# tree carries all of them. A missing entry returns the status of the printf
+# that named it; a complete tree returns false's failure, as there is nothing
+# to name.
 missing_runtime_entry() {
   local tree="$1" entry
   for entry in "${runtime_required[@]}"; do
     if [ ! -f "$tree/$entry" ]; then
       printf '%s\n' "$entry"
-      return 0
+      return
     fi
   done
   for entry in native/jeden/bin/jeden native/jeden/bin/jeden-sandbox-helper; do
     if [ ! -f "$tree/$entry" ] || [ ! -x "$tree/$entry" ]; then
       printf '%s (required native executable)\n' "$entry"
-      return 0
+      return
     fi
   done
   for entry in "$tree"/browser-runtime/ffmpeg-*/ffmpeg-mac; do
-    if [ -x "$entry" ]; then return 1; fi
+    if [ -x "$entry" ]; then false; return; fi
   done
   printf 'browser-runtime recording executable\n'
-  return 0
+  return
 }
 
 # `.ready` on its own used to be the whole test, and the unpack guard behind it
@@ -127,8 +139,7 @@ if [ "$needs_unpack" = yes ]; then
   tar -xzf "$payload" -C "$staging"
   if incomplete="$(missing_runtime_entry "$staging")"; then
     rm -rf "$staging"
-    printf 'Weles runtime payload %s unpacked without %s\n' "$payload" "$incomplete" >&2
-    exit 1
+    refuse "Weles runtime payload $payload unpacked without $incomplete"
   fi
   # Marked ready only once the tree has been shown complete, and published by
   # rename, so `.ready` never appears on a half-built runtime and no reader
@@ -151,7 +162,7 @@ version="$("$node_bin" -e '
   const fs = require("node:fs");
   const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).version;
   if (typeof value !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value)) {
-    process.exit(1);
+    throw new Error(`${process.argv[1]} names version ${JSON.stringify(value)}, which is not MAJOR.MINOR.PATCH`);
   }
   process.stdout.write(value);
 ' "$runtime/package.json")"
@@ -181,10 +192,16 @@ fi
 export PLAYWRIGHT_BROWSERS_PATH="$runtime/browser-runtime"
 # Recordings are runtime state, not release payload. Keeping them under the
 # immutable release directory made the authenticated diagnostics endpoint lose
-# every run as soon as Stado advanced `current`.
-export WELES_RECORDINGS_ROOT="${WELES_RECORDINGS_ROOT:-$HOME/.stado/var/weles/recordings}"
+# every run as soon as Stado advanced `current`. Where they go is the host's
+# registry entry (`targets[].weles.recordings_dir`), which Stado's
+# `weles-recordings` workload writes into this LaunchAgent as
+# WELES_RECORDINGS_ROOT, so the writer and Stado's janitor name one place.
+if [ -z "${WELES_RECORDINGS_ROOT:+stated}" ]; then
+  refuse "WELES_RECORDINGS_ROOT is not set for this LaunchAgent; run Stado's weles-recordings workload for this host with the absolute recordings path"
+fi
+export WELES_RECORDINGS_ROOT
 mkdir -p "$WELES_RECORDINGS_ROOT"
-chmod 700 "$WELES_RECORDINGS_ROOT"
+chmod u=rwx,go= "$WELES_RECORDINGS_ROOT"
 printf 'release_uri=stado://releases/weles-worker/%s/darwin-arm64/release.tar.gz
 archive_sha256=%s
 platform=darwin-arm64

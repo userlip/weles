@@ -22,7 +22,6 @@ concurrency:
 jobs:
   export:
     runs-on: [self-hosted, macOS, ARM64, "${{ inputs.runner_label }}"]
-    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: Build worker bundle
@@ -34,4 +33,4 @@ jobs:
         run: |
           set -euo pipefail
           export SKARBIEC_WELES_READER_COMMAND="$GITHUB_WORKSPACE/src/worker/deploy/acquire/skarbiec-acquire.mjs"
-          node "$GITHUB_WORKSPACE/dist/cli.js" design export-assets --provider figma --request "$WELES_DESIGN_EXPORT_REQUEST"
+          node "$GITHUB_WORKSPACE/dist/cli.js" design export --provider figma --request "$WELES_DESIGN_EXPORT_REQUEST"

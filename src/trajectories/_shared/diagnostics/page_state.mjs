@@ -27,7 +27,9 @@ function readState() {
     .map((el) => ({
       text: textOf(el),
       label: el.getAttribute('aria-label'),
-      role: el.getAttribute('role') ? el.getAttribute('role') : el.tagName.toLowerCase(),
+      role: el.getAttribute('role')
+        ? el.getAttribute('role')
+        : el.tagName.toLowerCase(),
       href: el.getAttribute('href'),
       placeholder: el.getAttribute('placeholder'),
       disabled:

@@ -8,7 +8,10 @@ import { lookup, resolve4 } from 'node:dns/promises';
 import type { ExitReputation, LinkedInProbePersona } from '../policy.js';
 import type { ResolvedProxy } from '../config.js';
 import { readOptionalWelesServiceSecret } from '../../secrets/scoped-service.js';
-import { secretServiceFor, stickyCredentials } from '../sources/provider_credentials.js';
+import {
+  secretServiceFor,
+  stickyCredentials,
+} from '../sources/provider_credentials.js';
 import { providerCandidates, type ProviderRow } from './candidates.js';
 import {
   diagHash,
@@ -17,7 +20,11 @@ import {
   type ProxyPreflightAttempt,
 } from './diagnostics.js';
 import { preflightExit } from './exit_preflight.js';
-import { requestsNoProxy, resolveUrlFormProxy } from './url_form.js';
+import {
+  requestsNoProxy,
+  requestsUrlForm,
+  resolveUrlFormProxy,
+} from './url_form.js';
 
 type RowMetadata = {
   country?: string;
@@ -29,16 +36,31 @@ type RowMetadata = {
 /** The diagnostic hash of a sticky id or exit address, for records that must not carry the value. */
 function hashed(value: string): string {
   const hash = diagHash(value);
-  if (!hash) throw new Error('an empty sticky id or exit address has no diagnostic hash');
+  if (!hash)
+    throw new Error(
+      'an empty sticky id or exit address has no diagnostic hash',
+    );
   return hash;
 }
 
 /** The row's country and city for the target platform: its per-platform override, else its own. */
-function rowGeography(row: ProviderRow, platform: string | undefined): { country?: string; city?: string } {
+function rowGeography(
+  row: ProviderRow,
+  platform: string | undefined,
+): { country?: string; city?: string } {
   const metadata = row.metadata as RowMetadata | undefined;
-  const country = platform && metadata?.country_overrides?.[platform] ? metadata.country_overrides[platform] : metadata?.country;
-  const city = platform && metadata?.city_overrides?.[platform] ? metadata.city_overrides[platform] : metadata?.city;
-  return { country, city: city ? String(city).toLowerCase().replace(/\s+/g, '_') : undefined };
+  const country =
+    platform && metadata?.country_overrides?.[platform]
+      ? metadata.country_overrides[platform]
+      : metadata?.country;
+  const city =
+    platform && metadata?.city_overrides?.[platform]
+      ? metadata.city_overrides[platform]
+      : metadata?.city;
+  return {
+    country,
+    city: city ? String(city).toLowerCase().replace(/\s+/g, '_') : undefined,
+  };
 }
 
 /**
@@ -58,7 +80,8 @@ async function gatewayAddress(
   );
   if ('answers' in records) {
     const live: string[] = [];
-    for (const ip of records.answers) if (!(await isBurned(ip, platform))) live.push(ip);
+    for (const ip of records.answers)
+      if (!(await isBurned(ip, platform))) live.push(ip);
     if (!live.length) return { rejected: 'all_dns_answers_burned' };
     return { host: live[Math.floor(Math.random() * live.length)] };
   }
@@ -67,8 +90,12 @@ async function gatewayAddress(
     (error: Error) => ({ unresolved: error.message }),
   );
   if ('unresolved' in system)
-    return { rejected: `dns_unresolved: ${row.proxy_host}: resolve4: ${records.unresolved}; lookup: ${system.unresolved}` };
-  return (await isBurned(system.address, platform)) ? { rejected: 'dns_answer_burned' } : { host: system.address };
+    return {
+      rejected: `dns_unresolved: ${row.proxy_host}: resolve4: ${records.unresolved}; lookup: ${system.unresolved}`,
+    };
+  return (await isBurned(system.address, platform))
+    ? { rejected: 'dns_answer_burned' }
+    : { host: system.address };
 }
 
 export async function resolveProxy(
@@ -78,13 +105,18 @@ export async function resolveProxy(
 ): Promise<ResolvedProxy | undefined> {
   if (requestsNoProxy(proxy)) return undefined;
   const startedAt = new Date().toISOString();
-  if (proxy.startsWith('http://') || proxy.startsWith('https://') || proxy.startsWith('socks'))
+  if (requestsUrlForm(proxy))
     return resolveUrlFormProxy(proxy, targetHost, startedAt);
 
   const attempts: ProxyPreflightAttempt[] = [];
-  const { candidates, undeclared, proxyType, ccOverride } = await providerCandidates(proxy);
+  const { candidates, undeclared, proxyType, ccOverride } =
+    await providerCandidates(proxy);
   const platform = platformFromTarget(targetHost);
-  const rejection = (row: ProviderRow, country: string | undefined, reason: string): ProxyPreflightAttempt => ({
+  const rejection = (
+    row: ProviderRow,
+    country: string | undefined,
+    reason: string,
+  ): ProxyPreflightAttempt => ({
     provider: row.provider,
     display_name: row.display_name,
     proxy_type: proxyType,
@@ -100,32 +132,47 @@ export async function resolveProxy(
     attempts.push(rejection(row, undefined, 'proxy_type_undeclared'));
   }
 
-  const { retiredProviderReason, isProviderBlockedForPlatform } = await import('../policy.js');
+  const { retiredProviderReason, isProviderBlockedForPlatform } = await import(
+    '../policy.js'
+  );
   const { isBurned } = await import('../burned.js');
   for (const row of candidates) {
     const retiredReason = retiredProviderReason(row.proxy_host, row.proxy_port);
     if (retiredReason) {
-      console.log(`[proxy] BLOCKED: ${row.display_name} host=${row.proxy_host}:${row.proxy_port} retired=${retiredReason} - skipping`);
+      console.log(
+        `[proxy] BLOCKED: ${row.display_name} host=${row.proxy_host}:${row.proxy_port} retired=${retiredReason} - skipping`,
+      );
       attempts.push(rejection(row, undefined, `retired:${retiredReason}`));
       continue;
     }
-    const secretService = row.secret_service ? row.secret_service : secretServiceFor(row.provider, row.proxy_type);
+    const secretService = row.secret_service
+      ? row.secret_service
+      : secretServiceFor(row.provider, row.proxy_type);
     if (!secretService) {
-      console.log(`[proxy] Skipping ${row.display_name}: no scoped provider credential names it`);
+      console.log(
+        `[proxy] Skipping ${row.display_name}: no scoped provider credential names it`,
+      );
       attempts.push(rejection(row, undefined, 'unscoped_provider'));
       continue;
     }
     const username = readOptionalWelesServiceSecret(secretService, 'username');
     const password = readOptionalWelesServiceSecret(secretService, 'password');
+    // A provider that intercepts TLS by design declares the SPKI hashes of
+    // its authority on its own item; one that declares none is verified.
+    const tlsSpki = readOptionalWelesServiceSecret(secretService, 'tls_spki');
     if (!username || !password) {
-      console.log(`[proxy] Skipping ${row.display_name}: exact provider grant unavailable`);
+      console.log(
+        `[proxy] Skipping ${row.display_name}: exact provider grant unavailable`,
+      );
       attempts.push(rejection(row, undefined, 'missing_exact_provider_grant'));
       continue;
     }
     const geography = rowGeography(row, platform);
     const stated = ccOverride ? ccOverride : geography.country;
     if (!stated) {
-      console.log(`[proxy] Skipping ${row.display_name}: neither the request "${proxy}" nor the row states a country`);
+      console.log(
+        `[proxy] Skipping ${row.display_name}: neither the request "${proxy}" nor the row states a country`,
+      );
       attempts.push(rejection(row, undefined, 'country_unstated'));
       continue;
     }
@@ -133,14 +180,18 @@ export async function resolveProxy(
     // Row policy: skip providers blocked for the target platform regardless
     // of how the resolver got here.
     if (isProviderBlockedForPlatform(row.provider, platform)) {
-      console.log(`[proxy] BLOCKED: ${row.display_name} is on toxic list for ${platform} — skipping`);
+      console.log(
+        `[proxy] BLOCKED: ${row.display_name} is on toxic list for ${platform} — skipping`,
+      );
       attempts.push(rejection(row, cc, 'provider_blocked_for_platform'));
       continue;
     }
     // A sticky session id only has to be new. The host's monotonic clock in
     // nanoseconds gives every attempt on this host its own, kept within the
     // integers the providers' digit-only session fields and the preflight log take.
-    const sessId = Number(process.hrtime.bigint() % BigInt(Number.MAX_SAFE_INTEGER));
+    const sessId = Number(
+      process.hrtime.bigint() % BigInt(Number.MAX_SAFE_INTEGER),
+    );
     const { username: stickyUser, password: stickyPass } = stickyCredentials(
       row.provider,
       row.proxy_type,
@@ -179,7 +230,9 @@ export async function resolveProxy(
     });
     if (verdict.abandonProvider || verdict.rejected) continue;
     const exitIp = verdict.exitIp ? verdict.exitIp : undefined;
-    console.log(`[proxy] Using: ${row.display_name} (${host}:${row.proxy_port}, sticky=${sessId}, exit=${exitIp ? exitIp : 'not read'})`);
+    console.log(
+      `[proxy] Using: ${row.display_name} (${host}:${row.proxy_port}, sticky=${sessId}, exit=${exitIp ? exitIp : 'not read'})`,
+    );
     // The winning exit is enriched once through ip-api (ASN, ISP, geography,
     // proxy/hosting/mobile flags); a read that failed is kept in the
     // preflight record with its cause.
@@ -223,6 +276,9 @@ export async function resolveProxy(
       sticky_session_id: String(sessId),
       sticky_hash: hashed(String(sessId)),
       exit_reputation: exitReputation,
+      tls_spki: tlsSpki
+        ? tlsSpki.split(',').map((hash) => hash.trim()).filter(Boolean)
+        : undefined,
     };
   }
 

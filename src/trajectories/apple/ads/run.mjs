@@ -39,7 +39,10 @@ console.log(
 const result = await run(args);
 if (result.out) console.log(result.out.trim());
 if (result.err) console.error(result.err.trim());
-if (result.code === null) throw new Error(`asc ads was ended by ${result.signal} before it finished ${action}`);
+if (result.code === null)
+  throw new Error(
+    `asc ads was ended by ${result.signal} before it finished ${action}`,
+  );
 if (result.code) {
   // asc's own status is the run's: the caller reads it as asc wrote it.
   console.log(`FAIL: asc ads exited ${result.code}`);

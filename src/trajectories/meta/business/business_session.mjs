@@ -6,7 +6,10 @@
 
 import { WSession } from '../../../../dist/session/wsession.js';
 import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
-import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import {
+  keptProfileDir,
+  stableProfilePersona,
+} from '../../_shared/profile/persona.mjs';
 
 export const USER_DATA_DIR = keptProfileDir('meta_ads');
 

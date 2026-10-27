@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { parseArgs } from 'node:util';
 import { WSession } from '../../dist/session/wsession.js';
-import { getSocialAccount, resolveAccountSession } from '../../dist/utils/credentials.js';
+import {
+  getSocialAccount,
+  resolveAccountSession,
+} from '../../dist/utils/credentials.js';
 import { humanClickLocator } from '../../dist/human/mouse.js';
 import { loadFreshCookieJarOrFail } from '../../src/trajectories/_shared/auth/cookie-freshness.mjs';
 import { pageSettled } from '../../src/trajectories/_shared/page/settled.mjs';
@@ -212,7 +215,11 @@ try {
 } catch (error) {
   failure = error;
   report.status = connected ? 'failed' : 'blocked';
-  report.error = { name: error.name, message: error.message, stack: error.stack };
+  report.error = {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+  };
 } finally {
   if (isolatedAccount && originalCharacter) {
     try {

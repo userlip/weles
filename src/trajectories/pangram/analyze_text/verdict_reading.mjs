@@ -4,14 +4,14 @@
 // from the same traffic in the recording files. A page that asks to sign up or
 // log in instead of showing a result is judged by the vision model and named.
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import { runRecordingsDir } from "../../../../dist/session/run-recordings.js";
-import { LABEL } from "./scan_brief.mjs";
-import { pageCondition, pageSettled } from "../../_shared/page/settled.mjs";
-import { pageShows } from "../../_shared/page/judged/seen.mjs";
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
+import { LABEL } from './scan_brief.mjs';
+import { pageCondition, pageSettled } from '../../_shared/page/settled.mjs';
+import { pageShows } from '../../_shared/page/judged/seen.mjs';
 
-const CLASSIFY_STATUS = "/classify-text-sliding-window/status";
+const CLASSIFY_STATUS = '/classify-text-sliding-window/status';
 
 function normalizePercent(n) {
   const value = Number(n);
@@ -45,23 +45,25 @@ function windowOf(window, index) {
     .map(Number)
     .find(Number.isFinite);
   const label = [window.label, window.editlens?.prediction_text].find(
-    (value) => typeof value === "string",
+    (value) => typeof value === 'string',
   );
-  return { window: {
-    start_index: start,
-    end_index: end,
-    text: typeof window.text === "string" ? window.text : null,
-    label: label === undefined ? null : label,
-    confidence:
-      typeof window.confidence === "string" ? window.confidence : null,
-    ai_likelihood: likelihood === undefined ? null : likelihood,
-  } };
+  return {
+    window: {
+      start_index: start,
+      end_index: end,
+      text: typeof window.text === 'string' ? window.text : null,
+      label: label === undefined ? null : label,
+      confidence:
+        typeof window.confidence === 'string' ? window.confidence : null,
+      ai_likelihood: likelihood === undefined ? null : likelihood,
+    },
+  };
 }
 
 export function extractFromPangramClassify(parsed) {
   const task = Array.isArray(parsed?.tasks)
     ? parsed.tasks.find(
-        (t) => t?.status === "success" && t?.result?.response?.overall,
+        (t) => t?.status === 'success' && t?.result?.response?.overall,
       )
     : null;
   const overall = task?.result?.response?.overall;
@@ -91,12 +93,15 @@ export function extractFromPangramClassify(parsed) {
   const read = Array.isArray(response.windows)
     ? response.windows.map(windowOf)
     : null;
-  const windows = read === null ? null : read.filter((r) => r.window).map((r) => r.window);
+  const windows =
+    read === null ? null : read.filter((r) => r.window).map((r) => r.window);
   const unreadableWindows =
-    read === null ? [] : read.filter((r) => r.unreadable).map((r) => r.unreadable);
+    read === null
+      ? []
+      : read.filter((r) => r.unreadable).map((r) => r.unreadable);
   return {
-    source: "api",
-    api_kind: "classify-text-sliding-window",
+    source: 'api',
+    api_kind: 'classify-text-sliding-window',
     verdict,
     ai_percent: aiPercent,
     human_percent: humanPercent,
@@ -106,7 +111,7 @@ export function extractFromPangramClassify(parsed) {
     prediction_short: overall.prediction_short || null,
     headline: overall.headline || null,
     textquery_uuid: task.result.textquery_uuid || null,
-    text: typeof response.text === "string" ? response.text : null,
+    text: typeof response.text === 'string' ? response.text : null,
     windows,
     unreadable_windows: unreadableWindows,
   };
@@ -138,8 +143,8 @@ function recordingResponsesFromFiles() {
     if (!existsSync(dir)) continue;
     for (const name of readdirSync(dir)) {
       const filePath = join(dir, name);
-      if (name === "network.ndjson") {
-        for (const line of readFileSync(filePath, "utf8").split(/\r?\n/)) {
+      if (name === 'network.ndjson') {
+        for (const line of readFileSync(filePath, 'utf8').split(/\r?\n/)) {
           if (!line.trim()) continue;
           try {
             const row = JSON.parse(line);
@@ -153,9 +158,9 @@ function recordingResponsesFromFiles() {
           }
         }
       }
-      if (name === "session.har") {
+      if (name === 'session.har') {
         try {
-          const har = JSON.parse(readFileSync(filePath, "utf8"));
+          const har = JSON.parse(readFileSync(filePath, 'utf8'));
           for (const entry of har?.log?.entries ?? []) {
             responses.push({
               url: entry?.request?.url,
@@ -182,15 +187,15 @@ function extractFromRecordedResponses() {
 // or log in first.
 export function authRequiredState(finalUrl) {
   const { pathname, searchParams } = new URL(finalUrl);
-  if (pathname.startsWith("/signup") && searchParams.has("pendingCheck"))
-    return "signup_pending_check";
+  if (pathname.startsWith('/signup') && searchParams.has('pendingCheck'))
+    return 'signup_pending_check';
   if (
-    ["/login", "/signin", "/sign-in", "/auth", "/session", "/sso"].some(
+    ['/login', '/signin', '/sign-in', '/auth', '/session', '/sso'].some(
       (route) => pathname.startsWith(route),
     )
   )
-    return "login_required";
-  return "signup_required_for_result";
+    return 'login_required';
+  return 'signup_required_for_result';
 }
 
 /** The verdict from Pangram's API answer, waited for as long as the scan
@@ -207,7 +212,7 @@ export async function collectResult(s) {
     if (
       await pageShows(
         s.page,
-        "Does the page ask to sign up or log in before it shows the scan result?",
+        'Does the page ask to sign up or log in before it shows the scan result?',
       )
     )
       return { walled: true, body_text_sample: text };

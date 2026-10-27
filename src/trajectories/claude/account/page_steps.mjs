@@ -9,9 +9,11 @@ import { dumpGisFailureDom } from '../google_sso/failure_dom.mjs';
 
 /** Fail `stage` with `code`, saving the page's DOM beside the run. */
 export async function failOnPage(page, code, stage, sentence) {
-  const title = await page
-    .title()
-    .catch((error) => `(title unreadable: ${error.message})`);
+  const [read] = await Promise.allSettled([page.title()]);
+  const title =
+    read.status === 'fulfilled'
+      ? read.value
+      : `(title unreadable: ${read.reason.message})`;
   const dump = await dumpGisFailureDom(
     [{ p: page, st: { url: page.url(), title }, variant: code }],
     code,

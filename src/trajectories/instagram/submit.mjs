@@ -20,7 +20,9 @@ export async function instagramPost(s) {
       .first();
     if (!(await thumb.count()))
       throw new Error(`INSTAGRAM_NO_POST: ${s.page.url()} links no post`);
-    await s.goto(new URL(await thumb.getAttribute('href'), INSTAGRAM_ORIGIN).href);
+    await s.goto(
+      new URL(await thumb.getAttribute('href'), INSTAGRAM_ORIGIN).href,
+    );
     await pageSettled(s.page);
   }
   const caption = await shownText(

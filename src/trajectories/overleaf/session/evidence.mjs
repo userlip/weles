@@ -23,7 +23,9 @@ export function overleafEvidence(label) {
   };
   const fail = async (s, tag, message) => {
     const path = await shot(s, `fail_${tag}`);
-    throw new Error(`OVERLEAF_STEP_FAILED: ${tag} — ${message}; the page's DOM is kept in ${path}`);
+    throw new Error(
+      `OVERLEAF_STEP_FAILED: ${tag} — ${message}; the page's DOM is kept in ${path}`,
+    );
   };
   return { shot, fail };
 }

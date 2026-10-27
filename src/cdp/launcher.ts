@@ -1,9 +1,8 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { execSync } from 'node:child_process';
 
 export interface LaunchOptions {
   headless?: boolean;
@@ -27,7 +26,6 @@ const chromiumDefaults = {
     '--disable-blink-features=AutomationControlled',
     '--disable-infobars',
     '--no-sandbox',
-    '--ignore-certificate-errors',
     '--disable-background-networking',
     '--disable-component-update',
     '--disable-default-apps',
@@ -64,22 +62,22 @@ function findChromiumBinary(explicitPath?: string): string {
     );
   }
 
+  // A CHROMIUM_PATH that names no file is a misconfiguration, not a hint to look elsewhere.
   const envPath = process.env.CHROMIUM_PATH;
-  if (envPath && existsSync(envPath)) {
-    return envPath;
+  if (envPath) {
+    if (existsSync(envPath)) return envPath;
+    throw new Error(`CHROMIUM_PATH names ${envPath}, which does not exist`);
   }
 
   for (const p of chromiumDefaults.systemPaths) {
     if (existsSync(p)) return p;
   }
 
+  // `which` answers the binary's path on PATH and fails when there is none.
   for (const name of ['google-chrome', 'chromium', 'chromium-browser']) {
-    try {
-      const result = execSync(`which ${name}`, { encoding: 'utf-8' }).trim();
-      if (result) return result;
-    } catch {
-      // not found, try next
-    }
+    const found = spawnSync('which', [name], { encoding: 'utf-8' });
+    const path = found.stdout.trim();
+    if (!found.status && path) return path;
   }
 
   throw new Error(
@@ -105,18 +103,16 @@ export async function launchChromium(
 
   let proxyAuth: { username: string; password: string } | undefined;
   if (options.proxyServer) {
-    try {
-      const pu = new URL(options.proxyServer);
-      if (pu.username) {
-        proxyAuth = {
-          username: decodeURIComponent(pu.username),
-          password: decodeURIComponent(pu.password),
-        };
-        launchArgs.push(`--proxy-server=${pu.protocol}//${pu.host}`);
-      } else {
-        launchArgs.push(`--proxy-server=${options.proxyServer}`);
-      }
-    } catch {
+    // Chrome takes the proxy without its credentials; a URL carrying them is
+    // split, and one it cannot parse (host:port) is handed over as given.
+    const pu = URL.canParse(options.proxyServer) ? new URL(options.proxyServer) : null;
+    if (pu && pu.username) {
+      proxyAuth = {
+        username: decodeURIComponent(pu.username),
+        password: decodeURIComponent(pu.password),
+      };
+      launchArgs.push(`--proxy-server=${pu.protocol}//${pu.host}`);
+    } else {
       launchArgs.push(`--proxy-server=${options.proxyServer}`);
     }
   }
@@ -147,12 +143,12 @@ export async function launchChromium(
     const rl = createInterface({ input: child.stderr! });
 
     rl.on('line', (line) => {
-      const match = line.match(/DevTools listening on (ws:\/\/.+)/);
-      if (match) {
+      const match = line.match(/DevTools listening on (?<url>ws:\/\/.+)/);
+      if (match?.groups) {
         rl.close();
         // Remove the exit listener so normal process lifecycle doesn't reject
         child.removeAllListeners('exit');
-        resolve(match[1]);
+        resolve(match.groups.url);
       }
     });
   });

@@ -7,7 +7,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { welesRepositoryRoot } from '../declared/engagements.js';
 
-export const ANALYTICS_SERVICE_PATH = 'src/trajectories/_shared/analytics-service.mjs';
+export const ANALYTICS_SERVICE_PATH =
+  'src/trajectories/_shared/analytics-service.mjs';
 
 type AnalyticsCatalog = {
   actions: Record<string, { inputs: Record<string, string> }>;
@@ -26,7 +27,11 @@ export function analyticsCatalogActions(): Record<string, string[]> {
       .filter((file) => file.endsWith('.json'))
       .flatMap((file) =>
         Object.entries(
-          (JSON.parse(readFileSync(path.join(dir, file), 'utf8')) as AnalyticsCatalog).actions,
+          (
+            JSON.parse(
+              readFileSync(path.join(dir, file), 'utf8'),
+            ) as AnalyticsCatalog
+          ).actions,
         ).map(([name, action]) => [name, Object.keys(action.inputs)]),
       ),
   );

@@ -21,9 +21,10 @@ const ASSIGNMENT_PLATFORMS: Readonly<Record<AssignmentPlatform, true>> = {
 };
 
 function assignmentPlatform(surface: string): AssignmentPlatform | null {
-  const prefix = surface.match(/^[a-z]+(?=[._:/-]|$)/)?.[0];
-  return prefix &&
-    Object.prototype.hasOwnProperty.call(ASSIGNMENT_PLATFORMS, prefix)
+  const named = surface.match(/^[a-z]+(?=[._:/-]|$)/);
+  if (!named) return null;
+  const [prefix] = named;
+  return Object.prototype.hasOwnProperty.call(ASSIGNMENT_PLATFORMS, prefix)
     ? (prefix as AssignmentPlatform)
     : null;
 }
@@ -57,34 +58,46 @@ export function isValidAssignment(
   );
 }
 
+/**
+ * The arm a new attempt runs: the assigned variant, or the control the
+ * immutable bundle declares. The control taken because the assignment failed
+ * or answered an arm the contract does not hold carries the reason, so the
+ * attempt records it and its control is not read as a randomized one.
+ */
 export async function resolveExperimentAssignment(
   contract: JourneyExperimentContract,
   transport: JourneyTransport,
   productId: string,
   subjectHash: string,
   surface: string,
-): Promise<JourneyExperimentIdentity> {
+): Promise<{ identity: JourneyExperimentIdentity; degraded: string | null }> {
   const control = controlAssignment(contract);
   const platform = assignmentPlatform(surface);
-  if (contract.kill_switch || platform === null) return control;
-  try {
-    const assignment = await transport.assignExperiment({
+  if (contract.kill_switch) return { identity: control, degraded: null };
+  if (platform === null) {
+    return { identity: control, degraded: `surface ${surface} names no assignment platform, so experiment ${contract.experiment_id} runs its control` };
+  }
+  return transport
+    .assignExperiment({
       product_id: productId,
       app_id: productId,
       platform,
       surface,
       subject: subjectHash,
-    });
-    if (
-      isValidAssignment(contract, assignment.experimentId, assignment.variant)
-    ) {
-      return {
-        experiment_id: assignment.experimentId,
-        variant_id: assignment.variant,
-      };
-    }
-  } catch {
-    // Assignment is optional for first use; the immutable bundle declares the safe fallback.
-  }
-  return control;
+    })
+    .then(
+      (assignment) => {
+        if (isValidAssignment(contract, assignment.experimentId, assignment.variant)) {
+          return { identity: { experiment_id: assignment.experimentId, variant_id: assignment.variant }, degraded: null };
+        }
+        return {
+          identity: control,
+          degraded: `experiment ${contract.experiment_id} was assigned ${JSON.stringify(assignment.experimentId)}/${JSON.stringify(assignment.variant)}, which its contract does not hold, so the attempt runs the control`,
+        };
+      },
+      (error: unknown) => ({
+        identity: control,
+        degraded: `experiment ${contract.experiment_id} could not be assigned (${error instanceof Error ? error.message : String(error)}), so the attempt runs the control`,
+      }),
+    );
 }

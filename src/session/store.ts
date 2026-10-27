@@ -10,6 +10,7 @@ import {
   writeLocalFields,
 } from '../secrets/scoped-service/local-file.js';
 import { readSetting, writeSetting } from '../state/skarbiec-records.js';
+import type { BrowserContext, Cookie } from 'playwright';
 
 // ---------------------------------------------------------------------------
 // Minimal type interfaces
@@ -27,7 +28,7 @@ export interface CookieParam {
   expires?: number;
   httpOnly?: boolean;
   secure?: boolean;
-  sameSite?: 'Strict' | 'Lax' | 'None';
+  sameSite?: string;
   [key: string]: unknown;
 }
 
@@ -154,10 +155,12 @@ export class SessionStore {
    * addCookies API). Playwright sets a cookie from its name and value
    * strings and its domain; a stored cookie without them is refused by name
    * rather than dropped, since a session missing one of its cookies signs in
-   * as nobody without saying so. Answers whether any cookie was injected.
+   * as nobody without saying so. A stored sameSite is handed on as written,
+   * and Playwright refuses one it does not take, naming the values it does.
+   * Answers whether any cookie was injected.
    */
   async injectPlaywright(
-    context: { addCookies(cookies: CookieParam[]): Promise<void> },
+    context: Pick<BrowserContext, 'addCookies'>,
     label: string,
   ): Promise<boolean> {
     const cookies = this.loadCookies(label);
@@ -171,7 +174,18 @@ export class SessionStore {
         `session ${label} in ${this._where()} holds cookies without a name, value or domain, which Playwright cannot set: ${incomplete.map((c) => JSON.stringify({ name: c.name, domain: c.domain })).join(', ')}`,
       );
     }
-    await context.addCookies(cookies);
+    await context.addCookies(
+      cookies.map((c) => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path,
+        expires: c.expires,
+        httpOnly: c.httpOnly,
+        secure: c.secure,
+        sameSite: c.sameSite as Cookie['sameSite'],
+      })),
+    );
     return true;
   }
 

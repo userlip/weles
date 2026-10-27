@@ -19,11 +19,7 @@
 import { spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  cliUnavailable,
-  runMetaCommand,
-  splitArgs,
-} from './cli/meta_cli.mjs';
+import { cliUnavailable, runMetaCommand, splitArgs } from './cli/meta_cli.mjs';
 
 const CAMPAIGN_ID = process.env.CAMPAIGN_ID;
 const ADS_URL = process.env.ADS_URL;

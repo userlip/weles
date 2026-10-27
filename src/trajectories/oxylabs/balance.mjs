@@ -21,15 +21,26 @@ await runGoogleSsoBalance({
   signedInUrl: /^(?!https:\/\/dashboard\.oxylabs\.io\/en\/?(\?.*)?$)/,
   readBalance: async (s) => {
     // The overview's remaining allowance, not a product tab's used/total.
-    const traffic = await shownText(s.page, 'remaining traffic available on the active plan, in GB (the number alone)');
-    const number = traffic?.replace(/,/g, '').match(/\d+(?:\.\d+)?/)?.shift();
+    const traffic = await shownText(
+      s.page,
+      'remaining traffic available on the active plan, in GB (the number alone)',
+    );
+    const number = traffic
+      ?.replace(/,/g, '')
+      .match(/\d+(?:\.\d+)?/)
+      ?.shift();
     return number === undefined ? null : Number(number);
   },
   persist: async (balance) => {
-    const residential = await patchEffectiveBalance('Oxylabs Residential', balance);
+    const residential = await patchEffectiveBalance(
+      'Oxylabs Residential',
+      balance,
+    );
     const mobile = await patchEffectiveBalance('Oxylabs Mobile', balance);
     if (residential !== mobile)
-      throw new Error(`OXYLABS_BALANCE_HALF_PERSISTED: residential=${residential} mobile=${mobile}`);
+      throw new Error(
+        `OXYLABS_BALANCE_HALF_PERSISTED: residential=${residential} mobile=${mobile}`,
+      );
     return residential;
   },
 });

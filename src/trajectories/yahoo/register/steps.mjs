@@ -7,7 +7,10 @@ import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
 import { phoneForField } from '../../_shared/inputs/phone.mjs';
-import { fieldCodeLength, mailedCode } from '../../_shared/inputs/mailed_code.mjs';
+import {
+  fieldCodeLength,
+  mailedCode,
+} from '../../_shared/inputs/mailed_code.mjs';
 
 /** The first of `selectors` the page shows, or null. */
 async function shown(page, selectors) {
@@ -21,13 +24,19 @@ async function shown(page, selectors) {
 /** Type `value` into the first field of `selectors` the page shows; refused when none is. */
 async function fillRequired(page, selectors, value, what) {
   const field = await shown(page, selectors);
-  if (!field) throw new Error(`YAHOO_FIELD_MISSING: ${page.url()} shows no ${what} field`);
+  if (!field)
+    throw new Error(
+      `YAHOO_FIELD_MISSING: ${page.url()} shows no ${what} field`,
+    );
   await humanFill(page, field, value);
 }
 
 /** Submit the step the page shows, through its own submit control. */
 async function submitStep(page) {
-  const submit = await shown(page, ['form button[type="submit"]', 'button[name="signup"]']);
+  const submit = await shown(page, [
+    'form button[type="submit"]',
+    'button[name="signup"]',
+  ]);
   if (submit) await humanClickLocator(page, submit);
   else await clickDescribed(page, 'the button that submits this signup step');
   await pageSettled(page);
@@ -37,7 +46,9 @@ async function submitStep(page) {
 function birthDate(id) {
   const born = new Date(`${id.birthMonth} ${id.birthDay}, ${id.birthYear}`);
   if (Number.isNaN(born.getTime()))
-    throw new Error(`birth_date_unreadable: ${id.birthMonth} ${id.birthDay} ${id.birthYear}`);
+    throw new Error(
+      `birth_date_unreadable: ${id.birthMonth} ${id.birthDay} ${id.birthYear}`,
+    );
   return born;
 }
 
@@ -47,21 +58,84 @@ function birthDate(id) {
  * which.
  */
 export async function fillSignupForm(page, id) {
-  const existingEmail = Boolean(await shown(page, ['input#reg-email', 'input[name="email"]']));
-  await fillRequired(page, ['input#reg-firstName', 'input[name="firstName"]', 'input[autocomplete="given-name"]'], id.firstName, 'first name');
-  await fillRequired(page, ['input#reg-lastName', 'input[name="lastName"]', 'input[autocomplete="family-name"]'], id.lastName, 'last name');
+  const existingEmail = Boolean(
+    await shown(page, ['input#reg-email', 'input[name="email"]']),
+  );
+  await fillRequired(
+    page,
+    [
+      'input#reg-firstName',
+      'input[name="firstName"]',
+      'input[autocomplete="given-name"]',
+    ],
+    id.firstName,
+    'first name',
+  );
+  await fillRequired(
+    page,
+    [
+      'input#reg-lastName',
+      'input[name="lastName"]',
+      'input[autocomplete="family-name"]',
+    ],
+    id.lastName,
+    'last name',
+  );
   if (existingEmail) {
-    await fillRequired(page, ['input#reg-email', 'input[name="email"]'], id.email, 'email');
-    await fillRequired(page, ['input#reg-birthYear', 'input[name="birthYear"]'], String(id.birthYear), 'birth year');
+    await fillRequired(
+      page,
+      ['input#reg-email', 'input[name="email"]'],
+      id.email,
+      'email',
+    );
+    await fillRequired(
+      page,
+      ['input#reg-birthYear', 'input[name="birthYear"]'],
+      String(id.birthYear),
+      'birth year',
+    );
   } else {
     const born = birthDate(id);
-    await fillRequired(page, ['input#reg-userId', 'input[name="userId"]'], id.username, 'user id');
-    await fillRequired(page, ['input#reg-password', 'input[name="password"]', 'input[type="password"]'], id.password, 'password');
-    await fillRequired(page, ['input[name="mm"]', 'input[id$="-mm"]'], born.toLocaleString('en', { month: '2-digit' }), 'birth month');
-    await fillRequired(page, ['input[name="dd"]', 'input[id$="-dd"]'], born.toLocaleString('en', { day: '2-digit' }), 'birth day');
-    await fillRequired(page, ['input[name="yyyy"]', 'input[id$="-yyyy"]'], String(id.birthYear), 'birth year');
-    const terms = await shown(page, ['input#checkTerms', 'input[name="checkTerms"]']);
-    if (terms && !(await terms.isChecked())) await humanClickLocator(page, terms);
+    await fillRequired(
+      page,
+      ['input#reg-userId', 'input[name="userId"]'],
+      id.username,
+      'user id',
+    );
+    await fillRequired(
+      page,
+      [
+        'input#reg-password',
+        'input[name="password"]',
+        'input[type="password"]',
+      ],
+      id.password,
+      'password',
+    );
+    await fillRequired(
+      page,
+      ['input[name="mm"]', 'input[id$="-mm"]'],
+      born.toLocaleString('en', { month: '2-digit' }),
+      'birth month',
+    );
+    await fillRequired(
+      page,
+      ['input[name="dd"]', 'input[id$="-dd"]'],
+      born.toLocaleString('en', { day: '2-digit' }),
+      'birth day',
+    );
+    await fillRequired(
+      page,
+      ['input[name="yyyy"]', 'input[id$="-yyyy"]'],
+      String(id.birthYear),
+      'birth year',
+    );
+    const terms = await shown(page, [
+      'input#checkTerms',
+      'input[name="checkTerms"]',
+    ]);
+    if (terms && !(await terms.isChecked()))
+      await humanClickLocator(page, terms);
   }
   await submitStep(page);
   return existingEmail ? 'existing_email' : 'yahoo_address';
@@ -72,7 +146,11 @@ export async function fillSignupForm(page, id) {
  * set to (../../_shared/inputs/phone.mjs).
  */
 export async function maybeHandlePhone(s) {
-  const phone = await shown(s.page, ['input[type="tel"][name*="phone" i]', 'input[name*="phone" i]', 'input[id*="phone" i]']);
+  const phone = await shown(s.page, [
+    'input[type="tel"][name*="phone" i]',
+    'input[name*="phone" i]',
+    'input[id*="phone" i]',
+  ]);
   if (!phone) return false;
   await humanFill(s.page, phone, await phoneForField(s, s.page, 'yahoo'));
   await submitStep(s.page);
@@ -88,10 +166,18 @@ export async function maybeHandlePhone(s) {
  * each is read once it arrives.
  */
 export async function maybeHandleCode(s, id, variant) {
-  const field = await shown(s.page, ['input[autocomplete="one-time-code"]', 'input[name*="code" i]', 'input[id*="code" i]']);
+  const field = await shown(s.page, [
+    'input[autocomplete="one-time-code"]',
+    'input[name*="code" i]',
+    'input[id*="code" i]',
+  ]);
   if (!field) return false;
   if (variant === 'existing_email') {
-    await humanFill(s.page, field, await mailedCode(id.email, 'yahoo', await fieldCodeLength(field)));
+    await humanFill(
+      s.page,
+      field,
+      await mailedCode(id.email, 'yahoo', await fieldCodeLength(field)),
+    );
   } else {
     await humanFill(s.page, field, await s.textedCode());
   }
@@ -101,10 +187,16 @@ export async function maybeHandleCode(s, id, variant) {
 
 /** A password step: the identity's password, and its confirmation when asked. */
 export async function maybeHandlePassword(page, password) {
-  const field = await shown(page, ['input[name="password"]', 'input[type="password"]']);
+  const field = await shown(page, [
+    'input[name="password"]',
+    'input[type="password"]',
+  ]);
   if (!field) return false;
   await humanFill(page, field, password);
-  const confirm = await shown(page, ['input[name*="confirm" i]', 'input[id*="confirm" i]']);
+  const confirm = await shown(page, [
+    'input[name*="confirm" i]',
+    'input[id*="confirm" i]',
+  ]);
   if (confirm) await humanFill(page, confirm, password);
   await submitStep(page);
   return true;

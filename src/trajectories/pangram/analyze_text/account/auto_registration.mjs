@@ -33,11 +33,15 @@ export function readAutoRegisterLedger() {
     text = readFileSync(path, 'utf8');
   } catch (error) {
     if (error.code === 'ENOENT') return {};
-    throw new Error(`cannot read the Pangram auto-register ledger ${path}: ${error.message}`);
+    throw new Error(
+      `cannot read the Pangram auto-register ledger ${path}: ${error.message}`,
+    );
   }
   const ledger = JSON.parse(text);
   if (!ledger || typeof ledger !== 'object' || Array.isArray(ledger))
-    throw new Error(`the Pangram auto-register ledger ${path} is not a ledger object`);
+    throw new Error(
+      `the Pangram auto-register ledger ${path} is not a ledger object`,
+    );
   return ledger;
 }
 
@@ -104,7 +108,9 @@ function runRegisterChild(script, reason, mode, ledger) {
     writeAutoRegisterLedger(ledger);
     resolve({
       success,
-      reason: success ? 'registered' : `register_failed: run ${runId} exit ${code} signal ${signal}`,
+      reason: success
+        ? 'registered'
+        : `register_failed: run ${runId} exit ${code} signal ${signal}`,
       stdout,
       stderr,
       ledgerDay: ledger[day],
@@ -118,10 +124,15 @@ export async function autoRegisterPangramAccount(reason) {
   const limit = maxAutoRegisters();
   const todayCount = autoRegisterCountToday(ledger);
   if (todayCount >= limit)
-    return { success: false, reason: `daily_auto_register_limit ${todayCount}/${limit}` };
+    return {
+      success: false,
+      reason: `daily_auto_register_limit ${todayCount}/${limit}`,
+    };
   // Beside this module, not under whatever directory the run started from.
   const script =
-    process.env.PANGRAM_REGISTER_SCRIPT ?? join(import.meta.dirname, '..', '..', 'register.mjs');
-  if (!existsSync(script)) return { success: false, reason: `register_script_not_found: ${script}` };
+    process.env.PANGRAM_REGISTER_SCRIPT ??
+    join(import.meta.dirname, '..', '..', 'register.mjs');
+  if (!existsSync(script))
+    return { success: false, reason: `register_script_not_found: ${script}` };
   return runRegisterChild(script, reason, 'proxy', ledger);
 }

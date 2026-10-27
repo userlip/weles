@@ -13,7 +13,8 @@ await runAction({
   action: 'promote',
   feedUrl: `${TIKTOK_ORIGIN}/foryou`,
   surfaceLabel: 'tiktok fyp',
-  resolveUserUrl: (u) => `${TIKTOK_ORIGIN}/@${encodeURIComponent(u.replace(/^@/, ''))}`,
+  resolveUserUrl: (u) =>
+    `${TIKTOK_ORIGIN}/@${encodeURIComponent(u.replace(/^@/, ''))}`,
   resolveSearchUrl: (q) =>
     `${TIKTOK_ORIGIN}/tag/${encodeURIComponent(q.replace(/^#/, ''))}`,
   pickPost: videoPost,

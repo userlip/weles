@@ -34,7 +34,10 @@ function onHoldNameserver(host) {
 export async function diagnoseBroken(domain) {
   const ns = await records(() => dnsp.resolveNs(domain));
   if (ns === null)
-    return { code: 'dns_unresolved', label: 'the domain does not resolve (NXDOMAIN or no nameservers)' };
+    return {
+      code: 'dns_unresolved',
+      label: 'the domain does not resolve (NXDOMAIN or no nameservers)',
+    };
   if (ns.some(onHoldNameserver))
     return {
       code: 'whois_hold',
@@ -42,7 +45,11 @@ export async function diagnoseBroken(domain) {
     };
   const mx = await records(() => dnsp.resolveMx(domain));
   if (mx === null || !mx.length)
-    return { code: 'no_mx', label: 'no inbound MX record: the domain names no server to receive its mail' };
+    return {
+      code: 'no_mx',
+      label:
+        'no inbound MX record: the domain names no server to receive its mail',
+    };
   return {
     code: 'mx_present_no_receive',
     label: `MX present (${mx.map((m) => m.exchange).join(', ')}) but the probe mail is not landing: the receiving route or its propagation`,

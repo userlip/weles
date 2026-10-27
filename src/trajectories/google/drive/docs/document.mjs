@@ -16,8 +16,10 @@ import { readScopedLogin } from '../../../../_shared/scoped-secrets.mjs';
 /** The value after `flag` on the command line, else the first of the environment's `envs` set; refused by name when none is given. */
 export function docInput(flag, envs, what) {
   let value = envs.map((name) => process.env[name]).find(Boolean);
-  if (process.argv.includes(flag)) [, value] = process.argv.slice(process.argv.indexOf(flag));
-  if (!value) throw new Error(`${flag} (or ${envs.join(' / ')}) is required: ${what}`);
+  if (process.argv.includes(flag))
+    [, value] = process.argv.slice(process.argv.indexOf(flag));
+  if (!value)
+    throw new Error(`${flag} (or ${envs.join(' / ')}) is required: ${what}`);
   return value;
 }
 
@@ -26,19 +28,27 @@ export function documentId(input) {
   const fromAddress = input.match(/\/document\/d\/(?<id>[\w-]+)/)?.groups.id;
   if (fromAddress) return fromAddress;
   if (/^[\w-]+$/.test(input)) return input;
-  throw new Error(`DRIVE_DOCUMENT_ID_UNREAD: "${input}" is neither a Google Docs address nor a document id`);
+  throw new Error(
+    `DRIVE_DOCUMENT_ID_UNREAD: "${input}" is neither a Google Docs address nor a document id`,
+  );
 }
 
 /** A session on `url`, signed in to Google Docs; a sign-in that does not complete throws. */
 export async function openSignedInDocs(label, url) {
   const creds = readScopedLogin('googleDrive');
-  const s = await WSession.start({ label, browser: process.env.BROWSER ? process.env.BROWSER : 'chromium' });
+  const s = await WSession.start({
+    label,
+    browser: process.env.BROWSER ? process.env.BROWSER : 'chromium',
+  });
   try {
     await s.page.goto(url, { waitUntil: 'domcontentloaded' });
     await pageSettled(s.page);
     if (onGoogleSignIn(s.page.url())) {
-      console.log(`[${label}] logged out — running googleSso for ${creds.email}`);
-      if (!(await googleSso(s, creds))) throw new Error(`DRIVE_DOCUMENT_SIGN_IN_FAILED: ${s.page.url()}`);
+      console.log(
+        `[${label}] logged out — running googleSso for ${creds.email}`,
+      );
+      if (!(await googleSso(s, creds)))
+        throw new Error(`DRIVE_DOCUMENT_SIGN_IN_FAILED: ${s.page.url()}`);
       await s.page.goto(url, { waitUntil: 'domcontentloaded' });
       await pageSettled(s.page);
     }
@@ -57,7 +67,10 @@ export async function openSignedInDocs(label, url) {
  * read `title`.
  */
 export async function setDocTitle(page, title) {
-  const display = page.locator('.docs-title-input-label-inner, .docs-title-input-label').filter({ visible: true }).first();
+  const display = page
+    .locator('.docs-title-input-label-inner, .docs-title-input-label')
+    .filter({ visible: true })
+    .first();
   await display.waitFor({ state: 'visible' });
   await humanClickLocator(page, display);
   const input = page.locator('input.docs-title-input');
@@ -66,15 +79,21 @@ export async function setDocTitle(page, title) {
     // allow-raw-playwright: selection of the already-focused title input, no click/focus/dispatch
     const field = document.querySelector('input.docs-title-input');
     if (document.activeElement !== field)
-      throw new Error('DRIVE_DOCUMENT_TITLE_FOCUS_LOST: the title input is not focused after the click');
+      throw new Error(
+        'DRIVE_DOCUMENT_TITLE_FOCUS_LOST: the title input is not focused after the click',
+      );
     field.select();
   });
   await humanType(page, title);
   if ((await input.inputValue()) !== title)
-    throw new Error('DRIVE_DOCUMENT_TITLE_VALUE_MISMATCH: the title input differs from the requested title');
+    throw new Error(
+      'DRIVE_DOCUMENT_TITLE_VALUE_MISMATCH: the title input differs from the requested title',
+    );
   await page.keyboard.press('Enter'); // allow-raw-playwright: commit-title Enter press
   await pageSettled(page);
   const shown = (await display.textContent()).trim();
   if (shown !== title)
-    throw new Error(`DRIVE_DOCUMENT_TITLE_NOT_COMMITTED: the title reads ${JSON.stringify(shown)}, not ${JSON.stringify(title)}`);
+    throw new Error(
+      `DRIVE_DOCUMENT_TITLE_NOT_COMMITTED: the title reads ${JSON.stringify(shown)}, not ${JSON.stringify(title)}`,
+    );
 }

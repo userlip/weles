@@ -35,7 +35,11 @@ async function github(path) {
     status: response.status,
     body,
   });
-  assert.equal(response.ok, true, `${endpoint.href}: ${response.status} ${body}`);
+  assert.equal(
+    response.ok,
+    true,
+    `${endpoint.href}: ${response.status} ${body}`,
+  );
   return JSON.parse(body);
 }
 
@@ -88,7 +92,11 @@ try {
 
   for (const [action, params, cause] of [
     ['github_create_repo', {}, 'none of REPO_NAME is set'],
-    ['github_create_repo', { repo_name: createdName }, 'none of REPO_DESC is set'],
+    [
+      'github_create_repo',
+      { repo_name: createdName },
+      'none of REPO_DESC is set',
+    ],
     [
       'github_create_repo',
       { repo_name: 'not a name', repo_desc: values['repo-description'] },
@@ -157,7 +165,9 @@ try {
   assert.equal(created.status, 'finished', JSON.stringify(created));
   assert.equal(created.ok, true, JSON.stringify(created));
   assert.ok(
-    created.stdout_tail.includes(`PASS: created ${values.owner}/${createdName}`),
+    created.stdout_tail.includes(
+      `PASS: created ${values.owner}/${createdName}`,
+    ),
   );
   report.created = created;
   const repo = await github(
@@ -205,7 +215,11 @@ try {
 } catch (error) {
   failure = error;
   report.status = connected ? 'failed' : 'blocked';
-  report.error = { name: error.name, message: error.message, stack: error.stack };
+  report.error = {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+  };
 } finally {
   await evidence.finish();
 }

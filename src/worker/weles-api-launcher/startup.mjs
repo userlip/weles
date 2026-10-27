@@ -180,7 +180,7 @@ export async function startup() {
   process.env.SKARBIEC_CAP_SOCKET = declaredSocket;
   const brokerStatus = run(
     skarbiecBin,
-    ['capability-status', '--socket', process.env.SKARBIEC_CAP_SOCKET],
+    ['capability', 'status', '--socket', process.env.SKARBIEC_CAP_SOCKET],
     'shared Skarbiec capability broker inspection',
   );
   process.stdout.write(`shared capability broker: ${brokerStatus}\n`);

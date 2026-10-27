@@ -131,7 +131,11 @@ export function summarizeKeywordPlannerResponses(responses) {
         if (typeof value === 'string') {
           const compact = norm(value);
           if (keywordPatterns.some((pattern) => pattern.test(compact)))
-            keywordMentions.push({ endpoint, path: path.join('.'), value: compact });
+            keywordMentions.push({
+              endpoint,
+              path: path.join('.'),
+              value: compact,
+            });
         }
         if (typeof value === 'number' && Number.isFinite(value) && value)
           numericMentions.push({ endpoint, path: path.join('.'), value });

@@ -7,7 +7,10 @@
 import { humanType } from '../../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
-import { fieldCodeLength, mailedCode } from '../../_shared/inputs/mailed_code.mjs';
+import {
+  fieldCodeLength,
+  mailedCode,
+} from '../../_shared/inputs/mailed_code.mjs';
 import {
   assertLinkedinAuthenticatedRegistration,
   assertLinkedinProxyStable,
@@ -17,11 +20,19 @@ import { fillPostRegisterOnboarding } from '../../_shared/linkedin/onboarding/wo
 import { ONBOARDING_PROFILE } from './run_request.mjs';
 import { confirmLinkedinEmail } from '../../_shared/linkedin/checkpoint.mjs';
 import { autoBindCharacter } from '../../lib/character-bind.mjs';
-import { submitEmailAndPassword, submitNames } from './account_creation/form_steps.mjs';
+import {
+  submitEmailAndPassword,
+  submitNames,
+} from './account_creation/form_steps.mjs';
 
 // LinkedIn sends a new member to these routes when it wants the emailed PIN;
 // anywhere else is the signed-in redirect.
-const EMAIL_PIN_ROUTES = ['/checkpoint', '/verify', '/email-verification', '/email_verification'];
+const EMAIL_PIN_ROUTES = [
+  '/checkpoint',
+  '/verify',
+  '/email-verification',
+  '/email_verification',
+];
 
 // saveAccount throws when the account could not be saved; the refusal
 // classifier names that failure by this prefix.
@@ -29,11 +40,18 @@ async function saveVerifiedLinkedinAccount(session, account) {
   try {
     return await session.saveAccount('linkedin', account);
   } catch (error) {
-    throw new Error(`ACCOUNT_PERSIST_FAILED: ${error.message}`, { cause: error });
+    throw new Error(`ACCOUNT_PERSIST_FAILED: ${error.message}`, {
+      cause: error,
+    });
   }
 }
 
-async function settleAuthenticatedSession({ session, identity, recordStage, proxyWatch }) {
+async function settleAuthenticatedSession({
+  session,
+  identity,
+  recordStage,
+  proxyWatch,
+}) {
   // The createAccount answer was awaited before this step; LinkedIn's
   // redirect after it (to /feed, /onboarding, /checkpoint, or back to /signup
   // on a silent rejection) has happened once the page has settled.
@@ -53,28 +71,46 @@ async function settleAuthenticatedSession({ session, identity, recordStage, prox
       `signup_did_not_complete: URL stayed at ${verifyUrl} — LinkedIn did not accept the registration`,
     );
   if (!EMAIL_PIN_ROUTES.some((route) => verifyPath.includes(route))) {
-    const redirected = await assertLinkedinAuthenticatedRegistration(session, 'after_registration_redirect');
-    recordStage('registration_redirect_authenticated', { authenticated: redirected.has_li_at });
+    const redirected = await assertLinkedinAuthenticatedRegistration(
+      session,
+      'after_registration_redirect',
+    );
+    recordStage('registration_redirect_authenticated', {
+      authenticated: redirected.has_li_at,
+    });
     return redirected;
   }
   const pinIn = session.page
-    .locator('input[name="pin"], input[autocomplete="one-time-code"], input#input__email_verification_pin')
+    .locator(
+      'input[name="pin"], input[autocomplete="one-time-code"], input#input__email_verification_pin',
+    )
     .filter({ visible: true })
     .first();
   await pinIn.waitFor({ state: 'visible' });
   // The PIN field states how many digits the mailed PIN has.
-  const code = await mailedCode(identity.email, 'linkedin', await fieldCodeLength(pinIn));
+  const code = await mailedCode(
+    identity.email,
+    'linkedin',
+    await fieldCodeLength(pinIn),
+  );
   await humanClickLocator(session.page, pinIn);
   await humanType(session.page, code);
   await humanClickLocator(
     session.page,
-    session.page.locator('button#email-pin-submit-button, button[type="submit"]').first(),
+    session.page
+      .locator('button#email-pin-submit-button, button[type="submit"]')
+      .first(),
   );
   // The PIN form posts and LinkedIn moves the page off the verification step,
   // or keeps it there with its own message; the settled page answers which.
   await pageSettled(session.page);
-  const verified = await assertLinkedinAuthenticatedRegistration(session, 'after_email_verification');
-  recordStage('email_verification_completed', { authenticated: verified.has_li_at });
+  const verified = await assertLinkedinAuthenticatedRegistration(
+    session,
+    'after_email_verification',
+  );
+  recordStage('email_verification_completed', {
+    authenticated: verified.has_li_at,
+  });
   return verified;
 }
 
@@ -85,11 +121,19 @@ export async function createLinkedinAccount(ctx) {
   await settleAuthenticatedSession(ctx);
   // The "add a role/school" onboarding gate, filled so the account can view
   // other profiles; what it filled is part of the run's record.
-  recordStage('onboarding', await fillPostRegisterOnboarding(session.page, ONBOARDING_PROFILE));
+  recordStage(
+    'onboarding',
+    await fillPostRegisterOnboarding(session.page, ONBOARDING_PROFILE),
+  );
   await assertNoLinkedinChallengePage(session, 'after_onboarding');
   recordStage('no_challenge_after_onboarding');
-  const authState = await assertLinkedinAuthenticatedRegistration(session, 'after_onboarding');
-  recordStage('after_onboarding_authenticated', { authenticated: authState.has_li_at });
+  const authState = await assertLinkedinAuthenticatedRegistration(
+    session,
+    'after_onboarding',
+  );
+  recordStage('after_onboarding_authenticated', {
+    authenticated: authState.has_li_at,
+  });
   proxyWatch.expectedExitIp = await assertLinkedinProxyStable(
     session,
     'before_account_persist',
@@ -105,7 +149,13 @@ export async function createLinkedinAccount(ctx) {
   recordStage('account_persisted');
   // The confirmation's answer (found and opened, or why not) and the bind's
   // are part of the run's record; a navigation that fails fails the run.
-  recordStage('email_confirmation', await confirmLinkedinEmail(session.page, identity.email));
-  recordStage('character_bound', await autoBindCharacter(identity.handle, 'linkedin'));
+  recordStage(
+    'email_confirmation',
+    await confirmLinkedinEmail(session.page, identity.email),
+  );
+  recordStage(
+    'character_bound',
+    await autoBindCharacter(identity.handle, 'linkedin'),
+  );
   return authState;
 }

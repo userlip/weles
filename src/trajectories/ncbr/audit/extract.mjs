@@ -29,7 +29,12 @@ async function answers(page) {
       for (let node = el.parentElement; node; node = node.parentElement) {
         const lab = node.querySelector('label, .MuiFormLabel-root, legend');
         if (lab?.textContent) return lab.textContent.trim();
-        if (Array.from(node.querySelectorAll('input, textarea, select')).some((f) => f !== el)) break;
+        if (
+          Array.from(node.querySelectorAll('input, textarea, select')).some(
+            (f) => f !== el,
+          )
+        )
+          break;
       }
       return null;
     };
@@ -40,7 +45,8 @@ async function answers(page) {
 }
 
 /** A field's heading: its row's text when it came from a row, its label, its name. */
-const heading = (field) => [field.row, field.label, field.name].filter(Boolean).join(' · ');
+const heading = (field) =>
+  [field.row, field.label, field.name].filter(Boolean).join(' · ');
 
 /** The fields as one Markdown text, a heading per field. */
 function joinFields(fields) {
@@ -54,7 +60,12 @@ async function openRowAt(page, section, index, projectUrl) {
   await pageSettled(page);
   const row = tableRows(page).nth(index);
   await clickSafe(row.locator(ROW_MENU), 'row menu');
-  await clickSafe(page.getByRole('menuitem', { name: 'Edytuj', exact: true }).filter({ visible: true }), 'Edytuj');
+  await clickSafe(
+    page
+      .getByRole('menuitem', { name: 'Edytuj', exact: true })
+      .filter({ visible: true }),
+    'Edytuj',
+  );
   await page
     .getByRole('button', { name: 'close side drawer', exact: true })
     .filter({ visible: true })
@@ -74,13 +85,16 @@ export async function extractSection(page, section, projectUrl, includeRows) {
     const rows = await tableRows(page).evaluateAll((nodes) =>
       nodes.map((node) => node.innerText.replace(/\s+/g, ' ').trim()),
     ); // allow-raw-playwright: read-only row texts
-    console.error(`[ncbr-pangram] ${section.id}: answers=${fields.length} rows=${rows.length}`);
+    console.error(
+      `[ncbr-pangram] ${section.id}: answers=${fields.length} rows=${rows.length}`,
+    );
     const sectionNames = new Set(fields.map((field) => field.name));
     for (const [index, rowText] of rows.entries()) {
       await openRowAt(page, section, index, projectUrl);
       // The section's own form stays in the page behind the drawer.
       for (const field of await answers(page))
-        if (!sectionNames.has(field.name)) rowFields.push({ ...field, row: rowText });
+        if (!sectionNames.has(field.name))
+          rowFields.push({ ...field, row: rowText });
       await closeDrawer(page);
     }
   }

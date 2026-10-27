@@ -56,9 +56,17 @@ export type WelesOnboardingView = {
     actions: readonly string[];
   };
   control_plane: 'connected' | 'offline';
+  // Where this run's journey definition came from: the control plane, the
+  // copy stored on this device, or the one bundled with Weles; `degraded`
+  // says why when it is not the control plane.
+  journey_source: 'control_plane' | 'stored' | 'bundled';
   // Present when queued first-use events were refused by the control plane;
   // they stay queued and are sent again on the next run.
   undelivered_events?: string;
+  // Present when this run left the control plane's current state: the journey
+  // came from this device or the product, or the resume was not reconciled,
+  // or an event stays queued; one cause per step.
+  degraded?: string[];
   verified_receipt?: {
     task_id: string;
     outcome: string;
@@ -103,11 +111,13 @@ export function render(
   client: {
     progress: JourneyProgress | null;
     screen: { screen_id: string; actions: readonly string[] } | null;
+    degraded: readonly string[];
+    source: 'control_plane' | 'stored' | 'bundled' | null;
   },
   plane: ControlPlane,
   claims?: ReceiptClaims,
 ): WelesOnboardingView {
-  if (!client.progress || !client.screen)
+  if (!client.progress || !client.screen || !client.source)
     throw new Error('Weles onboarding did not start');
   const content = CONTENT[client.screen.screen_id];
   if (!content)
@@ -129,8 +139,10 @@ export function render(
         client.progress.status === 'completed' ? [] : client.screen.actions,
     },
     control_plane: plane.connected ? 'connected' : 'offline',
+    journey_source: client.source,
   };
   if (plane.undeliveredEvents) view.undelivered_events = plane.undeliveredEvents;
+  if (client.degraded.length) view.degraded = [...client.degraded];
   if (claims)
     view.verified_receipt = {
       task_id: claims.taskId,

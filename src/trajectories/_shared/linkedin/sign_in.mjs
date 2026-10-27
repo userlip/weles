@@ -35,7 +35,9 @@ export async function submitLinkedinPassword(s, login, password) {
     .filter({ visible: true })
     .first();
   const secret = s.page
-    .locator('input#password, input[name="session_password"], input[type="password"]')
+    .locator(
+      'input#password, input[name="session_password"], input[type="password"]',
+    )
     .filter({ visible: true })
     .first();
   await address.waitFor({ state: 'visible' });
@@ -44,7 +46,10 @@ export async function submitLinkedinPassword(s, login, password) {
   await humanClickLocator(s.page, secret);
   await humanType(s.page, password);
   await injectV3LoginToken(s.page);
-  await clickDescribed(s.page, 'the button that signs in with the typed email and password');
+  await clickDescribed(
+    s.page,
+    'the button that signs in with the typed email and password',
+  );
   await Promise.any([
     urlMatching(s.page, (url) => !onSignInPage(url)),
     s.page

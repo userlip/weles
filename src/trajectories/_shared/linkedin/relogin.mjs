@@ -9,7 +9,11 @@
 // a relogin that does not reach li_at throws with where it ended.
 import { pageSettled } from '../page/settled.mjs';
 import { solveLinkedinCheckpoint } from './checkpoint.mjs';
-import { onCheckpointRoute, onSignInPage, submitLinkedinPassword } from './sign_in.mjs';
+import {
+  onCheckpointRoute,
+  onSignInPage,
+  submitLinkedinPassword,
+} from './sign_in.mjs';
 
 const SIGN_IN_URL = 'https://www.linkedin.com/login';
 
@@ -17,14 +21,17 @@ export async function reloginLinkedinInline(s, acct) {
   const login = acct.metadata?.email ? acct.metadata.email : acct.username;
   const password = acct.metadata?.password;
   if (!login || !password)
-    throw new Error(`LINKEDIN_RELOGIN_UNAVAILABLE: ${acct.username} holds no password to sign in again with`);
+    throw new Error(
+      `LINKEDIN_RELOGIN_UNAVAILABLE: ${acct.username} holds no password to sign in again with`,
+    );
   // Stale cookies would bounce /login back to the feed.
   await s.ctx.clearCookies();
   await s.page.goto(SIGN_IN_URL, { waitUntil: 'domcontentloaded' });
   await pageSettled(s.page);
   if (onCheckpointRoute(s.page.url())) {
     const solved = await solveLinkedinCheckpoint(s, 'relogin-pre-form', login);
-    if (solved.liAt) return { ok: true, liAt: solved.liAt, finalUrl: solved.finalUrl };
+    if (solved.liAt)
+      return { ok: true, liAt: solved.liAt, finalUrl: solved.finalUrl };
   }
   if (!onSignInPage(s.page.url()) && !onCheckpointRoute(s.page.url())) {
     // Auth state kept in the page's storage redirected away from /login.
@@ -39,9 +46,17 @@ export async function reloginLinkedinInline(s, acct) {
   let liAt = (await s.ctx.cookies()).find((c) => c.name === 'li_at' && c.value);
   let finalUrl = s.page.url();
   if (!liAt && onCheckpointRoute(finalUrl))
-    ({ liAt, finalUrl } = await solveLinkedinCheckpoint(s, 'relogin-post-submit', login));
+    ({ liAt, finalUrl } = await solveLinkedinCheckpoint(
+      s,
+      'relogin-post-submit',
+      login,
+    ));
   if (!liAt)
-    throw new Error(`LINKEDIN_RELOGIN_UNSIGNED: no li_at cookie after the sign-in form; the session is at ${finalUrl}`);
-  console.log(`[linkedin_relogin] li_at minted on the action's session at ${finalUrl}`);
+    throw new Error(
+      `LINKEDIN_RELOGIN_UNSIGNED: no li_at cookie after the sign-in form; the session is at ${finalUrl}`,
+    );
+  console.log(
+    `[linkedin_relogin] li_at minted on the action's session at ${finalUrl}`,
+  );
   return { ok: true, liAt, finalUrl };
 }

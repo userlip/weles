@@ -1,8 +1,8 @@
 // Declared observation: one reviewed trajectory reading one declared origin
-// under a declared dwell budget.
+// for a declared number of screens.
 //
 // The declaration names, per observation, its platform, its verb, the origin
-// it reads, what it must read there, the dwell budget it spends and the
+// it reads, what it must read there, how many screens it reads and the
 // reviewed trajectory; `generic_keeper_task` consumes it. Two failures land at
 // admission rather than at execution:
 //
@@ -178,7 +178,6 @@ export function applyKeeperTaskEnv(
   env.GENERIC_OBSERVATION_ORIGIN = resolveObservationOrigin(declared, params);
   env.GENERIC_OBSERVATION_READS = declared.reads;
   env.GENERIC_OBSERVATION_SCROLLS = String(declared.dwell.scrolls);
-  env.GENERIC_OBSERVATION_DWELL_MS = declared.dwell.ms.join(',');
   env.PLATFORM = declared.platform;
   env.VERB = declared.verb;
   delete env.GENERIC_TASK_URL;

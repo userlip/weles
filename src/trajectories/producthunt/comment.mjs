@@ -19,7 +19,10 @@ import { pageSettled } from '../_shared/page/settled.mjs';
 import { textShownOutsideEditors } from '../_shared/page/shows.mjs';
 import { loginViaTwitter } from './_session.mjs';
 
-const TARGET_URL = statedText(['PRODUCTHUNT_URL'], 'the Product Hunt launch page the comment is posted on');
+const TARGET_URL = statedText(
+  ['PRODUCTHUNT_URL'],
+  'the Product Hunt launch page the comment is posted on',
+);
 const COMMENT_TEXT = statedText(['PH_COMMENT'], 'the comment text to publish');
 
 await runAction({
@@ -32,14 +35,21 @@ await runAction({
     return { ok: true };
   },
   act: async (s) => {
-    const editor = s.page.locator('[contenteditable="true"][role="textbox"].tiptap').first();
+    const editor = s.page
+      .locator('[contenteditable="true"][role="textbox"].tiptap')
+      .first();
     await editor.waitFor({ state: 'visible' });
     await humanClickLocator(s.page, editor);
     await humanType(s.page, COMMENT_TEXT);
-    await clickDescribed(s.page, 'the button that posts the comment typed in the comment editor');
+    await clickDescribed(
+      s.page,
+      'the button that posts the comment typed in the comment editor',
+    );
     await pageSettled(s.page);
     if (!(await textShownOutsideEditors(s.page, COMMENT_TEXT)))
-      throw new Error(`PRODUCTHUNT_COMMENT_UNCONFIRMED: the comment shows nowhere outside the editor at ${s.page.url()}`);
+      throw new Error(
+        `PRODUCTHUNT_COMMENT_UNCONFIRMED: the comment shows nowhere outside the editor at ${s.page.url()}`,
+      );
     return `commented on ${TARGET_URL}`;
   },
 });

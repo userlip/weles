@@ -60,7 +60,11 @@ try {
       },
     );
   }
-  if (typeof usdRate !== 'number' || !Number.isFinite(usdRate) || !(usdRate >= Number.MIN_VALUE)) {
+  if (
+    typeof usdRate !== 'number' ||
+    !Number.isFinite(usdRate) ||
+    !(usdRate >= Number.MIN_VALUE)
+  ) {
     throw Object.assign(
       new Error('JuicySMS did not provide a usable USD conversion rate'),
       {

@@ -99,7 +99,8 @@ const ACTIONS = Object.fromEntries(
 
 /** The hostname of `url`; a site given as a bare host ("example.com") is read as https. */
 function siteHostname(url) {
-  return new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(url) ? url : `https://${url}`).hostname;
+  return new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(url) ? url : `https://${url}`)
+    .hostname;
 }
 
 /** The site's hostname without its www. */
@@ -113,7 +114,9 @@ function actionName() {
   if (process.env.ACTION) return process.env.ACTION;
   if (process.env.PLATFORM && process.env.VERB)
     return `${process.env.PLATFORM}_${process.env.VERB}`;
-  throw new Error('no analytics action was named: SERVICE_ACTION, ACTION, or PLATFORM with VERB, is required');
+  throw new Error(
+    'no analytics action was named: SERVICE_ACTION, ACTION, or PLATFORM with VERB, is required',
+  );
 }
 
 function actionUrl(cfg) {

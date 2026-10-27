@@ -16,9 +16,12 @@ import { statedText } from '../_shared/inputs/stated.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
 
 const ORIGIN = 'https://www.volumeleaders.com';
-const ANY_SIZE = 'MinVolume=0&MaxVolume=2000000000&MinPrice=0&MaxPrice=100000&MinDollars=0&MaxDollars=30000000000&VCD=0&RelativeSize=0';
-const ALL_SESSIONS = 'IncludePremarket=1&IncludeRTH=1&IncludeAH=1&IncludeOpening=1&IncludeClosing=1&IncludePhantom=1&IncludeOffsetting=1';
-const ANY_PRINT = 'DarkPools=-1&Sweeps=-1&LatePrints=-1&SignaturePrints=-1&EvenShared=-1&SecurityTypeKey=-1';
+const ANY_SIZE =
+  'MinVolume=0&MaxVolume=2000000000&MinPrice=0&MaxPrice=100000&MinDollars=0&MaxDollars=30000000000&VCD=0&RelativeSize=0';
+const ALL_SESSIONS =
+  'IncludePremarket=1&IncludeRTH=1&IncludeAH=1&IncludeOpening=1&IncludeClosing=1&IncludePhantom=1&IncludeOffsetting=1';
+const ANY_PRINT =
+  'DarkPools=-1&Sweeps=-1&LatePrints=-1&SignaturePrints=-1&EvenShared=-1&SecurityTypeKey=-1';
 // Each page's path and query; {ticker}, {start} and {end} are the request's.
 const PAGES = {
   trades: `/Trades?Tickers={ticker}&StartDate={start}&EndDate={end}&${ANY_SIZE}&${ANY_PRINT}&Conditions=&TradeRank=-1&TradeRankSnapshot=-1&MarketCap=-1&${ALL_SESSIONS}&SectorIndustry=&ViewMode=Automatic`,
@@ -27,9 +30,12 @@ const PAGES = {
   levels: `/TradeLevels?Ticker={ticker}&StartDate={start}&EndDate={end}&${ANY_SIZE}&TradeLevelRank=-1&TradeLevelCount=50&ViewMode=Automatic`,
   level_touches: `/TradeLevelTouches?Tickers={ticker}&StartDate={start}&EndDate={end}&${ANY_SIZE}&TradeLevelRank=10&PresetSearchTemplateID=87&ViewMode=Automatic`,
   chart: `/Chart0?Ticker={ticker}&StartDate={start}&EndDate={end}&${ANY_SIZE}&${ANY_PRINT}&VolumeProfile=0&Levels=5&TradeCount=3&TradeRank=-1&${ALL_SESSIONS}&ViewMode=Automatic`,
-  institutional_volume: '/InstitutionalVolume?Date={start}&Tickers={ticker}&PresetSearchTemplateID=87&ViewMode=Automatic',
-  ah_institutional_volume: '/AHInstitutionalVolume?Date={start}&Tickers={ticker}&PresetSearchTemplateID=87&ViewMode=Automatic',
-  total_volume: '/TotalVolume?Date={start}&Tickers={ticker}&PresetSearchTemplateID=87&ViewMode=Automatic',
+  institutional_volume:
+    '/InstitutionalVolume?Date={start}&Tickers={ticker}&PresetSearchTemplateID=87&ViewMode=Automatic',
+  ah_institutional_volume:
+    '/AHInstitutionalVolume?Date={start}&Tickers={ticker}&PresetSearchTemplateID=87&ViewMode=Automatic',
+  total_volume:
+    '/TotalVolume?Date={start}&Tickers={ticker}&PresetSearchTemplateID=87&ViewMode=Automatic',
   exhaustion: '/ExhaustionScore',
 };
 
@@ -37,15 +43,22 @@ function pageUrl(ticker, page) {
   const [today] = new Date().toISOString().split('T');
   const start = process.env.START_DATE ? process.env.START_DATE : today;
   const end = process.env.END_DATE ? process.env.END_DATE : today;
-  const path = PAGES[page].replace('{ticker}', encodeURIComponent(ticker)).replace('{start}', start).replace('{end}', end);
+  const path = PAGES[page]
+    .replace('{ticker}', encodeURIComponent(ticker))
+    .replace('{start}', start)
+    .replace('{end}', end);
   return new URL(path, ORIGIN).href;
 }
 
-const onLogin = (s) => new URL(s.page.url()).pathname.toLowerCase().startsWith('/login');
+const onLogin = (s) =>
+  new URL(s.page.url()).pathname.toLowerCase().startsWith('/login');
 
 async function signIn(s) {
   const email = statedText(['VL_EMAIL'], 'the VolumeLeaders login email');
-  const password = statedText(['VL_PASSWORD'], 'the VolumeLeaders login password');
+  const password = statedText(
+    ['VL_PASSWORD'],
+    'the VolumeLeaders login password',
+  );
   const submit = async () => {
     await s.goto(`${ORIGIN}/Login`);
     await pageSettled(s.page);
@@ -60,7 +73,10 @@ async function signIn(s) {
   console.error(`[vl] sign-in held; captcha: ${await s.solveCaptcha()}`);
   await s.page.locator('input[name="Password"]').press('Enter');
   await pageSettled(s.page);
-  if (onLogin(s)) throw new Error(`VL_SIGN_IN_FAILED: the sign-in stayed on ${s.page.url()} after its captcha`);
+  if (onLogin(s))
+    throw new Error(
+      `VL_SIGN_IN_FAILED: the sign-in stayed on ${s.page.url()} after its captcha`,
+    );
 }
 
 await runMarketScrape({

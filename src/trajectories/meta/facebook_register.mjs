@@ -13,10 +13,8 @@
 
 import { WSession } from '../../../dist/session/wsession.js';
 import { humanType } from '../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../dist/human/mouse.js';
+import { humanClickLocator } from '../../../dist/human/mouse.js';
+import { pageSettled } from '../_shared/page/settled.mjs';
 import { statedProxy } from '../_shared/inputs/stated.mjs';
 import { phoneForField } from '../_shared/inputs/phone.mjs';
 import { fieldCodeLength, mailedCode } from '../_shared/inputs/mailed_code.mjs';
@@ -28,7 +26,7 @@ async function signup(s) {
   console.log(`[fb] identity: ${id.username} <${id.email}>`);
 
   await s.goto(SIGNUP_URL);
-  await humanIdlePause('deliberate');
+  await pageSettled(s.page);
 
   // Some locales prompt a cookie consent banner Meta marks with its test id.
   const cookieBtn = s.page
@@ -37,7 +35,7 @@ async function signup(s) {
     .first();
   if (await cookieBtn.isVisible()) {
     await humanClickLocator(s.page, cookieBtn);
-    await humanIdlePause('deliberate');
+    await pageSettled(s.page);
   }
 
   // 1. First name + Surname.
@@ -75,12 +73,15 @@ async function signup(s) {
     const month = await monthSel.evaluate(
       (select, name) =>
         [...select.options].find(
-          (option) => option.value && name.startsWith(option.textContent.trim()),
+          (option) =>
+            option.value && name.startsWith(option.textContent.trim()),
         )?.value,
       String(id.birthMonth),
     );
     if (!month)
-      throw new Error(`FACEBOOK_MONTH_ABSENT: the month select offers no option for ${id.birthMonth}`);
+      throw new Error(
+        `FACEBOOK_MONTH_ABSENT: the month select offers no option for ${id.birthMonth}`,
+      );
     await monthSel.selectOption(month);
   }
   if (await yearSel.count()) await yearSel.selectOption(String(id.birthYear));
@@ -94,7 +95,7 @@ async function signup(s) {
     .first();
   if (await customRadio.count()) {
     await humanClickLocator(s.page, customRadio);
-    await humanIdlePause('short');
+    await pageSettled(s.page);
   } else {
     const femaleRadio = s.page
       .locator('input[type="radio"][name="sex"][value="1"]')
@@ -135,7 +136,7 @@ async function signup(s) {
     .filter({ visible: true })
     .first();
   await humanClickLocator(s.page, submit);
-  await humanIdlePause('long');
+  await pageSettled(s.page);
 
   // 7. Verification — email OTP by default; some IPs trigger a phone-SMS
   // gate instead. Detect which branch we landed on and run the matching code.
@@ -150,7 +151,7 @@ async function signup(s) {
     await humanClickLocator(s.page, phoneIn);
     await humanType(s.page, digits);
     await phoneIn.press('Enter');
-    await humanIdlePause('deliberate');
+    await pageSettled(s.page);
     const smsCode = await s.textedCode();
     const smsIn = s.page
       .locator(
@@ -162,7 +163,7 @@ async function signup(s) {
       await humanClickLocator(s.page, smsIn);
       await humanType(s.page, smsCode);
       await smsIn.press('Enter');
-      await humanIdlePause('long');
+      await pageSettled(s.page);
     }
   } else {
     const codeIn = s.page
@@ -173,11 +174,15 @@ async function signup(s) {
       .first();
     await codeIn.waitFor({ state: 'visible' });
     // The confirmation field states how many digits the mailed code has.
-    const emailCode = await mailedCode(id.email, 'facebook', await fieldCodeLength(codeIn));
+    const emailCode = await mailedCode(
+      id.email,
+      'facebook',
+      await fieldCodeLength(codeIn),
+    );
     await humanClickLocator(s.page, codeIn);
     await humanType(s.page, emailCode);
     await codeIn.press('Enter');
-    await humanIdlePause('long');
+    await pageSettled(s.page);
   }
 
   // 8. Land on facebook.com home (or /home.php / /?ref=...) on success.
@@ -187,9 +192,9 @@ async function signup(s) {
     !/facebook\.com\/$/.test(finalUrl) &&
     !/messenger\.com/.test(finalUrl)
   ) {
-    // Many flows show a "save your login info" interstitial — wait for the
-    // post-interstitial settle.
-    await humanIdlePause('deliberate');
+    // Many flows show a "save your login info" interstitial: the landing is
+    // read once the page has settled past it.
+    await pageSettled(s.page);
     const settled = s.page.url();
     if (!/facebook\.com/.test(settled)) {
       throw new Error(`facebook_register_no_landing: ${settled}`);

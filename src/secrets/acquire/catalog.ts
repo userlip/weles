@@ -67,20 +67,30 @@ export type SecretDefinition = {
  * that states neither names none here; definitionFor then resolves it by its
  * credential item.
  */
-export function normalizeSecret(request: AcquireSecretRequest): string | undefined {
+export function normalizeSecret(
+  request: AcquireSecretRequest,
+): string | undefined {
   const credentialId = request.credentialId?.trim();
   // Managed item identifiers are exact and case-sensitive. Only the deployment
   // declaration selects their lifecycle; an item's spelling does not.
-  if (credentialId && isWelesManagedPasswordItem(credentialId)) return credentialId;
-  return request.secret?.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (credentialId && isWelesManagedPasswordItem(credentialId))
+    return credentialId;
+  return request.secret
+    ?.trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
 }
 
 /** The registered provider definition a stated secret names, spelled with dots or underscores. */
 function registeredNamed(secret: string): SecretDefinition | undefined {
-  const registry = SECRET_REGISTRY as Readonly<Record<string, SecretDefinition>>;
+  const registry = SECRET_REGISTRY as Readonly<
+    Record<string, SecretDefinition>
+  >;
   if (Object.hasOwn(registry, secret)) return registry[secret];
   const underscored = secret.replace(/\./g, '_');
-  return Object.hasOwn(registry, underscored) ? registry[underscored] : undefined;
+  return Object.hasOwn(registry, underscored)
+    ? registry[underscored]
+    : undefined;
 }
 
 export function definitionFor(
@@ -99,7 +109,8 @@ export function definitionFor(
     ? registeredNamed(normalized)
     : Object.values(SECRET_REGISTRY).find(
         (definition) =>
-          acquiredSecretContract(definition.secret)?.item === request.credentialId,
+          acquiredSecretContract(definition.secret)?.item ===
+          request.credentialId,
       );
   return registered ? registered : genericDefinition(request);
 }

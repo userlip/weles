@@ -74,7 +74,11 @@ export function watchDevicePrompt(page, announced) {
       if (!google || !under(routes.devicePrompt)) {
         if (google && location.pathname.startsWith(routes.info))
           return { ended: true, detail };
-        return { left: true, refused: google && under(routes.challenge), detail };
+        return {
+          left: true,
+          refused: google && under(routes.challenge),
+          detail,
+        };
       }
       for (const alert of document.querySelectorAll(
         '[role="alert"], [aria-live="assertive"]',

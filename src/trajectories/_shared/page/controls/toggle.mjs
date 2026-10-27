@@ -13,7 +13,8 @@ import { pageSettled } from '../settled.mjs';
 export async function takeOnce(page, take, taken, what) {
   await pageSettled(page);
   if (await taken.isVisible()) return true;
-  if (!(await take.isVisible())) throw new Error(`CONTROL_MISSING: ${page.url()} shows no ${what} control`);
+  if (!(await take.isVisible()))
+    throw new Error(`CONTROL_MISSING: ${page.url()} shows no ${what} control`);
   await humanClickLocator(page, take);
   await taken.waitFor({ state: 'visible' });
   return false;

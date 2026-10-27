@@ -40,7 +40,10 @@ await runKeeperCollector({
   read: async (page) => {
     const lines = linesOf(await page.text());
     const plan = lines.find((line) => PLAN_LINE.test(line));
-    if (!plan) throw new Error('CHATGPT_BILLING_UNREAD: the keeper page names no "ChatGPT <plan>" line, so it is not the ChatGPT billing page');
+    if (!plan)
+      throw new Error(
+        'CHATGPT_BILLING_UNREAD: the keeper page names no "ChatGPT <plan>" line, so it is not the ChatGPT billing page',
+      );
     const cancelLine = lines.find((line) => CANCEL_LINE.test(line));
     const history = invoiceRows(lines, AMOUNT);
     const month = latestPaidMonth(history);
@@ -50,13 +53,16 @@ await runKeeperCollector({
       status: 'active',
       plan,
       expires_at: cancelLine ? dayIn(cancelLine) : null,
-      monthly_cost_usd: month.length ? centsTotal(month.map((invoice) => invoice.amount_usd)) : null,
+      monthly_cost_usd: month.length
+        ? centsTotal(month.map((invoice) => invoice.amount_usd))
+        : null,
       metadata: {
         collector: 'weles_keeper_chatgpt_billing_ui',
         source: 'chatgpt.com settings billing UI',
         collected_at: new Date().toISOString(),
         cancel_line: cancelLine,
-        monthly_cost_basis: 'sum of paid Billing history invoices in the latest invoice month',
+        monthly_cost_basis:
+          'sum of paid Billing history invoices in the latest invoice month',
         latest_paid_invoices: month,
         billing_history: history,
         page_lines: lines,

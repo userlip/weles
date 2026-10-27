@@ -5,10 +5,17 @@
 // record writer. Every failure throws with the service's label in its code.
 import { WSession } from '../../../../../dist/session/wsession.js';
 import { humanClickLocator } from '../../../../../dist/human/mouse.js';
-import { pageSettled, popupOrNavigation, urlMatching } from '../../page/settled.mjs';
+import {
+  pageSettled,
+  popupOrNavigation,
+  urlMatching,
+} from '../../page/settled.mjs';
 import { reviewUntilClosed } from '../../page/navigation/review.mjs';
 import { googleSso } from '../google_sso.mjs';
-import { readShownBalance, keepUnreadBalancePage } from '../google_sso/service_account.mjs';
+import {
+  readShownBalance,
+  keepUnreadBalancePage,
+} from '../google_sso/service_account.mjs';
 import { submitLoginForm } from '../native_login/submit.mjs';
 
 const GOOGLE_ACCOUNTS = /^https:\/\/accounts\.google\.com\//;
@@ -25,11 +32,17 @@ export function formSignIn(form) {
   return async (s) => {
     console.log(`[trajectory] Using service login: ${form.login.email}`);
     await s.goto(form.loginUrl);
-    const userIn = s.page.locator(form.userField).filter({ visible: true }).first();
+    const userIn = s.page
+      .locator(form.userField)
+      .filter({ visible: true })
+      .first();
     await userIn.waitFor({ state: 'visible' });
     await userIn.click();
     await userIn.pressSequentially(form.login.email);
-    const pwIn = s.page.locator('input[name="password"], input[type="password"]').filter({ visible: true }).first();
+    const pwIn = s.page
+      .locator('input[name="password"], input[type="password"]')
+      .filter({ visible: true })
+      .first();
     await pwIn.waitFor({ state: 'visible' });
     await pwIn.click();
     await pwIn.pressSequentially(form.login.password);
@@ -54,22 +67,43 @@ export function googleSignIn(google) {
     console.log(`[trajectory] Using Google SSO: ${google.login.email}`);
     await s.goto(google.loginUrl);
     await pageSettled(s.page);
-    if (google.openControl) await humanClickLocator(s.page, s.page.locator(google.openControl).first());
-    const root = google.controlFrame ? s.page.frames().find((frame) => frame.url().includes(google.controlFrame)) : s.page;
-    if (!root) throw new Error(`${code}_GOOGLE_FRAME_ABSENT: no frame at ${google.controlFrame} on ${s.page.url()}`);
-    const control = root.locator(google.googleControl).filter({ visible: true }).first();
+    if (google.openControl)
+      await humanClickLocator(
+        s.page,
+        s.page.locator(google.openControl).first(),
+      );
+    const root = google.controlFrame
+      ? s.page
+          .frames()
+          .find((frame) => frame.url().includes(google.controlFrame))
+      : s.page;
+    if (!root)
+      throw new Error(
+        `${code}_GOOGLE_FRAME_ABSENT: no frame at ${google.controlFrame} on ${s.page.url()}`,
+      );
+    const control = root
+      .locator(google.googleControl)
+      .filter({ visible: true })
+      .first();
     await control.waitFor({ state: 'visible' });
-    if (!(await control.isEnabled())) throw new Error(`${code}_GOOGLE_CONTROL_DISABLED: ${s.page.url()}`);
+    if (!(await control.isEnabled()))
+      throw new Error(`${code}_GOOGLE_CONTROL_DISABLED: ${s.page.url()}`);
     // A popup control opens Google in its own window, or navigates the page
     // itself when the browser keeps it in the tab; SSO runs where Google is.
     const popup = google.popup
-      ? await popupOrNavigation(s.page, GOOGLE_ACCOUNTS, () => humanClickLocator(s.page, control))
+      ? await popupOrNavigation(s.page, GOOGLE_ACCOUNTS, () =>
+          humanClickLocator(s.page, control),
+        )
       : null;
     if (popup) await pageSettled(popup);
     else if (!google.popup) await humanClickLocator(s.page, control);
-    const options = popup ? { originHost: google.originHost, page: popup } : { originHost: google.originHost };
+    const options = popup
+      ? { originHost: google.originHost, page: popup }
+      : { originHost: google.originHost };
     if (!(await googleSso(s, google.login, options)))
-      throw new Error(`${code}_SSO_INCOMPLETE: Google sign-in did not return to ${google.originHost}; observed ${s.page.url()}`);
+      throw new Error(
+        `${code}_SSO_INCOMPLETE: Google sign-in did not return to ${google.originHost}; observed ${s.page.url()}`,
+      );
     if (google.signedInUrl) await urlMatching(s.page, google.signedInUrl);
   };
 }
@@ -87,30 +121,50 @@ export function googleSignIn(google) {
  */
 export async function runBalanceCheck(run) {
   const code = run.label.toUpperCase();
-  const s = await WSession.start({ ...run.session, label: run.label, browser: 'chromium' });
+  const s = await WSession.start({
+    ...run.session,
+    label: run.label,
+    browser: 'chromium',
+  });
   try {
     await run.signIn(s, code);
     if (run.balanceUrl) {
-      const response = await s.page.goto(run.balanceUrl, { waitUntil: 'domcontentloaded' });
-      if (!response) throw new Error(`${code}_BALANCE_PAGE_UNANSWERED: ${run.balanceUrl}`);
-      if (!response.ok()) throw new Error(`${code}_BALANCE_PAGE_HTTP_ERROR: HTTP ${response.status()} at ${response.url()}`);
+      const response = await s.page.goto(run.balanceUrl, {
+        waitUntil: 'domcontentloaded',
+      });
+      if (!response)
+        throw new Error(`${code}_BALANCE_PAGE_UNANSWERED: ${run.balanceUrl}`);
+      if (!response.ok())
+        throw new Error(
+          `${code}_BALANCE_PAGE_HTTP_ERROR: HTTP ${response.status()} at ${response.url()}`,
+        );
       const unfinished = await response.finished();
-      if (unfinished) throw new Error(`${code}_BALANCE_PAGE_FAILED: ${response.url()}`, { cause: unfinished });
+      if (unfinished)
+        throw new Error(`${code}_BALANCE_PAGE_FAILED: ${response.url()}`, {
+          cause: unfinished,
+        });
     }
     await pageSettled(s.page);
     if (run.onBalancePage && !run.onBalancePage(new URL(s.page.url())))
-      throw new Error(`${code}_NOT_SIGNED_IN: the balance page settled on ${s.page.url()}`);
-    const balance = run.readBalance ? await run.readBalance(s) : await readShownBalance(s.page);
+      throw new Error(
+        `${code}_NOT_SIGNED_IN: the balance page settled on ${s.page.url()}`,
+      );
+    const balance = run.readBalance
+      ? await run.readBalance(s)
+      : await readShownBalance(s.page);
     if (balance === null) await keepUnreadBalancePage(s, run.label);
     console.log(`[trajectory] balance=${balance}`);
     if (!(await run.persist(balance)))
-      throw new Error(`${code}_BALANCE_NOT_PERSISTED: no record took the balance of ${run.label}`);
+      throw new Error(
+        `${code}_BALANCE_NOT_PERSISTED: no record took the balance of ${run.label}`,
+      );
     console.log(`PASS: balance=${balance} (persisted)`);
     return balance;
   } finally {
     // KEEP_OPEN=1 leaves the browser for a person to review until they close it.
     try {
-      if (process.env.KEEP_OPEN === '1' && !s.page.isClosed()) await reviewUntilClosed(s);
+      if (process.env.KEEP_OPEN === '1' && !s.page.isClosed())
+        await reviewUntilClosed(s);
     } finally {
       await s.close();
     }

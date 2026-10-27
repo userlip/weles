@@ -1,5 +1,5 @@
+import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 import { basename, dirname, join } from 'node:path';
 import type {
   BrowserContext,
@@ -67,93 +67,70 @@ export const CHROMIUM_ARGS = [
   // capable site is visited, making JA4/peetprint drift within a single run.
   '--disable-features=EncryptedClientHello',
 ];
-function inferMacAppName(executablePath: string): string | null {
-  const m = executablePath.match(/\/([^/]+\.app)\//);
-  return m?.[1]?.replace(/\.app$/, '') ?? null;
+/** The .app bundle a macOS executable lives in; absent for one outside a bundle. */
+function macAppName(executablePath: string): string | undefined {
+  return executablePath.match(/\/(?<app>[^/]+)\.app\//)?.groups?.app;
+}
+
+interface BinaryIdentity {
+  sha256: string;
+  mtime: string;
+  bytes: number;
 }
 
 // G16: identity of the exact browser BUILD that ran. The binary hash is the
-// expensive bit (shasum of a large Mach-O) so it is cached per path — the
-// worker is long-lived and the binary does not change mid-process.
-const _binaryIdentityCache = new Map<
-  string,
-  { sha256: string | null; mtime: string | null; bytes: number | null }
->();
-function binaryIdentity(path: string): {
-  sha256: string | null;
-  mtime: string | null;
-  bytes: number | null;
-} {
-  const cached = _binaryIdentityCache.get(path);
-  if (cached) return cached;
-  const id: {
-    sha256: string | null;
-    mtime: string | null;
-    bytes: number | null;
-  } = { sha256: null, mtime: null, bytes: null };
-  try {
-    const st = statSync(path);
-    id.mtime = st.mtime.toISOString();
-    id.bytes = st.size;
-  } catch {
-    /* best-effort */
-  }
-  try {
-    const out = execSync(`shasum -a 256 ${JSON.stringify(path)}`, {
-      encoding: 'utf8',
-      maxBuffer: 1 << 20,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-      .trim()
-      .split(/\s+/)[0];
-    if (/^[0-9a-f]{64}$/.test(out)) id.sha256 = out;
-  } catch {
-    /* best-effort */
-  }
-  _binaryIdentityCache.set(path, id);
-  return id;
-}
-// Parse the weles build label from an install path, e.g.
-// ~/.local/share/weles-chromium/147.0.7727.108-weles.1/... -> 147.0.7727.108-weles.1
-function parseWelesBuild(path: string): string | null {
-  return path.match(/weles-(?:chromium|firefox)\/([^/]+)\//)?.[1] ?? null;
+// expensive bit, so it is kept per path: the worker is long-lived and the
+// binary does not change mid-process. A binary that cannot be read is an
+// error, since the browser was just launched from it.
+const binaryIdentities = new Map<string, BinaryIdentity>();
+function binaryIdentity(path: string): BinaryIdentity {
+  const known = binaryIdentities.get(path);
+  if (known) return known;
+  const stat = statSync(path);
+  const identity = {
+    sha256: createHash('sha256').update(readFileSync(path)).digest('hex'),
+    mtime: stat.mtime.toISOString(),
+    bytes: stat.size,
+  };
+  binaryIdentities.set(path, identity);
+  return identity;
 }
 
+// The weles build label of an install path, e.g.
+// ~/.local/share/weles-chromium/147.0.7727.108-weles.1/... -> 147.0.7727.108-weles.1;
+// absent for a path outside a weles release directory.
+function welesBuild(path: string): string | undefined {
+  return path.match(/weles-(?:chromium|firefox)\/(?<build>[^/]+)\//)?.groups
+    ?.build;
+}
+
+/** Which verified browser build ran, how it was started, and its content hash. */
 export function browserProvenance(base: {
   browserType: string;
   source: string;
-  executablePath?: string;
-  channel?: string | null;
-  pid?: number | null;
-  customBinary?: boolean;
-  stockOverride?: boolean;
-  version?: string | null;
-  launchArgs?: string[];
+  executablePath: string;
+  pid: number | null;
+  /** null for a persistent context, whose Playwright handle has no browser. */
+  version: string | null;
+  /** The arguments the browser was started with, as Playwright was given them. */
+  launchArgs: LaunchOptions['args'];
 }) {
-  const executablePath = base.executablePath || null;
-  const binId = executablePath
-    ? binaryIdentity(executablePath)
-    : { sha256: null, mtime: null, bytes: null };
+  const { executablePath } = base;
+  const binary = binaryIdentity(executablePath);
   return {
     browser_type: base.browserType,
     source: base.source,
     executable_path: executablePath,
-    executable_basename: executablePath ? basename(executablePath) : null,
-    executable_dir: executablePath ? dirname(executablePath) : null,
-    mac_app_name: executablePath ? inferMacAppName(executablePath) : null,
-    channel: base.channel ?? null,
-    pid: base.pid ?? null,
-    custom_binary: base.customBinary ?? false,
-    stock_override: base.stockOverride ?? false,
-    playwright_default_chromium_path: null,
-    // G16: exact build identity — which weles build, its real reported version,
-    // a content hash + mtime/size of the binary, and the launch flags used.
-    weles_build: executablePath ? parseWelesBuild(executablePath) : null,
-    browser_version: base.version ?? null,
-    binary_sha256: binId.sha256,
-    binary_mtime: binId.mtime,
-    binary_bytes: binId.bytes,
-    launch_args: base.launchArgs ?? null,
+    executable_basename: basename(executablePath),
+    executable_dir: dirname(executablePath),
+    mac_app_name: macAppName(executablePath),
+    pid: base.pid,
+    weles_build: welesBuild(executablePath),
+    browser_version: base.version,
+    binary_sha256: binary.sha256,
+    binary_mtime: binary.mtime,
+    binary_bytes: binary.bytes,
+    launch_args: base.launchArgs,
   };
 }
 
@@ -188,6 +165,24 @@ export function redactContextOpts(opts: unknown): unknown {
     }),
   );
 }
+
+// Schemes a page loads itself, as the Fetch Standard names them: the HTTP(S)
+// schemes and the local schemes (https://fetch.spec.whatwg.org/#local-scheme).
+// Any other scheme a page reaches for is handed to a desktop application.
+const FETCH_SCHEMES: Record<string, true> = {
+  'http:': true,
+  'https:': true,
+  'about:': true,
+  'blob:': true,
+  'data:': true,
+};
+
+function customScheme(url: string): boolean {
+  return (
+    URL.canParse(url) && !Object.hasOwn(FETCH_SCHEMES, new URL(url).protocol)
+  );
+}
+
 /**
  * Observe navigation attempts to custom URI schemes (slack://, zoommtg://,
  * msteams://, vscode://, etc.) so trajectories are not blind to the
@@ -201,9 +196,9 @@ export function redactContextOpts(opts: unknown): unknown {
  */
 export function attachProtocolHandlerWatcher(context: BrowserContext) {
   const seen = new Set<string>();
-  const shouldLog = (kind: string, url: string, frameUrl = ''): boolean => {
+  const shouldLog = (kind: string, url: string, origin: string): boolean => {
     if (process.env.WELES_LOG_CUSTOM_PROTOCOL === '1') return true;
-    const key = `${kind}:${url}:${frameUrl}`;
+    const key = `${kind}:${url}:${origin}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -211,33 +206,18 @@ export function attachProtocolHandlerWatcher(context: BrowserContext) {
   context.on('page', (page) => {
     page.on('framenavigated', (frame) => {
       const url = frame.url();
-      const scheme = url.split(':', 1)[0];
-      if (
-        scheme &&
-        scheme !== 'http' &&
-        scheme !== 'https' &&
-        scheme !== 'about' &&
-        scheme !== 'data' &&
-        scheme !== 'blob'
-      ) {
-        if (shouldLog('nav', url))
-          console.log(`[async_api] custom-protocol nav attempted: ${url}`);
-      }
+      if (customScheme(url) && shouldLog('nav', url, page.url()))
+        console.log(`[async_api] custom-protocol nav attempted: ${url}`);
     });
     page.on('request', (req) => {
       const url = req.url();
-      if (
-        url.startsWith('http') ||
-        url.startsWith('about:') ||
-        url.startsWith('data:') ||
-        url.startsWith('blob:')
-      )
-        return;
-      const frameUrl = req.frame()?.url?.() ?? '';
-      if (shouldLog('request', url, frameUrl))
-        console.log(
-          `[async_api] custom-protocol request: ${url} (frame=${frameUrl})`,
-        );
+      if (!customScheme(url)) return;
+      const worker = req.serviceWorker();
+      const origin = worker
+        ? `service worker ${worker.url()}`
+        : `frame ${req.frame().url()}`;
+      if (shouldLog('request', url, origin))
+        console.log(`[async_api] custom-protocol request: ${url} (${origin})`);
     });
   });
 }

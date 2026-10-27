@@ -16,13 +16,10 @@ import { WSession } from '../../../dist/session/wsession.js';
 import { detectRedditBanSignals } from '../../../dist/platforms/reddit/ban_signals.js';
 import { banSignalOf } from '../_shared/auth/ban-signal.mjs';
 import { humanType } from '../../../dist/human/keyboard.js';
-import {
-  humanIdlePause,
-  humanClickLocator,
-} from '../../../dist/human/mouse.js';
+import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
 import { replaceAccountMetadata } from '../_shared/skarbiec/accounts.mjs';
-import { submitAnswered } from '../_shared/page/settled.mjs';
+import { pageSettled, submitAnswered } from '../_shared/page/settled.mjs';
 import { keepVerdict } from '../_shared/action/verdict.mjs';
 
 const LABEL = 'reddit_login';
@@ -65,7 +62,7 @@ async function submitLoginForm(s) {
     .first();
   await userIn.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, userIn);
-  await humanIdlePause('short');
+  await pageSettled(s.page);
   await humanType(s.page, LOGIN);
   const pwIn = s.page
     .locator(
@@ -75,9 +72,9 @@ async function submitLoginForm(s) {
     .first();
   await pwIn.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, pwIn);
-  await humanIdlePause('short');
+  await pageSettled(s.page);
   await humanType(s.page, PASSWORD);
-  await humanIdlePause('short');
+  await pageSettled(s.page);
   await pwIn.press('Enter');
   const loginAlert = s.page
     .locator('[role="alert"]')
@@ -117,7 +114,10 @@ try {
     `[ban-signal] ${banSignal.signal} (${JSON.stringify(banSignal.details)})`,
   );
   if (!banSignal.healthy)
-    throw refused(`the page reads ${banSignal.signal} after the login`, banSignal);
+    throw refused(
+      `the page reads ${banSignal.signal} after the login`,
+      banSignal,
+    );
   await persistFreshCookieJar(acct, await s.ctx.cookies(), {
     currentProxyUrl: proxyUrl,
     currentPersona: persona,

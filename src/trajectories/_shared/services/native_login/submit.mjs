@@ -81,16 +81,21 @@ export async function submitLoginForm(page, passwordField) {
       break;
     }
     response = await redirected.response();
-    if (!response)
+    if (!response) {
+      const failure = redirected.failure();
       throw Object.assign(
         new Error('login redirect did not return a response'),
         {
           code: 'NATIVE_LOGIN_REDIRECT_FAILED',
           ...details,
           redirectUrl: redirected.url(),
-          errorText: redirected.failure()?.errorText ?? null,
+          errorText:
+            failure === null
+              ? 'the browser recorded no failure for the redirect request'
+              : failure.errorText,
         },
       );
+    }
   }
   await pageSettled(page);
   const observed = new URL(page.url());

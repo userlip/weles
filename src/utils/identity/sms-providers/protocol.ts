@@ -32,12 +32,16 @@ export interface SmsProvider {
  * refused throws with `label` and the cause or HTTP status; the URL carries
  * the API key, so only `label` is quoted.
  */
-export async function providerAnswer(url: string, label: string): Promise<string> {
+export async function providerAnswer(
+  url: string,
+  label: string,
+): Promise<string> {
   const response = await fetch(url).catch((error: Error) => {
     throw new Error(`${label} failed: ${error.message}`, { cause: error });
   });
   const text = (await response.text()).trim();
-  if (!response.ok) throw new Error(`${label} answered HTTP ${response.status}: ${text}`);
+  if (!response.ok)
+    throw new Error(`${label} answered HTTP ${response.status}: ${text}`);
   return text;
 }
 
@@ -46,8 +50,16 @@ export async function providerAnswer(url: string, label: string): Promise<string
  * services) formats it as '490 315'. An answer with no digits is refused
  * with what the provider said.
  */
-export function codeDigits(provider: SmsProviderName, orderId: string, answer: string, carried: string): string {
+export function codeDigits(
+  provider: SmsProviderName,
+  orderId: string,
+  answer: string,
+  carried: string,
+): string {
   const code = carried.replace(/\D/g, '');
-  if (!code) throw new Error(`sms_${provider}_unreadable: order ${orderId} answered ${answer}`);
+  if (!code)
+    throw new Error(
+      `sms_${provider}_unreadable: order ${orderId} answered ${answer}`,
+    );
   return code;
 }

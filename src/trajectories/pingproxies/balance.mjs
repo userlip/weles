@@ -9,7 +9,8 @@ await runGoogleSsoBalance({
   label: 'pingproxies_balance',
   login: await getGoogleSsoCreds(),
   loginUrl: 'https://dashboard.byteful.com/login',
-  googleControl: 'button:has-text("Continue with Google"), button:has-text("Sign in with Google")',
+  googleControl:
+    'button:has-text("Continue with Google"), button:has-text("Sign in with Google")',
   originHost: 'byteful.com',
   persist: (balance) => patchEffectiveBalance('Pingproxies', balance),
 });

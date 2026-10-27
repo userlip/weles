@@ -16,7 +16,9 @@ async function readTask(svc, apiKey, taskId) {
   // the error whole.
   const body = await response.text();
   if (!response.ok)
-    throw new Error(`captcha_${svc.name}_http_${response.status}: getTaskResult for task ${taskId} failed: ${body}`);
+    throw new Error(
+      `captcha_${svc.name}_http_${response.status}: getTaskResult for task ${taskId} failed: ${body}`,
+    );
   let answer;
   try {
     answer = JSON.parse(body);
@@ -27,7 +29,9 @@ async function readTask(svc, apiKey, taskId) {
     );
   }
   if (answer.errorId)
-    throw new Error(`captcha_${svc.name}_error: task ${taskId} was refused: ${body}`);
+    throw new Error(
+      `captcha_${svc.name}_error: task ${taskId} was refused: ${body}`,
+    );
   return answer;
 }
 
@@ -35,9 +39,13 @@ export async function solverTaskResult(svc, apiKey, taskId) {
   for (;;) {
     const answer = await readTask(svc, apiKey, taskId);
     if (answer.status === 'ready') {
-      const token = answer.solution?.gRecaptchaResponse ? answer.solution.gRecaptchaResponse : answer.solution?.token;
+      const token = answer.solution?.gRecaptchaResponse
+        ? answer.solution.gRecaptchaResponse
+        : answer.solution?.token;
       if (!token)
-        throw new Error(`captcha_${svc.name}_no_token: task ${taskId} is ready but its solution carries no token: ${JSON.stringify(answer)}`);
+        throw new Error(
+          `captcha_${svc.name}_no_token: task ${taskId} is ready but its solution carries no token: ${JSON.stringify(answer)}`,
+        );
       return token;
     }
   }

@@ -3,7 +3,10 @@ import { humanClickLocator } from '../../../dist/human/mouse.js';
 
 /** The first post the page shows: the one a reply on this page answers. */
 function firstPost(page) {
-  return page.locator('article[data-testid="tweet"]').filter({ visible: true }).first();
+  return page
+    .locator('article[data-testid="tweet"]')
+    .filter({ visible: true })
+    .first();
 }
 
 /**

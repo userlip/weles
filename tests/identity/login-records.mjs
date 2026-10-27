@@ -58,7 +58,7 @@ try {
   const { metadata } = await import('../../dist/utils/login-accounts/records.js');
   const login = (document, tags) => {
     const id = `weles-login-records-${randomUUID()}`;
-    accepted(skarbiec, ['set-json', id, '--type', 'login', '--tags', tags.join(',')], JSON.stringify(document));
+    accepted(skarbiec, ['set', id, '--type', 'login', '--tags', tags.join(',')], JSON.stringify(document));
     return { id, kind: 'login', tags };
   };
   const refused = (item, code, ...named) => {

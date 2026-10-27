@@ -13,7 +13,12 @@
 // Output:
 //   recordings/<run>/<action>/pangram_result.json
 //   recordings/<run>/<action>/ban_signal.json
-import { LABEL, dashboardUrl, inputText, textStats } from './analyze_text/scan_brief.mjs';
+import {
+  LABEL,
+  dashboardUrl,
+  inputText,
+  textStats,
+} from './analyze_text/scan_brief.mjs';
 import { analyzeOnce } from './analyze_text/attempt.mjs';
 import { keepVerdict } from '../_shared/action/verdict.mjs';
 
@@ -46,7 +51,10 @@ do {
   }
   if (unkept)
     throw outcome.failure
-      ? new AggregateError([outcome.failure, unkept], `${outcome.failure.message}; and its verdict was not kept: ${unkept.message}`)
+      ? new AggregateError(
+          [outcome.failure, unkept],
+          `${outcome.failure.message}; and its verdict was not kept: ${unkept.message}`,
+        )
       : unkept;
 } while (outcome.failure && outcome.retryAccount);
 if (outcome.failure) throw outcome.failure;

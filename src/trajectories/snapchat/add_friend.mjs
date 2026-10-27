@@ -11,7 +11,10 @@ import { statedText } from '../_shared/inputs/stated.mjs';
 import { clickDescribed, pageShows } from '../_shared/page/judged/seen.mjs';
 import { WEB_APP, reloginSnapchat } from './sign_in.mjs';
 
-const TARGET = statedText(['TARGET_USERNAME'], 'the Snapchat user a real account sends a friend request to');
+const TARGET = statedText(
+  ['TARGET_USERNAME'],
+  'the Snapchat user a real account sends a friend request to',
+);
 
 await runAction({
   platform: 'snapchat',
@@ -22,9 +25,19 @@ await runAction({
   act: async (s) => {
     await clickDescribed(s.page, "the web app's search field");
     await humanType(s.page, TARGET);
-    await clickDescribed(s.page, `the button that adds the Snapchat user ${TARGET} as a friend, in that user's search result`);
-    if (!(await pageShows(s.page, `Does the search result for ${TARGET} show the friend request as sent or the user as added?`)))
-      throw new Error(`SNAPCHAT_FRIEND_REQUEST_UNCONFIRMED: the result for ${TARGET} does not show the request as sent`);
+    await clickDescribed(
+      s.page,
+      `the button that adds the Snapchat user ${TARGET} as a friend, in that user's search result`,
+    );
+    if (
+      !(await pageShows(
+        s.page,
+        `Does the search result for ${TARGET} show the friend request as sent or the user as added?`,
+      ))
+    )
+      throw new Error(
+        `SNAPCHAT_FRIEND_REQUEST_UNCONFIRMED: the result for ${TARGET} does not show the request as sent`,
+      );
     return `friend request sent to ${TARGET}`;
   },
 });

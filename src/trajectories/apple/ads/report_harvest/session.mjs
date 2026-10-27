@@ -71,7 +71,8 @@ function appleAdsApi(url) {
   const { hostname, pathname } = new URL(url);
   return (
     hostname === ADS_HOST &&
-    (pathname.startsWith('/reporting/graphql') || pathname.startsWith('/cm/api'))
+    (pathname.startsWith('/reporting/graphql') ||
+      pathname.startsWith('/cm/api'))
   );
 }
 

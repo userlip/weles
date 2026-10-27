@@ -12,8 +12,8 @@ export class UsageError extends Error {
 /** The status of a usage error, as shell builtins report incorrect usage. */
 const USAGE_STATUS = 2; // https://www.gnu.org/software/bash/manual/html_node/Exit-Status.html
 
-/** The status of any other failure. */
-const FAILURE_STATUS = 1; // https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/stdlib.h.html
+/** The status of any other failure, and of a command whose run answered a failure. */
+export const FAILURE_STATUS = 1; // https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/stdlib.h.html
 
 /** The exit status for a failure the CLI caught. */
 export function exitStatusFor(error: unknown): number {
@@ -58,28 +58,31 @@ Usage:
   weles open <url> [--headless] [--browser chromium|firefox] [--wait-for-text <text>] [--text] [--screenshot <file>] [--json]
   weles mcp
   weles release surface [--root <directory>]
-  weles release enforce-version --decision <file> --baseline <file> --declaration <file> --manifest <file> [--json]
-  weles release validate-manifest --manifest <file> --source-revision <sha> --candidate-tag <tag> [--json]
-  weles release adopt-baseline --released <version> --published-surface <file> --reason <text> [--correcting <version>] [--json]
-  weles design export-assets --provider figma --request <export-request.json>
-  weles design parse-document --provider figma <document.json[.gz]> <summary.json> <nodes.json> [<vocabulary.json>]
+  weles release enforce --decision <file> --baseline <file> --declaration <file> --manifest <file> [--json]
+  weles release validate --manifest <file> --source-revision <sha> --candidate-tag <tag> [--json]
+  weles release adopt --released <version> --published-surface <file> --reason <text> [--correcting <version>] [--json]
+  weles design export --provider figma --request <export-request.json>
+  weles design parse --provider figma <document.json[.gz]> <summary.json> <nodes.json> [<vocabulary.json>]
   weles runs list [--json]
   weles runs show <run-id> [--json]
   weles runs answer <run-id> --ready|--approved|--not-received [--detail <text>] [--json]
   weles runs cancel <run-id> --detail <text> [--json]
-  weles account-security --provider google --login-role <skarbiec-role> [--json]
-  weles account-security --run <run-id> [--json]
-  weles app-password --provider google --login-role <skarbiec-role> --organization <skrzynka-organization> --account <mailbox-email> [--json]
-  weles app-password --provider google --login-item <skarbiec-item> --organization <skrzynka-organization> --account <mailbox-email> [--json]
-  weles app-password --run <run-id> [--json]
-  weles developer-certificate --provider apple --subject <dn> [--account-role <role>] --confirm "AUTHORIZE ONE APPLE DEVELOPER ID" --execution-host <host> --private-key-out <abs> --expires-in-minutes <n> [--execution-agent <agent>] [--json]
-  weles developer-certificate --run <run-id> --certificate-out <abs> [--private-key <abs> --store-host <host>] [--json]
+  weles security --provider google --login-role <skarbiec-role> [--json]
+  weles security --run <run-id> [--json]
+  weles password --provider google --login-role <skarbiec-role> --organization <skrzynka-organization> --account <mailbox-email> [--json]
+  weles password --provider google --login-item <skarbiec-item> --organization <skrzynka-organization> --account <mailbox-email> [--json]
+  weles password --run <run-id> [--json]
+  weles certificate --provider apple --subject <dn> [--account-role <role>] --confirm "AUTHORIZE ONE APPLE DEVELOPER ID" --execution-host <host> --private-key-out <abs> --expires-in-minutes <n> [--execution-agent <agent>] [--json]
+  weles certificate --run <run-id> --certificate-out <abs> [--private-key <abs> --store-host <host>] [--json]
   weles login --provider apple [--account-role <role>] --confirm "AUTHORIZE ONE APPLE LOGIN" --execution-host <host> --expires-in-minutes <n> [--execution-agent <agent>] [--json]
   weles login --run <run-id> [--json]
   weles worker <status|version|start|stop|restart> [--json]
   weles keeper start --session <id> [--url <url>] [--headless]
   weles keeper <status|stop> --session <id>
   weles records adopt [--json]
+  weles recordings scrub [--json]
+  weles pointer harvest <run>.inst.json... [--json]
+  weles pointer show [--json]
   weles doctor [--json]
   weles version
 
@@ -90,12 +93,12 @@ Options:
   --state-dir <dir>       Override the durable onboarding state directory.
   --host <hostname>       Exact managed Weles worker hostname for imported definitions.
   --provider <name>       The provider a login, developer certificate, app password or account-security
-                          read goes through: apple for login and developer-certificate, google for
-                          app-password and account-security; none is assumed.
+                          read goes through: apple for login and certificate, google for
+                          password and security; none is assumed.
   --login-role <role>     The Skarbiec role the Google login plays (the item tagged stado:role:<role>).
-                          account-security reads 2FA without signing in; app-password signs in,
+                          security reads 2FA without signing in; password signs in,
                           creates a Google app password and hands it to Skrzynka.
-  --login-item <item>     Exact Skarbiec Google login for app-password when no role is assigned.
+  --login-item <item>     Exact Skarbiec Google login for password when no role is assigned.
   Worker and runs commands reach the executor at the route
   'stado service directory connect weles-admission' gives, with the token of the item playing
   the worker's API role (stado credentials get --role echo-weles-api --field token);
@@ -136,5 +139,11 @@ cancelled with --detail, and a cancelled sign-in no longer holds the account, so
 next sign-in starts a new run. keeper start holds one browser session that answers JSON commands
 on ~/.weles/keeper/<id>/socket. keeper status reads the live session and current action;
 keeper stop closes the browser and finalizes its evidence before confirming the stop. records adopt tags every Weles
-record in this vault with weles:record:<kind> from its own context.
+record in this vault with weles:record:<kind> from its own context. recordings scrub rewrites
+every session_meta.json under WELES_RECORDINGS_ROOT that still holds env_all, keeping only the
+variable names (env_names) as a new run does, and lists each file it changed or could not read.
+pointer harvest reads the instrumentation dumps of runs a person drove and keeps the pointer's
+travel between presses and the wheel steps in WELES_RECORDINGS_ROOT/pointer-trace.json; every
+move and scroll replays that trace, and a host without one refuses to move the pointer, naming
+the file. pointer show says what the trace holds and which dumps it came from.
 `;

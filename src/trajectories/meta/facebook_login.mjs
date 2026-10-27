@@ -10,10 +10,8 @@ import {
 } from '../../../dist/utils/credentials.js';
 import { WSession } from '../../../dist/session/wsession.js';
 import { humanType } from '../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../dist/human/mouse.js';
+import { humanClickLocator } from '../../../dist/human/mouse.js';
+import { pageSettled } from '../_shared/page/settled.mjs';
 import { persistFreshCookieJar } from '../_shared/auth/cookie-freshness.mjs';
 import { clickOffered } from '../_shared/page/judged/seen.mjs';
 import { isLoginUrl } from './ads/session/login_wall.mjs';
@@ -21,10 +19,16 @@ import { isLoginUrl } from './ads/session/login_wall.mjs';
 const LOGIN_URL = 'https://www.facebook.com/login';
 
 const acct = await getSocialAccount('facebook');
-if (!acct) throw new Error('FACEBOOK_ACCOUNT_UNAVAILABLE: no active facebook account in Skarbiec');
+if (!acct)
+  throw new Error(
+    'FACEBOOK_ACCOUNT_UNAVAILABLE: no active facebook account in Skarbiec',
+  );
 const email = acct.metadata?.email ? acct.metadata.email : acct.username;
 const password = acct.metadata?.password;
-if (!password) throw new Error(`FACEBOOK_PASSWORD_UNAVAILABLE: facebook account ${acct.username} has no password`);
+if (!password)
+  throw new Error(
+    `FACEBOOK_PASSWORD_UNAVAILABLE: facebook account ${acct.username} has no password`,
+  );
 console.log(`[fb-login] using account: ${acct.username} <${email}>`);
 
 const { proxyUrl, persona } = await resolveAccountSession(acct);
@@ -36,7 +40,7 @@ const s = await WSession.start({
 
 try {
   await s.goto(LOGIN_URL);
-  await humanIdlePause('deliberate');
+  await pageSettled(s.page);
 
   // Cookie banner — a fixed-position overlay Meta marks with its own test id.
   const cookieBtn = s.page
@@ -45,7 +49,7 @@ try {
     .first();
   if (await cookieBtn.isVisible()) {
     await humanClickLocator(s.page, cookieBtn);
-    await humanIdlePause('deliberate');
+    await pageSettled(s.page);
   }
 
   // 1. Email or mobile.
@@ -68,7 +72,7 @@ try {
 
   // 3. Submit from the password field.
   await pwIn.press('Enter');
-  await humanIdlePause('long');
+  await pageSettled(s.page);
 
   // 4. "Save your login info?" / new-device prompt — accept and continue.
   if (
@@ -77,7 +81,7 @@ try {
       'the button that saves the login info or continues',
     )
   )
-    await humanIdlePause('deliberate');
+    await pageSettled(s.page);
 
   // 5. Confirm we landed on home (a checkpoint or login route is a fail signal).
   const finalUrl = s.page.url();
@@ -87,7 +91,7 @@ try {
   if (!/facebook\.com\/(\?|$|home)/.test(finalUrl)) {
     // Confirm the session on the home page before the jar is persisted.
     await s.page.goto('https://www.facebook.com/');
-    await humanIdlePause('deliberate');
+    await pageSettled(s.page);
     const landed = s.page.url();
     if (!/facebook\.com\/(\?|$|home)/.test(landed))
       throw new Error(`facebook_session_unconfirmed: ${landed}`);
@@ -98,7 +102,8 @@ try {
     currentProxyUrl: proxyUrl,
     currentPersona: persona,
   });
-  if (!persisted.ok) throw new Error(`facebook_persist_failed: ${persisted.reason}`);
+  if (!persisted.ok)
+    throw new Error(`facebook_persist_failed: ${persisted.reason}`);
   console.log(`PASS: facebook logged in (${cookies.length} cookies persisted)`);
 } finally {
   await s.close();

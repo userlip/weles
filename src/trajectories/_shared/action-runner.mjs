@@ -64,7 +64,9 @@ function actionContext(cfg, acct) {
     );
   const product = findProduct(productId);
   if (!product)
-    throw new Error(`ACTION_PRODUCT_UNKNOWN: no product ${productId} in Skarbiec`);
+    throw new Error(
+      `ACTION_PRODUCT_UNKNOWN: no product ${productId} in Skarbiec`,
+    );
   return { character, product };
 }
 
@@ -81,7 +83,9 @@ function actionFeed(cfg, acct) {
   if (SEARCH_QUERY && cfg.resolveSearchUrl)
     return { feed: cfg.resolveSearchUrl(SEARCH_QUERY), targetedMode: true };
   const feed =
-    typeof cfg.feedUrl === 'function' ? cfg.feedUrl(acct.username) : cfg.feedUrl;
+    typeof cfg.feedUrl === 'function'
+      ? cfg.feedUrl(acct.username)
+      : cfg.feedUrl;
   if (!feed)
     throw new Error(
       `ACTION_TARGET_REQUIRED: ${cfg.platform} ${cfg.action} names no page to act on (TARGET_URL${cfg.resolveUserUrl ? ', TARGET_USER' : ''}${cfg.resolveSearchUrl ? ', SEARCH_QUERY' : ''})`,

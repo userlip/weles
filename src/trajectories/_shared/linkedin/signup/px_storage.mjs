@@ -19,7 +19,10 @@ const PX_LS_KEY_RE = /^(PXdOjV695v_|_pxvid|pxsid|_?px_|rc::|_grecaptcha)/;
 
 /** Keeps the page's PX storage keys in `acct`'s record; answers the keys kept. */
 export async function captureLinkedinPxStorage(s, acct) {
-  if (!acct.id) throw new Error(`LINKEDIN_PX_ACCOUNT_UNIDENTIFIED: ${acct.username} has no Skarbiec id to keep its PX storage under`);
+  if (!acct.id)
+    throw new Error(
+      `LINKEDIN_PX_ACCOUNT_UNIDENTIFIED: ${acct.username} has no Skarbiec id to keep its PX storage under`,
+    );
   const items = await s.page.evaluate((pattern) => {
     const keys = new RegExp(pattern);
     return Object.fromEntries(
@@ -49,9 +52,12 @@ export async function restoreLinkedinPxStorage(s, acct) {
   const stored = acct.metadata?.linkedin_px_storage;
   if (!stored) return { keys: [] };
   if (typeof stored !== 'object')
-    throw new Error(`LINKEDIN_PX_STORAGE_MALFORMED: ${acct.username}'s kept PX storage is not an object`);
+    throw new Error(
+      `LINKEDIN_PX_STORAGE_MALFORMED: ${acct.username}'s kept PX storage is not an object`,
+    );
   await s.page.evaluate((kv) => {
-    for (const [key, value] of Object.entries(kv)) localStorage.setItem(key, String(value));
+    for (const [key, value] of Object.entries(kv))
+      localStorage.setItem(key, String(value));
   }, stored);
   const keys = Object.keys(stored);
   console.log(`[linkedin_login] restored ${keys.length} PX storage keys`);

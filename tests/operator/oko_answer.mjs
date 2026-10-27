@@ -40,8 +40,10 @@ const dirty = spawnSync('git', ['status', '--porcelain'], {
 writeFileSync(report, `revision: ${revision}${dirty}\nrecords: ${requests}\n`);
 process.env.WELES_OPERATOR_REQUEST_DIR = requests;
 
+const { okoBinary } = await import('../../src/operator/oko-ask.mjs');
+
 const oko = (args) => {
-  const result = spawnSync(process.env.WELES_OKO_BIN || 'oko', args, {
+  const result = spawnSync(okoBinary(), args, {
     encoding: 'utf8',
   });
   appendFileSync(
@@ -93,7 +95,7 @@ try {
   assert.ok(outside.status, 'an answer outside the choices is refused');
   assert.match(outside.stderr, /takes one of its choices/);
 
-  const answersSoFar = (opened.answers ?? []).length;
+  const answersSoFar = opened.answers.length;
   const received = store.nextOperatorAnswer(opened.id, answersSoFar);
   const answered = oko([
     'asks',

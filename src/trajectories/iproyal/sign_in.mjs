@@ -3,7 +3,10 @@
 // renders without a working handler; so the OAuth code flow is started
 // directly with IPRoyal's own client and redirect, the shared Google SSO
 // driver signs in, and Google redirects back to /social-login/google/success.
-import { getGoogleSsoCreds, googleSso } from '../_shared/services/google_sso.mjs';
+import {
+  getGoogleSsoCreds,
+  googleSso,
+} from '../_shared/services/google_sso.mjs';
 import { pageSettled } from '../_shared/page/settled.mjs';
 
 export const IPROYAL_DASHBOARD = 'https://dashboard.iproyal.com/';
@@ -20,6 +23,8 @@ export async function iproyalSignIn() {
     await s.page.goto(GOOGLE_OAUTH_URL, { waitUntil: 'domcontentloaded' });
     await pageSettled(s.page);
     if (!(await googleSso(s, login, { originHost: 'iproyal.com' })))
-      throw new Error(`${code}_SSO_INCOMPLETE: Google sign-in did not return to iproyal.com; observed ${s.page.url()}`);
+      throw new Error(
+        `${code}_SSO_INCOMPLETE: Google sign-in did not return to iproyal.com; observed ${s.page.url()}`,
+      );
   };
 }

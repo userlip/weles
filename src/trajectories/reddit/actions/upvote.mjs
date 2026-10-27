@@ -41,7 +41,10 @@ await runAction({
       .first();
     await thing.waitFor({ state: 'visible' });
     const fullname = await thing.getAttribute('data-fullname');
-    await humanClickLocator(s.page, thing.locator('div.midcol.unvoted div.arrow.up').first());
+    await humanClickLocator(
+      s.page,
+      thing.locator('div.midcol.unvoted div.arrow.up').first(),
+    );
     await s.page
       .locator(
         `div.thing[data-fullname="${fullname}"] div.midcol.likes div.arrow.upmod`,

@@ -4,9 +4,12 @@
 // meta/threads_register.mjs takes), and when that alone does not sign the
 // page in, its "Continue with Instagram" sign-in and consent are walked.
 // The resulting Threads cookies are kept in the Threads account's record.
-import { getSocialAccount, resolveAccountSession } from '../../../dist/utils/credentials.js';
+import {
+  getSocialAccount,
+  resolveAccountSession,
+} from '../../../dist/utils/credentials.js';
 import { WSession } from '../../../dist/session/wsession.js';
-import { humanIdlePause } from '../../../dist/human/mouse.js';
+import { pageSettled } from '../_shared/page/settled.mjs';
 import {
   injectProviderCookies,
   waitForNavBackTo,
@@ -25,34 +28,61 @@ const onLogin = (address) => {
 };
 
 const acct = await getSocialAccount('threads');
-if (!acct) throw new Error('THREADS_ACCOUNT_UNAVAILABLE: no active threads account in Skarbiec');
+if (!acct)
+  throw new Error(
+    'THREADS_ACCOUNT_UNAVAILABLE: no active threads account in Skarbiec',
+  );
 const igAcct = await getSocialAccount('instagram');
-if (!igAcct) throw new Error('THREADS_INSTAGRAM_UNAVAILABLE: no instagram account to sign Threads in through');
+if (!igAcct)
+  throw new Error(
+    'THREADS_INSTAGRAM_UNAVAILABLE: no instagram account to sign Threads in through',
+  );
 const igCookies = igAcct.metadata?.cookies;
 if (!Array.isArray(igCookies) || !igCookies.length)
-  throw new Error(`THREADS_INSTAGRAM_SIGNED_OUT: instagram ${igAcct.username} holds no cookies; sign it in to Instagram first`);
-console.log(`[threads-login] target=${acct.username} via instagram=${igAcct.username}`);
+  throw new Error(
+    `THREADS_INSTAGRAM_SIGNED_OUT: instagram ${igAcct.username} holds no cookies; sign it in to Instagram first`,
+  );
+console.log(
+  `[threads-login] target=${acct.username} via instagram=${igAcct.username}`,
+);
 
 const { proxyUrl, persona } = await resolveAccountSession(acct);
-const s = await WSession.start({ label: 'threads_login', proxy: proxyUrl, persona });
+const s = await WSession.start({
+  label: 'threads_login',
+  proxy: proxyUrl,
+  persona,
+});
 try {
-  const injected = await injectProviderCookies(s.ctx, 'instagram', igCookies, ['.threads.net']);
+  const injected = await injectProviderCookies(s.ctx, 'instagram', igCookies, [
+    '.threads.net',
+  ]);
   console.log(`[threads-login] injected ${injected} instagram+threads cookies`);
   await s.goto(LOGIN_URL);
-  await humanIdlePause('deliberate');
+  await pageSettled(s.page);
   // Cookies that sign the page in send it straight off /login; otherwise the
   // Instagram sign-in and its consent are walked.
-  if (onLogin(s.page.url()) && (await clickOffered(s.page, 'the Continue with Instagram button'))) {
-    await humanIdlePause('deliberate');
+  if (
+    onLogin(s.page.url()) &&
+    (await clickOffered(s.page, 'the Continue with Instagram button'))
+  ) {
+    await pageSettled(s.page);
     await answerOAuthConsent(s.page);
     await waitForNavBackTo(s.page, onThreads);
   }
   if (onLogin(s.page.url()))
-    throw new Error(`threads_login_did_not_advance: the page stays on ${s.page.url()} (the Instagram cookies may be stale)`);
+    throw new Error(
+      `threads_login_did_not_advance: the page stays on ${s.page.url()} (the Instagram cookies may be stale)`,
+    );
   const cookies = await s.ctx.cookies();
-  const persisted = await persistFreshCookieJar(acct, cookies, { currentProxyUrl: proxyUrl, currentPersona: persona });
-  if (!persisted.ok) throw new Error(`threads_persist_failed: ${persisted.reason}`);
-  console.log(`PASS: threads logged in (${cookies.length} cookies persisted, final=${s.page.url()})`);
+  const persisted = await persistFreshCookieJar(acct, cookies, {
+    currentProxyUrl: proxyUrl,
+    currentPersona: persona,
+  });
+  if (!persisted.ok)
+    throw new Error(`threads_persist_failed: ${persisted.reason}`);
+  console.log(
+    `PASS: threads logged in (${cookies.length} cookies persisted, final=${s.page.url()})`,
+  );
 } finally {
   await s.close();
 }

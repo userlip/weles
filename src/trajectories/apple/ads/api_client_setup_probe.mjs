@@ -109,7 +109,10 @@ try {
       s.page,
       'the account settings entry of the Apple Ads account menu',
     );
-    await clickDescribed(s.page, 'the API tab of the Apple Ads account settings');
+    await clickDescribed(
+      s.page,
+      'the API tab of the Apple Ads account settings',
+    );
   }
   const finalState = await pageDiag(s.page, 'final');
   const existing = await inspectExistingAppleAdsApi(s.page, finalState);

@@ -49,7 +49,8 @@ export async function integrationAction(domain, action, body) {
   try {
     envelope = JSON.parse(text);
   } catch (error) {
-    const shown = text.trim() === '' ? 'an empty body' : `the body ${text.trim()}`;
+    const shown =
+      text.trim() === '' ? 'an empty body' : `the body ${text.trim()}`;
     throw new Error(
       `${endpoint} answered HTTP ${response.status} with ${shown}, which is not JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -57,10 +58,14 @@ export async function integrationAction(domain, action, body) {
   if (!response.ok || envelope?.ok !== true || !envelope.result) {
     // The boundary's own error when it states one, else the whole envelope.
     const refusal =
-      envelope && typeof envelope === 'object' && Object.hasOwn(envelope, 'error')
+      envelope &&
+      typeof envelope === 'object' &&
+      Object.hasOwn(envelope, 'error')
         ? envelope.error
         : envelope;
-    throw new Error(`${endpoint} answered HTTP ${response.status}: ${JSON.stringify(refusal)}`);
+    throw new Error(
+      `${endpoint} answered HTTP ${response.status}: ${JSON.stringify(refusal)}`,
+    );
   }
   return envelope.result;
 }

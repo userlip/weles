@@ -202,7 +202,13 @@ export function createDispatcher({
   async function dispatchQueue() {
     if (dispatching || draining || recovering || paused) return;
     dispatching = true;
-    while (!draining && !recovering && !paused && !active.size && queue.length) {
+    while (
+      !draining &&
+      !recovering &&
+      !paused &&
+      !active.size &&
+      queue.length
+    ) {
       const taskId = queue.shift();
       queued.delete(taskId);
       const start = await settled(startTask(taskId));

@@ -29,7 +29,9 @@ await runAction({
             resolve({ source: element.currentSrc, duration: element.duration });
           element.addEventListener('ended', done, { once: true });
           element.addEventListener('error', () =>
-            reject(new Error(`the video failed to play: ${element.error?.message}`)),
+            reject(
+              new Error(`the video failed to play: ${element.error?.message}`),
+            ),
           );
           element.addEventListener('timeupdate', () => {
             if (element.currentTime < furthest) done();

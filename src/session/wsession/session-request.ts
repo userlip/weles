@@ -17,6 +17,26 @@ import type { Persona } from '../../browser/persona.js';
 /** The realized proxy a launched session presents, as async_api takes it. */
 export type SessionProxy = NonNullable<AsyncNewBrowserOptions['proxy']>;
 
+/** The proxy a running session went through, as it reports it. */
+export type SessionProxyConfig = {
+  server: string;
+  username?: string;
+  password?: string;
+  country?: string;
+  exit_ip?: string;
+  platform?: string;
+};
+
+/** One response the session kept, with its body as text. */
+export type CapturedResponse = {
+  ts: number;
+  method: string;
+  url: string;
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+};
+
 export interface WSessionOptions {
   label?: string;
   proxy?: string;
@@ -55,8 +75,16 @@ export function redactProxyForLog(proxy: unknown): string {
     return u.toString();
   }
   if (typeof proxy === 'object') {
-    const p = proxy as { server?: string; username?: string; password?: string };
-    return JSON.stringify({ server: p.server, username: p.username, password: p.password ? '***' : undefined });
+    const p = proxy as {
+      server?: string;
+      username?: string;
+      password?: string;
+    };
+    return JSON.stringify({
+      server: p.server,
+      username: p.username,
+      password: p.password ? '***' : undefined,
+    });
   }
   return String(proxy);
 }
@@ -65,7 +93,11 @@ export function redactProxyForLog(proxy: unknown): string {
 function profilePlatform(opts: WSessionOptions): string {
   const action = process.env.ACTION?.trim();
   const [actionPlatform] = action ? action.split('_') : [];
-  const named = [opts.platform?.trim(), actionPlatform, opts.targetHost?.trim()].find(Boolean);
+  const named = [
+    opts.platform?.trim(),
+    actionPlatform,
+    opts.targetHost?.trim(),
+  ].find(Boolean);
   if (!named)
     throw new Error(
       'ACCOUNT_PROFILE_PLATFORM_UNNAMED: an account session needs its platform (WSession.start platform, the ACTION it runs, or targetHost) to file its browser profile under',
@@ -78,14 +110,21 @@ function profilePlatform(opts: WSessionOptions): string {
  * keyed by a hash of ACCOUNT_ID under <platform>/<browser>. Undefined when the
  * run has no ACCOUNT_ID, which is how a session gets an ephemeral profile.
  */
-export function accountProfileDirectory(opts: WSessionOptions, browser: string): string | undefined {
+export function accountProfileDirectory(
+  opts: WSessionOptions,
+  browser: string,
+): string | undefined {
   const accountId = process.env.ACCOUNT_ID?.trim();
   if (!accountId) return undefined;
-  const safePlatform = profilePlatform(opts).toLowerCase().replace(/[^\w.-]+/g, '-');
+  const safePlatform = profilePlatform(opts)
+    .toLowerCase()
+    .replace(/[^\w.-]+/g, '-');
   const safeBrowser = browser.toLowerCase().replace(/[^\w.-]+/g, '-');
   const accountKey = createHash('sha256').update(accountId).digest('hex');
   const declaredRoot = process.env.WELES_BROWSER_PROFILE_ROOT?.trim();
-  const root = declaredRoot ? declaredRoot : join(userInfo().homedir, '.local', 'state', 'weles', 'browser-profiles');
+  const root = declaredRoot
+    ? declaredRoot
+    : join(userInfo().homedir, '.local', 'state', 'weles', 'browser-profiles');
   const parent = join(root, safePlatform, safeBrowser);
   const directory = join(parent, accountKey);
   mkdirSync(parent, { recursive: true, mode: OWNER_ONLY });
@@ -93,7 +132,8 @@ export function accountProfileDirectory(opts: WSessionOptions, browser: string):
     try {
       mkdirSync(directory, { mode: OWNER_ONLY });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('fresh browser profile directory already exists');
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST')
+        throw new Error('fresh browser profile directory already exists');
       throw error;
     }
   } else {

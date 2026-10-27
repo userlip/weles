@@ -50,7 +50,9 @@ export const REAUTH_PROVIDERS = new Set(
 // that began like JSON and did not parse is named in `answer_errors`.
 // The second factor a document reports, or null when it names none.
 const reportedFactor = (document) =>
-  document && typeof document === 'object' && 'second_factor' in document ? document.second_factor : null;
+  document && typeof document === 'object' && 'second_factor' in document
+    ? document.second_factor
+    : null;
 
 export function runReauth(
   provider,
@@ -88,19 +90,24 @@ export function runReauth(
       return;
     }
     const processSpec = trajectoryProcess(trajPath);
-    const subscriptionId = account && account.subscriptionId ? account.subscriptionId : null;
+    const subscriptionId =
+      account && account.subscriptionId ? account.subscriptionId : null;
     const child = spawn(processSpec.command, processSpec.args, {
       cwd: REPO,
       env: {
         ...process.env,
-        ...(process.env.WELES_FULL_DIAGNOSTICS === undefined ? { WELES_FULL_DIAGNOSTICS: '1' } : {}),
+        ...(process.env.WELES_FULL_DIAGNOSTICS === undefined
+          ? { WELES_FULL_DIAGNOSTICS: '1' }
+          : {}),
         ...runChildIdentity(runId, action),
         ...(account
           ? {
               WELES_LOGIN_ITEM: account.loginItem,
               WELES_ACCOUNT_REVISION: account.accountRevision,
               [`${provider.toUpperCase()}_DISPLAY_NAME`]: account.displayName,
-              ...(subscriptionId ? { BRAMA_SUBSCRIPTION_ID: subscriptionId } : {}),
+              ...(subscriptionId
+                ? { BRAMA_SUBSCRIPTION_ID: subscriptionId }
+                : {}),
             }
           : {}),
         ...env,
@@ -162,7 +169,12 @@ export function runReauth(
           lastStage = { stage: step.groups.stage, at };
           stages.push(lastStage);
           recordProgress();
-          progress({ event: 'stage', run_id: runId, stage: lastStage.stage, at });
+          progress({
+            event: 'stage',
+            run_id: runId,
+            stage: lastStage.stage,
+            at,
+          });
           continue;
         }
         if (line.startsWith('OPERATOR_REQUEST ')) {
@@ -224,7 +236,8 @@ export function runReauth(
       result.failure = result.ok
         ? null
         : (result.failure ?? credentialFailure(result));
-      if (reportedFactor(result) === null) result.second_factor = reportedFactor(result.failure);
+      if (reportedFactor(result) === null)
+        result.second_factor = reportedFactor(result.failure);
       result.stages = stages;
       result.operator_request = operatorRequest;
       if (progressRecordError)

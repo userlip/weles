@@ -22,7 +22,9 @@ console.log(`[trajectory] requested $${usd}`);
 
 const login = await getScopedGoogleLogin('oxylabsDashboard');
 if (!login)
-  throw new Error('the Oxylabs dashboard Google login is not in Skarbiec; nothing was charged');
+  throw new Error(
+    'the Oxylabs dashboard Google login is not in Skarbiec; nothing was charged',
+  );
 const { shot } = purchaseEvidence('oxylabs_topup');
 
 const s = await WSession.start({

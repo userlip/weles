@@ -14,7 +14,13 @@ if (runId && basename(runId) !== runId)
 function diagnosticsDir() {
   if (process.env.APPLE_ADS_DIAG_DIR) return process.env.APPLE_ADS_DIAG_DIR;
   if (runId)
-    return join(statedText(['WELES_RECORDINGS_ROOT'], 'the recording root for a managed Apple Ads report harvest'), runId);
+    return join(
+      statedText(
+        ['WELES_RECORDINGS_ROOT'],
+        'the recording root for a managed Apple Ads report harvest',
+      ),
+      runId,
+    );
   return runOutputPath('apple-ads-report-harvest');
 }
 export const DIAG_DIR = diagnosticsDir();
@@ -30,7 +36,8 @@ export const SESSION_LABEL = 'apple_ads_report_harvest';
 export const REPORT_URL = process.env.APPLE_ADS_REPORT_URL
   ? process.env.APPLE_ADS_REPORT_URL
   : `https://app-ads.apple.com/cm/app/${APP_ID}/report`;
-export const CLOSE_AFTER_HARVEST = process.env.APPLE_ADS_CLOSE_AFTER_HARVEST === '1';
+export const CLOSE_AFTER_HARVEST =
+  process.env.APPLE_ADS_CLOSE_AFTER_HARVEST === '1';
 export const DATE_PRESETS = statedText(
   ['APPLE_ADS_DATE_PRESETS'],
   'the report date presets to snapshot, comma-separated as Apple Ads labels them',

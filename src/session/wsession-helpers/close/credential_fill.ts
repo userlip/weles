@@ -99,20 +99,15 @@ async function assertDeclaredControl(
   fieldClass: CredentialFieldClass,
   target: string,
 ): Promise<void> {
-  const seen = await control.evaluate((node) => {
-    const element = node as Element;
-    return {
-      type:
-        element instanceof HTMLInputElement
-          ? element.type
-          : element.tagName.toLowerCase(),
-      autocomplete: element.hasAttribute('autocomplete')
-        ? String(element.getAttribute('autocomplete'))
-            .toLowerCase()
-            .split(/\s+/)
-        : [],
-    };
-  });
+  const seen = await control.evaluate((element) => ({
+    type:
+      element instanceof HTMLInputElement
+        ? element.type
+        : element.tagName.toLowerCase(),
+    autocomplete: element.hasAttribute('autocomplete')
+      ? String(element.getAttribute('autocomplete')).toLowerCase().split(/\s+/)
+      : [],
+  }));
   const declared = CREDENTIAL_CONTROLS[fieldClass];
   const fits =
     Object.hasOwn(declared.types, seen.type) ||

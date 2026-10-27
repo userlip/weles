@@ -16,16 +16,28 @@ export interface PersonaBinding {
   canvasSeed?: number | string | null;
 }
 
-function endpoint(proxy: ProxyBinding): { host: string; port: string; username: string | undefined } {
+function endpoint(proxy: ProxyBinding): {
+  host: string;
+  port: string;
+  username: string | undefined;
+} {
   if (typeof proxy === 'string') {
     const url = new URL(proxy);
-    return { host: url.hostname, port: url.port, username: decodeURIComponent(url.username) };
+    return {
+      host: url.hostname,
+      port: url.port,
+      username: decodeURIComponent(url.username),
+    };
   }
   if ('server' in proxy) {
     const url = new URL(proxy.server);
     return { host: url.hostname, port: url.port, username: proxy.username };
   }
-  return { host: proxy.host, port: String(proxy.port), username: proxy.username };
+  return {
+    host: proxy.host,
+    port: String(proxy.port),
+    username: proxy.username,
+  };
 }
 
 /**
@@ -44,6 +56,8 @@ export function proxySignature(proxy: ProxyBinding | null | undefined): string {
 /** The persona a jar is bound to: its canvas seed. A persona without one cannot be told from another and is refused. */
 export function personaSignature(persona: PersonaBinding): string {
   if (persona.canvasSeed === undefined || persona.canvasSeed === null)
-    throw new Error('COOKIE_PERSONA_UNSIGNED: the persona carries no canvas seed to bind a cookie jar to');
+    throw new Error(
+      'COOKIE_PERSONA_UNSIGNED: the persona carries no canvas seed to bind a cookie jar to',
+    );
   return `cs:${persona.canvasSeed}`;
 }

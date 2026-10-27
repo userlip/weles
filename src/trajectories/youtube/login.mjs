@@ -20,6 +20,8 @@ await runLogin({
     await pageSettled(s.page);
     const creds = { email: login, password, metadata: acct.metadata };
     if (!(await googleSso(s, creds, { originHost: 'youtube.com' })))
-      throw new Error(`YOUTUBE_SIGN_IN_FAILED: Google did not return ${login} to YouTube (at ${s.page.url()})`);
+      throw new Error(
+        `YOUTUBE_SIGN_IN_FAILED: Google did not return ${login} to YouTube (at ${s.page.url()})`,
+      );
   },
 });

@@ -20,12 +20,32 @@ export function requestsNoProxy(request: string | undefined): boolean {
   const asked = request.trim().toLowerCase();
   return !asked || asked === NO_PROXY || asked === DIRECT_EGRESS;
 }
+
+/**
+ * Whether a proxy request is a proxy URL to dial as given (an http, https or
+ * socks address) rather than a request the provider registry answers.
+ */
+export function requestsUrlForm(request: string): boolean {
+  return (
+    request.startsWith('http://') ||
+    request.startsWith('https://') ||
+    request.startsWith('socks')
+  );
+}
+
 export async function resolveUrlFormProxy(
   proxy: string,
   targetHost: string | undefined,
   startedAt: string,
 ): Promise<ResolvedProxy | undefined> {
   const u = new URL(proxy);
+  // The proxy is dialled at the port the URL names; a URL without one would be handed out as "host:".
+  if (!u.port) {
+    throw new Error(`proxy URL for ${u.hostname} names no port; state the proxy's port in the URL`);
+  }
+  // The diagnostics record the target only when the caller named one.
+  let statedTarget: string | null = null;
+  if (targetHost) statedTarget = targetHost;
   // Toxicity policy on URL-form path: reject providers blocked for target.
   const {
     providerFromHost,
@@ -46,7 +66,7 @@ export async function resolveUrlFormProxy(
       isProviderBlockedForPlatform(provFromUrl, platformForBlock))
   ) {
     console.log(
-      `[proxy] OVERRIDE: WELES_ALLOW_RETIRED_PROXY=1 — bypassing block for ${u.hostname}:${u.port} (would be: ${retiredReason ?? 'toxic_for_' + platformForBlock})`,
+      `[proxy] OVERRIDE: WELES_ALLOW_RETIRED_PROXY=1 — bypassing block for ${u.hostname}:${u.port} (would be: ${retiredReason ? retiredReason : 'toxic_for_' + platformForBlock})`,
     );
   }
   if (retiredReason && !allowRetired) {
@@ -55,7 +75,7 @@ export async function resolveUrlFormProxy(
     );
     writeProxyPreflightDiagnostics({
       requested_proxy: '[url-form]',
-      target_host: targetHost ?? null,
+      target_host: statedTarget,
       started_at: startedAt,
       completed_at: new Date().toISOString(),
       selected: false,
@@ -74,7 +94,7 @@ export async function resolveUrlFormProxy(
     );
     writeProxyPreflightDiagnostics({
       requested_proxy: '[url-form]',
-      target_host: targetHost ?? null,
+      target_host: statedTarget,
       started_at: startedAt,
       completed_at: new Date().toISOString(),
       selected: false,

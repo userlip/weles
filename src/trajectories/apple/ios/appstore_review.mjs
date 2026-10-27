@@ -19,7 +19,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getSocialAccount } from '../../../../dist/utils/credentials.js';
-import { humanIdlePause } from '../../../../dist/human/mouse.js';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { statedText } from '../../_shared/inputs/stated.mjs';
 
@@ -75,11 +74,17 @@ async function wda(method, path, body) {
   return json;
 }
 
+// The session waits for the App Store to go idle before every element query
+// and action (XCUITest quiescence, WebDriverAgent's shouldWaitForQuiescence),
+// so each step reads the sheet the previous one left, as the app reports it,
+// with no pause of this run's own.
 async function ensureSession() {
   const status = await wda('GET', '/status');
   if (status.sessionId) return status.sessionId;
   const created = await wda('POST', '/session', {
-    capabilities: { alwaysMatch: { bundleId: APP_STORE_BUNDLE } },
+    capabilities: {
+      alwaysMatch: { bundleId: APP_STORE_BUNDLE, shouldWaitForQuiescence: true },
+    },
   });
   const sid = created.value?.sessionId
     ? created.value.sessionId
@@ -170,14 +175,11 @@ console.log(`[ios-review] session ${sid}`);
 await wda('POST', `/session/${sid}/wda/apps/launch`, {
   bundleId: APP_STORE_BUNDLE,
 });
-await humanIdlePause('deliberate');
 await wda('POST', `/session/${sid}/url`, {
   url: `itms-apps://apps.apple.com/app/id${APP_ID}`,
 });
-await humanIdlePause('deliberate');
 
 await tapElement(sid, await scrollToWriteReview(sid));
-await humanIdlePause('deliberate');
 
 // An Apple ID not signed in to Media & Purchases gets the system's password
 // sheet, the only secure text field this flow can meet.
@@ -200,7 +202,6 @@ if (!star)
     `the review sheet shows no ${RATING}-star button`,
   );
 await tapElement(sid, star);
-await humanIdlePause('deliberate');
 
 // The sheet's single-line text field is the title; its text view the body.
 const titleField = await findFirst(sid, 'type == "XCUIElementTypeTextField"');
@@ -211,9 +212,7 @@ if (!titleField)
     'the review sheet shows no title field',
   );
 await tapElement(sid, titleField);
-await humanIdlePause('short');
 await setElementValue(sid, titleField, TITLE);
-await humanIdlePause('deliberate');
 const bodyField = await findFirst(sid, 'type == "XCUIElementTypeTextView"');
 if (!bodyField)
   await failWithSource(
@@ -222,9 +221,7 @@ if (!bodyField)
     'the review sheet shows no body text view',
   );
 await tapElement(sid, bodyField);
-await humanIdlePause('short');
 await setElementValue(sid, bodyField, REVIEW_TEXT);
-await humanIdlePause('deliberate');
 
 const send = await findFirst(
   sid,
@@ -237,7 +234,6 @@ if (!send)
     'the review sheet shows no Send button',
   );
 await tapElement(sid, send);
-await humanIdlePause('deliberate');
 
 // The sheet closes back to the listing on success; an alert over it is
 // Apple's refusal (account too new, app not owned, throttled).

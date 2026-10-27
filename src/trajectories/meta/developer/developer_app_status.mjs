@@ -8,7 +8,10 @@
 
 import { WSession } from '../../../../dist/session/wsession.js';
 import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
-import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
+import {
+  keptProfileDir,
+  stableProfilePersona,
+} from '../../_shared/profile/persona.mjs';
 import { recordPageState } from '../../_shared/diagnostics/page_state.mjs';
 
 const RUN = 'meta_developer_app_status';

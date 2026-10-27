@@ -57,7 +57,8 @@ function undeclaredSecret(request: AcquireSecretRequest): AcquireSecretResult {
   if (!secret) {
     return {
       status: 'unsupported_secret',
-      message: 'The request names no secret and no credentialId, so no declaration can match it',
+      message:
+        'The request names no secret and no credentialId, so no declaration can match it',
     };
   }
   const message =
@@ -146,9 +147,13 @@ export function buildSecretAcquisitionPlan(
     const exact = (pattern: RegExp, value: string | null | undefined) =>
       typeof value === 'string' && pattern.test(value.trim().toLowerCase());
     const missing = [
-      ...(exact(ENTRA_UPN, request.accountUpn) ? [] : ['one exact account UPN']),
+      ...(exact(ENTRA_UPN, request.accountUpn)
+        ? []
+        : ['one exact account UPN']),
       ...(exact(LOWER_UUID, request.tenantId) ? [] : ['one exact tenant id']),
-      ...(exact(LOWER_UUID, request.principalObjectId) ? [] : ['one exact principal object id']),
+      ...(exact(LOWER_UUID, request.principalObjectId)
+        ? []
+        : ['one exact principal object id']),
     ];
     if (missing.length) {
       return {

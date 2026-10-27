@@ -130,18 +130,32 @@ export function readScopedField(
   if (local) return readLocalField(local, role, field);
   const tokenFile = checkedTokenFile(tokenFileName);
   if (!tokenFile) return undefined;
+  // The delegated form: Skarbiec resolves the coordinate role:<role> under the
+  // consumer's own read:role:<role>#<field> grant. Without --route Stado reads
+  // through its own administration grant, which refuses any consumer but
+  // stado, so a scoped consumer exported in the environment was refused at its
+  // first read.
   const result = spawnSync(
     stadoBinary(),
-    ['credentials', 'get', '--role', role, '--field', field],
+    [
+      'credentials',
+      'get',
+      '--role',
+      role,
+      '--field',
+      field,
+      '--route',
+      skarbiecEndpoint(),
+      '--consumer',
+      consumer,
+      '--grant-file',
+      tokenFile,
+    ],
     {
       encoding: 'buffer',
       maxBuffer: Infinity,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: helperEnvironment({
-        WC_SKARBIEC_URL: skarbiecEndpoint(),
-        WC_SKARBIEC_CONSUMER: consumer,
-        WC_SKARBIEC_TOKEN_FILE: tokenFile,
-      }),
+      env: helperEnvironment({}),
     },
   );
   const output = succeeded(result, (stderr, ended) => {

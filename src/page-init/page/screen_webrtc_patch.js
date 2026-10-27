@@ -1,6 +1,9 @@
-// Minimal screen + WebRTC patch for the custom Chromium path. Loaded separately
-// so these protections run even if the larger navigator.js stub fails on a
-// particular page.
+// Minimal screen patch for the custom Chromium path. Loaded separately so the
+// emulated screen holds even if the larger navigator.js stub fails on a
+// particular page. A patch that cannot install itself leaves the browser's own
+// behaviour in place, so it says so on the console under the marker Weles
+// reads (src/page-init/failures.ts), never silently. The WebRTC leak guard is
+// navigator/webrtc.js, loaded on its own on every launch path.
 
 (function applyScreenPatch() {
   const scr = __weles && __weles.screen;
@@ -45,67 +48,15 @@
           });
         }
       }
-    } catch {}
-  }
-})();
-
-(function blockWebRTCLeak() {
-  if (typeof RTCPeerConnection === 'undefined') return;
-  try {
-    const Original = RTCPeerConnection;
-    const stripHostSrflx = function (sdp) {
-      if (typeof sdp !== 'string') return sdp;
-      return sdp.replace(
-        /a=candidate:[^\r\n]+\s+(host|srflx)[^\r\n]*(?:\r\n|\n)/g,
-        '',
+    } catch (fallbackErr) {
+      console.debug(
+        '__weles_page_init_failure__',
+        JSON.stringify({
+          patch: 'screen',
+          error: String((fallbackErr && fallbackErr.message) || fallbackErr),
+          first: String((screenErr && screenErr.message) || screenErr),
+        }),
       );
-    };
-    function RTCPeerConnectionShim(configuration) {
-      const pc = new Original(configuration);
-      const wrap = function (orig) {
-        return function () {
-          const p = orig.apply(pc, arguments);
-          return p.then(function (desc) {
-            if (desc && typeof desc.sdp === 'string')
-              desc.sdp = stripHostSrflx(desc.sdp);
-            return desc;
-          });
-        };
-      };
-      pc.createOffer = wrap(pc.createOffer.bind(pc));
-      pc.createAnswer = wrap(pc.createAnswer.bind(pc));
-      const origSetLocal = pc.setLocalDescription.bind(pc);
-      pc.setLocalDescription = function (desc) {
-        if (desc && typeof desc.sdp === 'string')
-          desc.sdp = stripHostSrflx(desc.sdp);
-        return origSetLocal(desc);
-      };
-      const origAddEventListener = pc.addEventListener.bind(pc);
-      pc.addEventListener = function (type, listener, options) {
-        if (type === 'icecandidate') return undefined;
-        return origAddEventListener(type, listener, options);
-      };
-      let userOnIceCandidate = null;
-      Object.defineProperty(pc, 'onicecandidate', {
-        get: function () {
-          return userOnIceCandidate;
-        },
-        set: function (fn) {
-          userOnIceCandidate = typeof fn === 'function' ? fn : null;
-        },
-        configurable: true,
-        enumerable: true,
-      });
-      return pc;
     }
-    RTCPeerConnectionShim.prototype = Original.prototype;
-    Object.defineProperty(window, 'RTCPeerConnection', {
-      value: RTCPeerConnectionShim,
-      configurable: true,
-      writable: true,
-      enumerable: true,
-    });
-  } catch (e) {
-    /* leave native WebRTC */
   }
 })();

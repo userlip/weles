@@ -83,13 +83,17 @@ try {
     );
   if (TAB === 'issued') {
     await clickDescribed(s.page, 'the Issued credits tab');
-    if (!(await pageShows(s.page, 'Is the Issued credits tab the selected tab?')))
+    if (
+      !(await pageShows(s.page, 'Is the Issued credits tab the selected tab?'))
+    )
       throw new Error(
         `GCP_CREDITS_TAB: the Issued credits tab does not show selected at ${s.page.url()}; no capture was taken`,
       );
   }
   await s.page.screenshot({ path: OUT_PNG, fullPage: true });
-  console.log(`[gcp_credits] ${TAB} credits of ${ACCOUNT} captured to ${OUT_PNG}`);
+  console.log(
+    `[gcp_credits] ${TAB} credits of ${ACCOUNT} captured to ${OUT_PNG}`,
+  );
 } finally {
   await s.close();
 }

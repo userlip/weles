@@ -1,51 +1,42 @@
 #!/usr/bin/env node
-import { pageSettled } from '../../_shared/page/settled.mjs';
 // Automatyczny login do lsi.parp.gov.pl przez reset hasła.
-// Email idzie na adres konta PARP (PARP_EMAIL); link resetu czyta Skrzynka (skrzynka sync / message list).
-// Po reset: zapisuje nowe hasło do ~/.weles/parp_login.json i loguje się.
+// Email idzie na adres konta PARP (PARP_EMAIL); link resetu czyta Skrzynka
+// (skrzynka sync / message list), tylko z poczty od nadawcy PARP_RESET_SENDER
+// otrzymanej po wysłaniu prośby. Po resecie zapisuje nowe hasło do
+// ~/.weles/parp_login.json. Każda strona jest czytana, gdy się ustali (jak
+// strona sama to zgłasza); każdy brak kończy przebieg z nazwaną przyczyną.
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { registrationPassword } from '../../../../dist/utils/identity/password.js';
-
 import { WSession } from '../../../../dist/session/wsession.js';
 import { humanFill } from '../../../../dist/human/keyboard.js';
-import { humanIdlePause } from '../../../../dist/human/mouse.js';
 import { clickDescribed } from '../../_shared/page/judged/seen.mjs';
+import { pageSettled } from '../../_shared/page/settled.mjs';
+import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 
-const EMAIL = process.env.PARP_EMAIL;
-if (!EMAIL) throw new Error('set PARP_EMAIL to the PARP account address');
+const EMAIL = statedText(['PARP_EMAIL'], 'the PARP account address');
+// The sender PARP's reset mail comes from, as the caller states it: the reset
+// link is read only from that sender's mail.
+const RESET_SENDER = statedText(
+  ['PARP_RESET_SENDER'],
+  "the address PARP's password-reset mail is sent from",
+);
 const STORE = join(homedir(), '.weles', 'parp_login.json');
 const NEW_PASSWORD = registrationPassword();
-const RESET_SENDER = process.env.PARP_RESET_SENDER || 'lsi@parp.gov.pl';
 const LOGIN_URL = 'https://lsi.parp.gov.pl/';
-const SKRZYNKA = process.env.SKRZYNKA_BIN || 'skrzynka';
+// Skrzynka is run as the program of that name on PATH, as every product
+// command is.
+const SKRZYNKA = 'skrzynka';
 
-const EMAIL_SELECTORS = [
-  'input[type="email"]',
-  'input[name="email"]',
-  'input[id*="email" i]',
-  'input[placeholder*="email" i]',
-];
-const PASSWORD_SELECTORS_NEW = [
-  'input[type="password"][name*="new" i]',
-  'input[type="password"]:nth-of-type(1)',
-  'input[type="password"]',
-];
-const PASSWORD_SELECTORS_CONFIRM = [
-  'input[type="password"][name*="confirm" i]',
-  'input[type="password"]:nth-of-type(2)',
-];
+const EMAIL_FIELD =
+  'input[type="email"], input[name="email"], input[id*="email" i], input[placeholder*="email" i]';
 
 function logn(msg) {
   console.log(`[parp_login] ${msg}`);
-}
-
-async function url(s) {
-  return await s.page.url();
 }
 
 async function screenshot(s, name) {
@@ -63,18 +54,7 @@ async function screenshot(s, name) {
 async function clickControl(s, description) {
   logn(`klikam: ${description}`);
   await clickDescribed(s.page, description);
-}
-
-async function fillByAnySelector(s, selectors, value) {
-  for (const sel of selectors) {
-    const locator = s.page.locator(sel).first();
-    if ((await locator.count()) > 0) {
-      logn(`fill: ${sel}`);
-      await humanFill(s.page, locator, value);
-      return true;
-    }
-  }
-  return false;
+  await pageSettled(s.page);
 }
 
 function skrzynka(args) {
@@ -94,99 +74,95 @@ function resetMailbox() {
 }
 
 // A reset link is one that leads back into the site being logged into, below
-// its front page, in mail from the reset sender received after `requestedAt`;
-// older mail and homepage or footer links never qualify.
+// its front page; homepage or footer links never qualify.
 function resetLink(body) {
   const host = new URL(LOGIN_URL).host;
   return [...body.matchAll(/https?:\/\/[^\s<>"]+/gi)]
-    .map((m) => m[0])
-    .find((candidate) => {
-      const url = new URL(candidate);
-      return (
-        url.host === host && (url.pathname.length > 1 || url.search.length > 0)
-      );
-    });
+    .map(([candidate]) => new URL(candidate))
+    .find(
+      (url) => url.host === host && (url.pathname !== '/' || url.search !== ''),
+    );
 }
 
-// One sync and read of the PARP mailbox in Skrzynka; Skrzynka offers no push
-// or blocking read, so a reset mail that has not arrived yet is null for the
-// caller to report.
+// One sync and read of the PARP mailbox in Skrzynka, narrowed by Skrzynka to
+// the reset sender's mail received since the request. Skrzynka offers no push
+// or blocking read, so a reset mail that has not arrived yet is refused with
+// what to do.
 function readResetLink(requestedAt) {
   const mailboxId = resetMailbox();
   skrzynka(['sync', '--mailbox', mailboxId]);
-  const link = skrzynka([
+  const mail = skrzynka([
     'message',
     'list',
     '--mailbox',
     mailboxId,
-    '--limit',
-    '100',
-  ])
-    .filter(
-      (m) =>
-        m.sender.toLowerCase().includes(RESET_SENDER.toLowerCase()) &&
-        Date.parse(m.received_at) >= requestedAt,
-    )
-    .sort((a, b) => b.received_at.localeCompare(a.received_at))
-    .map((m) => resetLink(m.body_text))
-    .find(Boolean);
-  if (link) logn(`znalazłem link reset: ${link}...`);
-  return link ?? null;
+    '--sender',
+    RESET_SENDER,
+    '--since',
+    requestedAt.toISOString(),
+  ]);
+  const link = mail.map((m) => resetLink(m.body_text)).find(Boolean);
+  if (link === undefined)
+    throw new Error(
+      `mail resetowy od ${RESET_SENDER} jeszcze nie dotarł do skrzynki ${EMAIL} w Skrzynce (${mail.length} wiadomości od niego od ${requestedAt.toISOString()} bez linku); uruchom ponownie, gdy przyjdzie (albo PARP ma captcha / blokadę resetu).`,
+    );
+  logn(`znalazłem link reset: ${link.href}`);
+  return link.href;
 }
 
-async function main() {
-  const s = await WSession.start({
-    label: 'parp_login',
-    proxy: process.env.PROXY_URL,
-  });
+/** The visible field `selector` names, refused by name when the page shows none. */
+async function visibleField(s, selector, what) {
+  const field = s.page.locator(selector).filter({ visible: true }).first();
+  if (!(await field.count()))
+    throw new Error(`${s.page.url()} nie pokazuje pola ${what} (${selector})`);
+  return field;
+}
 
+const s = await WSession.start({
+  label: 'parp_login',
+  proxy: statedProxy('the PARP login'),
+});
+try {
   logn('otwieram lsi.parp.gov.pl');
   await s.goto(LOGIN_URL);
-  await humanIdlePause('deliberate');
+  await pageSettled(s.page);
   await screenshot(s, 'login_page');
 
-  logn('klikam link reset hasła');
   await clickControl(
     s,
     'the link on the login form for a forgotten password (password reset)',
   );
-  await humanIdlePause('deliberate');
   await screenshot(s, 'reset_form');
 
   logn(`wpisuję email: ${EMAIL}`);
-  if (!(await fillByAnySelector(s, EMAIL_SELECTORS, EMAIL))) {
-    logn('FAIL: nie znalazłem pola email');
-    process.exitCode = 1;
-    await s.close();
-    return;
-  }
-  await humanIdlePause('short');
+  await humanFill(s.page, await visibleField(s, EMAIL_FIELD, 'email'), EMAIL);
+  await pageSettled(s.page);
 
-  const requestedAt = Date.now();
+  const requestedAt = new Date();
   await clickControl(s, 'the button that sends the password reset request');
-  await humanIdlePause('deliberate');
   await screenshot(s, 'reset_submitted');
 
   logn('czytam skrzynkę PARP w Skrzynce');
   const link = readResetLink(requestedAt);
-  if (!link) {
-    logn(
-      `FAIL: mail resetowy od ${RESET_SENDER} jeszcze nie dotarł do skrzynki ${EMAIL} w Skrzynce; uruchom ponownie, gdy przyjdzie (albo PARP ma captcha / blokadę resetu).`,
-    );
-    process.exitCode = 1;
-    await s.close();
-    return;
-  }
 
-  logn(`navigates do reset URL`);
+  logn('otwieram link resetu');
   await s.goto(link);
-  await humanIdlePause('deliberate');
+  await pageSettled(s.page);
   await screenshot(s, 'reset_link_opened');
 
+  // The reset form shows the new password and its confirmation: the page's
+  // visible password fields, in order.
+  const [newField, confirmField] = await s.page
+    .locator('input[type="password"]')
+    .filter({ visible: true })
+    .all();
+  if (confirmField === undefined)
+    throw new Error(
+      `${s.page.url()} nie pokazuje dwóch pól hasła (nowe i potwierdzenie)`,
+    );
+
   logn(`wpisuję nowe hasło (zapisuję do ${STORE})`);
-  if (!existsSync(STORE.replace(/\/[^/]+$/, ''))) {
-    mkdirSync(STORE.replace(/\/[^/]+$/, ''), { recursive: true });
-  }
+  mkdirSync(dirname(STORE), { recursive: true });
   writeFileSync(
     STORE,
     JSON.stringify(
@@ -196,36 +172,18 @@ async function main() {
         createdAt: new Date().toISOString(),
       },
       null,
-      2,
+      '  ',
     ),
   );
-
-  if (!(await fillByAnySelector(s, PASSWORD_SELECTORS_NEW, NEW_PASSWORD))) {
-    logn('FAIL: nie znalazłem pola nowe hasło');
-    process.exitCode = 1;
-    await s.close();
-    return;
-  }
-  const confirmFilled = await fillByAnySelector(
-    s,
-    PASSWORD_SELECTORS_CONFIRM,
-    NEW_PASSWORD,
-  );
-  logn(`pola hasła wypełnione (confirm: ${confirmFilled})`);
-  await humanIdlePause('short');
+  await humanFill(s.page, newField, NEW_PASSWORD);
+  await humanFill(s.page, confirmField, NEW_PASSWORD);
+  await pageSettled(s.page);
 
   await clickControl(s, 'the button that saves the new password');
-  await humanIdlePause('deliberate');
   await screenshot(s, 'after_password_set');
 
-  logn(`final URL po reset: ${await url(s)}`);
+  logn(`final URL po reset: ${s.page.url()}`);
   logn(`OK: hasło zapisane do ${STORE}`);
-
-  await pageSettled(s.page);
+} finally {
   await s.close();
 }
-
-main().catch((e) => {
-  console.error('FAIL:', e);
-  process.exitCode = 1;
-});

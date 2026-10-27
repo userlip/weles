@@ -22,7 +22,10 @@
 // a log.
 
 import { WSession } from '../../../dist/session/wsession.js';
-import { loadTopupCardEnv, topupCard } from '../_shared/services/topup_common.mjs';
+import {
+  loadTopupCardEnv,
+  topupCard,
+} from '../_shared/services/topup_common.mjs';
 import { exitStatusFor } from '../../../dist/cli/usage.js';
 import { CHECKOUT_HOST, payHostedCheckout } from './hosted_checkout.mjs';
 

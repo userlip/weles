@@ -13,7 +13,7 @@
 // it. A system LaunchDaemon of the same name is outside this user's domain and
 // is reported, not touched. Run by hand or by a test, nothing is retired.
 
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -34,23 +34,24 @@ export const PREDECESSORS = Object.freeze([
 ]);
 
 // Whether launchctl accepted the command, and its own words when it did not.
-// A launchctl that cannot be started at all is thrown: every answer it would
-// have given about the predecessors is unknown, not "absent".
+// A launchctl that cannot be started, or that a signal ends, is thrown: every
+// answer it would have given about the predecessors is unknown, not "absent".
 function launchctl(args) {
-  try {
-    execFileSync('/bin/launchctl', args, {
-      stdio: ['ignore', 'ignore', 'pipe'],
-      encoding: 'utf8',
-    });
-    return { ok: true, detail: null };
-  } catch (error) {
-    if (error.status == null)
-      throw new Error(`/bin/launchctl could not run: ${error.message}`);
-    return {
-      ok: false,
-      detail: `launchctl ${args.join(' ')} exited ${error.status}: ${String(error.stderr).trim()}`,
-    };
-  }
+  const result = spawnSync('/bin/launchctl', args, {
+    stdio: ['ignore', 'ignore', 'pipe'],
+    encoding: 'utf8',
+  });
+  if (result.error)
+    throw new Error(`/bin/launchctl could not run: ${result.error.message}`);
+  if (result.signal)
+    throw new Error(
+      `/bin/launchctl ${args.join(' ')} was ended by ${result.signal}`,
+    );
+  if (!result.status) return { ok: true, detail: null };
+  return {
+    ok: false,
+    detail: `launchctl ${args.join(' ')} exited ${result.status}: ${result.stderr.trim()}`,
+  };
 }
 
 /**

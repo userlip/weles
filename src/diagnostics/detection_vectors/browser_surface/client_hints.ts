@@ -15,6 +15,15 @@
 
 import type { DetectionRule } from '../finding.js';
 
+/** The platforms whose personas run on x86. */
+const X86_PLATFORMS: Record<string, true> = { windows: true, linux: true };
+
+/** A client hint as lowercase text; null when the page did not report it. */
+function loweredHint(value: unknown): string | null {
+  if (typeof value !== 'string' || !value) return null;
+  return value.toLowerCase();
+}
+
 export const clientHintsRules: DetectionRule[] = [
   // ---------------------------------------------------------------------------
   // Client Hints / userAgentData
@@ -50,14 +59,16 @@ export const clientHintsRules: DetectionRule[] = [
     test(s) {
       const uad = s?.js?.userAgentData;
       if (!uad) return null;
-      const platform = String(uad.platform || '').toLowerCase();
-      const arch = String(uad.architecture || '').toLowerCase();
-      const renderer = String(
-        s?.js?.webgl1?.params?.UNMASKED_RENDERER || '',
-      ).toLowerCase();
+      // A hint the page did not report cannot be inconsistent: architecture is a
+      // high-entropy hint, absent unless requested, and is not judged as ''.
+      const platform = loweredHint(uad.platform);
+      const arch = loweredHint(uad.architecture);
+      if (platform === null || arch === null) return null;
+      const renderer = loweredHint(s?.js?.webgl1?.params?.UNMASKED_RENDERER);
       // Apple Silicon GPU must report arm arch on macOS.
       if (
         platform === 'macos' &&
+        renderer !== null &&
         renderer.includes('apple') &&
         arch !== 'arm'
       ) {
@@ -74,7 +85,7 @@ export const clientHintsRules: DetectionRule[] = [
         };
       }
       // Windows/Linux personas should be x86.
-      if ((platform === 'windows' || platform === 'linux') && arch !== 'x86') {
+      if (Object.hasOwn(X86_PLATFORMS, platform) && arch !== 'x86') {
         return {
           id: 'uad_platform_arch',
           category: 'inconsistency',

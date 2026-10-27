@@ -5,26 +5,28 @@
 import { CDPConnection } from '../connection.js';
 import { CDPError } from '../errors.js';
 
+// Chrome sends requestId and the request on every Fetch.requestPaused and
+// Fetch.authRequired event (https://chromedevtools.github.io/devtools-protocol/tot/Fetch/).
 type FetchRequestPausedParams = {
-  requestId?: string;
-  request?: { url?: string };
+  requestId: string;
+  request: { url: string } & Record<string, unknown>;
 };
 
 type FetchAuthRequiredParams = {
-  requestId?: string;
-  authChallenge?: { source?: string };
+  requestId: string;
+  authChallenge: { source?: string };
 };
 
 export class CDPRoute {
-  readonly request: Record<string, any>;
+  readonly request: Record<string, unknown>;
   private _conn: CDPConnection;
   private _sid: string;
   private _rid: string;
-  constructor(conn: CDPConnection, sid: string, params: any) {
+  constructor(conn: CDPConnection, sid: string, params: FetchRequestPausedParams) {
     this._conn = conn;
     this._sid = sid;
-    this.request = params.request ?? {};
-    this._rid = params.requestId ?? '';
+    this.request = params.request;
+    this._rid = params.requestId;
   }
   async abort(reason = 'Failed') {
     await this._conn.send(
@@ -33,24 +35,20 @@ export class CDPRoute {
       this._sid,
     );
   }
-  async fulfill(
-    o: {
-      status?: number;
-      headers?: Record<string, string>;
-      body?: string;
-    } = {},
-  ) {
-    const h = Object.entries(o.headers ?? {}).map(([name, value]) => ({
-      name,
-      value,
-    }));
+  /** Answers the paused request with the response the caller states: its status is required, headers and body as given. */
+  async fulfill(o: { status: number; headers?: Record<string, string>; body?: string }) {
+    if (!Number.isInteger(o.status)) {
+      throw new Error(`a fulfilled response needs its HTTP status; got ${JSON.stringify(o.status)}`);
+    }
+    const headers = o.headers ? Object.entries(o.headers).map(([name, value]) => ({ name, value })) : [];
+    const body = o.body ? Buffer.from(o.body).toString('base64') : '';
     await this._conn.send(
       'Fetch.fulfillRequest',
       {
         requestId: this._rid,
-        responseCode: o.status ?? 200,
-        responseHeaders: h,
-        body: Buffer.from(o.body ?? '').toString('base64'),
+        responseCode: o.status,
+        responseHeaders: headers,
+        body,
       },
       this._sid,
     );
@@ -140,7 +138,7 @@ export class FetchInterception {
   private async _onAuthRequired(
     params: FetchAuthRequiredParams,
   ): Promise<void> {
-    const requestId = params.requestId ?? '';
+    const requestId = params.requestId;
     const isProxyChallenge = params.authChallenge?.source === 'Proxy';
     if (!requestId || !isProxyChallenge || !this._proxyAuth) {
       await this._conn.send(
@@ -182,8 +180,8 @@ export class FetchInterception {
   private async _onRequestPaused(
     params: FetchRequestPausedParams,
   ): Promise<void> {
-    const url = params.request?.url ?? '';
-    const requestId = params.requestId ?? '';
+    const url = params.request.url;
+    const requestId = params.requestId;
     for (const { pattern, handler } of this._routes) {
       if (pattern.test(url)) {
         await handler(new CDPRoute(this._conn, this._sessionId, params));

@@ -1,113 +1,76 @@
-// Recorded operator pointer geometry, loaded once per run.
-// Pointer replay uses spatially perturbed geometry, not inter-step pauses.
+// The recorded pointer travel and wheel steps a move or scroll replays,
+// read once per run from the harvested trace (pointer/trace-file.ts). A move
+// replays one recorded segment carried onto the requested start and end: the
+// recorded path is turned and scaled as a whole so its start lands on the
+// start and its end on the end, keeping the hand's own curve and its spacing.
 
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { humanRandom } from '../utils/motion/timing.js';
+import { humanIndex } from '../utils/motion/timing.js';
+import {
+  readPointerTrace,
+  type Point,
+  type PointerTrace,
+  type Segment,
+  type WheelStep,
+} from './pointer/trace-file.js';
 
-interface TraceEvent {
-  type: string;
-  x?: number | null;
-  y?: number | null;
-}
+let loaded: PointerTrace | null = null;
 
-function loadLatestTrace(): TraceEvent[] {
-  const dir = join(process.cwd(), 'recordings');
-  if (!existsSync(dir)) return [];
-  const files = readdirSync(dir)
-    .filter((f) => f.startsWith('behavior_') && f.endsWith('.jsonl'))
-    .sort();
-  if (!files.length) return [];
-  const path = join(dir, files[files.length - 1]);
-  const raw = readFileSync(path, 'utf8');
-  const out: TraceEvent[] = [];
-  // A line that does not parse is skipped, but kept with its parser error and
-  // reported, so a trace that is mostly unreadable is not taken for a short one.
-  const malformed: string[] = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      out.push(JSON.parse(line));
-    } catch (error) {
-      malformed.push(error instanceof Error ? error.message : String(error));
-    }
-  }
-  const [firstError] = malformed;
-  if (firstError !== undefined)
-    console.error(
-      `[human] ${path}: ${malformed.length} trace line(s) are not JSON, first: ${firstError}`,
+/** The harvested trace, read on first use and kept for the run. */
+function trace(): PointerTrace {
+  if (loaded === null) {
+    loaded = readPointerTrace();
+    console.log(
+      `[human/trace] ${loaded.segments.length} segments and ${loaded.wheel.length} wheel steps from ${loaded.sources.join(', ')}`,
     );
-  return out;
-}
-
-interface Waypoint {
-  u: number;
-  v: number;
-} // normalized coordinates
-interface Segment {
-  points: Waypoint[];
-  aspect: number;
-}
-
-function derive() {
-  const evts = loadLatestTrace();
-  const segments: Segment[] = [];
-  let segBuf: { x: number; y: number }[] = [];
-  for (const e of evts) {
-    if (e.type === 'pointermove' && e.x != null && e.y != null) {
-      segBuf.push({ x: e.x, y: e.y });
-    } else if (e.type === 'click') {
-      // Finalize segment: normalize (dx,dy) against the end-to-start delta.
-      if (segBuf.length >= 4) {
-        const s = segBuf[0],
-          end = segBuf[segBuf.length - 1];
-        const rx = end.x - s.x,
-          ry = end.y - s.y;
-        const mag = Math.hypot(rx, ry);
-        if (mag > 20) {
-          const aspect = Math.abs(rx) > 0.1 ? Math.abs(ry / rx) : 999;
-          const points: Waypoint[] = segBuf.map((p) => ({
-            u: rx === 0 ? 0 : (p.x - s.x) / rx,
-            v: ry === 0 ? 0 : (p.y - s.y) / ry,
-          }));
-          segments.push({ points, aspect });
-        }
-      }
-      segBuf = [];
-    }
   }
-  return { segments, sourceCount: evts.length };
+  return loaded;
 }
 
-const T = derive();
-if (T.sourceCount > 0) {
-  console.log(
-    `[human/trace] loaded ${T.sourceCount} events: segments=${T.segments.length}`,
-  );
+/** One of `items`, drawn from the run's seeded timing source. */
+function drawn<T>(items: readonly T[]): T {
+  const item = items[humanIndex(items.length)];
+  if (item === undefined) throw new Error('the pointer trace holds nothing to draw from');
+  return item;
 }
 
-// Return a denormalized waypoint sequence for a move from (ax,ay) to (bx,by),
-// using a real recorded pointer segment of matching aspect ratio. Output page
-// coords with per-point ±3-8 px spatial jitter. If no segments are available,
-// return an empty array — caller will fall back to the Bezier generator.
-export function getMoveTemplate(
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-): { x: number; y: number }[] {
-  if (!T.segments.length) return [];
-  const rx = bx - ax,
-    ry = by - ay;
-  const targetAspect = Math.abs(rx) > 0.1 ? Math.abs(ry / rx) : 999;
-  // Pick segment with closest aspect within random top-3 for variety
-  const sorted = T.segments
-    .map((s) => ({ s, d: Math.abs(s.aspect - targetAspect) }))
-    .sort((a, b) => a.d - b.d);
-  const pool = sorted.slice(0, Math.min(5, sorted.length));
-  const pick = pool[Math.floor(humanRandom() * pool.length)].s;
-  return pick.points.map((p) => ({
-    x: Math.round(ax + p.u * rx + (humanRandom() * 2 - 1) * 6),
-    y: Math.round(ay + p.v * ry + (humanRandom() * 2 - 1) * 6),
-  }));
+function endsOf(segment: Segment): { first: Point; last: Point } {
+  const [first] = segment.points;
+  const last = segment.points.findLast(() => true);
+  if (first === undefined || last === undefined)
+    throw new Error('a pointer trace segment holds no points');
+  return { first, last };
+}
+
+/**
+ * The waypoints of a move from `from` to `to`: one recorded segment carried
+ * onto them by the similarity (turn and scale) that maps the segment's start
+ * and end onto `from` and `to`, written as complex multiplication.
+ */
+export function replayedPath(from: Point, to: Point): Point[] {
+  const segment = drawn(trace().segments);
+  const { first, last } = endsOf(segment);
+  const rx = last.x - first.x;
+  const ry = last.y - first.y;
+  const tx = to.x - from.x;
+  const ty = to.y - from.y;
+  const norm = rx * rx + ry * ry;
+  // (tx + i·ty) / (rx + i·ry): the turn and scale from recorded to wanted.
+  const a = (tx * rx + ty * ry) / norm;
+  const b = (ty * rx - tx * ry) / norm;
+  return segment.points.map((p) => {
+    const px = p.x - first.x;
+    const py = p.y - first.y;
+    return { x: from.x + a * px - b * py, y: from.y + b * px + a * py };
+  });
+}
+
+/** Where a recorded hand starts when it travels to `to` and nobody knows where it is: one segment's own start, carried so the segment ends at `to`. */
+export function recordedApproach(to: Point): Point {
+  const { first, last } = endsOf(drawn(trace().segments));
+  return { x: to.x - (last.x - first.x), y: to.y - (last.y - first.y) };
+}
+
+/** One recorded wheel step. */
+export function recordedWheelStep(): WheelStep {
+  return drawn(trace().wheel);
 }

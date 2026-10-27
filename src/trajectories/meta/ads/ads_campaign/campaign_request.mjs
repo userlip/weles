@@ -15,7 +15,10 @@ import {
   resolveAccountSession,
 } from '../../../../../dist/utils/credentials.js';
 import { statedText } from '../../../_shared/inputs/stated.mjs';
-import { keptProfileDir, stableProfilePersona } from '../../../_shared/profile/persona.mjs';
+import {
+  keptProfileDir,
+  stableProfilePersona,
+} from '../../../_shared/profile/persona.mjs';
 
 const ADS_URL = process.env.ADS_URL;
 const RAW_AD_ACCOUNT_ID =
@@ -165,7 +168,10 @@ function requireCampaignTarget() {
 
 // What creating a campaign needs stated; each missing value is refused by name.
 function requireCampaignInputs() {
-  statedText(['CAMPAIGN_NAME'], 'the name the ad account lists the campaign under');
+  statedText(
+    ['CAMPAIGN_NAME'],
+    'the name the ad account lists the campaign under',
+  );
   statedText(
     ['CAMPAIGN_OBJECTIVE'],
     "the campaign objective, as the account's Ads Manager labels it (e.g. Traffic)",

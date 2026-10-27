@@ -19,13 +19,15 @@ const COMMANDS: Readonly<Record<string, CliCommand>> = Object.freeze({
   release: 'release',
   design: 'design',
   runs: 'runs',
-  'account-security': 'account-security',
-  'app-password': 'app-password',
-  'developer-certificate': 'developer-certificate',
+  security: 'security',
+  password: 'password',
+  certificate: 'certificate',
   login: 'login',
   worker: 'worker',
   records: 'records',
+  recordings: 'recordings',
   keeper: 'keeper',
+  pointer: 'pointer',
 });
 
 /** The options that take the argument after them as their value. */

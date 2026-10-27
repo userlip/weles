@@ -19,21 +19,42 @@ import { join } from 'node:path';
 
 import { RUN_RESULTS_DIR } from '../../configuration.mjs';
 import { REPO, RUN_RELEASE_IDENTITY } from '../../release-identity.mjs';
-import { SAFE_RUN_ID, lastJsonLine, persistRunResult } from '../run-outcome.mjs';
+import {
+  SAFE_RUN_ID,
+  lastJsonLine,
+  persistRunResult,
+} from '../run-outcome.mjs';
 import { registerRunningRun } from '../running-runs.mjs';
-import { liveOutput, recordedOutputs, runChildIdentity, signalRunProcess, trajectoryProcess } from './placement.mjs';
+import {
+  liveOutput,
+  recordedOutputs,
+  runChildIdentity,
+  signalRunProcess,
+  trajectoryProcess,
+} from './placement.mjs';
 
 /**
  * The child's environment: the caller's, or this process's (a routed run
  * records full diagnostics unless the host's own WELES_FULL_DIAGNOSTICS says
  * otherwise), then the run's own.
  */
-function childEnvironment(runOptions, params, action, trajPath, accountId, freshProfile, runId, paramsToEnv) {
+function childEnvironment(
+  runOptions,
+  params,
+  action,
+  trajPath,
+  accountId,
+  freshProfile,
+  runId,
+  paramsToEnv,
+) {
   const base = runOptions.childEnvironment
     ? runOptions.childEnvironment
     : {
         ...process.env,
-        ...(process.env.WELES_FULL_DIAGNOSTICS === undefined ? { WELES_FULL_DIAGNOSTICS: '1' } : {}),
+        ...(process.env.WELES_FULL_DIAGNOSTICS === undefined
+          ? { WELES_FULL_DIAGNOSTICS: '1' }
+          : {}),
       };
   return {
     ...base,
@@ -49,7 +70,13 @@ function childEnvironment(runOptions, params, action, trajPath, accountId, fresh
 // table, resolved by the entry point: this module is never the one that names a
 // path inside the release tree.
 export function createTrajectoryRunner({ resolveTrajectory, paramsToEnv }) {
-  return function runTrajectory(action, params, accountId, freshProfile, runOptions = {}) {
+  return function runTrajectory(
+    action,
+    params,
+    accountId,
+    freshProfile,
+    runOptions = {},
+  ) {
     return new Promise((resolveRun) => {
       const trajPath = resolveTrajectory(action);
       if (!trajPath) {
@@ -76,13 +103,28 @@ export function createTrajectoryRunner({ resolveTrajectory, paramsToEnv }) {
       try {
         running({});
       } catch (error) {
-        resolveRun({ ok: false, error: 'run_metadata_unavailable', action, run_id: runId, stderr_tail: error.message });
+        resolveRun({
+          ok: false,
+          error: 'run_metadata_unavailable',
+          action,
+          run_id: runId,
+          stderr_tail: error.message,
+        });
         return;
       }
       const processSpec = trajectoryProcess(trajPath);
       const child = spawn(processSpec.command, processSpec.args, {
         cwd: REPO,
-        env: childEnvironment(runOptions, params, action, trajPath, accountId, freshProfile, runId, paramsToEnv),
+        env: childEnvironment(
+          runOptions,
+          params,
+          action,
+          trajPath,
+          accountId,
+          freshProfile,
+          runId,
+          paramsToEnv,
+        ),
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       });
@@ -112,7 +154,10 @@ export function createTrajectoryRunner({ resolveTrajectory, paramsToEnv }) {
           try {
             running({ stages });
           } catch (error) {
-            stageRecordErrors.push({ stage: lastStage.stage, error: error.message });
+            stageRecordErrors.push({
+              stage: lastStage.stage,
+              error: error.message,
+            });
           }
         }
       };
@@ -128,7 +173,10 @@ export function createTrajectoryRunner({ resolveTrajectory, paramsToEnv }) {
           cancelDetail = detail;
           abortRun();
         },
-        describe: () => ({ stage: lastStage, ...liveOutput(stdout, stderr, lastOutputAt) }),
+        describe: () => ({
+          stage: lastStage,
+          ...liveOutput(stdout, stderr, lastOutputAt),
+        }),
       });
       const finish = (outcome) => {
         if (settled) return;
@@ -137,8 +185,12 @@ export function createTrajectoryRunner({ resolveTrajectory, paramsToEnv }) {
         runOptions.signal?.removeEventListener('abort', abortRun);
         let result = {
           ...outcome,
-          ...(cancelDetail === null ? {} : { ok: false, cancelled: true, cancel_detail: cancelDetail }),
-          ...(stageRecordErrors.length ? { stage_record_errors: stageRecordErrors } : {}),
+          ...(cancelDetail === null
+            ? {}
+            : { ok: false, cancelled: true, cancel_detail: cancelDetail }),
+          ...(stageRecordErrors.length
+            ? { stage_record_errors: stageRecordErrors }
+            : {}),
           stages,
         };
         try {
@@ -152,12 +204,16 @@ export function createTrajectoryRunner({ resolveTrajectory, paramsToEnv }) {
             completed_at: new Date().toISOString(),
           });
         } catch (error) {
-          result = { ...result, metadata_error: `run metadata could not be completed: ${error.message}` };
+          result = {
+            ...result,
+            metadata_error: `run metadata could not be completed: ${error.message}`,
+          };
         }
         resolveRun(result);
       };
       if (runOptions.signal?.aborted) abortRun();
-      else runOptions.signal?.addEventListener('abort', abortRun, { once: true });
+      else
+        runOptions.signal?.addEventListener('abort', abortRun, { once: true });
       child.stdout.on('data', (chunk) => {
         lastOutputAt = new Date().toISOString();
         stdout += chunk.toString();
@@ -190,8 +246,13 @@ export function createTrajectoryRunner({ resolveTrajectory, paramsToEnv }) {
           signal,
           action,
           run_id: runId,
-          result: printed.result === null && recorded.outputs.generic_browser_task ? recorded.outputs.generic_browser_task : printed.result,
-          ...(printed.unparsed.length ? { result_errors: printed.unparsed } : {}),
+          result:
+            printed.result === null && recorded.outputs.generic_browser_task
+              ? recorded.outputs.generic_browser_task
+              : printed.result,
+          ...(printed.unparsed.length
+            ? { result_errors: printed.unparsed }
+            : {}),
           ...recorded,
           stdout_tail: stdout,
           stderr_tail: stderr,

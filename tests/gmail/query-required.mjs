@@ -40,13 +40,21 @@ try {
       assert.equal(result.error, undefined);
       assert.ok(result.status, 'missing query must refuse the run');
       assert.match(result.stderr, /GMAIL_QUERY_REQUIRED:.*GM_QUERY/);
-      assert.equal(result.stdout, '', 'refusal precedes browser and mailbox output');
+      assert.equal(
+        result.stdout,
+        '',
+        'refusal precedes browser and mailbox output',
+      );
     }
   }
   report.status = 'passed';
 } catch (error) {
   report.status = 'failed';
-  report.error = { name: error.name, message: error.message, stack: error.stack };
+  report.error = {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+  };
   throw error;
 } finally {
   await rm(home, { recursive: true, force: true });

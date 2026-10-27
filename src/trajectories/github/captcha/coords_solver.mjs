@@ -11,12 +11,19 @@ import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 import { humanClick } from '../../../../dist/human/mouse.js';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { statedCount } from '../../_shared/inputs/stated.mjs';
-import { completeMultimodal, requireStadoModelRouterConfig } from './stado_model_router.mjs';
+import {
+  completeMultimodal,
+  requireStadoModelRouterConfig,
+} from './stado_model_router.mjs';
 
 export const PUZZLE_FRAME = 'iframe.js-octocaptcha-frame';
 
 // The steps the model may answer with, and whether the click submits an answer.
-const STEPS = { click: { submits: false }, submit: { submits: true }, wait: null };
+const STEPS = {
+  click: { submits: false },
+  submit: { submits: true },
+  wait: null,
+};
 
 const prompt = (width, height) =>
   `This image is an Arkose FunCaptcha frame, ${width}x${height} pixels, on GitHub's signup. Name the single next step that solves it.
@@ -54,16 +61,27 @@ async function nextStep(image, width, height) {
   });
   const open = text.indexOf('{');
   const close = text.lastIndexOf('}');
-  if (open === Math.min(open, close) && open !== close && open === Math.abs(open)) {
+  if (
+    open === Math.min(open, close) &&
+    open !== close &&
+    open === Math.abs(open)
+  ) {
     const step = JSON.parse(text.slice(open, close + Math.sign(text.length)));
     if (!Object.hasOwn(STEPS, step.step))
-      throw new Error(`ARKOSE_STEP_UNKNOWN: ${model} named step "${step.step}", not one of ${Object.keys(STEPS).join(', ')}`);
+      throw new Error(
+        `ARKOSE_STEP_UNKNOWN: ${model} named step "${step.step}", not one of ${Object.keys(STEPS).join(', ')}`,
+      );
     if (STEPS[step.step]) {
-      const inside = (v, size) => Number.isFinite(v) && v === Math.abs(v) && v < size;
+      const inside = (v, size) =>
+        Number.isFinite(v) && v === Math.abs(v) && v < size;
       if (!inside(step.x, width) || !inside(step.y, height))
-        throw new Error(`ARKOSE_POINT_OUTSIDE: ${model} named (${step.x}, ${step.y}) for a ${width}x${height} frame`);
+        throw new Error(
+          `ARKOSE_POINT_OUTSIDE: ${model} named (${step.x}, ${step.y}) for a ${width}x${height} frame`,
+        );
     }
-    console.log(`[arkose] ${model}: ${step.step}${STEPS[step.step] ? ` (${step.x}, ${step.y})` : ''} — ${step.why}`);
+    console.log(
+      `[arkose] ${model}: ${step.step}${STEPS[step.step] ? ` (${step.x}, ${step.y})` : ''} — ${step.why}`,
+    );
     return step;
   }
   throw new Error(`ARKOSE_STEP_UNREAD: ${model} answered no JSON: ${text}`);
@@ -94,23 +112,38 @@ export async function solveRotationViaCoords(page, { advanced, refused }) {
     if (await advanced()) return true;
     if (await refused()) return false;
     const box = await frame.boundingBox();
-    if (!box) throw new Error(`ARKOSE_FRAME_GONE: the puzzle frame left ${page.url()} while GitHub neither moved on nor refused`);
+    if (!box)
+      throw new Error(
+        `ARKOSE_FRAME_GONE: the puzzle frame left ${page.url()} while GitHub neither moved on nor refused`,
+      );
     const image = await page.screenshot({ type: 'png', clip: box });
     rounds.push(image);
     writeFileSync(join(dir, `round_${rounds.length}.png`), image);
     if (previous && previous.equals(image))
-      throw new Error(`ARKOSE_FRAME_STILL: the puzzle frame did not change after round ${rounds.length}`);
+      throw new Error(
+        `ARKOSE_FRAME_STILL: the puzzle frame did not change after round ${rounds.length}`,
+      );
     previous = image;
-    const step = await nextStep(image, Math.round(box.width), Math.round(box.height));
+    const step = await nextStep(
+      image,
+      Math.round(box.width),
+      Math.round(box.height),
+    );
     if (STEPS[step.step]) {
       if (STEPS[step.step].submits) {
         submitted.push(rounds.length);
         if (submitted.length > budget) {
-          console.log(`[arkose] ${submitted.length} answers submitted without GitHub moving on; WELES_ARKOSE_SUBMIT_BUDGET is ${budget}`);
+          console.log(
+            `[arkose] ${submitted.length} answers submitted without GitHub moving on; WELES_ARKOSE_SUBMIT_BUDGET is ${budget}`,
+          );
           return false;
         }
       }
-      await humanClick(page, Math.round(box.x + step.x), Math.round(box.y + step.y));
+      await humanClick(
+        page,
+        Math.round(box.x + step.x),
+        Math.round(box.y + step.y),
+      );
     }
     await pageSettled(page);
   }

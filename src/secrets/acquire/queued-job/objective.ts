@@ -18,7 +18,10 @@ import type { AcquireSecretRequest } from '../request.js';
 import { ENTRA_PROVIDER, type SecretDefinition } from '../catalog.js';
 
 /** The purpose the request states, else the definition's own. */
-export function purposeFor(request: AcquireSecretRequest, def: SecretDefinition): string {
+export function purposeFor(
+  request: AcquireSecretRequest,
+  def: SecretDefinition,
+): string {
   const purpose = request.purpose?.trim();
   if (purpose) return purpose;
   return def.defaultPurpose;
@@ -26,12 +29,16 @@ export function purposeFor(request: AcquireSecretRequest, def: SecretDefinition)
 
 /** A value an objective names; the objective cannot be written without it. */
 function named(value: string | null | undefined, what: string): string {
-  if (typeof value !== 'string' || !value.trim()) throw new Error(`the objective needs ${what}; the request carries none`);
+  if (typeof value !== 'string' || !value.trim())
+    throw new Error(`the objective needs ${what}; the request carries none`);
   return value.trim().toLowerCase();
 }
 
 /** The sentence telling the worker which existing account to use, when the request names one. */
-function accountSentences(accountEmail: string | undefined, signIn: string): string[] {
+function accountSentences(
+  accountEmail: string | undefined,
+  signIn: string,
+): string[] {
   if (!accountEmail) return [];
   return [`Use the existing authenticated account ${accountEmail}. ${signIn}`];
 }

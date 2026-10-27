@@ -10,6 +10,7 @@ await runBalanceCheck({
   signIn: await sadcaptchaSignIn(),
   balanceUrl: SADCAPTCHA_DASHBOARD,
   onBalancePage: (url) =>
-    url.origin === new URL(SADCAPTCHA_DASHBOARD).origin && url.pathname === new URL(SADCAPTCHA_DASHBOARD).pathname,
+    url.origin === new URL(SADCAPTCHA_DASHBOARD).origin &&
+    url.pathname === new URL(SADCAPTCHA_DASHBOARD).pathname,
   persist: (balance) => patchServiceBalance('SadCaptcha', balance),
 });

@@ -12,51 +12,45 @@ import { humanClickLocator } from '../../../../dist/human/mouse.js';
 /** The consent page's own submit control. */
 const CONSENT_SUBMIT = 'form button[type="submit"], form input[type="submit"]';
 
-export function isTerminalHost(host, href) {
-  // auth.openai.com is an intermediate redirect (login / callback); the real
-  // end-state is platform.openai.com or chatgpt.com where Codex CLI receives
-  // the token via callback.
-  if (/^platform\.openai\.com$/i.test(host)) return true;
-  if (/^chatgpt\.com$/i.test(host)) return true;
-  // A very small set of auth.openai.com callback URLs mean we are done.
-  if (
-    /^auth\.openai\.com$/i.test(host) &&
-    /(?:\/codex\/device\/(?:callback|success)|\/deviceauth\/callback)/i.test(
-      href || '',
-    )
-  )
-    return true;
-  // The non-device browser flow redirects to a local server started by
-  // `codex login` (no --device-auth). Recognize that as terminal as well.
-  if (
-    /^localhost(:\d+)?$/i.test(host) &&
-    /(?:\/auth\/callback|\/success)/i.test(href || '')
-  )
-    return true;
-  return false;
-}
+/** The Codex consent page, by origin and path. */
+const CONSENT_PAGE = 'https://auth.openai.com/sign-in-with-chatgpt/codex/consent';
 
-function isCodexConsentPage(host, pathname) {
-  return (
-    host === 'auth.openai.com' &&
-    pathname === '/sign-in-with-chatgpt/codex/consent'
-  );
+// The URLs that end OpenAI's half, as host name and path prefix: any path on
+// the hosts Codex CLI receives its token from (platform.openai.com,
+// chatgpt.com); on auth.openai.com only the device flow's callback and
+// success pages; and on localhost the callback of the local server
+// `codex login` (no --device-auth) starts. Any other URL does not end it.
+const TERMINAL_URLS = [
+  { hostname: 'platform.openai.com', path: '/' },
+  { hostname: 'chatgpt.com', path: '/' },
+  { hostname: 'auth.openai.com', path: '/codex/device/callback' },
+  { hostname: 'auth.openai.com', path: '/codex/device/success' },
+  { hostname: 'auth.openai.com', path: '/deviceauth/callback' },
+  { hostname: 'localhost', path: '/auth/callback' },
+  { hostname: 'localhost', path: '/success' },
+];
+
+/** Whether the URL is one where OpenAI's half of the handoff has ended. */
+export function isTerminalUrl(href) {
+  if (!URL.canParse(href)) return false;
+  const url = new URL(href);
+  const hostname = url.hostname.toLowerCase();
+  const pathname = url.pathname.toLowerCase();
+  return TERMINAL_URLS.some((terminal) => terminal.hostname === hostname && pathname.startsWith(terminal.path));
 }
 
 export async function handleCodexConsentPage(page, mark) {
   const url = new URL(page.url());
-  if (!isCodexConsentPage(url.host, url.pathname)) return false;
+  if (`${url.origin}${url.pathname}` !== CONSENT_PAGE) return false;
   mark('codex_consent_page');
+  // A read whose document was replaced mid-evaluation answers "no control
+  // yet" (navigation/read.mjs); the caller looks again on the next page.
   const state = await navEval(
     page,
     (selector) => {
-      const btn = document.querySelector(selector);
-      if (!btn) return { found: false };
-      return {
-        found: true,
-        disabled: btn.matches(':disabled, [aria-disabled="true"]'),
-        text: (btn.innerText || btn.value).trim(),
-      };
+      const control = document.querySelector(selector);
+      if (!control) return { found: false };
+      return { found: true, disabled: control.matches(':disabled, [aria-disabled="true"]') };
     },
     { found: false },
     CONSENT_SUBMIT,
@@ -74,16 +68,11 @@ export async function handleCodexConsentPage(page, mark) {
   // The non-device flow redirects to a local server; the device flow
   // redirects back to auth.openai.com. Wait for either terminal URL, for as
   // long as Playwright's own navigation default allows.
-  const current = page.url();
-  const cur = URL.canParse(current) ? new URL(current) : null;
-  if (cur && isTerminalHost(cur.host, cur.href)) return true;
+  if (isTerminalUrl(page.url())) return true;
   try {
-    await page.waitForURL((url) => isTerminalHost(url.host, url.href));
+    await page.waitForURL((next) => isTerminalUrl(next.href));
     return true;
   } catch (e) {
-    const final = page.url();
-    throw new Error(`post-consent: no terminal redirect (final=${final})`, {
-      cause: e,
-    });
+    throw new Error(`post-consent: no terminal redirect (final=${page.url()})`, { cause: e });
   }
 }

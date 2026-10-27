@@ -15,7 +15,10 @@ import { clickDescribed } from '../_shared/page/judged/seen.mjs';
 import { pageSettled, responseAfterAction } from '../_shared/page/settled.mjs';
 
 const VIDEO = statedText(['VIDEO_URL'], 'the YouTube video commented on');
-const COMMENT = statedText(['COMMENT_TEXT'], 'the comment published under the account');
+const COMMENT = statedText(
+  ['COMMENT_TEXT'],
+  'the comment published under the account',
+);
 const CREATE_COMMENT = /\/youtubei\/v\d+\/comment\/create_comment/;
 
 await runAction({
@@ -26,18 +29,31 @@ await runAction({
   act: async (s) => {
     await s.page.locator('#comments').scrollIntoViewIfNeeded();
     await pageSettled(s.page);
-    await clickDescribed(s.page, "the video's add-a-comment box below the video");
+    await clickDescribed(
+      s.page,
+      "the video's add-a-comment box below the video",
+    );
     await humanType(s.page, COMMENT);
     const answer = await responseAfterAction(
       s.page,
-      (request) => request.method() === 'POST' && CREATE_COMMENT.test(request.url()),
-      () => clickDescribed(s.page, 'the Comment button that posts the typed comment'),
+      (request) =>
+        request.method() === 'POST' && CREATE_COMMENT.test(request.url()),
+      () =>
+        clickDescribed(
+          s.page,
+          'the Comment button that posts the typed comment',
+        ),
     );
     const body = await answer.text();
-    if (!answer.ok()) throw new Error(`YOUTUBE_COMMENT_REFUSED: ${answer.url()} answered ${answer.status()}: ${body}`);
+    if (!answer.ok())
+      throw new Error(
+        `YOUTUBE_COMMENT_REFUSED: ${answer.url()} answered ${answer.status()}: ${body}`,
+      );
     const result = JSON.parse(body).actionResult;
     if (!result || result.status !== 'STATUS_SUCCEEDED')
-      throw new Error(`YOUTUBE_COMMENT_NOT_POSTED: YouTube's create_comment answer reports no succeeded action: ${body}`);
+      throw new Error(
+        `YOUTUBE_COMMENT_NOT_POSTED: YouTube's create_comment answer reports no succeeded action: ${body}`,
+      );
     return `commented on ${VIDEO}`;
   },
 });

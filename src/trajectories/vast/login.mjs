@@ -20,10 +20,15 @@ try {
       .sort((a, b) => b.length - a.length);
     return longest;
   });
-  if (!command) throw new Error(`VAST_INSTALL_COMMAND_MISSING: ${ws.page.url()} renders no code block`);
+  if (!command)
+    throw new Error(
+      `VAST_INSTALL_COMMAND_MISSING: ${ws.page.url()} renders no code block`,
+    );
   const shot = join(runRecordingsDir('vast_login'), 'install_cmd.png');
   await ws.page.screenshot({ path: shot, fullPage: true });
-  console.log(`[vast] install command (${command.length} characters), screenshot ${shot}`);
+  console.log(
+    `[vast] install command (${command.length} characters), screenshot ${shot}`,
+  );
   console.log(`PASS: Vast install command read under team ${team}`);
 } catch (error) {
   console.error(`FAIL: ${error.message}`);

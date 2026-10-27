@@ -143,6 +143,7 @@ export function openOperatorRequest(input) {
     waited_seconds: null,
     outcome_detail: '',
     pages: [],
+    answers: [],
   };
   write(request);
   const asked = askThroughOko(request);

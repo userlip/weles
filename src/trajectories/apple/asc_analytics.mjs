@@ -32,7 +32,9 @@ try {
         const title = row.querySelector('[class*=name], [class*=title]');
         const linked = row.href ? row.href.match(/apps\/(?<id>\d+)/) : null;
         return {
-          id: row.getAttribute('data-app-id') ? row.getAttribute('data-app-id') : linked?.groups.id,
+          id: row.getAttribute('data-app-id')
+            ? row.getAttribute('data-app-id')
+            : linked?.groups.id,
           name: (title ? title : row).textContent.trim(),
         };
       })
@@ -43,7 +45,8 @@ try {
   for (const app of apps) {
     await openAppStoreConnect(s, `/analytics/app/${app.id}/overview`);
     const metrics = {};
-    for (const [name, what] of Object.entries(METRICS)) metrics[name] = await shownText(s.page, what);
+    for (const [name, what] of Object.entries(METRICS))
+      metrics[name] = await shownText(s.page, what);
     results.push({ ...app, ...metrics });
     console.log(`[asc-analytics] ${app.name}:`, JSON.stringify(metrics));
   }

@@ -40,8 +40,12 @@ async function exchangeSymbol(s, ticker) {
   if (symbols.has(ticker)) return symbols.get(ticker);
   await s.goto(`${ORIGIN}/symbols/${encodeURIComponent(ticker)}/`);
   await pageSettled(s.page);
-  const symbol = new URL(s.page.url()).pathname.match(SYMBOL_PATH)?.groups.symbol;
-  if (!symbol) throw new Error(`TV_SYMBOL_UNRESOLVED: /symbols/${ticker}/ led to ${s.page.url()}, which names no exchange`);
+  const symbol = new URL(s.page.url()).pathname.match(SYMBOL_PATH)?.groups
+    .symbol;
+  if (!symbol)
+    throw new Error(
+      `TV_SYMBOL_UNRESOLVED: /symbols/${ticker}/ led to ${s.page.url()}, which names no exchange`,
+    );
   symbols.set(ticker, symbol);
   return symbol;
 }
@@ -51,6 +55,7 @@ await runMarketScrape({
   code: 'TV',
   label: 'tv_scrape',
   catalog: PAGES,
-  urlFor: async (s, ticker, page) => `${ORIGIN}/symbols/${await exchangeSymbol(s, ticker)}/${PAGES[page]}`,
+  urlFor: async (s, ticker, page) =>
+    `${ORIGIN}/symbols/${await exchangeSymbol(s, ticker)}/${PAGES[page]}`,
   rowPage: (page) => `tv_${page}`,
 });

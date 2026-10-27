@@ -4,7 +4,10 @@ import { solveRecaptchaV2 as solveRecaptchaV2InPage } from '../../../../dist/cap
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { humanType } from '../../../../dist/human/keyboard.js';
 import { pageSettled, urlMatching } from '../page/settled.mjs';
-import { inboxConfigured, messagesTo } from '../../../_shared/mail/skrzynka-inbox.mjs';
+import {
+  inboxConfigured,
+  messagesTo,
+} from '../../../_shared/mail/skrzynka-inbox.mjs';
 import { onCheckpointRoute } from './sign_in.mjs';
 
 // The site key of the reCAPTCHA Enterprise LinkedIn's login form runs.
@@ -12,7 +15,8 @@ const RECAPTCHA_SITEKEY = '6LcIy_MqAAAAAMKiupFSbmzW3xjGSlIfRzNWYMjC';
 // The page key of LinkedIn's email-PIN checkpoint.
 const EMAIL_PIN_PAGE = 'emailPinChallenge';
 
-const liAtOf = async (ctx) => (await ctx.cookies()).find((c) => c.name === 'li_at' && c.value);
+const liAtOf = async (ctx) =>
+  (await ctx.cookies()).find((c) => c.name === 'li_at' && c.value);
 
 /**
  * The PIN fields of LinkedIn's email-PIN checkpoint: one field that takes
@@ -21,14 +25,22 @@ const liAtOf = async (ctx) => (await ctx.cookies()).find((c) => c.name === 'li_a
  */
 async function pinFields(page) {
   const single = page
-    .locator('input[name="pin"], input[autocomplete="one-time-code"], input[name*="pin" i]')
+    .locator(
+      'input[name="pin"], input[autocomplete="one-time-code"], input[name*="pin" i]',
+    )
     .filter({ visible: true })
     .first();
   if (await single.count()) {
     const length = Number(await single.getAttribute('maxlength'));
-    return { single, length: Number.isSafeInteger(length) && length ? length : undefined };
+    return {
+      single,
+      length: Number.isSafeInteger(length) && length ? length : undefined,
+    };
   }
-  const boxes = await page.locator('input[name^="pin-"], input[name^="otp-"]').filter({ visible: true }).all();
+  const boxes = await page
+    .locator('input[name^="pin-"], input[name^="otp-"]')
+    .filter({ visible: true })
+    .all();
   return { boxes, length: boxes.length };
 }
 
@@ -42,13 +54,18 @@ async function pinFields(page) {
 async function solveEmailPinChallenge(page, email) {
   const pageKeyMeta = page.locator('meta[name="pageKey"]').first();
   if (!(await pageKeyMeta.count())) return false;
-  if (!(await pageKeyMeta.getAttribute('content'))?.includes(EMAIL_PIN_PAGE)) return false;
+  if (!(await pageKeyMeta.getAttribute('content'))?.includes(EMAIL_PIN_PAGE))
+    return false;
   if (!inboxConfigured())
-    throw new Error(`LINKEDIN_PIN_UNREADABLE: the email-PIN checkpoint needs the mail to ${email}, and no Skrzynka organization is configured`);
+    throw new Error(
+      `LINKEDIN_PIN_UNREADABLE: the email-PIN checkpoint needs the mail to ${email}, and no Skrzynka organization is configured`,
+    );
   const opened = Date.now();
   const { single, boxes, length } = await pinFields(page);
   if (!length)
-    throw new Error(`LINKEDIN_PIN_FIELDS_MISSING: ${page.url()} shows no PIN field that states its length`);
+    throw new Error(
+      `LINKEDIN_PIN_FIELDS_MISSING: ${page.url()} shows no PIN field that states its length`,
+    );
   const pin = new RegExp(`\\b\\d{${length}}\\b`);
   const mailed = (await messagesTo(email, 'linkedin.com'))
     .filter((m) => Date.parse(m.received_at) >= opened)
@@ -69,7 +86,10 @@ async function solveEmailPinChallenge(page, email) {
   }
   await humanClickLocator(
     page,
-    page.locator('button[type="submit"], button#email-pin-submit-button').filter({ visible: true }).first(),
+    page
+      .locator('button[type="submit"], button#email-pin-submit-button')
+      .filter({ visible: true })
+      .first(),
   );
   await pageSettled(page);
   return true;
@@ -85,25 +105,33 @@ async function solveEmailPinChallenge(page, email) {
  */
 export async function solveLinkedinCheckpoint({ ctx, page }, reason, email) {
   let liAt = await liAtOf(ctx);
-  if (liAt || !onCheckpointRoute(page.url())) return { liAt, finalUrl: page.url() };
+  if (liAt || !onCheckpointRoute(page.url()))
+    return { liAt, finalUrl: page.url() };
   if (email && (await solveEmailPinChallenge(page, email))) {
     liAt = await liAtOf(ctx);
-    if (liAt || !onCheckpointRoute(page.url())) return { liAt, finalUrl: page.url() };
+    if (liAt || !onCheckpointRoute(page.url()))
+      return { liAt, finalUrl: page.url() };
   }
   if (process.env.WELES_NOPECHA_EXT === '1') {
-    console.log(`[linkedin_login] ${reason}: the NopeCha extension solves the checkpoint in the page`);
+    console.log(
+      `[linkedin_login] ${reason}: the NopeCha extension solves the checkpoint in the page`,
+    );
     await urlMatching(page, (url) => !onCheckpointRoute(url));
     return { liAt: await liAtOf(ctx), finalUrl: page.url() };
   }
   // The checkpoint serves the visible V2 Enterprise image grid: a token put
   // into the outer page does not trigger its verify callback, so the grid is
   // solved inside its own frame.
-  console.log(`[linkedin_login] ${reason}: solving the checkpoint's image grid`);
+  console.log(
+    `[linkedin_login] ${reason}: solving the checkpoint's image grid`,
+  );
   const solved = await solveRecaptchaV2InPage(page);
   await pageSettled(page);
   liAt = await liAtOf(ctx);
   if (!liAt && onCheckpointRoute(page.url()))
-    console.log(`[linkedin_login] linkedin_checkpoint_unsolved: solver=${solved} url=${page.url()}`);
+    console.log(
+      `[linkedin_login] linkedin_checkpoint_unsolved: solver=${solved} url=${page.url()}`,
+    );
   return { liAt, finalUrl: page.url() };
 }
 
@@ -114,11 +142,26 @@ export async function solveLinkedinCheckpoint({ ctx, page }, reason, email) {
  * limits the account. Answers whether the link was found and opened.
  */
 export async function confirmLinkedinEmail(page, email) {
-  if (!inboxConfigured()) return { ok: false, reason: 'no Skrzynka organization is configured to read the confirmation mail' };
+  if (!inboxConfigured())
+    return {
+      ok: false,
+      reason:
+        'no Skrzynka organization is configured to read the confirmation mail',
+    };
   const link = (await messagesTo(email, 'linkedin.com'))
-    .map((m) => m.body_text.match(/https:\/\/www\.linkedin\.com\/comm\/psettings\/email\/confirm\?[^\s<>"]+/)?.shift())
+    .map((m) =>
+      m.body_text
+        .match(
+          /https:\/\/www\.linkedin\.com\/comm\/psettings\/email\/confirm\?[^\s<>"]+/,
+        )
+        ?.shift(),
+    )
     .find(Boolean);
-  if (!link) return { ok: false, reason: `no confirmation link in the mail to ${email}` };
+  if (!link)
+    return {
+      ok: false,
+      reason: `no confirmation link in the mail to ${email}`,
+    };
   await page.goto(link, { waitUntil: 'domcontentloaded' });
   await pageSettled(page);
   return { ok: true, finalUrl: page.url() };
@@ -131,14 +174,26 @@ export async function confirmLinkedinEmail(page, email) {
  * answers no token throws.
  */
 export async function injectV3LoginToken(page) {
-  const token = await new CaptchaSolver().solveRecaptchaV3(RECAPTCHA_SITEKEY, page.url(), 'login');
-  if (!token) throw new Error('LINKEDIN_LOGIN_TOKEN_UNSOLVED: no captcha solving service answered the login reCAPTCHA');
+  const token = await new CaptchaSolver().solveRecaptchaV3(
+    RECAPTCHA_SITEKEY,
+    page.url(),
+    'login',
+  );
+  if (!token)
+    throw new Error(
+      'LINKEDIN_LOGIN_TOKEN_UNSOLVED: no captcha solving service answered the login reCAPTCHA',
+    );
   await page.evaluate((solvedToken) => {
-    for (const recaptcha of [window.grecaptcha?.enterprise, window.grecaptcha].filter(Boolean)) {
+    for (const recaptcha of [
+      window.grecaptcha?.enterprise,
+      window.grecaptcha,
+    ].filter(Boolean)) {
       recaptcha.execute = () => Promise.resolve(solvedToken);
       recaptcha.getResponse = () => solvedToken;
     }
-    for (const field of document.querySelectorAll('textarea[name^="g-recaptcha-response"]'))
+    for (const field of document.querySelectorAll(
+      'textarea[name^="g-recaptcha-response"]',
+    ))
       field.value = solvedToken;
   }, token);
 }

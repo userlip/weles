@@ -10,27 +10,53 @@ import { ascAll, ascRequest } from '../api/client.mjs';
 
 const BUNDLE = statedText(['BUNDLE'], 'the bundle id of the app to rename');
 const DRY = process.env.DRY === '1';
-const NEW_NAME = DRY ? process.env.NEW_NAME : statedText(['NEW_NAME'], 'the name the app gets (or DRY=1 to only read)');
+const NEW_NAME = DRY
+  ? process.env.NEW_NAME
+  : statedText(['NEW_NAME'], 'the name the app gets (or DRY=1 to only read)');
 
 try {
-  const [app] = await ascAll(`/apps?filter[bundleId]=${encodeURIComponent(BUNDLE)}`);
-  if (!app) throw new Error(`ASC_APP_NOT_FOUND: App Store Connect holds no app for bundle ${BUNDLE}`);
-  console.log(`APP ${app.id} | name: ${app.attributes.name} | bundle: ${app.attributes.bundleId}`);
+  const [app] = await ascAll(
+    `/apps?filter[bundleId]=${encodeURIComponent(BUNDLE)}`,
+  );
+  if (!app)
+    throw new Error(
+      `ASC_APP_NOT_FOUND: App Store Connect holds no app for bundle ${BUNDLE}`,
+    );
+  console.log(
+    `APP ${app.id} | name: ${app.attributes.name} | bundle: ${app.attributes.bundleId}`,
+  );
   const refused = [];
   for (const info of await ascAll(`/apps/${app.id}/appInfos`)) {
-    for (const loc of await ascAll(`/appInfos/${info.id}/appInfoLocalizations`)) {
-      console.log(`  appInfo ${info.id} [${info.attributes.state}] loc ${loc.id} ${loc.attributes.locale}: name="${loc.attributes.name}"`);
+    for (const loc of await ascAll(
+      `/appInfos/${info.id}/appInfoLocalizations`,
+    )) {
+      console.log(
+        `  appInfo ${info.id} [${info.attributes.state}] loc ${loc.id} ${loc.attributes.locale}: name="${loc.attributes.name}"`,
+      );
       if (DRY || !NEW_NAME || loc.attributes.name === NEW_NAME) continue;
       await ascRequest(`/appInfoLocalizations/${loc.id}`, {
         method: 'PATCH',
-        body: { data: { type: 'appInfoLocalizations', id: loc.id, attributes: { name: NEW_NAME } } },
+        body: {
+          data: {
+            type: 'appInfoLocalizations',
+            id: loc.id,
+            attributes: { name: NEW_NAME },
+          },
+        },
       }).then(
-        () => console.log(`    -> renamed loc ${loc.attributes.locale} to "${NEW_NAME}"`),
+        () =>
+          console.log(
+            `    -> renamed loc ${loc.attributes.locale} to "${NEW_NAME}"`,
+          ),
         (error) => refused.push(error),
       );
     }
   }
-  if (refused.length) throw new AggregateError(refused, refused.map((error) => error.message).join('; '));
+  if (refused.length)
+    throw new AggregateError(
+      refused,
+      refused.map((error) => error.message).join('; '),
+    );
   console.log('DONE');
 } catch (error) {
   console.error(`FAIL: ${error.message}`);

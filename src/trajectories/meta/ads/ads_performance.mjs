@@ -21,12 +21,11 @@ import { integrationsConfigured } from '../../../_shared/integrations.mjs';
 import { statedProxy, statedText } from '../../_shared/inputs/stated.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { shownText } from '../../_shared/page/judged/seen.mjs';
-import { keptProfileDir, stableProfilePersona } from '../../_shared/profile/persona.mjs';
 import {
-  cliUnavailable,
-  runMetaCommand,
-  splitArgs,
-} from './cli/meta_cli.mjs';
+  keptProfileDir,
+  stableProfilePersona,
+} from '../../_shared/profile/persona.mjs';
+import { cliUnavailable, runMetaCommand, splitArgs } from './cli/meta_cli.mjs';
 
 const INDENT = '  ';
 const CAMPAIGN_ID = process.env.CAMPAIGN_ID;
@@ -55,7 +54,9 @@ async function browserPerformance() {
     throw new Error(
       'AD_ACCOUNT_ID or META_ADS_COMPANY_ACCOUNT_ID is required for the browser read',
     );
-  const url = new URL('https://adsmanager.facebook.com/adsmanager/manage/campaigns');
+  const url = new URL(
+    'https://adsmanager.facebook.com/adsmanager/manage/campaigns',
+  );
   url.searchParams.set('act', AD_ACCOUNT_ID);
   if (BUSINESS_ID) url.searchParams.set('business_id', BUSINESS_ID);
   const s = await WSession.start({

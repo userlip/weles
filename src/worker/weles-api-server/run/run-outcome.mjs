@@ -55,7 +55,10 @@ export function persistRunResult(path, document) {
 export function claimRunResult(path, document) {
   mkdirSync(RUN_RESULTS_DIR, { recursive: true, mode: OWNER_DIRECTORY });
   try {
-    writeFileSync(path, JSON.stringify(document), { mode: OWNER_FILE, flag: 'wx' });
+    writeFileSync(path, JSON.stringify(document), {
+      mode: OWNER_FILE,
+      flag: 'wx',
+    });
     return true;
   } catch (error) {
     if (error.code === 'EEXIST') return false;

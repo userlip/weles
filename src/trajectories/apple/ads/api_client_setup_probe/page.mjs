@@ -52,11 +52,13 @@ function documentState() {
  */
 export async function pageDiag(page, label) {
   const frames = await Promise.all(
-    page.frames().map((frame) =>
-      frame
-        .evaluate(documentState)
-        .catch((e) => ({ url: frame.url(), unreadable: e.message })),
-    ),
+    page
+      .frames()
+      .map((frame) =>
+        frame
+          .evaluate(documentState)
+          .catch((e) => ({ url: frame.url(), unreadable: e.message })),
+      ),
   );
   const data = { ...(await page.evaluate(documentState)), frames };
   const outPath = join(DIAG_DIR, `${label}.json`);

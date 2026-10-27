@@ -14,10 +14,7 @@ import {
 } from '../content/llm.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  humanIdlePause,
-  humanScrollPage,
-} from '../../../../dist/human/mouse.js';
+import { humanScrollPage } from '../../../../dist/human/mouse.js';
 import { runRecordingsDir } from '../../../../dist/session/run-recordings.js';
 
 const REVIEW_REQUIRED = process.env.REQUIRE_APPROVAL !== '0';
@@ -64,33 +61,35 @@ function holdForReview(label, acct, record) {
       '  ',
     ),
   );
-  console.log(`pending_review: written to ${dir}; review required, not published`);
+  console.log(
+    `pending_review: written to ${dir}; review required, not published`,
+  );
   return 'pending_review';
 }
 
 function surfaceOf(cfg, acct, feed) {
-  if (typeof cfg.surfaceLabel === 'function') return cfg.surfaceLabel(acct, feed);
+  if (typeof cfg.surfaceLabel === 'function')
+    return cfg.surfaceLabel(acct, feed);
   return cfg.surfaceLabel ? cfg.surfaceLabel : feed;
 }
 
-// cfg.scrolls and cfg.dwellMs are the declared observation's: how many
-// viewports are read and the idle read time after each, in milliseconds.
-// Every browse trajectory passes its declaration's values; a caller without
-// them is refused rather than given a count or a pause nobody declared.
+// cfg.scrolls is the declared observation's: how many viewports are read.
+// Every browse trajectory passes its declaration's count; a caller without
+// one is refused rather than given a count nobody declared.
 export async function handleBrowse(s, cfg) {
   const scrolls = cfg.scrolls;
+  // Each screen is read once the page has settled after the wheel
+  // (humanScrollPage observes it); no clock stands in for reading.
   if (
     !Number.isSafeInteger(scrolls) ||
-    Math.sign(scrolls) === -Math.sign(Number.MAX_VALUE) ||
-    !cfg.dwellMs
+    Math.sign(scrolls) === -Math.sign(Number.MAX_VALUE)
   ) {
     throw new Error(
-      `browse needs the declared observation's scroll count and dwell, got ${JSON.stringify({ scrolls: cfg.scrolls, dwellMs: cfg.dwellMs })}`,
+      `browse needs the declared observation's scroll count, got ${JSON.stringify({ scrolls: cfg.scrolls })}`,
     );
   }
   for (const _ of Array(scrolls).keys()) {
     await humanScrollPage(s.page, 'down');
-    await humanIdlePause(cfg.dwellMs);
   }
   return `scrolled ${scrolls}x`;
 }

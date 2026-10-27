@@ -1,13 +1,12 @@
 import { humanType } from '../../../dist/human/keyboard.js';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../dist/human/mouse.js';
+import { humanClickLocator } from '../../../dist/human/mouse.js';
 import { pageSettled } from '../_shared/page/settled.mjs';
 
 const POST_IDENTITY = ['data-urn', 'data-id'];
 const postNamed = (page, id) =>
-  page.locator(POST_IDENTITY.map((name) => `[${name}="${id}"]`).join(', ')).first();
+  page
+    .locator(POST_IDENTITY.map((name) => `[${name}="${id}"]`).join(', '))
+    .first();
 
 /**
  * The first post the page shows (the one whose React Like control comes
@@ -19,7 +18,9 @@ export async function linkedinFirstPost(s) {
   await pageSettled(s.page);
   const like = s.page.locator('button[aria-label*="React Like" i]').first();
   if (!(await like.count()))
-    throw new Error(`LINKEDIN_NO_POST: ${s.page.url()} shows no post to answer`);
+    throw new Error(
+      `LINKEDIN_NO_POST: ${s.page.url()} shows no post to answer`,
+    );
   const pinned = await like.evaluate((button, names) => {
     const selector = names.map((name) => `[${name}]`).join(', ');
     const post = button.closest(selector);
@@ -35,8 +36,14 @@ export async function linkedinFirstPost(s) {
     .locator('.feed-shared-update-v2__description, .update-components-text')
     .first();
   if (!(await text.count()))
-    throw new Error(`LINKEDIN_NO_POST_TEXT: post ${pinned.id} carries no text to answer`);
-  return { postTitle: await text.innerText(), url: s.page.url(), id: pinned.id };
+    throw new Error(
+      `LINKEDIN_NO_POST_TEXT: post ${pinned.id} carries no text to answer`,
+    );
+  return {
+    postTitle: await text.innerText(),
+    url: s.page.url(),
+    id: pinned.id,
+  };
 }
 
 /**
@@ -74,14 +81,16 @@ export async function linkedinSubmitComment(s, text, post) {
   await postBtn.waitFor({ state: 'visible' });
   await humanClickLocator(s.page, postBtn);
   await s.page.waitForFunction(() => {
-    const e = document.querySelector('div[role="textbox"][contenteditable="true"]');
+    const e = document.querySelector(
+      'div[role="textbox"][contenteditable="true"]',
+    );
     return !e || !e.textContent.trim();
   });
 }
 
 export async function linkedinSubmitPost(s, text) {
   await s.goto('https://www.linkedin.com/feed/');
-  await humanIdlePause('deliberate');
+  await pageSettled(s.page);
   // Open the feed's post composer through its accessible label.
   const startPost = s.page
     .locator('button.share-box-feed-entry__trigger')

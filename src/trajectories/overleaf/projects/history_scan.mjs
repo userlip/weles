@@ -25,14 +25,25 @@ import { openOverleaf } from '../../_shared/services/overleaf_google_sign_in.mjs
 
 const INDENT = '  ';
 const [, , projectArg] = process.argv;
-const PROJECT = projectArg ? projectArg : statedText(['OVERLEAF_PROJECT'], 'the id of the project whose history is read');
+const PROJECT = projectArg
+  ? projectArg
+  : statedText(
+      ['OVERLEAF_PROJECT'],
+      'the id of the project whose history is read',
+    );
 const COLLABORATOR = process.env.OVERLEAF_COLLABORATOR_EMAIL;
 // LaTeX that makes or names a figure.
 const FIGURE = /\\begin\{figure|\\includegraphics|\\label\{fig:/;
 
 async function historyJson(s, path) {
-  const answer = await s.ctx.request.get(`https://www.overleaf.com/project/${PROJECT}${path}`, { headers: { Accept: 'application/json' } });
-  if (!answer.ok()) throw new Error(`OVERLEAF_HISTORY_REFUSED: ${path} answered HTTP ${answer.status()}: ${await answer.text()}`);
+  const answer = await s.ctx.request.get(
+    `https://www.overleaf.com/project/${PROJECT}${path}`,
+    { headers: { Accept: 'application/json' } },
+  );
+  if (!answer.ok())
+    throw new Error(
+      `OVERLEAF_HISTORY_REFUSED: ${path} answered HTTP ${answer.status()}: ${await answer.text()}`,
+    );
   return answer.json();
 }
 
@@ -40,7 +51,10 @@ async function historyJson(s, path) {
 async function allUpdates(s) {
   const updates = [];
   for (let before; ; ) {
-    const page = await historyJson(s, `/updates${before ? `?before=${before}` : ''}`);
+    const page = await historyJson(
+      s,
+      `/updates${before ? `?before=${before}` : ''}`,
+    );
     updates.push(...page.updates);
     if (!page.nextBeforeTimestamp) return updates;
     before = page.nextBeforeTimestamp;
@@ -49,42 +63,95 @@ async function allUpdates(s) {
 
 /** The figure deletions in `file` between two versions, each with the users who made it. */
 async function figureDeletions(s, file, from, to) {
-  const { diff } = await historyJson(s, `/diff?from=${from}&to=${to}&pathname=${encodeURIComponent(file)}`);
+  const { diff } = await historyJson(
+    s,
+    `/diff?from=${from}&to=${to}&pathname=${encodeURIComponent(file)}`,
+  );
   return diff
     .filter((chunk) => typeof chunk.d === 'string' && FIGURE.test(chunk.d))
-    .map((chunk) => ({ file, from, to, users: chunk.meta.users, at: chunk.meta.end_ts, text: chunk.d }));
+    .map((chunk) => ({
+      file,
+      from,
+      to,
+      users: chunk.meta.users,
+      at: chunk.meta.end_ts,
+      text: chunk.d,
+    }));
 }
 
 const { s } = await openOverleaf({ label: 'overleaf_history_scan' });
 try {
   const users = await historyJson(s, '/changes/users');
-  const names = new Map(users.map((user) => [user.id, [user.first_name, user.last_name].filter(Boolean).join(' ') || user.email]));
+  const names = new Map(
+    users.map((user) => [
+      user.id,
+      [user.first_name, user.last_name].filter(Boolean).join(' ') || user.email,
+    ]),
+  );
   const { entities } = await historyJson(s, '/entities');
-  const texFiles = entities.filter((entity) => entity.type === 'doc' && entity.path.endsWith('.tex')).map((entity) => entity.path.replace(/^\//, ''));
+  const texFiles = entities
+    .filter((entity) => entity.type === 'doc' && entity.path.endsWith('.tex'))
+    .map((entity) => entity.path.replace(/^\//, ''));
   const updates = await allUpdates(s);
-  if (!updates.length) throw new Error(`OVERLEAF_HISTORY_EMPTY: project ${PROJECT} has no saved history`);
+  if (!updates.length)
+    throw new Error(
+      `OVERLEAF_HISTORY_EMPTY: project ${PROJECT} has no saved history`,
+    );
   const from = Math.min(...updates.map((update) => update.fromV));
   const to = Math.max(...updates.map((update) => update.toV));
   const stuck = [];
-  for (const file of texFiles) stuck.push(...(await figureDeletions(s, file, from, to)));
-  const collaborator = COLLABORATOR && users.find((user) => user.email === COLLABORATOR);
-  if (COLLABORATOR && !collaborator) throw new Error(`OVERLEAF_COLLABORATOR_UNKNOWN: ${COLLABORATOR} is not a collaborator of ${PROJECT}`);
+  for (const file of texFiles)
+    stuck.push(...(await figureDeletions(s, file, from, to)));
+  const collaborator =
+    COLLABORATOR && users.find((user) => user.email === COLLABORATOR);
+  if (COLLABORATOR && !collaborator)
+    throw new Error(
+      `OVERLEAF_COLLABORATOR_UNKNOWN: ${COLLABORATOR} is not a collaborator of ${PROJECT}`,
+    );
   const byCollaborator = [];
   if (collaborator)
-    for (const update of updates.filter((candidate) => candidate.meta.users.some((user) => user.id === collaborator.id)))
+    for (const update of updates.filter((candidate) =>
+      candidate.meta.users.some((user) => user.id === collaborator.id),
+    ))
       for (const file of texFiles)
         byCollaborator.push(
-          ...(await figureDeletions(s, file, update.fromV, update.toV)).filter((deletion) => deletion.users.includes(collaborator.id)),
+          ...(await figureDeletions(s, file, update.fromV, update.toV)).filter(
+            (deletion) => deletion.users.includes(collaborator.id),
+          ),
         );
   const dir = runRecordingsDir('overleaf_history_scan');
   mkdirSync(dir, { recursive: true });
   const report = join(dir, 'figure_deletions.json');
-  writeFileSync(report, JSON.stringify({ project: PROJECT, users, texFiles, updates: updates.length, from, to, stuck, collaborator: COLLABORATOR, byCollaborator }, null, INDENT));
+  writeFileSync(
+    report,
+    JSON.stringify(
+      {
+        project: PROJECT,
+        users,
+        texFiles,
+        updates: updates.length,
+        from,
+        to,
+        stuck,
+        collaborator: COLLABORATOR,
+        byCollaborator,
+      },
+      null,
+      INDENT,
+    ),
+  );
   const who = (ids) => ids.map((id) => names.get(id)).join(', ');
-  for (const deletion of stuck) console.log(`[history_scan] STUCK ${deletion.file} by [${who(deletion.users)}] at ${deletion.at}: ${deletion.text.replace(/\s+/g, ' ')}`);
+  for (const deletion of stuck)
+    console.log(
+      `[history_scan] STUCK ${deletion.file} by [${who(deletion.users)}] at ${deletion.at}: ${deletion.text.replace(/\s+/g, ' ')}`,
+    );
   for (const deletion of byCollaborator)
-    console.log(`[history_scan] ${COLLABORATOR} ${deletion.file} v${deletion.from}->${deletion.to}: ${deletion.text.replace(/\s+/g, ' ')}`);
-  console.log(`PASS: ${stuck.length} figure deletion(s) stuck across ${texFiles.length} .tex file(s); report ${report}`);
+    console.log(
+      `[history_scan] ${COLLABORATOR} ${deletion.file} v${deletion.from}->${deletion.to}: ${deletion.text.replace(/\s+/g, ' ')}`,
+    );
+  console.log(
+    `PASS: ${stuck.length} figure deletion(s) stuck across ${texFiles.length} .tex file(s); report ${report}`,
+  );
 } catch (error) {
   console.error(`FAIL: ${error.message}`);
   process.exitCode = exitStatusFor(error);

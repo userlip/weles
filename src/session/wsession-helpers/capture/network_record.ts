@@ -11,7 +11,7 @@
 // it, in every spelling a body can carry them; until that read lands, or when
 // it cannot be made, the body is withheld and says why.
 
-import type { BrowserContext, Frame } from 'playwright';
+import type { BrowserContext, Frame, Request } from 'playwright';
 
 const MASKED = '<redacted-masked-field>';
 const EMAIL = /[\w.%+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]+/g;
@@ -50,6 +50,25 @@ function redactBody(
   }
   kept = kept.replace(EMAIL, '<redacted-email>');
   return { body: kept, redacted: kept !== body };
+}
+
+/**
+ * The frame that sent a request; null for a service worker's request, which
+ * no frame sent. A navigation issued before its frame exists has no frame to
+ * read masked fields from: that is answered as the sentence saying so, and
+ * the body stays withheld rather than kept unredacted.
+ */
+function sendingFrame(req: Request): Frame | null | string {
+  if (req.serviceWorker()) return null;
+  try {
+    return req.frame();
+  } catch (error) {
+    return frameUnavailable(error);
+  }
+}
+
+function frameUnavailable(error: unknown): string {
+  return `[request body withheld: the frame that sent it could not be read, so a typed password could not be removed: ${error instanceof Error ? error.message : String(error)}]`;
 }
 
 export function attachCompleteNetRecord(
@@ -99,11 +118,10 @@ export function attachCompleteNetRecord(
       if (post === '') return;
       // The frame that sent the request holds the masked fields its body
       // could carry; a request no frame sent (a service worker's) has none.
-      let frame: Frame | null;
-      try {
-        frame = req.frame();
-      } catch {
-        frame = null;
+      const frame = sendingFrame(req);
+      if (typeof frame === 'string') {
+        entry.postData = frame;
+        return;
       }
       const masked: Promise<string[]> =
         frame === null ? Promise.resolve([]) : maskedValues(frame);
@@ -212,73 +230,27 @@ export function attachCompleteNetRecord(
       });
     }
   });
-  // WebSocket capture: every frame in both directions.
+  // WebSocket capture: every frame in both directions. A frame's payload is
+  // kept as text, or base64 when it is binary; pushing a record cannot fail.
+  const framePayload = (payload: unknown): string => {
+    if (Buffer.isBuffer(payload)) return payload.toString('base64');
+    if (typeof payload === 'string') return payload;
+    return `[frame payload of type ${typeof payload}]`;
+  };
   (ctx as any).on?.('websocket', (sock: any) => {
-    try {
-      const u = sock.url();
-      reqs.push({ t: Date.now(), phase: 'ws-open', url: u });
-      sock.on('framesent', (f: any) => {
-        try {
-          const p = f.payload;
-          const payload = Buffer.isBuffer(p)
-            ? p.toString('base64')
-            : String(p ?? '');
-          reqs.push({ t: Date.now(), phase: 'ws-tx', url: u, payload });
-        } catch (frameError) {
-          reqs.push({
-            t: Date.now(),
-            phase: 'ws-tx_capture_failed',
-            url: u,
-            error:
-              frameError instanceof Error
-                ? frameError.message
-                : String(frameError),
-          });
-        }
-      });
-      sock.on('framereceived', (f: any) => {
-        try {
-          const p = f.payload;
-          const payload = Buffer.isBuffer(p)
-            ? p.toString('base64')
-            : String(p ?? '');
-          reqs.push({ t: Date.now(), phase: 'ws-rx', url: u, payload });
-        } catch (frameError) {
-          reqs.push({
-            t: Date.now(),
-            phase: 'ws-rx_capture_failed',
-            url: u,
-            error:
-              frameError instanceof Error
-                ? frameError.message
-                : String(frameError),
-          });
-        }
-      });
-      sock.on('close', () => {
-        try {
-          reqs.push({ t: Date.now(), phase: 'ws-close', url: u });
-        } catch {}
-      });
-      sock.on('socketerror', (e: any) => {
-        try {
-          reqs.push({
-            t: Date.now(),
-            phase: 'ws-error',
-            url: u,
-            error: String(e),
-          });
-        } catch {}
-      });
-    } catch (socketError) {
-      reqs.push({
-        t: Date.now(),
-        phase: 'ws-open_capture_failed',
-        error:
-          socketError instanceof Error
-            ? socketError.message
-            : String(socketError),
-      });
-    }
+    const u = sock.url();
+    reqs.push({ t: Date.now(), phase: 'ws-open', url: u });
+    sock.on('framesent', (f: { payload: unknown }) => {
+      reqs.push({ t: Date.now(), phase: 'ws-tx', url: u, payload: framePayload(f.payload) });
+    });
+    sock.on('framereceived', (f: { payload: unknown }) => {
+      reqs.push({ t: Date.now(), phase: 'ws-rx', url: u, payload: framePayload(f.payload) });
+    });
+    sock.on('close', () => {
+      reqs.push({ t: Date.now(), phase: 'ws-close', url: u });
+    });
+    sock.on('socketerror', (e: unknown) => {
+      reqs.push({ t: Date.now(), phase: 'ws-error', url: u, error: String(e) });
+    });
   });
 }

@@ -17,7 +17,10 @@ import { installNetworkLogger } from '../lib/tiktok-register-helpers.mjs';
 import { statedCount, statedProxy } from '../_shared/inputs/stated.mjs';
 import { registerOnce } from './register/attempt.mjs';
 
-const maxAttempts = statedCount('MAX_RETRIES', 'how many fresh identities this registration may try');
+const maxAttempts = statedCount(
+  'MAX_RETRIES',
+  'how many fresh identities this registration may try',
+);
 const proxy = statedProxy('the TikTok signup');
 
 /** One attempt in its own session; answers the saved account. */
@@ -39,11 +42,18 @@ async function attempt() {
     // The account exists from here on: a failure to record it or bind its
     // character ends the run instead of creating another identity's account.
     try {
-      console.log(`[test] ${await s.saveAccount('tiktok', { username, email: id.email, password })}`);
-      console.log(`[bind] ${JSON.stringify(await autoBindCharacter(username, 'tiktok'))}`);
+      console.log(
+        `[test] ${await s.saveAccount('tiktok', { username, email: id.email, password })}`,
+      );
+      console.log(
+        `[bind] ${JSON.stringify(await autoBindCharacter(username, 'tiktok'))}`,
+      );
     } catch (cause) {
       throw Object.assign(
-        new Error(`TIKTOK_ACCOUNT_NOT_RECORDED: TikTok created ${username}; saving it or binding its character failed: ${cause.message}`, { cause }),
+        new Error(
+          `TIKTOK_ACCOUNT_NOT_RECORDED: TikTok created ${username}; saving it or binding its character failed: ${cause.message}`,
+          { cause },
+        ),
         { accountCreated: true },
       );
     }
@@ -58,7 +68,9 @@ try {
   let username;
   while (!username) {
     if (failures.length === maxAttempts)
-      throw new Error(`TIKTOK_REGISTER_FAILED: every attempt failed: ${failures.join(' | ')}`);
+      throw new Error(
+        `TIKTOK_REGISTER_FAILED: every attempt failed: ${failures.join(' | ')}`,
+      );
     try {
       username = await attempt();
     } catch (error) {

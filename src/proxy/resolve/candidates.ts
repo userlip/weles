@@ -9,7 +9,10 @@ import type { WelesServiceSecret } from '../../secrets/scoped-service.js';
 import { listServiceMetadata } from '../../state/skarbiec-records.js';
 import { providerFromHost } from '../policy.js';
 import { poolRequest } from '../sources/pool_request.js';
-import { proxyTypeOf, type ProxyType } from '../sources/provider_credentials.js';
+import {
+  proxyTypeOf,
+  type ProxyType,
+} from '../sources/provider_credentials.js';
 
 export type ProviderRow = {
   display_name: string;
@@ -39,7 +42,9 @@ function shuffled(rows: ProviderRow[]): ProviderRow[] {
     .map(({ row }) => row);
 }
 
-export async function providerCandidates(proxy: string): Promise<ProviderCandidates> {
+export async function providerCandidates(
+  proxy: string,
+): Promise<ProviderCandidates> {
   const providers: ProviderRow[] = listServiceMetadata('proxy')
     .filter((record) => record.host && record.port)
     .map(
@@ -47,30 +52,54 @@ export async function providerCandidates(proxy: string): Promise<ProviderCandida
         display_name: String(record.display_name ?? record.id),
         proxy_host: String(record.host),
         proxy_port: String(record.port),
-        provider: typeof record.provider === 'string' ? record.provider : providerFromHost(String(record.host)),
+        provider:
+          typeof record.provider === 'string'
+            ? record.provider
+            : providerFromHost(String(record.host)),
         proxy_type: proxyTypeOf(record.proxy_type),
-        ...(typeof record.balance_usd === 'number' ? { balance_usd: record.balance_usd } : {}),
+        ...(typeof record.balance_usd === 'number'
+          ? { balance_usd: record.balance_usd }
+          : {}),
         metadata:
-          record.metadata && typeof record.metadata === 'object' ? (record.metadata as { country?: string }) : undefined,
+          record.metadata && typeof record.metadata === 'object'
+            ? (record.metadata as { country?: string })
+            : undefined,
       }),
     );
   // Decodo first — canonical static ISP (real residential ASNs). The ISP
   // branch below keeps this order deterministic.
-  const { maybeOxylabsIspRow, maybeOxylabsDedicatedIspRow, maybeDecodoIspRows } = await import('../sources/isp_row.js');
-  for (const r of [...maybeDecodoIspRows(), maybeOxylabsIspRow(), maybeOxylabsDedicatedIspRow()]) if (r) providers.push(r);
+  const {
+    maybeOxylabsIspRow,
+    maybeOxylabsDedicatedIspRow,
+    maybeDecodoIspRows,
+  } = await import('../sources/isp_row.js');
+  for (const r of [
+    ...maybeDecodoIspRows(),
+    maybeOxylabsIspRow(),
+    maybeOxylabsDedicatedIspRow(),
+  ])
+    if (r) providers.push(r);
 
   // The request's country overrides the row's stored country
   // ('residential us', 'residential br').
   const request = poolRequest(proxy);
   const proxyType = request.proxyType ? request.proxyType : 'unknown';
-  const undeclared = request.proxyType ? providers.filter((p) => !p.proxy_type) : [];
-  const typed = request.proxyType ? providers.filter((p) => p.proxy_type === request.proxyType) : providers;
+  const undeclared = request.proxyType
+    ? providers.filter((p) => !p.proxy_type)
+    : [];
+  const typed = request.proxyType
+    ? providers.filter((p) => p.proxy_type === request.proxyType)
+    : providers;
   // Explicit provider targeting, e.g. 'pingproxies residential': the names
   // are the ones `proxy/capability.ts` declares, matched against the
   // provider the row's endpoint derives.
-  const filtered = request.provider ? typed.filter((p) => p.provider === request.provider) : typed;
+  const filtered = request.provider
+    ? typed.filter((p) => p.provider === request.provider)
+    : typed;
   // Residential and mobile pools are shuffled (per-pool rate limits); ISP rows stay in order.
   const ordered = proxyType === 'isp' ? filtered : shuffled(filtered);
-  const ccOverride = request.country ? request.country.toLowerCase() : undefined;
+  const ccOverride = request.country
+    ? request.country.toLowerCase()
+    : undefined;
   return { candidates: ordered, undeclared, proxyType, ccOverride };
 }

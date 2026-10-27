@@ -91,7 +91,11 @@ try {
     });
     assert.equal(noRecipient.ok, false, JSON.stringify(noRecipient));
     assert.match(
-      [noRecipient.error, noRecipient.stderr_tail, noRecipient.stdout_tail].join('\n'),
+      [
+        noRecipient.error,
+        noRecipient.stderr_tail,
+        noRecipient.stdout_tail,
+      ].join('\n'),
       /none of RECIPIENT_HANDLE is set/,
     );
     const noMessage = await run(action, {
@@ -101,7 +105,9 @@ try {
     });
     assert.equal(noMessage.ok, false, JSON.stringify(noMessage));
     assert.match(
-      [noMessage.error, noMessage.stderr_tail, noMessage.stdout_tail].join('\n'),
+      [noMessage.error, noMessage.stderr_tail, noMessage.stdout_tail].join(
+        '\n',
+      ),
       /none of DM_MESSAGE is set/,
     );
   }
@@ -123,9 +129,9 @@ try {
     senderId,
   );
   assert.equal(delivered.ok, true, JSON.stringify(delivered));
-  const receiptLine = delivered.stdout_tail?.split('\n').find(
-    (line) => line.includes('"acknowledgement":"provider_response"'),
-  );
+  const receiptLine = delivered.stdout_tail
+    ?.split('\n')
+    .find((line) => line.includes('"acknowledgement":"provider_response"'));
   assert.ok(receiptLine, JSON.stringify(delivered));
   const receipt = JSON.parse(receiptLine);
   assert.equal(receipt.recipient_requested, recipientHandle.replace(/^@/, ''));
@@ -137,7 +143,11 @@ try {
 } catch (error) {
   failure = error;
   report.status = connected ? 'failed' : 'blocked';
-  report.error = { name: error.name, message: error.message, stack: error.stack };
+  report.error = {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+  };
 } finally {
   await evidence.finish();
 }

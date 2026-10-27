@@ -19,8 +19,14 @@ import { clickOffered, pageShows } from '../../_shared/page/judged/seen.mjs';
 import { pageSettled } from '../../_shared/page/settled.mjs';
 import { textShownOutsideEditors } from '../../_shared/page/shows.mjs';
 
-const RECIPIENT = statedText(['RECIPIENT_HANDLE'], 'the TikTok username the DM goes to').replace(/^@/, '');
-const MESSAGE = statedText(['DM_MESSAGE'], 'the text sent from a real account to a real person');
+const RECIPIENT = statedText(
+  ['RECIPIENT_HANDLE'],
+  'the TikTok username the DM goes to',
+).replace(/^@/, '');
+const MESSAGE = statedText(
+  ['DM_MESSAGE'],
+  'the text sent from a real account to a real person',
+);
 
 await runAction({
   platform: 'tiktok',
@@ -28,31 +34,65 @@ await runAction({
   feedUrl: 'https://www.tiktok.com/messages',
   banDetector: detectTikTokBanSignals,
   act: async (s) => {
-    const create = s.page.locator('[data-e2e="chat-create-new"]').filter({ visible: true }).first();
+    const create = s.page
+      .locator('[data-e2e="chat-create-new"]')
+      .filter({ visible: true })
+      .first();
     await create.waitFor({ state: 'visible' });
     await humanClickLocator(s.page, create);
-    const search = s.page.locator('input[data-e2e="chat-create-new-search"]').filter({ visible: true }).first();
+    const search = s.page
+      .locator('input[data-e2e="chat-create-new-search"]')
+      .filter({ visible: true })
+      .first();
     await search.waitFor({ state: 'visible' });
     await humanClickLocator(s.page, search);
     await humanType(s.page, RECIPIENT);
-    const row = s.page.locator('[data-e2e*="search-user"]').filter({ has: s.page.getByText(RECIPIENT, { exact: true }), visible: true }).first();
+    const row = s.page
+      .locator('[data-e2e*="search-user"]')
+      .filter({
+        has: s.page.getByText(RECIPIENT, { exact: true }),
+        visible: true,
+      })
+      .first();
     await row.waitFor({ state: 'visible' });
     await humanClickLocator(s.page, row);
     await pageSettled(s.page);
     // Some flows confirm the chosen person before the conversation opens.
-    if (await clickOffered(s.page, 'the button that starts the chat with the chosen person')) await pageSettled(s.page);
-    const composer = s.page.locator('[data-e2e="message-input-textarea"], div[contenteditable="true"][role="textbox"]').filter({ visible: true }).first();
+    if (
+      await clickOffered(
+        s.page,
+        'the button that starts the chat with the chosen person',
+      )
+    )
+      await pageSettled(s.page);
+    const composer = s.page
+      .locator(
+        '[data-e2e="message-input-textarea"], div[contenteditable="true"][role="textbox"]',
+      )
+      .filter({ visible: true })
+      .first();
     if (!(await composer.count())) {
-      if (await pageShows(s.page, `Does the page say @${RECIPIENT} does not accept messages from this account?`))
-        throw new Error(`TIKTOK_DM_REFUSED_BY_RECIPIENT: @${RECIPIENT}'s settings do not accept messages from this account`);
-      throw new Error(`TIKTOK_DM_COMPOSER_MISSING: the conversation with @${RECIPIENT} shows no message field at ${s.page.url()}`);
+      if (
+        await pageShows(
+          s.page,
+          `Does the page say @${RECIPIENT} does not accept messages from this account?`,
+        )
+      )
+        throw new Error(
+          `TIKTOK_DM_REFUSED_BY_RECIPIENT: @${RECIPIENT}'s settings do not accept messages from this account`,
+        );
+      throw new Error(
+        `TIKTOK_DM_COMPOSER_MISSING: the conversation with @${RECIPIENT} shows no message field at ${s.page.url()}`,
+      );
     }
     await humanClickLocator(s.page, composer);
     await humanType(s.page, MESSAGE);
     await s.page.keyboard.press('Enter');
     await pageSettled(s.page);
     if (!(await textShownOutsideEditors(s.page, MESSAGE)))
-      throw new Error('TIKTOK_DM_UNCONFIRMED: the conversation does not show the message after sending');
+      throw new Error(
+        'TIKTOK_DM_UNCONFIRMED: the conversation does not show the message after sending',
+      );
     return `sent a message to @${RECIPIENT}`;
   },
 });

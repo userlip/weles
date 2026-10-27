@@ -8,7 +8,10 @@
 // writer); its suspended routes deactivate the account.
 import { humanType } from '../../../dist/human/keyboard.js';
 import { humanClickLocator } from '../../../dist/human/mouse.js';
-import { deactivateAccount, deactivationClause } from '../../../dist/account/state.js';
+import {
+  deactivateAccount,
+  deactivationClause,
+} from '../../../dist/account/state.js';
 import { detectInstagramBanSignals } from '../../../dist/platforms/instagram/ban_signals.js';
 import { runLogin } from '../_shared/action/login.mjs';
 import { pageSettled, urlMatching } from '../_shared/page/settled.mjs';
@@ -29,10 +32,18 @@ await runLogin({
     await s.goto(LOGIN_URL);
     await pageSettled(s.page);
     // Instagram names its fields email and pass.
-    const address = s.page.locator('input[name="email"], input[name="username"]').filter({ visible: true }).first();
-    const secret = s.page.locator('input[name="pass"], input[name="password"]').filter({ visible: true }).first();
+    const address = s.page
+      .locator('input[name="email"], input[name="username"]')
+      .filter({ visible: true })
+      .first();
+    const secret = s.page
+      .locator('input[name="pass"], input[name="password"]')
+      .filter({ visible: true })
+      .first();
     if (!(await address.count()) || !(await secret.count()))
-      throw new Error(`INSTAGRAM_LOGIN_FORM_MISSING: ${s.page.url()} shows no login form`);
+      throw new Error(
+        `INSTAGRAM_LOGIN_FORM_MISSING: ${s.page.url()} shows no login form`,
+      );
     await humanClickLocator(s.page, address);
     await humanType(s.page, login);
     await humanClickLocator(s.page, secret);
@@ -46,20 +57,46 @@ await runLogin({
     ]);
     await pageSettled(s.page);
     if (await alert.count())
-      throw new Error(`INSTAGRAM_LOGIN_REFUSED: ${(await alert.innerText()).trim()}`);
+      throw new Error(
+        `INSTAGRAM_LOGIN_REFUSED: ${(await alert.innerText()).trim()}`,
+      );
     const url = s.page.url();
     if (routeOf(url, [LOGIN_ROUTE]))
-      throw new Error(`INSTAGRAM_LOGIN_UNANSWERED: Instagram stayed on its login form at ${url}`);
+      throw new Error(
+        `INSTAGRAM_LOGIN_UNANSWERED: Instagram stayed on its login form at ${url}`,
+      );
     const checkpoint = routeOf(url, CHECKPOINT_ROUTES);
     if (checkpoint)
-      throw Object.assign(new Error(`INSTAGRAM_CHECKPOINT: Instagram holds the account at ${url}`), {
-        banSignal: { signal: 'checkpoint', healthy: false, details: { final_url: url } },
-      });
+      throw Object.assign(
+        new Error(
+          `INSTAGRAM_CHECKPOINT: Instagram holds the account at ${url}`,
+        ),
+        {
+          banSignal: {
+            signal: 'checkpoint',
+            healthy: false,
+            details: { final_url: url },
+          },
+        },
+      );
     if (routeOf(url, SUSPENDED_ROUTES)) {
-      const outcome = await deactivateAccount(acct.id, acct.metadata, 'INSTAGRAM_SUSPENDED');
-      throw Object.assign(new Error(`INSTAGRAM_SUSPENDED: ${url}; ${deactivationClause(outcome, acct.username)}`), {
-        banSignal: { signal: 'suspended', healthy: false, details: { final_url: url } },
-      });
+      const outcome = await deactivateAccount(
+        acct.id,
+        acct.metadata,
+        'INSTAGRAM_SUSPENDED',
+      );
+      throw Object.assign(
+        new Error(
+          `INSTAGRAM_SUSPENDED: ${url}; ${deactivationClause(outcome, acct.username)}`,
+        ),
+        {
+          banSignal: {
+            signal: 'suspended',
+            healthy: false,
+            details: { final_url: url },
+          },
+        },
+      );
     }
   },
 });

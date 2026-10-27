@@ -1,10 +1,8 @@
 // The ISP product page and the start of its checkout: Buy now, the stated IP
 // tier, and Buy random locations.
 import { writeFileSync } from 'node:fs';
-import {
-  humanClickLocator,
-  humanIdlePause,
-} from '../../../../../dist/human/mouse.js';
+import { humanClickLocator } from '../../../../../dist/human/mouse.js';
+import { pageSettled } from '../../../_shared/page/settled.mjs';
 import { OUT_DIR, shot, stamp } from './evidence.mjs';
 
 export async function openIspProduct(s) {
@@ -12,7 +10,7 @@ export async function openIspProduct(s) {
   await s.page.goto('https://dashboard.oxylabs.io/en/products', {
     waitUntil: 'domcontentloaded',
   });
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   console.log(`[trajectory] products url=${s.page.url()}`);
   await shot(s, 'products_overview');
 
@@ -25,7 +23,7 @@ export async function openIspProduct(s) {
   // pages topup.mjs opens.
   const ispUrl = 'https://dashboard.oxylabs.io/en/overview/ISP';
   await s.page.goto(ispUrl, { waitUntil: 'domcontentloaded' });
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   console.log(`[trajectory] /overview/ISP url=${s.page.url()}`);
   await shot(s, 'overview_isp');
   const ispText = await s.page.evaluate(() => document.body.innerText);
@@ -48,7 +46,7 @@ export async function startCheckout(s, ipCount) {
     throw new Error('no Buy-style button visible on /overview/ISP');
   }
   await humanClickLocator(s.page, buyBtn);
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   await shot(s, 'step1_choose_plan');
   console.log(`[trajectory] step1 url=${s.page.url()}`);
 
@@ -61,7 +59,9 @@ export async function startCheckout(s, ipCount) {
     .first();
   if (!(await tier.isVisible())) {
     await shot(s, 'no_stated_tier');
-    throw new Error(`the ISP checkout offers no ${ipCount} IPs tier; nothing was bought`);
+    throw new Error(
+      `the ISP checkout offers no ${ipCount} IPs tier; nothing was bought`,
+    );
   }
   await humanClickLocator(s.page, tier);
   const tierSelected = await tier.evaluate((el) => {
@@ -75,7 +75,9 @@ export async function startCheckout(s, ipCount) {
   });
   if (!tierSelected) {
     await shot(s, 'stated_tier_not_selected');
-    throw new Error(`the ${ipCount} IPs tier did not read back as selected; nothing was bought`);
+    throw new Error(
+      `the ${ipCount} IPs tier did not read back as selected; nothing was bought`,
+    );
   }
   console.log(`[trajectory] step1: ${ipCount} IPs tier selected`);
 
@@ -93,7 +95,7 @@ export async function startCheckout(s, ipCount) {
   await shot(s, 'before_buy_random');
   console.log('[trajectory] clicking "Buy random locations"…');
   await humanClickLocator(s.page, buyRandomBtn);
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   await shot(s, 'after_buy_random');
   console.log(`[trajectory] after buy-random url=${s.page.url()}`);
 }

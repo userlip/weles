@@ -1,48 +1,76 @@
 // The proxy a LinkedIn registration runs through: its summarised state, the diagnostics of a
 // failure, and the assertions that it is the requested, stable, dedicated ISP exit.
+//
+// Every judgement reads the resolved proxy record (provider, proxy_type, sticky_session_id,
+// server) and the one retirement policy in proxy/policy; nothing is guessed from words or
+// address shapes in the request, and no environment switch lets a registration run unproxied.
 import { isIP } from 'node:net';
-import { requestsNoProxy } from '../../../../../../dist/proxy/resolve/url_form.js';
+import { retiredProviderReason } from '../../../../../../dist/proxy/policy.js';
+import {
+  requestsNoProxy,
+  requestsUrlForm,
+} from '../../../../../../dist/proxy/resolve/url_form.js';
 import {
   getLinkedinAuthState,
   getLinkedinChallengeSignal,
   summarizeLinkedinPage,
 } from './page_state.mjs';
 
+// The one proxy type a LinkedIn registration runs through: a dedicated ISP exit, whose
+// address stays the account's for its whole life (proxy/sources/provider_credentials.ts).
+const DEDICATED_ISP = 'isp';
+
+// A field the record states, or null when it states none: an absent field is reported as
+// absent, never as an empty value that reads like one that was measured.
+function stated(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return value;
+}
+
+// The proxy server address the record names, or the reason it names none.
+function serverAddress(server) {
+  if (!server) return { error: 'the session states no proxy server' };
+  if (!URL.canParse(server)) {
+    return {
+      error: `proxy server ${JSON.stringify(server)} does not parse as a URL`,
+    };
+  }
+  const u = new URL(server);
+  return {
+    host: u.hostname,
+    port: u.port,
+    scheme: u.protocol.replace(/:$/, ''),
+  };
+}
+
 export function summarizeLinkedinProxyState(
   session,
-  requestedProxy = '',
-  expectedExitIp = '',
+  requestedProxy,
+  expectedExitIp,
 ) {
-  const cfg = session.proxyConfig ?? {};
-  let serverHost = '';
-  let serverPort = '';
-  let serverScheme = '';
-  try {
-    const u = new URL(cfg.server ?? '');
-    serverHost = u.hostname;
-    serverPort = u.port;
-    serverScheme = u.protocol.replace(/:$/, '');
-  } catch {}
+  const cfg = session.proxyConfig;
+  const requested = stated(requestedProxy);
   return {
-    requested: String(requestedProxy).startsWith('http')
-      ? '[url-form]'
-      : String(requestedProxy),
-    server_host: serverHost,
-    server_port: serverPort,
-    server_scheme: serverScheme,
-    provider: cfg.provider ?? '',
-    proxy_type: cfg.proxy_type ?? '',
-    platform: cfg.platform ?? '',
-    country: cfg.country ?? '',
-    expected_exit_ip: expectedExitIp || '',
-    actual_exit_ip: cfg.exit_ip ?? '',
+    requested:
+      requested !== null && requestsUrlForm(String(requested))
+        ? '[url-form]'
+        : requested,
+    server: cfg
+      ? serverAddress(cfg.server)
+      : { error: 'the session has no proxy' },
+    provider: stated(cfg?.provider),
+    proxy_type: stated(cfg?.proxy_type),
+    platform: stated(cfg?.platform),
+    country: stated(cfg?.country),
+    expected_exit_ip: stated(expectedExitIp),
+    actual_exit_ip: stated(cfg?.exit_ip),
   };
 }
 
 export async function getLinkedinFailureDiagnostics(
   session,
-  requestedProxy = '',
-  expectedExitIp = '',
+  requestedProxy,
+  expectedExitIp,
 ) {
   const page = await summarizeLinkedinPage(session.page).catch((e) => ({
     error: e.message,
@@ -52,7 +80,7 @@ export async function getLinkedinFailureDiagnostics(
       error: e.message,
     })),
     proxy: summarizeLinkedinProxyState(session, requestedProxy, expectedExitIp),
-    challenge_signal: page?.error ? '' : getLinkedinChallengeSignal(page),
+    challenge_signal: page?.error ? null : getLinkedinChallengeSignal(page),
     page,
   };
 }
@@ -60,18 +88,18 @@ export async function getLinkedinFailureDiagnostics(
 export async function assertLinkedinProxyStable(
   session,
   stage,
-  expectedExitIp = '',
+  expectedExitIp,
 ) {
   if (!session.proxyConfig?.server) {
-    if (process.env.LINKEDIN_ALLOW_NO_PROXY === '1')
-      return session.proxyConfig?.exit_ip || '';
     throw new Error(
       'PROXY_REQUIRED: linkedin_register requires proxied dedicated ISP traffic',
     );
   }
-  let actual = '';
+  let actual;
   try {
     const res = await session.ctx.request.get('https://api.ipify.org');
+    if (!res.ok())
+      throw new Error(`exit address service answered ${res.status()} ${res.statusText()}`);
     actual = (await res.text()).trim();
   } catch (e) {
     throw new Error(
@@ -85,88 +113,71 @@ export async function assertLinkedinProxyStable(
       `PROXY_DRIFT_CHECK_FAILED: stage=${stage} invalid_exit_ip=${actual}`,
     );
   }
-  const expected = expectedExitIp || session.proxyConfig.exit_ip || actual;
-  if (expected && actual && expected !== actual) {
+  // The exit this registration is bound to: the one the caller already observed, else the
+  // one the session's record pinned. Before either is known the first observation binds it.
+  const bound = expectedExitIp ? expectedExitIp : session.proxyConfig.exit_ip;
+  if (bound && bound !== actual) {
     throw new Error(
-      `PROXY_DRIFT: stage=${stage} expected=${expected} actual=${actual}`,
+      `PROXY_DRIFT: stage=${stage} expected=${bound} actual=${actual}`,
     );
   }
   session.proxyConfig.exit_ip = actual;
   return actual;
 }
 
-export function assertLinkedinRegisterProxyRequest(requestedProxy = '') {
-  const raw = String(requestedProxy).trim().toLowerCase();
-  if (requestsNoProxy(raw)) {
-    if (process.env.LINKEDIN_ALLOW_NO_PROXY === '1') return;
+// Refuses, before a browser starts, a request that cannot resolve to a dedicated ISP
+// record: no proxy at all, or a proxy URL, which declares no provider or proxy type.
+// Everything else is judged on the record the request resolves to.
+export function assertLinkedinRegisterProxyRequest(requestedProxy) {
+  if (requestsNoProxy(requestedProxy)) {
     throw new Error(
-      `PROXY_NOT_DEDICATED_ISP: requested=${JSON.stringify(raw)}`,
+      `PROXY_REQUIRED: linkedin_register requires a dedicated ISP proxy; requested=${JSON.stringify(requestedProxy)}`,
     );
   }
-  if (/^(https?:|socks)/.test(raw)) {
-    throw new Error('PROXY_NOT_DEDICATED_ISP: url_form_proxy_request');
-  }
-  if (
-    /\boxylabs\b/.test(raw) ||
-    /(?:^|[.:/])7777(?:\b|\/|$)/.test(raw) ||
-    /(?:^|\.)?(?:pr|isp|disp)\.oxylabs\.io\b/.test(raw)
-  ) {
+  if (requestsUrlForm(requestedProxy.trim())) {
     throw new Error(
-      `PROXY_NOT_DEDICATED_ISP: retired_linkedin_proxy requested=${raw}`,
-    );
-  }
-  if (/\b(residential|mobile|datacenter)\b/.test(raw) && !/\bisp\b/.test(raw)) {
-    throw new Error(`PROXY_NOT_DEDICATED_ISP: requested=${raw}`);
-  }
-  if (!/\bisp\b/.test(raw)) {
-    throw new Error(
-      `PROXY_NOT_DEDICATED_ISP: missing_isp_request requested=${raw}`,
+      'PROXY_NOT_DEDICATED_ISP: url_form_proxy_request (a proxy URL declares no provider or proxy type; request the provider pool instead)',
     );
   }
 }
 
-export function assertLinkedinDedicatedIspProxy(session, requestedProxy = '') {
-  const raw = String(requestedProxy).toLowerCase();
-  if (requestsNoProxy(raw) && process.env.LINKEDIN_ALLOW_NO_PROXY === '1')
-    return;
-  const server = String(session.proxyConfig?.server ?? '').toLowerCase();
-  const username = String(session.proxyConfig?.username ?? '').toLowerCase();
-  const provider = String(session.proxyConfig?.provider ?? '').toLowerCase();
-  const proxyType = String(session.proxyConfig?.proxy_type ?? '').toLowerCase();
-  const isUrlForm = /^(https?:|socks)/.test(raw);
-  if (/\b(residential|mobile|datacenter)\b/.test(raw) && !/\bisp\b/.test(raw)) {
-    throw new Error(`PROXY_NOT_DEDICATED_ISP: requested=${raw}`);
-  }
-  const retiredLinkedinProxy =
-    /\boxylabs\b/.test(raw) ||
-    provider === 'oxylabs' ||
-    /(^|\/\/|\.)(?:pr|isp|disp)\.oxylabs\.io(?::|\/|$)/.test(server) ||
-    /(?:^|\/\/)(?:195\.86\.|152\.233\.|209\.38\.)/.test(server) ||
-    /:7777(?:\/|$)/.test(server);
-  if (retiredLinkedinProxy) {
+// Refuses a session whose resolved proxy record is not a live dedicated ISP exit, naming
+// the field of the record that decides it.
+export function assertLinkedinDedicatedIspProxy(session, requestedProxy) {
+  const cfg = session.proxyConfig;
+  const requested = JSON.stringify(requestedProxy);
+  if (!cfg?.server) {
     throw new Error(
-      `PROXY_NOT_DEDICATED_ISP: retired_linkedin_proxy requested=${raw} server=${server} provider=${provider}`,
+      `PROXY_REQUIRED: the session for requested=${requested} runs with no proxy`,
     );
   }
-  if (isUrlForm && !proxyType) {
-    throw new Error('PROXY_NOT_DEDICATED_ISP: unclassified_url_proxy');
-  }
-  if (!proxyType) {
-    throw new Error('PROXY_NOT_DEDICATED_ISP: missing_proxy_type');
-  }
-  if (proxyType && proxyType !== 'isp') {
-    throw new Error(`PROXY_NOT_DEDICATED_ISP: proxy_type=${proxyType}`);
-  }
-  const rotatingGateway =
-    /pr\.oxylabs\.io|geo\.iproyal\.com|brd\.superproxy\.io|packetstream|pingproxies|:7777|:12321|:22225/.test(
-      server,
-    );
-  const stickyCredential = /sessid-|_session-|[-_]session[-_]|_s_\d+/.test(
-    username,
-  );
-  if (rotatingGateway || stickyCredential) {
+  const server = serverAddress(cfg.server);
+  if (server.error)
+    throw new Error(`PROXY_NOT_DEDICATED_ISP: ${server.error}`);
+  if (!cfg.provider) {
     throw new Error(
-      `PROXY_NOT_DEDICATED_ISP: server=${server} username=${username}`,
+      `PROXY_NOT_DEDICATED_ISP: missing_provider server=${server.host} requested=${requested}`,
+    );
+  }
+  if (!cfg.proxy_type) {
+    throw new Error(
+      `PROXY_NOT_DEDICATED_ISP: missing_proxy_type provider=${cfg.provider} server=${server.host}`,
+    );
+  }
+  if (cfg.proxy_type !== DEDICATED_ISP) {
+    throw new Error(
+      `PROXY_NOT_DEDICATED_ISP: proxy_type=${cfg.proxy_type} provider=${cfg.provider}`,
+    );
+  }
+  const retired = retiredProviderReason(server.host, server.port);
+  if (retired) {
+    throw new Error(
+      `PROXY_NOT_DEDICATED_ISP: retired_linkedin_proxy reason=${retired} provider=${cfg.provider} server=${server.host}:${server.port}`,
+    );
+  }
+  if (cfg.sticky_session_id) {
+    throw new Error(
+      `PROXY_NOT_DEDICATED_ISP: the ${cfg.provider} record carries rotating-pool session ${cfg.sticky_session_id}; a dedicated ISP exit has none`,
     );
   }
 }

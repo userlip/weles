@@ -18,13 +18,17 @@ try {
   const appId = statedText(['APP_ID'], 'the Slack app to rename');
   const newName = statedText(['NEW_NAME'], 'the name the Slack app takes');
   if (!integrationsConfigured())
-    throw new UsageError('STADO_INTEGRATION_API_URL and WELES_STADO_INTEGRATION_TOKEN are required');
+    throw new UsageError(
+      'STADO_INTEGRATION_API_URL and WELES_STADO_INTEGRATION_TOKEN are required',
+    );
   const renamed = await integrationAction('slack', 'app.rename', {
     identity: 'app-configuration',
     app_id: appId,
     name: newName,
   });
-  console.log(`renamed ${renamed.app_id}: "${renamed.before}" -> "${renamed.after}"`);
+  console.log(
+    `renamed ${renamed.app_id}: "${renamed.before}" -> "${renamed.after}"`,
+  );
   console.log('DONE');
 } catch (error) {
   console.log(`FAIL app.rename: ${error.message}`);

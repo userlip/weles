@@ -14,8 +14,14 @@ import { pageSettled } from '../_shared/page/settled.mjs';
 import { textShownOutsideEditors } from '../_shared/page/shows.mjs';
 import { WEB_APP, reloginSnapchat } from './sign_in.mjs';
 
-const RECIPIENT = statedText(['RECIPIENT_HANDLE'], 'the Snapchat username the DM goes to').replace(/^@/, '');
-const MESSAGE = statedText(['DM_MESSAGE'], 'the text sent from a real account to a real person');
+const RECIPIENT = statedText(
+  ['RECIPIENT_HANDLE'],
+  'the Snapchat username the DM goes to',
+).replace(/^@/, '');
+const MESSAGE = statedText(
+  ['DM_MESSAGE'],
+  'the text sent from a real account to a real person',
+);
 
 await runAction({
   platform: 'snapchat',
@@ -27,14 +33,25 @@ await runAction({
     await clickDescribed(s.page, 'the button that starts a new chat');
     await clickDescribed(s.page, 'the search field of the new chat');
     await humanType(s.page, RECIPIENT);
-    await clickDescribed(s.page, `the search result for the Snapchat user ${RECIPIENT}`);
-    if (await clickOffered(s.page, 'the button that opens the chat with the selected user')) await pageSettled(s.page);
+    await clickDescribed(
+      s.page,
+      `the search result for the Snapchat user ${RECIPIENT}`,
+    );
+    if (
+      await clickOffered(
+        s.page,
+        'the button that opens the chat with the selected user',
+      )
+    )
+      await pageSettled(s.page);
     await clickDescribed(s.page, 'the message field of the open chat');
     await humanType(s.page, MESSAGE);
     await s.page.keyboard.press('Enter');
     await pageSettled(s.page);
     if (!(await textShownOutsideEditors(s.page, MESSAGE)))
-      throw new Error(`SNAPCHAT_DM_NOT_SHOWN: the chat with ${RECIPIENT} does not show the sent message`);
+      throw new Error(
+        `SNAPCHAT_DM_NOT_SHOWN: the chat with ${RECIPIENT} does not show the sent message`,
+      );
     return `DM sent to @${RECIPIENT}`;
   },
 });

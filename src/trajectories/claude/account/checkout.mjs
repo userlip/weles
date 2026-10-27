@@ -50,12 +50,20 @@ function card() {
   try {
     source = loadTopupCardEnv();
   } catch (error) {
-    throw new AuthenticationFailure('purchase_card_missing', 'checkout', error.message);
+    throw new AuthenticationFailure(
+      'purchase_card_missing',
+      'checkout',
+      error.message,
+    );
   }
   try {
     return topupCard();
   } catch (error) {
-    throw new AuthenticationFailure('purchase_card_incomplete', 'checkout', `the purchase card from ${source}: ${error.message}`);
+    throw new AuthenticationFailure(
+      'purchase_card_incomplete',
+      'checkout',
+      `the purchase card from ${source}: ${error.message}`,
+    );
   }
 }
 

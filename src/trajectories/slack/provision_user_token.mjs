@@ -3,12 +3,11 @@
 //
 // Env:
 //   SLACK_WORKSPACE_URL          required: the workspace, https://<name>.slack.com
-//   WELES_CREDENTIAL_CONSTRAINTS the Skarbiec item the token is stored in (the
-//                                worker passes a run's `constraints`); the token
-//                                is captured from the app's OAuth page and
-//                                written by the session's credential store
-//   WELES_SECRET_RESULT_FILE     without those constraints, required: the JSON
-//                                path the raw token is written to
+//   WELES_CREDENTIAL_CONSTRAINTS required: the Skarbiec item the token is stored
+//                                in (the worker passes a run's `constraints`);
+//                                the token is captured from the app's OAuth page
+//                                and written by the session's credential store,
+//                                never as text anywhere else
 //   PROXY_URL                    required: the proxy the browser goes through,
 //                                or 'direct'
 //   SLACK_EMAIL, SLACK_PASS      sign in through the workspace's Google SSO;
@@ -26,7 +25,7 @@
 // x-oauth-scopes header), not the ones asked for. Stdout carries only the
 // token's type and length.
 
-import { writeFileSync } from 'node:fs';
+// The token goes only to the Skarbiec item a run names.
 import { statedText } from '../_shared/inputs/stated.mjs';
 import {
   appToken,
@@ -44,13 +43,10 @@ import {
 
 const LABEL = 'slack-user-token';
 const workspace = slackWorkspace();
-const IN_SKARBIEC = Boolean(process.env.WELES_CREDENTIAL_CONSTRAINTS);
-const RESULT_FILE = IN_SKARBIEC
-  ? null
-  : statedText(
-      ['WELES_SECRET_RESULT_FILE'],
-      'the JSON file the raw user token is written to when the run carries no Skarbiec credential constraints (WELES_CREDENTIAL_CONSTRAINTS)',
-    );
+statedText(
+  ['WELES_CREDENTIAL_CONSTRAINTS'],
+  'the Skarbiec item the user token is stored in (a run\'s constraints, passed by the worker)',
+);
 const APP_ID = process.env.SLACK_APP_ID;
 // The app is named and granted before the browser starts, so a run that would
 // create one nobody described is refused before anything happens.
@@ -132,18 +128,7 @@ try {
     url: auth.url,
   };
   // The browser is still on the app's OAuth page, where the store captures it.
-  const stored = IN_SKARBIEC
-    ? await s.storeCredential('User OAuth Token', 'token')
-    : `written to ${RESULT_FILE}`;
-  if (!IN_SKARBIEC)
-    writeFileSync(
-      RESULT_FILE,
-      JSON.stringify(
-        { ok: true, token, ...report, created_at: new Date().toISOString() },
-        null,
-        '  ',
-      ),
-    );
+  const stored = await s.storeCredential('User OAuth Token', 'token');
   console.log(
     `[${LABEL}] ready ${JSON.stringify({ type: token.split('-').shift(), length: token.length, ...report, stored })}`,
   );

@@ -59,9 +59,9 @@ await runAction({
         ).find(visible);
         const label = button?.getAttribute('aria-label');
         if (label && label !== before) return { state: 'changed', label };
-        const error = Array.from(document.querySelectorAll('.flash-error')).find(
-          visible,
-        );
+        const error = Array.from(
+          document.querySelectorAll('.flash-error'),
+        ).find(visible);
         if (error?.textContent?.trim())
           return { state: 'refused', label, message: error.textContent.trim() };
         return null;

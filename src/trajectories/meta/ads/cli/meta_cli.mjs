@@ -15,7 +15,9 @@ export const META_CLI = 'meta';
  */
 export function splitArgs(text) {
   return Array.from(
-    text.matchAll(/"(?<dq>[^"]*)"|'(?<sq>[^']*)'|(?<bare>[^\s"']+)|(?<open>["'])/g),
+    text.matchAll(
+      /"(?<dq>[^"]*)"|'(?<sq>[^']*)'|(?<bare>[^\s"']+)|(?<open>["'])/g,
+    ),
     ({ groups }) => {
       if (groups.open)
         throw new Error('META_ADS_CLI_ARGS has an unterminated quote');

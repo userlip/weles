@@ -151,7 +151,7 @@ export function readDocument(id: string): Record<string, any> {
 }
 
 export function writeDocument(id: string, document: Record<string, any>): void {
-  skarbiec('set-json', [id], JSON.stringify(document));
+  skarbiec('set', [id], JSON.stringify(document));
 }
 
 /** Replace only the exact payload observed by the caller; the vault arbitrates. */
@@ -161,7 +161,7 @@ export function writeUnchangedDocument(
   payload: Record<string, any>,
 ): void {
   skarbiec(
-    'set-json',
+    'set',
     [id, '--if-unchanged'],
     JSON.stringify({ expected, payload }),
   );
@@ -175,7 +175,7 @@ export function writeTaggedDocument(
   tags: string[],
 ): void {
   skarbiec(
-    'set-json',
+    'set',
     [id, '--type', type, '--tags', tags.join(',')],
     JSON.stringify(document),
   );
@@ -197,7 +197,7 @@ export function writeBundle(
   tags?: string[],
 ): void {
   skarbiec(
-    'set-json',
+    'set',
     [id, '--type', 'bundle', ...(tags ? ['--tags', tags.join(',')] : [])],
     JSON.stringify({
       schema: 'skarbiec.item.v2',

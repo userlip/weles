@@ -12,7 +12,12 @@ export async function revealQueryInEditor(page, queryText) {
   const wanted = norm(queryText);
   const before = await summarizeVisible(page, wanted);
   if (before.targetIndex === Math.abs(before.targetIndex))
-    return { attempted: false, reason: 'already-found', targetMatchKind: before.targetMatchKind, targetScore: before.targetScore };
+    return {
+      attempted: false,
+      reason: 'already-found',
+      targetMatchKind: before.targetMatchKind,
+      targetScore: before.targetScore,
+    };
   await page.keyboard.press('ControlOrMeta+f');
   await pageSettled(page);
   await humanType(page, wanted);
@@ -21,12 +26,21 @@ export async function revealQueryInEditor(page, queryText) {
   await page.keyboard.press('Escape');
   await pageSettled(page);
   const after = await summarizeVisible(page, wanted);
-  return { attempted: true, method: 'editor-search', targetMatchKind: after.targetMatchKind, targetScore: after.targetScore, targetIndex: after.targetIndex };
+  return {
+    attempted: true,
+    method: 'editor-search',
+    targetMatchKind: after.targetMatchKind,
+    targetScore: after.targetScore,
+    targetIndex: after.targetIndex,
+  };
 }
 
 /** Clicks the visible element whose text is `text` (exactly, when `exact`); answers whether one was there. */
 export async function clickVisibleText(page, text, tag, exact) {
-  const found = page.getByText(text, { exact: exact === true }).filter({ visible: true }).first();
+  const found = page
+    .getByText(text, { exact: exact === true })
+    .filter({ visible: true })
+    .first();
   if (!(await found.count())) return { tag, text, clicked: false };
   await found.scrollIntoViewIfNeeded();
   await humanClickLocator(page, found);
@@ -36,7 +50,8 @@ export async function clickVisibleText(page, text, tag, exact) {
 
 /** One probe of the history state under `tag`, after revealing the phrase when `reveal`. */
 export async function probeHistoryState(s, tag, queryText, reveal) {
-  const revealResult = reveal === true ? await revealQueryInEditor(s.page, queryText) : null;
+  const revealResult =
+    reveal === true ? await revealQueryInEditor(s.page, queryText) : null;
   const d = await dump(s, tag);
   const summary = await summarizeVisible(s.page, queryText);
   return {

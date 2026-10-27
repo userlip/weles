@@ -40,9 +40,15 @@ export async function keepUnreadBalancePage(s, label) {
       unkept.push(`${name}: ${error.message}`);
     }
   };
-  await keep('dashboard-text.txt', async (path) => writeFileSync(path, await s.page.evaluate(() => document.body.innerText)));
-  await keep('dashboard.html', async (path) => writeFileSync(path, await s.page.content()));
-  await keep('dashboard.png', (path) => s.page.screenshot({ path, fullPage: true }));
+  await keep('dashboard-text.txt', async (path) =>
+    writeFileSync(path, await s.page.evaluate(() => document.body.innerText)),
+  );
+  await keep('dashboard.html', async (path) =>
+    writeFileSync(path, await s.page.content()),
+  );
+  await keep('dashboard.png', (path) =>
+    s.page.screenshot({ path, fullPage: true }),
+  );
   throw new Error(
     `${label.toUpperCase()}_BALANCE_NOT_FOUND: the page at ${s.page.url()} shows no account balance; it is kept in ${dir}${unkept.length ? `, except ${unkept.join('; ')}` : ''}`,
   );
@@ -69,7 +75,8 @@ export async function patchServiceBalance(displayName, balance) {
     (document) =>
       document.context?.owner === 'weles' &&
       typeof document.context?.display_name === 'string' &&
-      document.context.display_name.toLowerCase() === String(displayName).toLowerCase(),
+      document.context.display_name.toLowerCase() ===
+        String(displayName).toLowerCase(),
   );
   if (!id) return false;
   const now = new Date().toISOString();

@@ -11,7 +11,10 @@
 // offers no form to submit stops the run naming the page and its buttons.
 // `shot(s, name)` records each step in the caller's evidence.
 import { pageSettled } from '../_shared/page/settled.mjs';
-import { CHECKOUT_HOST, payHostedCheckout } from '../stripe/hosted_checkout.mjs';
+import {
+  CHECKOUT_HOST,
+  payHostedCheckout,
+} from '../stripe/hosted_checkout.mjs';
 import { topupCard } from '../_shared/services/topup_common.mjs';
 
 export async function completeCheckout(s, shot) {

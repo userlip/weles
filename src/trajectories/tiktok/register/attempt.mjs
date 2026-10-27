@@ -7,10 +7,19 @@
 // carries sessionRefused, since another identity on it would end the same way.
 import { humanClickLocator } from '../../../../dist/human/mouse.js';
 import { humanType } from '../../../../dist/human/keyboard.js';
-import { pageSettled, responseAfterAction } from '../../_shared/page/settled.mjs';
+import {
+  pageSettled,
+  responseAfterAction,
+} from '../../_shared/page/settled.mjs';
 import { clickOffered } from '../../_shared/page/judged/seen.mjs';
-import { fieldCodeLength, mailedCode } from '../../_shared/inputs/mailed_code.mjs';
-import { runUsernameStep, syncReactInputValue } from '../../lib/tiktok-register-helpers.mjs';
+import {
+  fieldCodeLength,
+  mailedCode,
+} from '../../_shared/inputs/mailed_code.mjs';
+import {
+  runUsernameStep,
+  syncReactInputValue,
+} from '../../lib/tiktok-register-helpers.mjs';
 
 const HOME_URL = 'https://www.tiktok.com/';
 const EXPLORE_URL = 'https://www.tiktok.com/explore';
@@ -31,7 +40,8 @@ const SUCCESS = 'success';
 
 const pathOf = (request) => new URL(request.url()).pathname;
 
-const refusal = (message, sessionRefused) => Object.assign(new Error(message), { sessionRefused });
+const refusal = (message, sessionRefused) =>
+  Object.assign(new Error(message), { sessionRefused });
 
 /**
  * TikTok's answer to the request `action` sends to `path`, or the captcha it
@@ -46,9 +56,11 @@ async function answerOrCaptcha(page, path, action) {
     }
     return { captcha: false };
   })();
-  const answered = responseAfterAction(page, (request) => path.test(pathOf(request)), action).then(
-    (response) => ({ response }),
-  );
+  const answered = responseAfterAction(
+    page,
+    (request) => path.test(pathOf(request)),
+    action,
+  ).then((response) => ({ response }));
   const first = await Promise.race([answered, captcha]);
   decided = true;
   return first;
@@ -79,8 +91,15 @@ async function openEmailSignup(s) {
   const region = (await page.content()).match(VREGION)?.groups.region;
   console.log(`[test] browser-time vregion=${region}`);
   if (region?.endsWith('-TTP2'))
-    throw new Error(`TIKTOK_TTP2_ROUTED: the exit is routed through ${region}, whose signup form ignores clicks`);
-  if (await clickOffered(page, 'the button that declines optional cookies, or accepts them when declining is not offered'))
+    throw new Error(
+      `TIKTOK_TTP2_ROUTED: the exit is routed through ${region}, whose signup form ignores clicks`,
+    );
+  if (
+    await clickOffered(
+      page,
+      'the button that declines optional cookies, or accepts them when declining is not offered',
+    )
+  )
     await pageSettled(page);
   while (!page.url().includes('/phone-or-email')) {
     await s.click('Use phone or email');
@@ -102,7 +121,9 @@ async function fillSignupForm(s, id, password) {
   await s.fill('Email', id.email);
   const passwordField = page.locator(PASSWORD_FIELD).first();
   if (!(await passwordField.count()))
-    throw new Error(`TIKTOK_PASSWORD_FIELD_MISSING: ${page.url()} shows no password field`);
+    throw new Error(
+      `TIKTOK_PASSWORD_FIELD_MISSING: ${page.url()} shows no password field`,
+    );
   await passwordField.focus();
   await pageSettled(page);
   await page.keyboard.press('ControlOrMeta+A');
@@ -119,10 +140,17 @@ async function requestCode(s) {
   const page = s.page;
   const send = page.locator(SEND_CODE_BUTTON).first();
   if (!(await send.count()) || !(await send.isEnabled()))
-    throw new Error('TIKTOK_SEND_CODE_DISABLED: the form shows no enabled send-code control after the email and password');
-  const sent = await answerOrCaptcha(page, SEND_CODE, () => s.click('Send code'));
+    throw new Error(
+      'TIKTOK_SEND_CODE_DISABLED: the form shows no enabled send-code control after the email and password',
+    );
+  const sent = await answerOrCaptcha(page, SEND_CODE, () =>
+    s.click('Send code'),
+  );
   if (sent.captcha)
-    throw refusal('TIKTOK_CAPTCHA_ON_SEND_CODE: TikTok showed its captcha before sending the code', true);
+    throw refusal(
+      'TIKTOK_CAPTCHA_ON_SEND_CODE: TikTok showed its captcha before sending the code',
+      true,
+    );
   const body = await readAnswer(sent.response, 'send_code');
   if (body?.message !== SUCCESS)
     throw refusal(`TIKTOK_SEND_CODE_REFUSED: ${JSON.stringify(body)}`, true);
@@ -133,8 +161,14 @@ async function verifyCode(s, id, password, passwordField) {
   const page = s.page;
   const codeField = page.locator(CODE_FIELD).first();
   if (!(await codeField.count()))
-    throw new Error(`TIKTOK_CODE_FIELD_MISSING: ${page.url()} shows no code field after the code was sent`);
-  const code = await mailedCode(id.email, 'tiktok', await fieldCodeLength(codeField));
+    throw new Error(
+      `TIKTOK_CODE_FIELD_MISSING: ${page.url()} shows no code field after the code was sent`,
+    );
+  const code = await mailedCode(
+    id.email,
+    'tiktok',
+    await fieldCodeLength(codeField),
+  );
   await humanClickLocator(page, codeField);
   await humanType(page, code);
   // React reconciles the controlled fields only once send_code succeeded.
@@ -142,9 +176,13 @@ async function verifyCode(s, id, password, passwordField) {
   await syncReactInputValue(codeField, code);
   await page.keyboard.press('Tab');
   await pageSettled(page);
-  const verified = await answerOrCaptcha(page, REGISTER_VERIFY, () => s.click('Next'));
+  const verified = await answerOrCaptcha(page, REGISTER_VERIFY, () =>
+    s.click('Next'),
+  );
   if (verified.captcha)
-    throw new Error('TIKTOK_CAPTCHA_ON_NEXT: TikTok showed its captcha when the code was submitted');
+    throw new Error(
+      'TIKTOK_CAPTCHA_ON_NEXT: TikTok showed its captcha when the code was submitted',
+    );
   const body = await readAnswer(verified.response, 'register_verify_login');
   if (body?.message !== SUCCESS)
     throw new Error(`TIKTOK_ACCOUNT_NOT_CREATED: ${JSON.stringify(body)}`);
@@ -167,6 +205,8 @@ export async function registerOnce(s, id, password) {
   // and a /foryou or /@ address is shown to signed-out visitors too.
   const cookies = await s.ctx.cookies(HOME_URL);
   if (!cookies.some((cookie) => cookie.name === 'sessionid' && cookie.value))
-    throw new Error(`TIKTOK_NOT_SIGNED_IN: the context holds no TikTok sessionid at ${s.page.url()}`);
+    throw new Error(
+      `TIKTOK_NOT_SIGNED_IN: the context holds no TikTok sessionid at ${s.page.url()}`,
+    );
   return username;
 }

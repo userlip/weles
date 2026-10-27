@@ -95,7 +95,11 @@ try {
   connected = true;
 
   for (const [action, params, missing] of [
-    ['meta_ads_api_campaign', { resource: 'campaign' }, 'ACTION_KIND, META_ACTION'],
+    [
+      'meta_ads_api_campaign',
+      { resource: 'campaign' },
+      'ACTION_KIND, META_ACTION',
+    ],
     ['meta_ads_api_catalog', { action: 'create' }, 'RESOURCE'],
     ['meta_ads_api_audience', {}, 'ACTION_KIND, META_ACTION'],
     ['meta_ads_api_creative', { action: 'create' }, 'RESOURCE'],
@@ -113,21 +117,29 @@ try {
 
   for (const [action, params] of [
     ['meta_ads_api_audience', { ad_account_id: values['ad-account'] }],
-    ['meta_ads_api_creative', {
-      ad_account_id: values['ad-account'],
-      resource: 'creative',
-    }],
-    ['meta_ads_api_catalog', {
-      business_id: values['business-id'],
-      resource: 'catalog',
-    }],
+    [
+      'meta_ads_api_creative',
+      {
+        ad_account_id: values['ad-account'],
+        resource: 'creative',
+      },
+    ],
+    [
+      'meta_ads_api_catalog',
+      {
+        business_id: values['business-id'],
+        resource: 'catalog',
+      },
+    ],
   ]) {
-    const listed = graphResult(await run(action, {
-      ...params,
-      action: 'list',
-      fields: 'id,name',
-      live_read: true,
-    }));
+    const listed = graphResult(
+      await run(action, {
+        ...params,
+        action: 'list',
+        fields: 'id,name',
+        live_read: true,
+      }),
+    );
     assert.ok(Array.isArray(listed.data), JSON.stringify(listed));
   }
 
@@ -136,37 +148,45 @@ try {
     fields: 'id,name,locale',
     live_read: true,
   };
-  const formBefore = graphResult(await run('meta_ads_api_lead_form', {
-    ...leadForm,
-    action: 'read',
-  }));
+  const formBefore = graphResult(
+    await run('meta_ads_api_lead_form', {
+      ...leadForm,
+      action: 'read',
+    }),
+  );
   assert.equal(formBefore.id, values['lead-form-id']);
   assert.equal(formBefore.name, values['lead-form-name']);
   assert.equal(formBefore.locale, values['lead-form-locale']);
-  graphResult(await run('meta_ads_api_lead_form', {
-    ...leadForm,
-    action: 'update',
-    lead_form_name: values['lead-form-name'],
-    submit: true,
-  }));
-  const formAfter = graphResult(await run('meta_ads_api_lead_form', {
-    ...leadForm,
-    action: 'read',
-  }));
+  graphResult(
+    await run('meta_ads_api_lead_form', {
+      ...leadForm,
+      action: 'update',
+      lead_form_name: values['lead-form-name'],
+      submit: true,
+    }),
+  );
+  const formAfter = graphResult(
+    await run('meta_ads_api_lead_form', {
+      ...leadForm,
+      action: 'read',
+    }),
+  );
   assert.equal(formAfter.locale, formBefore.locale);
   assert.equal(formAfter.name, formBefore.name);
 
   const name = `${values['name-prefix']}-${randomUUID()}`;
-  const created = graphResult(await run('meta_ads_api_campaign', {
-    resource: 'campaign',
-    action: 'create',
-    ad_account_id: values['ad-account'],
-    campaign_name: name,
-    campaign_objective: values.objective,
-    special_ad_categories: categories,
-    status: values.status,
-    submit: true,
-  }));
+  const created = graphResult(
+    await run('meta_ads_api_campaign', {
+      resource: 'campaign',
+      action: 'create',
+      ad_account_id: values['ad-account'],
+      campaign_name: name,
+      campaign_objective: values.objective,
+      special_ad_categories: categories,
+      status: values.status,
+      submit: true,
+    }),
+  );
   assert.ok(created.id, JSON.stringify(created));
   campaignId = created.id;
 
@@ -176,38 +196,52 @@ try {
     fields: 'id,name,status',
     live_read: true,
   };
-  const initial = graphResult(await run('meta_ads_api_campaign', {
-    ...address,
-    action: 'read',
-  }));
+  const initial = graphResult(
+    await run('meta_ads_api_campaign', {
+      ...address,
+      action: 'read',
+    }),
+  );
   assert.equal(initial.id, campaignId);
   assert.equal(initial.name, name);
   assert.equal(initial.status, values.status);
 
-  graphResult(await run('meta_ads_api_campaign', {
-    ...address,
-    action: 'update',
-    ad_set_name: `${name}-unrelated`,
-    status: values.status,
-    submit: true,
-  }));
-  const unchanged = graphResult(await run('meta_ads_api_campaign', {
-    ...address,
-    action: 'read',
-  }));
-  assert.equal(unchanged.name, name, 'an ad set name must not rename a campaign');
+  graphResult(
+    await run('meta_ads_api_campaign', {
+      ...address,
+      action: 'update',
+      ad_set_name: `${name}-unrelated`,
+      status: values.status,
+      submit: true,
+    }),
+  );
+  const unchanged = graphResult(
+    await run('meta_ads_api_campaign', {
+      ...address,
+      action: 'read',
+    }),
+  );
+  assert.equal(
+    unchanged.name,
+    name,
+    'an ad set name must not rename a campaign',
+  );
 
   const renamed = `${name}-updated`;
-  graphResult(await run('meta_ads_api_campaign', {
-    ...address,
-    action: 'update',
-    campaign_name: renamed,
-    submit: true,
-  }));
-  const observed = graphResult(await run('meta_ads_api_campaign', {
-    ...address,
-    action: 'read',
-  }));
+  graphResult(
+    await run('meta_ads_api_campaign', {
+      ...address,
+      action: 'update',
+      campaign_name: renamed,
+      submit: true,
+    }),
+  );
+  const observed = graphResult(
+    await run('meta_ads_api_campaign', {
+      ...address,
+      action: 'read',
+    }),
+  );
   assert.equal(observed.name, renamed);
   report.observed_campaign = {
     id: campaignId,
@@ -226,12 +260,14 @@ try {
 } finally {
   if (campaignId) {
     try {
-      const deleted = graphResult(await run('meta_ads_api_campaign', {
-        resource: 'campaign',
-        action: 'delete',
-        campaign_id: campaignId,
-        submit: true,
-      }));
+      const deleted = graphResult(
+        await run('meta_ads_api_campaign', {
+          resource: 'campaign',
+          action: 'delete',
+          campaign_id: campaignId,
+          submit: true,
+        }),
+      );
       assert.equal(deleted.success, true, JSON.stringify(deleted));
       report.deleted_campaign = { id: campaignId, result: deleted };
     } catch (error) {

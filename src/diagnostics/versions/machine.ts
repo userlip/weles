@@ -10,7 +10,7 @@ import {
   totalmem,
   userInfo,
 } from 'node:os';
-import { PUBLIC_ADDRESS_SERVICE } from '../../utils/runtime/public-address.js';
+import { parsePublicAddress, publicAddressService } from '../../utils/runtime/public-address.js';
 import { captureFailure, captureFailures, safeExec } from './failures.js';
 
 /** Where each platform keeps a machine id that survives reboots. */
@@ -92,14 +92,15 @@ let publicAddress: string | undefined;
 /** Ask once, at load, in the long-lived worker, so no run waits on it. */
 async function readPublicAddress(): Promise<void> {
   const field = 'machine.public_ip';
-  const operation = `GET ${PUBLIC_ADDRESS_SERVICE}`;
+  let operation = 'resolve WELES_PUBLIC_ADDRESS_URL';
   try {
-    const response = await fetch(PUBLIC_ADDRESS_SERVICE);
-    const text = (await response.text()).trim();
+    const service = publicAddressService();
+    operation = `GET ${service}`;
+    const response = await fetch(service);
+    const text = await response.text();
     if (!response.ok)
       throw new Error(`answered HTTP ${response.status}: ${text}`);
-    if (!text) throw new Error('answered no address');
-    publicAddress = text;
+    publicAddress = parsePublicAddress(text, service);
   } catch (error) {
     captureFailures.push(captureFailure(field, operation, error));
   }

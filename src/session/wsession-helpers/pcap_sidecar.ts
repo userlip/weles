@@ -71,7 +71,8 @@ export function startPcap(ws: any, label: string | undefined): void {
     return;
   }
   status.enabled = true;
-  status.pid = child.pid ?? null;
+  // A spawn that did not get a pid failed; its error event fills spawn_error.
+  if (child.pid !== undefined) status.pid = child.pid;
   child.stderr?.on('data', (d) => {
     status.stderr = status.stderr + d.toString();
   });
@@ -92,6 +93,28 @@ export function startPcap(ws: any, label: string | undefined): void {
 // Object.getOwnPropertyNames(self) + .navigator. Result lands in
 // ws._instWorkerSurfaces. Lives here (not in capture_extras.ts) because that
 // file is at the 300-line cap.
+
+/** The CDP session of one attached worker: what the inventory sends to and listens on. */
+type WorkerSession = {
+  send(method: string, params?: object): Promise<unknown>;
+  on(event: string, listener: (event: unknown) => void): void;
+};
+
+/** The handles a Playwright CDP session may expose for opening a child session. */
+type SessionOpener = {
+  _connection?: { session?: (sessionId: string) => WorkerSession | undefined };
+  session?: (sessionId: string) => WorkerSession | undefined;
+};
+
+/** The CDP session the connection opened for an attached worker, from whichever handle this Playwright exposes; null when neither does. */
+function workerSession(cdp: SessionOpener, sessionId: string): WorkerSession | null {
+  const viaConnection = cdp._connection?.session?.(sessionId);
+  if (viaConnection) return viaConnection;
+  const direct = cdp.session?.(sessionId);
+  if (direct) return direct;
+  return null;
+}
+
 export function attachWorkerInventory(ws: any): void {
   const cdp = ws?._cdp;
   if (!cdp) return;
@@ -112,10 +135,7 @@ export function attachWorkerInventory(ws: any): void {
       const sessId = e?.sessionId;
       const ti = e?.targetInfo;
       if (!sessId || !ti) return;
-      const childCdp =
-        (cdp as any)._connection?.session?.(sessId) ??
-        (cdp as any).session?.(sessId) ??
-        null;
+      const childCdp = workerSession(cdp, sessId);
       let inv: any = null;
       let err: string | null = null;
       if (childCdp) {
@@ -160,56 +180,19 @@ export function attachWorkerInventory(ws: any): void {
             },
           });
         }
-        childCdp.on('Runtime.consoleAPICalled', (ev: any) => {
-          try {
-            we.push({
-              t: Date.now(),
-              targetId: ti.targetId,
-              phase: 'console',
-              payload: ev,
-            });
-          } catch {}
-        });
-        childCdp.on('Runtime.exceptionThrown', (ev: any) => {
-          try {
-            we.push({
-              t: Date.now(),
-              targetId: ti.targetId,
-              phase: 'exception',
-              payload: ev,
-            });
-          } catch {}
-        });
-        childCdp.on('Network.requestWillBeSent', (ev: any) => {
-          try {
-            we.push({
-              t: Date.now(),
-              targetId: ti.targetId,
-              phase: 'request',
-              payload: ev,
-            });
-          } catch {}
-        });
-        childCdp.on('Network.responseReceived', (ev: any) => {
-          try {
-            we.push({
-              t: Date.now(),
-              targetId: ti.targetId,
-              phase: 'response',
-              payload: ev,
-            });
-          } catch {}
-        });
-        childCdp.on('Network.loadingFailed', (ev: any) => {
-          try {
-            we.push({
-              t: Date.now(),
-              targetId: ti.targetId,
-              phase: 'loadingFailed',
-              payload: ev,
-            });
-          } catch {}
-        });
+        // Each worker event is kept with its phase; pushing to an array does not fail, so nothing is caught here.
+        const WORKER_EVENTS: Record<string, string> = {
+          'Runtime.consoleAPICalled': 'console',
+          'Runtime.exceptionThrown': 'exception',
+          'Network.requestWillBeSent': 'request',
+          'Network.responseReceived': 'response',
+          'Network.loadingFailed': 'loadingFailed',
+        };
+        for (const [event, phase] of Object.entries(WORKER_EVENTS)) {
+          childCdp.on(event, (ev: unknown) => {
+            we.push({ t: Date.now(), targetId: ti.targetId, phase, payload: ev });
+          });
+        }
       } else {
         err = 'no child cdp session handle';
       }

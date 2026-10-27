@@ -1,7 +1,9 @@
 // Which exit the proxy actually gave us. Recorded on the proxy object itself,
 // so provenance and cost accounting read the same value.
 
+import { isIP } from 'node:net';
 import type { BrowserContext } from 'playwright';
+import echo from '../../../trajectories/_shared/network/egress-echo.json' with { type: 'json' };
 import type { SessionProxy } from '../session-request.js';
 
 export async function probeExitIp(launch: {
@@ -14,7 +16,7 @@ export async function probeExitIp(launch: {
   // Provenance and cost accounting read exit_ip, so a probe that did not
   // learn it says why rather than leaving the exit silently unknown.
   try {
-    const r = await launch.ctx.request.get('https://api.ipify.org');
+    const r = await launch.ctx.request.get(echo.url);
     if (!r.ok()) {
       console.error(
         `[launch] ${launch.label}: exit IP probe answered HTTP ${r.status()}; the proxy exit stays unknown`,
@@ -22,7 +24,7 @@ export async function probeExitIp(launch: {
       return;
     }
     const t = (await r.text()).trim();
-    if (/^[\da-fA-F.:]+$/.test(t)) proxy.exit_ip = t;
+    if (isIP(t)) proxy.exit_ip = t;
     else
       console.error(
         `[launch] ${launch.label}: exit IP probe answered no address (${JSON.stringify(t)}); the proxy exit stays unknown`,

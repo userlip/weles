@@ -101,6 +101,10 @@ async function remove() {
 // What each ACTION does; `list` is a read without an audience id.
 const ACTIONS = { create, update, read, list: read, delete: remove };
 
-const action = statedChoice(['ACTION_KIND', 'META_ACTION'], ACTIONS, 'what is done with the audience');
+const action = statedChoice(
+  ['ACTION_KIND', 'META_ACTION'],
+  ACTIONS,
+  'what is done with the audience',
+);
 await ACTIONS[action]();
 console.log(`PASS: Meta audience API ${action} completed`);

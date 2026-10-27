@@ -78,7 +78,9 @@ function figure(value) {
     raw === false ||
     Array.isArray(raw)
   )
-    throw new Error(`apple_ads_report_figure_unreadable: ${JSON.stringify(raw)}`);
+    throw new Error(
+      `apple_ads_report_figure_unreadable: ${JSON.stringify(raw)}`,
+    );
   return number;
 }
 
@@ -115,7 +117,8 @@ export function summarizeExactReports(exactReports) {
   return exactReports.map((report) => {
     const errors = report.json?.errors;
     const hasGraphqlErrors =
-      errors !== undefined && (!Array.isArray(errors) || Boolean(errors.length));
+      errors !== undefined &&
+      (!Array.isArray(errors) || Boolean(errors.length));
     const data = report.json?.data?.reportingV5?.getReportsByCampaign;
     if (
       !report.ok ||

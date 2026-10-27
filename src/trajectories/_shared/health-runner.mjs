@@ -63,7 +63,9 @@ async function probe(session, url, matching, detector, moment) {
   const read = { url: null, status: null, body: null };
   try {
     await session.goto(url);
-    const response = session.capturedResponses.find((r) => matching.test(r.url));
+    const response = session.capturedResponses.find((r) =>
+      matching.test(r.url),
+    );
     read.url = response ? response.url : session.page.url();
     if (response) {
       read.status = response.status;

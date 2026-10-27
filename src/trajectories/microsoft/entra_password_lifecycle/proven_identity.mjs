@@ -1,12 +1,8 @@
-// What Entra itself proves about the tenant and the principal: the token claims
-// the first-party My Account SPA mints for the signed-in session, the hard gate
-// every password write and every Skarbiec commit sits behind, and the directory
-// binding of the UPN domain that needs no password at all.
-//
-// Moved out of entra_password_lifecycle.mjs, which keeps the three trajectory
-// entry points.
+// The Entra identity this run is signed in as, proven from the tokens the
+// authorized first-party context minted, before any password is written.
 
-import { humanIdlePause } from '../../../../dist/human/mouse.js';
+import { randomUUID } from 'node:crypto';
+
 import { pageSettled } from '../../_shared/page/settled.mjs';
 
 import {
@@ -17,34 +13,57 @@ import {
   SIGN_IN_ORIGIN,
 } from './queued_job.mjs';
 
-const ANY_UUID = /[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}/i;
-const JWT_SCAN = /eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]*/g;
+/** A UUID anywhere in a text, its shape read from a UUID, as queued_job.mjs reads it. */
+const ANY_UUID = new RegExp(randomUUID().replace(/[\da-f]/g, '[\\da-f]'), 'i');
+// A compact JWS: header, payload and signature, each base64url (RFC 7515
+// section 7.1), the payload captured.
+const JWT_SCAN = /eyJ[\w-]+\.(?<payload>[\w-]+)\.[\w-]*/g;
 
-function decodedTokenClaims(token) {
-  const segments = token.split('.');
-  if (segments.length !== 3) return null;
-  try {
-    const payload = JSON.parse(
-      Buffer.from(segments[1], 'base64url').toString('utf8'),
-    );
-    return payload && typeof payload === 'object' && !Array.isArray(payload)
-      ? payload
-      : null;
-  } catch {
-    return null;
-  }
+// `promise` settled as an outcome: its value, or the refusal `describe` makes
+// of its error, so a caller answers with the cause instead of throwing it.
+function settled(promise, describe) {
+  return promise.then(
+    (value) => ({ ok: true, value }),
+    (error) => ({ ok: false, reason: describe(error.message) }),
+  );
 }
 
-function claimedIdentities(values) {
+// The claim set of a token's payload, or why it is none: a token-shaped string
+// in storage is not necessarily a token, and one that is not is named.
+async function decodedTokenClaims(payload) {
+  const text = Buffer.from(payload, 'base64url').toString('utf8');
+  const parsed = await settled(
+    new Response(text).json(),
+    (cause) => `a token-shaped value whose payload is not JSON (${cause})`,
+  );
+  if (!parsed.ok) return parsed;
+  const { value } = parsed;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, reason: 'a token-shaped value whose payload is not a JSON object' };
+  }
+  return { ok: true, value };
+}
+
+// A claim's text, trimmed and lowercased, or null when the token states none.
+function claim(claims, name) {
+  return typeof claims[name] === 'string' ? claims[name].trim().toLowerCase() : null;
+}
+
+// The identities the token-shaped values carry, and what could not be read of
+// the ones that are not tokens.
+async function claimedIdentities(values) {
   const identities = [];
+  const unreadable = [];
   for (const value of values) {
-    for (const [token] of String(value).matchAll(JWT_SCAN)) {
-      const claims = decodedTokenClaims(token);
-      if (!claims) continue;
-      const tid =
-        typeof claims.tid === 'string' ? claims.tid.trim().toLowerCase() : '';
-      const oid =
-        typeof claims.oid === 'string' ? claims.oid.trim().toLowerCase() : '';
+    for (const match of String(value).matchAll(JWT_SCAN)) {
+      const decoded = await decodedTokenClaims(match.groups.payload);
+      if (!decoded.ok) {
+        unreadable.push(decoded.reason);
+        continue;
+      }
+      const claims = decoded.value;
+      const tid = claim(claims, 'tid');
+      const oid = claim(claims, 'oid');
       if (!LOWER_UUID.test(tid) || !LOWER_UUID.test(oid)) continue;
       const named = [
         claims.preferred_username,
@@ -59,17 +78,15 @@ function claimedIdentities(values) {
       // refuse: a federated principal carries the resource tenant in tid and its
       // guest object id in oid, so tid and oid alone cannot tell it apart from a
       // directory-managed member.
-      const idp =
-        typeof claims.idp === 'string' ? claims.idp.trim().toLowerCase() : '';
       identities.push({
         tid,
         oid,
-        upn: named ? named.trim().toLowerCase() : '',
-        idp,
+        upn: named === undefined ? null : named.trim().toLowerCase(),
+        idp: claim(claims, 'idp'),
       });
     }
   }
-  return identities;
+  return { identities, unreadable };
 }
 
 // Second claim source: the bearer tokens the authorized first-party SPA attaches
@@ -77,81 +94,50 @@ function claimedIdentities(values) {
 // their claim set, and are dropped by clearBearerTokens once asserted.
 export function trackBearerTokens(page, sink) {
   page.on('request', (request) => {
-    const header = request.headers().authorization ?? '';
-    if (!/^Bearer\s+eyJ/i.test(header)) return;
+    const header = request.headers().authorization;
+    if (typeof header !== 'string' || !/^Bearer\s+eyJ/i.test(header)) return;
     sink.push(header.replace(/^Bearer\s+/i, ''));
   });
 }
 
 export function clearBearerTokens(sink) {
-  sink.splice(0, sink.length);
+  while (sink.length) sink.pop();
 }
 
 // The token cache of the authorized context is evidence. A storage this run
 // could not read is a named refusal carrying the reason, never an empty claim
 // list that reads like a session which minted nothing.
-async function storedTokenValues(page) {
-  try {
-    const values = await page.evaluate(() => {
-      const found = [];
-      for (const store of [
-        globalThis.sessionStorage,
-        globalThis.localStorage,
-      ]) {
-        if (!store) continue;
-        for (let index = 0; index < store.length; index += 1) {
-          const key = store.key(index);
-          if (key === null) continue;
-          const value = store.getItem(key);
-          if (typeof value === 'string') found.push(value);
-        }
-      }
-      return found;
-    });
-    return { ok: true, values };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `the authorized context token storage could not be read: ${error.message}`,
-    };
-  }
+function storedTokenValues(page) {
+  return settled(
+    page.evaluate(() =>
+      [globalThis.sessionStorage, globalThis.localStorage]
+        .filter(Boolean)
+        .flatMap((store) => Object.values({ ...store }))
+        .filter((value) => typeof value === 'string'),
+    ),
+    (cause) => `the authorized context token storage could not be read: ${cause}`,
+  );
 }
 
 async function authorizedClaims(page, sink) {
   const stored = await storedTokenValues(page);
   if (!stored.ok) {
-    return {
-      ok: false,
-      reason: stored.reason,
-      identities: claimedIdentities(sink),
-    };
+    return { ok: false, reason: stored.reason, ...(await claimedIdentities(sink)) };
   }
-  return {
-    ok: true,
-    identities: claimedIdentities([...stored.values, ...sink]),
-  };
-}
-
-// The authorized context has to be open before its claims can be read; a
-// navigation that never landed is the same refusal as claims that never
-// appeared, and it names the navigation failure.
-async function openAuthorizedContext(page) {
-  try {
-    await page.goto(AUTHORIZED_CONTEXT_URL, { waitUntil: 'domcontentloaded' });
-    return { ok: true };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `the authorized Entra context could not be opened: ${error.message}`,
-    };
-  }
+  return { ok: true, ...(await claimedIdentities([...stored.value, ...sink])) };
 }
 
 // Hard gate. Every password write and every Skarbiec commit sits behind this.
 export async function assertEntraIdentity(session, contract, sink) {
   const page = session.page;
   if (!AUTHORIZED_CONTEXT_HOST.test(new URL(page.url()).hostname)) {
-    const opened = await openAuthorizedContext(page);
+    // The authorized context has to be open before its claims can be read; a
+    // navigation that never landed is the same refusal as claims that never
+    // appeared, and it names the navigation failure.
+    const opened = await settled(
+      page.goto(AUTHORIZED_CONTEXT_URL, { waitUntil: 'domcontentloaded' }),
+      (cause) => `the authorized Entra context could not be opened: ${cause}`,
+    );
     if (!opened.ok) {
       return {
         ok: false,
@@ -160,21 +146,22 @@ export async function assertEntraIdentity(session, contract, sink) {
         reason: opened.reason,
       };
     }
-    await humanIdlePause('deliberate');
   }
-  let claims = { ok: true, identities: [] };
+  // The context's tokens are read once the page has finished what opening it
+  // started, as the page itself reports it.
   await pageSettled(page);
-  claims = await authorizedClaims(page, sink);
-  const identities = claims.identities;
+  const claims = await authorizedClaims(page, sink);
+  const { identities } = claims;
   clearBearerTokens(sink);
   if (!identities.length) {
+    const causes = [...(claims.ok ? [] : [claims.reason]), ...claims.unreadable];
     return {
       ok: false,
       code: 'ENTRA_IDENTITY_UNVERIFIED',
       retryable: true,
-      reason: claims.ok
-        ? 'the authorized Entra session exposed no readable tid and oid claims'
-        : `the authorized Entra session exposed no readable tid and oid claims: ${claims.reason}`,
+      reason: causes.length
+        ? `the authorized Entra session exposed no readable tid and oid claims: ${causes.join('; ')}`
+        : 'the authorized Entra session exposed no readable tid and oid claims',
     };
   }
   const directoryMatches = identities.every(
@@ -183,7 +170,7 @@ export async function assertEntraIdentity(session, contract, sink) {
       identity.oid === contract.principalObjectId,
   );
   const conflictingUpn = identities.some(
-    (identity) => identity.upn && identity.upn !== contract.accountUpn,
+    (identity) => identity.upn !== null && identity.upn !== contract.accountUpn,
   );
   const confirmedUpn = identities.some(
     (identity) => identity.upn === contract.accountUpn,
@@ -198,11 +185,11 @@ export async function assertEntraIdentity(session, contract, sink) {
     };
   }
   // A guest federated from another identity provider -- in practice a personal
-  // Microsoft account homed in the consumer tenant 9188040d-6c67-4c5b-b112-36a304b66dad
-  // -- satisfies tid, oid and UPN while its password lives outside this
-  // directory. Entra's ChangePassword surface does not administer it, so the run
-  // would reach the write, fail to prove what the directory holds, and quarantine
-  // a credential. Refuse before any write, and name the surface that does own it.
+  // Microsoft account homed in the consumer tenant -- satisfies tid, oid and UPN
+  // while its password lives outside this directory. Entra's ChangePassword
+  // surface does not administer it, so the run would reach the write, fail to
+  // prove what the directory holds, and quarantine a credential. Refuse before
+  // any write, and name the surface that does own it.
   const federated = identities.find((identity) => identity.idp);
   if (federated) {
     return {
@@ -220,39 +207,42 @@ export async function assertEntraIdentity(session, contract, sink) {
 // can be missing answers with its own reason, so 'the domain resolves to another
 // tenant' is never confused with 'the discovery document was not readable'.
 export async function tenantOfUpnDomain(accountUpn) {
-  const domain = accountUpn.slice(accountUpn.lastIndexOf('@') + 1);
-  const discovery = `${SIGN_IN_ORIGIN}/${encodeURIComponent(domain)}/v2.0/.well-known/openid-configuration`;
-  let response;
-  try {
-    response = await fetch(discovery);
-  } catch (error) {
-    return {
-      ok: false,
-      reason: `the OpenID configuration of the UPN domain ${domain} could not be requested: ${error.message}`,
-    };
+  const [, domain] = accountUpn.split(/@(?=[^@]+$)/);
+  if (domain === undefined) {
+    return { ok: false, reason: `the UPN ${accountUpn} names no domain` };
   }
+  const discovery = `${SIGN_IN_ORIGIN}/${encodeURIComponent(domain)}/v2.0/.well-known/openid-configuration`;
+  const requested = await settled(
+    fetch(discovery),
+    (cause) => `the OpenID configuration of the UPN domain ${domain} could not be requested: ${cause}`,
+  );
+  if (!requested.ok) return requested;
+  const response = requested.value;
   if (!response.ok) {
     return {
       ok: false,
       reason: `the OpenID configuration of the UPN domain ${domain} answered HTTP ${response.status}`,
     };
   }
-  let document;
-  try {
-    document = await response.json();
-  } catch (error) {
+  const read = await settled(
+    response.json(),
+    (cause) => `the OpenID configuration of the UPN domain ${domain} was not readable JSON: ${cause}`,
+  );
+  if (!read.ok) return read;
+  const document = read.value;
+  if (typeof document?.issuer !== 'string') {
     return {
       ok: false,
-      reason: `the OpenID configuration of the UPN domain ${domain} was not readable JSON: ${error.message}`,
+      reason: `the OpenID configuration of the UPN domain ${domain} states no issuer`,
     };
   }
-  const issuer = typeof document?.issuer === 'string' ? document.issuer : '';
-  const found = issuer.match(ANY_UUID);
-  if (!found) {
+  const found = document.issuer.match(ANY_UUID);
+  if (found === null) {
     return {
       ok: false,
-      reason: `the OpenID configuration issuer of the UPN domain ${domain} names no tenant id`,
+      reason: `the OpenID configuration issuer ${document.issuer} of the UPN domain ${domain} names no tenant id`,
     };
   }
-  return { ok: true, tenantId: found[0].toLowerCase() };
+  const [tenant] = found;
+  return { ok: true, tenantId: tenant.toLowerCase() };
 }

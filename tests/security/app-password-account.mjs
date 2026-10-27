@@ -105,7 +105,7 @@ try {
       values.account.toLowerCase(),
     );
     const admitted = cli([
-      'app-password',
+      'password',
       '--provider',
       'google',
       '--login-item',
@@ -146,7 +146,7 @@ try {
   const result = persisted.value.result;
   assert.equal(result.login_item, values['login-item']);
   assert.equal(result.expected_account, values.account.trim());
-  const readback = cli(['app-password', '--run', run.id, '--json']);
+  const readback = cli(['password', '--run', run.id, '--json']);
   assert.deepEqual(readback.value.result, result);
   report.after = mailbox();
   if (values.outcome === 'account-mismatch') {

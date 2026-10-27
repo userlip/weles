@@ -16,7 +16,7 @@ export type NavigatingPage =
   | (NavigationEvents & { mainFrame(): unknown })
   | { page(): NavigationEvents };
 export type EvaluatingPage = {
-  evaluate(pageFunction: () => unknown): Promise<unknown>;
+  evaluate<R>(pageFunction: () => R | Promise<R>): Promise<R>;
 } & NavigatingPage;
 
 function navigationOf(target: NavigatingPage): {

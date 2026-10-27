@@ -31,7 +31,8 @@ export async function dump(s, tag) {
   const text = await s.page.evaluate(() => document.body.innerText);
   writeFileSync(`${base}.html`, html);
   writeFileSync(`${base}.txt`, text);
-  console.log(`[version_history_ui] ${tag} url=${s.page.url()} html=${base}.html text=${base}.txt`);
+  console.log(
+    `[version_history_ui] ${tag} url=${s.page.url()} html=${base}.html text=${base}.txt`,
+  );
   return { html: `${base}.html`, text: `${base}.txt`, bodyText: text };
 }
-

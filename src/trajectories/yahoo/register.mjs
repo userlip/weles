@@ -37,7 +37,10 @@ const YAHOO_SESSION = ['T', 'Y'];
 function writeResult(value) {
   const dir = runRecordingsDir(LABEL);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'yahoo_register_result.json'), JSON.stringify(value, null, '  '));
+  writeFileSync(
+    join(dir, 'yahoo_register_result.json'),
+    JSON.stringify(value, null, '  '),
+  );
 }
 
 /**
@@ -75,7 +78,11 @@ try {
     const captcha = await s.solveCaptcha();
     if (captcha !== NO_CAPTCHA && captcha !== CAPTCHA_SOLVED)
       throw Object.assign(new Error(`YAHOO_CAPTCHA_UNPASSED: ${captcha}`), {
-        banSignal: { signal: 'captcha_challenge', healthy: false, details: { final_url: s.page.url(), reason: captcha } },
+        banSignal: {
+          signal: 'captcha_challenge',
+          healthy: false,
+          details: { final_url: s.page.url(), reason: captcha },
+        },
       });
     if (captcha === CAPTCHA_SOLVED) continue;
     if (await maybeOpenPasswordSetup(s.page)) continue;
@@ -104,21 +111,36 @@ try {
     cookies: state.cookies,
     completed_at: new Date().toISOString(),
   });
-  verdict = { signal: 'healthy', healthy: true, details: { final_url: state.url } };
+  verdict = {
+    signal: 'healthy',
+    healthy: true,
+    details: { final_url: state.url },
+  };
   console.log(`PASS: yahoo ${id.email}`);
 } catch (error) {
   failure = error;
-  writeResult({ ok: false, error: error.message, completed_at: new Date().toISOString() });
+  writeResult({
+    ok: false,
+    error: error.message,
+    completed_at: new Date().toISOString(),
+  });
   verdict = error.banSignal
     ? error.banSignal
-    : { signal: 'register_failed', healthy: false, details: { final_url: s.page.url(), error: error.message } };
+    : {
+        signal: 'register_failed',
+        healthy: false,
+        details: { final_url: s.page.url(), error: error.message },
+      };
   console.log(`FAIL: ${error.message}`);
 } finally {
   try {
     await keepVerdict(LABEL, null, verdict);
   } catch (keepError) {
     failure = failure
-      ? new AggregateError([failure, keepError], `${failure.message}; and its verdict was not kept: ${keepError.message}`)
+      ? new AggregateError(
+          [failure, keepError],
+          `${failure.message}; and its verdict was not kept: ${keepError.message}`,
+        )
       : keepError;
   }
   await s.close();

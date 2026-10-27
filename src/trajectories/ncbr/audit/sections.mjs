@@ -43,9 +43,13 @@ const SECTIONS = [
  * pattern that selects nothing is refused as a usage error.
  */
 export function selectedSections(settings, pattern) {
-  const chosen = SECTIONS.filter(([id, title]) => !pattern || pattern.test(`${id} ${title}`));
+  const chosen = SECTIONS.filter(
+    ([id, title]) => !pattern || pattern.test(`${id} ${title}`),
+  );
   if (!chosen.length)
-    throw new UsageError(`SECTION_PATTERN ${pattern} selects none of the sections ${SECTIONS.map(([id]) => id).join(', ')}`);
+    throw new UsageError(
+      `SECTION_PATTERN ${pattern} selects none of the sections ${SECTIONS.map(([id]) => id).join(', ')}`,
+    );
   const projectUrl = settings.projectUrl();
   return chosen.map(([id, title]) => ({
     id,

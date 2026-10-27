@@ -2,7 +2,7 @@
 // overview, and the plan a tier change moves to, stated by the caller. No
 // plan names, prices or traffic allowances are written here: the page says
 // what Oxylabs sells today.
-import { humanIdlePause } from '../../../../dist/human/mouse.js';
+import { pageSettled } from '../../_shared/page/settled.mjs';
 import { statedText } from '../../_shared/inputs/stated.mjs';
 import { pageShows, shownText } from '../../_shared/page/judged/seen.mjs';
 
@@ -23,7 +23,7 @@ export async function detectCurrentPlan(s) {
   await s.goto('https://dashboard.oxylabs.io/en/overview/MP', {
     waitUntil: 'domcontentloaded',
   });
-  await humanIdlePause('long');
+  await pageSettled(s.page);
   const isPayAsYouGo = await pageShows(
     s.page,
     'Is this Mobile Proxies account on pay-as-you-go, buying traffic by amount rather than on a monthly plan?',

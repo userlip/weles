@@ -23,32 +23,40 @@ export function validateExpectedAccount(login, expected) {
   }
 }
 
+/** The outcome when Google accepted the enrollment but Skarbiec did not
+ * confirm the seed it was given, with the cause. */
+function seedUnconfirmed(login, cause) {
+  return {
+    ok: false,
+    blocked: 'seed_persist_unconfirmed',
+    provider_enrollment_confirmed: true,
+    seed_written: null,
+    detail: `Google accepted enrollment for ${login.email}, but conditional seed persistence for ${login.loginItem} was not confirmed: ${cause}`,
+  };
+}
+
 export function persistEnrolledSeed(login, secret) {
   const payload = {
     ...login.document,
     fields: { ...login.document.fields, totp_secret: secret },
   };
+  let stored;
   try {
     writeUnchangedDocument(login.loginItem, login.document, payload);
-    const stored = readDocument(login.loginItem);
-    if (
-      typeof stored.fields?.username !== 'string' ||
-      stored.fields.username.trim().toLowerCase() !==
-        login.email.trim().toLowerCase() ||
-      stored.fields.totp_secret !== secret
-    ) {
-      throw new Error(
-        'Skarbiec readback did not confirm the enrolled account and seed',
-      );
-    }
-    return { ok: true };
+    stored = readDocument(login.loginItem);
   } catch (error) {
-    return {
-      ok: false,
-      blocked: 'seed_persist_unconfirmed',
-      provider_enrollment_confirmed: true,
-      seed_written: null,
-      detail: `Google accepted enrollment for ${login.email}, but conditional seed persistence for ${login.loginItem} was not confirmed: ${error.message}`,
-    };
+    return seedUnconfirmed(login, error.message);
   }
+  if (
+    typeof stored.fields?.username !== 'string' ||
+    stored.fields.username.trim().toLowerCase() !==
+      login.email.trim().toLowerCase() ||
+    stored.fields.totp_secret !== secret
+  ) {
+    return seedUnconfirmed(
+      login,
+      'Skarbiec readback did not confirm the enrolled account and seed',
+    );
+  }
+  return { ok: true };
 }

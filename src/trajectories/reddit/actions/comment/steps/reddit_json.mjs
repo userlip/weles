@@ -51,11 +51,14 @@ export async function ownListingHas(page, handle, body) {
   );
 }
 
-/** One JSON read through the session's request context: status plus body text. */
+/**
+ * One JSON read through the session's request context: status plus body text.
+ * The context carries the account's cookies, so the certificate is verified:
+ * a TLS-intercepting proxy is refused rather than handed the session.
+ */
 export async function contextRead(s, url) {
   const resp = await s.page.context().request.get(url, {
     headers: { Accept: 'application/json' },
-    ignoreHTTPSErrors: true,
   });
   return { status: resp.status(), body: await resp.text() };
 }
@@ -99,7 +102,9 @@ export async function threadAt(page, url) {
   const posts = listed.map((c) => c.data).filter(Boolean);
   const subreddit = address.match(/\/r\/(?<name>[^/]+)\//)?.groups.name;
   const own = subreddit
-    ? posts.filter((p) => p.subreddit?.toLowerCase() === subreddit.toLowerCase())
+    ? posts.filter(
+        (p) => p.subreddit?.toLowerCase() === subreddit.toLowerCase(),
+      )
     : posts;
   if (posts.length && !own.length)
     throw new Error(

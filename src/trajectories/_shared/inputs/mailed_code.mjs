@@ -25,8 +25,15 @@ import { messagesTo } from '../../../_shared/mail/skrzynka-inbox.mjs';
 export async function fieldCodeLength(field) {
   const stated = await field.getAttribute('maxlength');
   const length = Number(stated);
-  if (!stated || !Number.isInteger(length) || !length || Math.abs(length) !== length)
-    throw new Error(`CODE_FIELD_LENGTH_UNSTATED: the code field states no maxlength (it reads ${JSON.stringify(stated)})`);
+  if (
+    !stated ||
+    !Number.isInteger(length) ||
+    !length ||
+    Math.abs(length) !== length
+  )
+    throw new Error(
+      `CODE_FIELD_LENGTH_UNSTATED: the code field states no maxlength (it reads ${JSON.stringify(stated)})`,
+    );
   return length;
 }
 
@@ -39,9 +46,13 @@ async function arrivedMail(email, sender, wanted) {
 }
 
 function codeIn(mail, email, sender, length) {
-  const found = new RegExp(`(?<!\\d)\\d{${length}}(?!\\d)`).exec(`${mail.subject}\n${mail.body_text}`);
+  const found = new RegExp(`(?<!\\d)\\d{${length}}(?!\\d)`).exec(
+    `${mail.subject}\n${mail.body_text}`,
+  );
   if (!found)
-    throw new Error(`MAILED_CODE_ABSENT: the mail from ${sender} to ${email} ("${mail.subject}") carries no ${length}-digit code`);
+    throw new Error(
+      `MAILED_CODE_ABSENT: the mail from ${sender} to ${email} ("${mail.subject}") carries no ${length}-digit code`,
+    );
   const [digits] = found;
   return digits;
 }
@@ -49,14 +60,22 @@ function codeIn(mail, email, sender, length) {
 function linkIn(mail, email, sender, host) {
   for (const [written] of mail.body_text.matchAll(/https:\/\/[^\s"'<>\]]+/g)) {
     const link = new URL(written.replaceAll('&amp;', '&'));
-    if (link.hostname === host || link.hostname.endsWith(`.${host}`)) return link.href;
+    if (link.hostname === host || link.hostname.endsWith(`.${host}`))
+      return link.href;
   }
-  throw new Error(`MAILED_LINK_ABSENT: the mail from ${sender} to ${email} ("${mail.subject}") carries no link to ${host}`);
+  throw new Error(
+    `MAILED_LINK_ABSENT: the mail from ${sender} to ${email} ("${mail.subject}") carries no link to ${host}`,
+  );
 }
 
 /** The code of `length` digits the newest mail from `sender` to `email` carries, once that mail arrives. */
 export async function mailedCode(email, sender, length) {
-  return codeIn(await arrivedMail(email, sender, Boolean), email, sender, length);
+  return codeIn(
+    await arrivedMail(email, sender, Boolean),
+    email,
+    sender,
+    length,
+  );
 }
 
 /** The first link to `host` (or a host under it) in the newest mail from `sender` to `email`, once that mail arrives. */
@@ -70,8 +89,11 @@ export async function mailedLink(email, sender, host) {
  * that is not among them, once it arrives.
  */
 export async function expectMail(email, sender) {
-  const before = new Set((await messagesTo(email.toLowerCase(), sender)).map((mail) => mail.id));
-  const fresh = () => arrivedMail(email, sender, (mail) => !before.has(mail.id));
+  const before = new Set(
+    (await messagesTo(email.toLowerCase(), sender)).map((mail) => mail.id),
+  );
+  const fresh = () =>
+    arrivedMail(email, sender, (mail) => !before.has(mail.id));
   return {
     code: async (length) => codeIn(await fresh(), email, sender, length),
     link: async (host) => linkIn(await fresh(), email, sender, host),

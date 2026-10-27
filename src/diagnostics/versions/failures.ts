@@ -3,6 +3,7 @@
 // a row's missing version field always says why it is missing.
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
+import { describeError } from '../../_shared/error-chain/index.cjs';
 
 // The package that supplied this module, not the caller's working directory.
 // Both src/diagnostics/versions and dist/diagnostics/versions have this depth.
@@ -31,9 +32,8 @@ export function captureFailure(
   operation: string,
   error: unknown,
 ): CaptureFailure {
-  if (!(error instanceof Error))
-    return { field, operation, message: String(error) };
-  const failure: CaptureFailure = { field, operation, message: error.message };
+  const failure: CaptureFailure = { field, operation, message: describeError(error) };
+  if (!(error instanceof Error)) return failure;
   const { code, status, stderr } = error as ProcessError;
   if (code !== undefined) failure.code = code;
   if (status !== undefined) failure.exit_status = status;
